@@ -811,7 +811,21 @@ export const ar: Messages = {
   'profile.edit.keptBy': 'محفوظ لدى {owner}',
   'app.booting': 'جارٍ فتح ميدورا',
 
+  'session.unconfirmed.title': 'تعذّر التأكد من تسجيل دخولك',
+  'session.unconfirmed.body':
+    'تعذّر الوصول إلى ميدورا. ما زلت مسجّل الدخول على هذا الهاتف، ولم يُحذف أي شيء.',
+  'session.unconfirmed.offline': 'هذا الهاتف غير متصل بالإنترنت. سنحاول مرة أخرى عند عودة الاتصال.',
+  'session.unconfirmed.online':
+    'قد يكون الاتصال بطيئًا أو قد تكون ميدورا مشغولة. حاول مرة أخرى بعد قليل.',
+  'session.unconfirmed.still': 'لا يزال الوصول إلى ميدورا متعذّرًا. حاول مرة أخرى بعد قليل.',
+  'session.unconfirmed.retry': 'حاول مرة أخرى',
+  'session.unconfirmed.signOut': 'تسجيل الخروج من هذا الهاتف',
+  'session.unconfirmed.signOut.confirmTitle': 'تسجيل الخروج من هذا الهاتف؟',
+  'session.unconfirmed.signOut.confirmDetail':
+    'تعذّر الوصول إلى ميدورا، لذلك سيُسجَّل الخروج من هذا الهاتف فقط. سينتهي تسجيل دخولك لدى ميدورا من تلقاء نفسه عند انتهاء صلاحيته. ستحتاج إلى كلمة المرور لتسجيل الدخول مرة أخرى. تبقى المساعدة الطارئة متاحة.',
+
   'nav.title.signIn': 'تسجيل الدخول',
+  'nav.title.sessionCheck': 'التحقق من تسجيل دخولك',
   'nav.title.verify': 'تحقّق',
   'nav.title.createAccount': 'إنشاء حساب',
   'nav.title.confirmEmail': 'تأكيد البريد',

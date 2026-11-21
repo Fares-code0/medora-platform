@@ -263,7 +263,9 @@ describe('the authentication gate', () => {
 
   it('falls back to the auth stack when the stored token is rejected', async () => {
     const authService = stubAuthService({
-      refresh: jest.fn(() => Promise.reject(Object.assign(new Error('x'), { kind: 'auth' }))),
+      refresh: jest.fn(() =>
+        Promise.reject(Object.assign(new Error('x'), { kind: 'auth', code: 'unauthorized' })),
+      ),
     });
     await renderApp({ authService, storedRefreshToken: 'stale' });
 

@@ -44,6 +44,66 @@
  * with a locale and no provider.
  */
 
+/**
+ * Formatter cache.
+ *
+ * Constructing an `Intl` formatter is the expensive half of formatting —
+ * it resolves locale data — and the appointment card alone asks for about
+ * eight per render (date, time, relative, and two calendar-day lookups),
+ * for every card on the page. The formatters are immutable once built, so
+ * one per (kind, locale, zone) is enough for the life of the process.
+ *
+ * Only a formatter that constructed successfully is cached. An unknown
+ * locale or zone still throws on every call, into the same `catch`
+ * fallbacks as before. Each cache also remembers which `Intl` constructor
+ * built it and starts over if that constructor is replaced (a polyfill
+ * installed late, or a test removing `Intl`), so a cached formatter never
+ * outlives the runtime that produced it.
+ */
+type DateKind = 'date' | 'longDate' | 'time' | 'calendarDay';
+
+const DATE_OPTIONS: Record<DateKind, Intl.DateTimeFormatOptions> = {
+  date: { weekday: 'short', day: 'numeric', month: 'short' },
+  longDate: { day: 'numeric', month: 'long', year: 'numeric' },
+  time: { hour: '2-digit', minute: '2-digit' },
+  calendarDay: { year: 'numeric', month: '2-digit', day: '2-digit' },
+};
+
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const relativeFormatters = new Map<string, Intl.RelativeTimeFormat>();
+let dateBuiltBy: unknown = null;
+let relativeBuiltBy: unknown = null;
+
+function dateFormatter(kind: DateKind, locale: string, timeZone?: string): Intl.DateTimeFormat {
+  if (Intl.DateTimeFormat !== dateBuiltBy) {
+    dateFormatters.clear();
+    dateBuiltBy = Intl.DateTimeFormat;
+  }
+  const key = `${kind}|${locale}|${timeZone ?? ''}`;
+  let formatter = dateFormatters.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      ...DATE_OPTIONS[kind],
+      ...(timeZone === undefined ? {} : { timeZone }),
+    });
+    dateFormatters.set(key, formatter);
+  }
+  return formatter;
+}
+
+function relativeFormatter(locale: string): Intl.RelativeTimeFormat {
+  if (Intl.RelativeTimeFormat !== relativeBuiltBy) {
+    relativeFormatters.clear();
+    relativeBuiltBy = Intl.RelativeTimeFormat;
+  }
+  let formatter = relativeFormatters.get(locale);
+  if (formatter === undefined) {
+    formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    relativeFormatters.set(locale, formatter);
+  }
+  return formatter;
+}
+
 function safeDate(iso: string): Date | null {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -54,12 +114,7 @@ export function formatDate(iso: string, locale: string, timeZone?: string): stri
   const date = safeDate(iso);
   if (date === null) return iso;
   try {
-    return new Intl.DateTimeFormat(locale, {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      ...(timeZone === undefined ? {} : { timeZone }),
-    }).format(date);
+    return dateFormatter('date', locale, timeZone).format(date);
   } catch {
     return iso.slice(0, 10);
   }
@@ -70,12 +125,7 @@ export function formatLongDate(iso: string, locale: string, timeZone?: string): 
   const date = safeDate(iso);
   if (date === null) return iso;
   try {
-    return new Intl.DateTimeFormat(locale, {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      ...(timeZone === undefined ? {} : { timeZone }),
-    }).format(date);
+    return dateFormatter('longDate', locale, timeZone).format(date);
   } catch {
     return iso.slice(0, 10);
   }
@@ -86,11 +136,7 @@ export function formatTime(iso: string, locale: string, timeZone?: string): stri
   const date = safeDate(iso);
   if (date === null) return iso;
   try {
-    return new Intl.DateTimeFormat(locale, {
-      hour: '2-digit',
-      minute: '2-digit',
-      ...(timeZone === undefined ? {} : { timeZone }),
-    }).format(date);
+    return dateFormatter('time', locale, timeZone).format(date);
   } catch {
     return iso.slice(11, 16);
   }
@@ -140,12 +186,7 @@ function startOfLocalDay(date: Date, timeZone?: string): number {
       // to ask `Intl` "what calendar date is this instant, there?".
       // Both ends of the comparison go through the same conversion, so
       // the difference is exact days in that zone.
-      const day = new Intl.DateTimeFormat('en-CA', {
-        timeZone,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(date);
+      const day = dateFormatter('calendarDay', 'en-CA', timeZone).format(date);
       const parsed = Date.parse(`${day}T00:00:00Z`);
       if (!Number.isNaN(parsed)) return parsed;
     } catch {
@@ -185,7 +226,7 @@ export function formatRelative(
     (startOfLocalDay(date, options.timeZone) - startOfLocalDay(now, options.timeZone)) / 86_400_000,
   );
   try {
-    const relative = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    const relative = relativeFormatter(locale);
     if (Math.abs(days) < 30) return relative.format(days, 'day');
     return relative.format(Math.round(days / 30), 'month');
   } catch {

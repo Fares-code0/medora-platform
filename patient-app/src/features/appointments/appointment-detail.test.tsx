@@ -1,8 +1,11 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, waitFor } from '@testing-library/react-native';
+import { RefreshControl } from 'react-native';
 
+import { en } from '@/i18n/messages';
 import type { AppointmentsStackParamList } from '@/navigation/routes';
 import { renderWithProviders } from '@/test/render';
+import type { ApiError } from '@/types/api';
 import { APPOINTMENT_PRIORITIES, APPOINTMENT_STATUSES } from '@/types/vocabularies';
 
 import type { AppointmentDetail, AppointmentEvent } from './model/types';
@@ -300,5 +303,35 @@ describe('appointment priority is carried, not rendered', () => {
     const view = await renderDetail(DETAIL({ priority: 'urgent', status: 'confirmed' }));
 
     expect(view.getByTestId('appointment-detail-status')).toBeTruthy();
+  });
+});
+
+describe('pull to refresh', () => {
+  it('refetches the appointment when the screen is pulled down', async () => {
+    const view = await renderDetail(DETAIL());
+    const before = view.get.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(view.get.mock.calls.length).toBe(before + 1));
+  });
+
+  it('keeps the appointment on screen when a refresh fails, and says so without blocking', async () => {
+    const view = await renderDetail(DETAIL());
+    const network: ApiError = { kind: 'network' };
+    const spy = jest.spyOn(appointmentService, 'getById').mockRejectedValue(network);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('Dr Layla Haddad')).toBeTruthy();
+    expect(view.queryByTestId('appointment-detail-error')).toBeNull();
+    expect(view.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    expect(spy.mock.calls.length).toBe(before + 1);
   });
 });

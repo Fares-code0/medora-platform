@@ -1,4 +1,4 @@
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { headingA11y, pressableA11y } from '@/accessibility/a11y';
@@ -20,6 +20,13 @@ import { Text } from '../Text';
  *
  * `onRequestClose` is wired so Android's hardware back button dismisses.
  * A confirmation the back button cannot escape is a trap.
+ *
+ * The sheet sits inside a `KeyboardAvoidingView` because some sheets hold
+ * a text field (the cancel and reschedule reasons). A `Modal` is its own
+ * window, so the screen's keyboard handling does not reach it: on iOS the
+ * keyboard rose over the field and the Confirm button beneath it. Padding
+ * lifts the bottom-anchored sheet clear. Android resizes the modal window
+ * for the keyboard itself, so it gets no extra behaviour.
  */
 export interface BottomSheetProps {
   readonly visible: boolean;
@@ -42,50 +49,55 @@ export function BottomSheet({ visible, onClose, title, children, testID }: Botto
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={[styles.fill, { backgroundColor: theme.colors.scrim }]}>
-        {/* The scrim is a dismiss target for a pointer, and hidden from
+      <KeyboardAvoidingView
+        style={styles.fill}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={[styles.fill, { backgroundColor: theme.colors.scrim }]}>
+          {/* The scrim is a dismiss target for a pointer, and hidden from
             assistive tech — a screen reader user dismisses with the
             explicit Close control, not by finding an unlabelled backdrop. */}
-        <Pressable
-          style={styles.fill}
-          onPress={onClose}
-          importantForAccessibility="no"
-          accessibilityElementsHidden
-        />
+          <Pressable
+            style={styles.fill}
+            onPress={onClose}
+            importantForAccessibility="no"
+            accessibilityElementsHidden
+          />
 
-        <View
-          testID={testID}
-          accessibilityViewIsModal
-          style={[
-            styles.sheet,
-            theme.elevation.modal,
-            {
-              backgroundColor: theme.colors.surfaceOverlay,
-              borderColor: theme.colors.border,
-              borderTopLeftRadius: theme.radius.surface * 2,
-              borderTopRightRadius: theme.radius.surface * 2,
-              paddingHorizontal: theme.screenGutter,
-              paddingTop: theme.space[4],
-              paddingBottom: insets.bottom + theme.space[4],
-              rowGap: theme.space[4],
-            },
-          ]}
-        >
-          <View style={styles.header}>
-            <Text variant="h2" style={styles.grow} {...headingA11y(title)}>
-              {title}
-            </Text>
-            <Pressable
-              onPress={onClose}
-              hitSlop={12}
-              {...pressableA11y({ label: t('action.close') })}
-            >
-              <Icon name="x" size={22} color="textSecondary" />
-            </Pressable>
+          <View
+            testID={testID}
+            accessibilityViewIsModal
+            style={[
+              styles.sheet,
+              theme.elevation.modal,
+              {
+                backgroundColor: theme.colors.surfaceOverlay,
+                borderColor: theme.colors.border,
+                borderTopLeftRadius: theme.radius.surface * 2,
+                borderTopRightRadius: theme.radius.surface * 2,
+                paddingHorizontal: theme.screenGutter,
+                paddingTop: theme.space[4],
+                paddingBottom: insets.bottom + theme.space[4],
+                rowGap: theme.space[4],
+              },
+            ]}
+          >
+            <View style={styles.header}>
+              <Text variant="h2" style={styles.grow} {...headingA11y(title)}>
+                {title}
+              </Text>
+              <Pressable
+                onPress={onClose}
+                hitSlop={12}
+                {...pressableA11y({ label: t('action.close') })}
+              >
+                <Icon name="x" size={22} color="textSecondary" />
+              </Pressable>
+            </View>
+            {children}
           </View>
-          {children}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

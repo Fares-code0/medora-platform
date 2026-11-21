@@ -113,7 +113,7 @@ describe('the adapters a release build actually runs', () => {
     // session from it.
     await expect(fixtureAuthService.refresh(DEMO_PATIENT_REFRESH_TOKEN)).rejects.toMatchObject({
       kind: 'auth',
-      code: 'token_invalid',
+      code: 'unauthorized',
     });
   });
 

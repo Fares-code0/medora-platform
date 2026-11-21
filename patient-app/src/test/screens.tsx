@@ -4,6 +4,7 @@ import { AppointmentDetailScreen } from '@/features/appointments/screens/Appoint
 import { AppointmentsScreen } from '@/features/appointments/screens/AppointmentsScreen';
 import type { AuthService, SignInResult } from '@/features/auth/model/types';
 import { ConsentScreen } from '@/features/auth/screens/ConsentScreen';
+import { SessionUnconfirmedScreen } from '@/features/auth/screens/SessionUnconfirmedScreen';
 import { SessionProvider } from '@/features/auth/SessionProvider';
 import { createTokenStorage } from '@/features/auth/storage';
 import { ClinicScreen } from '@/features/clinic/screens/ClinicScreen';
@@ -66,6 +67,9 @@ export const mockNavigation = {
   setOptions: jest.fn(),
   addListener: jest.fn(() => jest.fn()),
   canGoBack: jest.fn(() => false),
+  // A hosted screen is the one on screen. `SessionUnconfirmedScreen` reads
+  // it to hold a retry's outcome while Emergency is open (audit M4).
+  isFocused: jest.fn(() => true),
 };
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- see the docblock:
@@ -81,6 +85,7 @@ export type HostedScreen = readonly [name: string, screen: ComponentType<any>, p
 export const SCREENS: readonly HostedScreen[] = [
   ['Onboarding', OnboardingScreen, {}],
   ['Consent', ConsentScreen, {}],
+  ['SessionUnconfirmed', SessionUnconfirmedScreen, {}],
   ['Home', HomeScreen, {}],
   ['Discover', DiscoverScreen, {}],
   ['DoctorProfile', DoctorProfileScreen, { doctorId: 'DR-1' }],

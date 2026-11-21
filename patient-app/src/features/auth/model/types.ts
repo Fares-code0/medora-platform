@@ -52,6 +52,14 @@ export type SessionEndReason = 'signed-out' | 'session-expired' | 'locked';
 
 export type SessionState =
   | { readonly status: 'booting' }
+  /**
+   * A refresh token is in the keychain and the server could not be
+   * reached to exchange it — no signal, a timeout, a 5xx (see
+   * `refresh-outcome.ts`). Not signed in: there is no access token and
+   * no identity, so nothing clinical can be shown. Not signed out
+   * either: the token is kept, because nothing has said it is dead.
+   */
+  | { readonly status: 'unconfirmed' }
   | { readonly status: 'unauthenticated'; readonly reason?: SessionEndReason }
   | { readonly status: 'authenticated'; readonly identity: AuthenticatedIdentity };
 

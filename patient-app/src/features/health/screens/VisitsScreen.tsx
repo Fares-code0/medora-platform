@@ -40,7 +40,11 @@ export function VisitsScreen({ navigation }: Props) {
   const visits = useVisits();
 
   return (
-    <Screen testID="visits-screen">
+    <Screen
+      testID="visits-screen"
+      onRefresh={() => void visits.refetch()}
+      refreshing={visits.isRefetching}
+    >
       <Text variant="h1" {...headingA11y(t('health.visits.title'))}>
         {t('health.visits.title')}
       </Text>
@@ -54,6 +58,7 @@ export function VisitsScreen({ navigation }: Props) {
       <AsyncBoundary
         testID="visits-list"
         query={visits}
+        keepDataOnRefreshError
         isEmpty={(data) => data.length === 0}
         empty={{
           icon: 'fileText',

@@ -46,6 +46,18 @@ export type AuthStackParamList = {
   Emergency: undefined;
 };
 
+/**
+ * The `unconfirmed` session state (`SessionUnconfirmedScreen`): a stored
+ * sign-in the server could not be reached to confirm. Its own stack, not
+ * a branch of either other one — it is neither signed in nor signed out —
+ * and `Emergency` is a route in it for the reason it is one in
+ * `AuthStackParamList`.
+ */
+export type SessionCheckStackParamList = {
+  SessionCheck: undefined;
+  Emergency: undefined;
+};
+
 export type HomeStackParamList = {
   HomeRoot: undefined;
   /**

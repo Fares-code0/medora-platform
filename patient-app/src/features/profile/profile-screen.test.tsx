@@ -1,7 +1,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
 
-import type { AuthService } from '@/features/auth/model/types';
+import { apiClient } from '@/api/client';
+import type { AuthService, SignInResult } from '@/features/auth/model/types';
 import { SessionProvider } from '@/features/auth/SessionProvider';
 import { createTokenStorage } from '@/features/auth/storage';
 import type { ProfileStackParamList } from '@/navigation/routes';
@@ -47,6 +48,10 @@ const installed: { mockRestore: () => void }[] = [];
 
 afterEach(() => {
   for (const spy of installed.splice(0)) spy.mockRestore();
+  // Each test signs in, which installs an access token on the shared client.
+  apiClient.setAccessToken(null);
+  apiClient.setRefreshHandler(null);
+  apiClient.setSessionLostHandler(null);
 });
 
 /**
@@ -64,15 +69,31 @@ function stubProfile(profile: PatientProfile = PROFILE) {
  * A real `SessionProvider` over a stub `AuthService`, so the logout
  * assertion runs through the session code the button actually calls
  * rather than a mocked context. `authService.logout` is the observable
- * end of it: `SessionProvider.logout()` calls it unconditionally, and
- * sweeps local state whether or not it resolves.
+ * end of it: `SessionProvider.logout()` calls it whenever the session
+ * has an access token to name — which a signed-in Profile always does —
+ * and sweeps local state whether or not it resolves.
+ *
+ * The session is signed in, as it is wherever Profile can be reached: a
+ * stored refresh token that `refresh` exchanges on boot. This used to
+ * render Profile signed out, which only passed while logout called the
+ * server even with nothing to authenticate the call (audit M5).
  */
+const SIGNED_IN: SignInResult = {
+  tokens: { accessToken: 'access-1', refreshToken: 'refresh-2' },
+  identity: {
+    subjectId: 'subject-1',
+    displayName: 'Amina Yusuf',
+    email: 'amina@example.com',
+    emailVerified: true,
+  },
+};
+
 function stubAuthService(): AuthService {
   return {
     login: jest.fn(),
     verifyOtp: jest.fn(),
     resendOtp: jest.fn(),
-    refresh: jest.fn(),
+    refresh: jest.fn(() => Promise.resolve(SIGNED_IN)),
     logout: jest.fn(() => Promise.resolve()),
     register: jest.fn(),
     verifyEmail: jest.fn(),
@@ -102,11 +123,11 @@ async function renderProfile(options: { profile?: PatientProfile; reject?: unkno
     route: { key: 'p', name: 'ProfileRoot' },
   } as unknown as NativeStackScreenProps<ProfileStackParamList, 'ProfileRoot'>;
 
+  const tokenStorage = createTokenStorage(createInMemorySecureStore());
+  await tokenStorage.writeRefreshToken('refresh-1');
+
   const view = renderWithProviders(
-    <SessionProvider
-      authService={authService}
-      tokenStorage={createTokenStorage(createInMemorySecureStore())}
-    >
+    <SessionProvider authService={authService} tokenStorage={tokenStorage}>
       <ProfileScreen {...props} />
     </SessionProvider>,
   );

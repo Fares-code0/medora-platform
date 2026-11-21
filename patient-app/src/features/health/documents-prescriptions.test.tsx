@@ -1,6 +1,9 @@
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
+import { RefreshControl } from 'react-native';
 
+import { en } from '@/i18n/messages';
 import { renderWithProviders } from '@/test/render';
+import type { ApiError } from '@/types/api';
 import { DOCUMENT_CATEGORIES, PRESCRIPTION_STATUSES } from '@/types/vocabularies';
 
 import type { PatientDocument, Prescription } from './model/types';
@@ -219,15 +222,18 @@ describe('prescriptions are a record, not a request (J-07, OOS-2)', () => {
  * rendering its own literal.
  */
 describe('a document names its kind in words, not in database values', () => {
-  it.each(DOCUMENT_CATEGORIES)('renders %s as a label rather than the literal', async (category) => {
-    const view = await renderDocuments([documentFixture({ id: 'DOC-1', category })]);
+  it.each(DOCUMENT_CATEGORIES)(
+    'renders %s as a label rather than the literal',
+    async (category) => {
+      const view = await renderDocuments([documentFixture({ id: 'DOC-1', category })]);
 
-    // The literal never reaches the screen…
-    expect(view.queryByText(category)).toBeNull();
-    // …and something is still rendered in its place, so this cannot be
-    // satisfied by dropping the badge.
-    expect(view.getByTestId('document-DOC-1')).toBeTruthy();
-  });
+      // The literal never reaches the screen…
+      expect(view.queryByText(category)).toBeNull();
+      // …and something is still rendered in its place, so this cannot be
+      // satisfied by dropping the badge.
+      expect(view.getByTestId('document-DOC-1')).toBeTruthy();
+    },
+  );
 
   it('spells out the hyphenated one, which is the case that made this obvious', async () => {
     const view = await renderDocuments([
@@ -251,5 +257,67 @@ describe('a document names its kind in words, not in database values', () => {
     );
 
     for (const label of labels) expect(view.getByText(label)).toBeTruthy();
+  });
+});
+
+describe('pull to refresh', () => {
+  it('refetches the documents when the screen is pulled down', async () => {
+    const view = await renderDocuments([documentFixture({ id: 'DOC-1' })]);
+    const spy = jest.spyOn(healthService, 'listDocuments');
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(spy.mock.calls.length).toBe(before + 1));
+  });
+
+  it('refetches the prescriptions when the screen is pulled down', async () => {
+    const view = await renderPrescriptions([]);
+    const spy = jest.spyOn(healthService, 'listPrescriptions');
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(spy.mock.calls.length).toBe(before + 1));
+  });
+
+  it('keeps the documents on screen when a refresh fails, and says so without blocking', async () => {
+    const view = await renderDocuments([documentFixture({ id: 'DOC-1', title: 'Cached letter' })]);
+    const network: ApiError = { kind: 'network' };
+    const spy = jest.spyOn(healthService, 'listDocuments').mockRejectedValue(network);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('Cached letter')).toBeTruthy();
+    expect(view.queryByTestId('documents-list-error')).toBeNull();
+    expect(view.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    expect(spy.mock.calls.length).toBe(before + 1);
+  });
+
+  it('keeps the prescriptions on screen when a refresh fails, and says so without blocking', async () => {
+    const view = await renderPrescriptions([
+      prescriptionFixture({ id: 'RX-1', medicationName: 'Cached medicine' }),
+    ]);
+    const network: ApiError = { kind: 'network' };
+    const spy = jest.spyOn(healthService, 'listPrescriptions').mockRejectedValue(network);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('Cached medicine')).toBeTruthy();
+    expect(view.queryByTestId('prescriptions-list-error')).toBeNull();
+    expect(view.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    expect(spy.mock.calls.length).toBe(before + 1);
   });
 });

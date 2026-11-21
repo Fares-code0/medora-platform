@@ -907,7 +907,23 @@ export const en = {
   'profile.edit.keptBy': 'Kept by {owner}',
   'app.booting': 'Opening Medora',
 
+  // ── A stored sign-in the server could not be reached to confirm ────
+  'session.unconfirmed.title': 'We couldn’t confirm you’re signed in',
+  'session.unconfirmed.body':
+    'Medora could not be reached. You are still signed in on this phone, and nothing has been removed.',
+  'session.unconfirmed.offline':
+    'This phone is offline. We will try again when the connection comes back.',
+  'session.unconfirmed.online':
+    'The connection may be slow, or Medora may be busy. Try again in a moment.',
+  'session.unconfirmed.still': 'Medora still could not be reached. Try again in a moment.',
+  'session.unconfirmed.retry': 'Try again',
+  'session.unconfirmed.signOut': 'Sign out of this phone',
+  'session.unconfirmed.signOut.confirmTitle': 'Sign out of this phone?',
+  'session.unconfirmed.signOut.confirmDetail':
+    'Medora cannot be reached, so only this phone will be signed out. Your sign-in on Medora’s side will end by itself when it expires. You will need your password to sign back in. Emergency help stays available.',
+
   'nav.title.signIn': 'Sign in',
+  'nav.title.sessionCheck': 'Checking your sign-in',
   'nav.title.verify': 'Verify',
   'nav.title.createAccount': 'Create account',
   'nav.title.confirmEmail': 'Confirm email',

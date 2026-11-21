@@ -38,7 +38,7 @@ export interface ListParams {
  * finding 3.2): a wrong password and an expired token are both `401`, and
  * a client that reads only the status treats a typo as a dead session and
  * logs the patient out. `code` is what tells `invalid_credentials` from
- * `token_expired`. `client.ts` therefore refreshes on `kind: 'auth'` ONLY
+ * `unauthorized`. `client.ts` therefore refreshes on `kind: 'auth'` ONLY
  * when the code is absent or is a token code — never on a credentials
  * failure. `errors.test.ts` is the assertion.
  *
@@ -60,7 +60,17 @@ export type ApiError = ApiErrorBase &
     | { readonly kind: 'network' }
     | { readonly kind: 'timeout' }
     | { readonly kind: 'cancelled' }
-    | { readonly kind: 'server'; readonly ref: string }
+    | {
+        readonly kind: 'server';
+        readonly ref: string;
+        /**
+         * The HTTP status, when the failure was an HTTP response.
+         * `normalizeHttpError` maps every status it has no case for to
+         * `server` — a 405 or a 3xx as well as a 503 — so the kind alone
+         * does not say "5xx". `isStaleDataSafeError` reads this.
+         */
+        readonly status?: number;
+      }
   );
 
 export type ApiErrorKind = ApiError['kind'];
@@ -75,19 +85,43 @@ export function isApiError(value: unknown): value is ApiError {
  * The backend's error codes that mean "your access token is no longer
  * good", as distinct from every other 401. Only these trigger a refresh.
  *
- * `unauthorized` is the one the backend actually sends: its access-token
- * guard throws `AppException.unauthorized()` for a missing, expired or
- * revoked token (`access-token.guard.ts`), and that code is used for no
- * business rejection — a wrong password is `invalid_credentials`, a wrong
- * code `otp_invalid`. The web client refreshes on the same code.
+ * **One code, read from the backend rather than assumed (audit H1).**
+ * Reconciled with `main`, which had added `unauthorized` at the front of
+ * the old four-code list. The list is narrowed to that one code because
+ * the backend source admits no other:
+ *
+ * - The access-token guard answers a missing, forged, expired or ended
+ *   access token with `AppException.unauthorized()` and, for a dead
+ *   session, `AppException.unauthorized('unauthorized', 'Session
+ *   expired')` (`backend/src/modules/auth/guards/access-token.guard.ts`,
+ *   lines 70, 73 and 95). `AppException.unauthorized`'s default code is
+ *   `unauthorized` (`common/errors/app.exception.ts`), as is the default
+ *   for any bare 401 (`defaultCodeForStatus`, `common/errors/error-codes.ts`).
+ *   The authorization guard with no principal and `/auth/session` for an
+ *   ended session send the same code (`shared/authz/authorization.guard.ts`,
+ *   `modules/auth/services/session-user.service.ts`).
+ * - `token_expired`, `unauthenticated` and `session_expired` appear
+ *   nowhere in the backend's error codes (`common/errors/error-codes.ts`)
+ *   or in any `AppException` it throws. Listing them changed nothing
+ *   against the real API.
+ * - `token_invalid` IS sent with a 401, but as a business rejection: an
+ *   expired or forged 2FA re-enrolment token on
+ *   `POST /me/2fa/reenroll/confirm` (`modules/auth/services/
+ *   two-factor.service.ts`, `completeReenrollment`). Refreshing on it
+ *   replayed that confirmation with a fresh access token, so it must NOT
+ *   be listed. Its other uses (password reset, email verification,
+ *   invitations) are 422s.
+ *
+ * The web client reached the same one-code set (`TOKEN_FAILURE_CODES` in
+ * `frontend/src/api/client.ts`). The other 401 codes the backend sends —
+ * `invalid_credentials`, `otp_invalid`, `token_invalid` — are about what
+ * the patient typed and never trigger a refresh. `POST /auth/refresh`
+ * also refuses with `unauthorized` (`modules/auth/services/
+ * refresh.service.ts`, `expiredSession`); that request opts out with
+ * `skipRefresh` and by path (`client.ts`), because a refresh refreshing
+ * itself is a loop.
  */
-export const TOKEN_ERROR_CODES: readonly string[] = [
-  'unauthorized',
-  'token_expired',
-  'token_invalid',
-  'unauthenticated',
-  'session_expired',
-];
+export const TOKEN_ERROR_CODES: readonly string[] = ['unauthorized'];
 
 /** Does this normalized error justify attempting a token refresh? */
 export function isTokenExpiryError(error: ApiError): boolean {

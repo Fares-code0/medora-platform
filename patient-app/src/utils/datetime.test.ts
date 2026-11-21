@@ -96,6 +96,32 @@ describe('an instant it cannot parse', () => {
   });
 });
 
+describe('formatter reuse', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('builds one Intl formatter per kind, locale and zone, not one per call', () => {
+    // A zone no other test uses, so nothing is cached for it yet.
+    const zone = 'Pacific/Auckland';
+    const spy = jest.spyOn(Intl, 'DateTimeFormat');
+
+    const first = formatDateTime(INSTANT, 'en', zone);
+    for (let i = 0; i < 10; i += 1) formatDateTime(INSTANT, 'en', zone);
+
+    // One date formatter and one time formatter, however many cards.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(formatDateTime(INSTANT, 'en', zone)).toBe(first);
+  });
+
+  it('keeps formats for different locales and zones apart', () => {
+    expect(formatTime(INSTANT, 'en', 'UTC')).not.toBe(formatTime(INSTANT, 'en', 'Asia/Tokyo'));
+    expect(formatRelative(INSTANT, 'en', { now: new Date(INSTANT) })).not.toBe(
+      formatRelative(INSTANT, 'ar', { now: new Date(INSTANT) }),
+    );
+  });
+});
+
 describe('a runtime without Intl', () => {
   /**
    * Hermes ships `Intl` in the variant Expo SDK 52 uses, but the

@@ -1,7 +1,12 @@
-import { fireEvent } from '@testing-library/react-native';
+import { useEffect, useState } from 'react';
 
+import { fireEvent } from '@testing-library/react-native';
+import { KeyboardAvoidingView } from 'react-native';
+
+import { normalizeHttpError } from '@/api/errors';
 import { EndpointNotImplementedError } from '@/api/seam';
 import { ar, en } from '@/i18n/messages';
+import { ResponseContractError } from '@/schemas/envelope';
 import { renderWithProviders } from '@/test/render';
 import { MIN_TOUCH_TARGET } from '@/theme';
 import { APPOINTMENT_STATUSES } from '@/types/vocabularies';
@@ -14,6 +19,7 @@ import { AsyncBoundary } from './feedback/AsyncBoundary';
 import { EmptyState } from './feedback/EmptyState';
 import { ErrorState, __presentForTest } from './feedback/ErrorState';
 import { Input } from './Input';
+import { BottomSheet } from './layout/BottomSheet';
 import { StatusBadge, statusPresentation } from './StatusBadge';
 import { Text } from './Text';
 
@@ -351,6 +357,216 @@ describe('AsyncBoundary', () => {
   });
 });
 
+describe('AsyncBoundary — a refresh that fails over cached data', () => {
+  const cached = { data: ['x'], isPending: false, isError: true };
+  const NETWORK = { kind: 'network' } as const;
+
+  const render = (
+    query: { data: string[] | undefined; isPending: boolean; isError: boolean; error: unknown },
+    keep = true,
+  ) =>
+    renderWithProviders(
+      <AsyncBoundary
+        query={{ ...query, refetch: jest.fn() }}
+        isEmpty={(d) => d.length === 0}
+        testID="b"
+        keepDataOnRefreshError={keep}
+      >
+        {(data) => <Text>{`got ${data.length}`}</Text>}
+      </AsyncBoundary>,
+    );
+
+  it('keeps the records on screen and reports the failure in a toast', async () => {
+    const view = render({ ...cached, error: NETWORK });
+
+    expect(view.getByText('got 1')).toBeTruthy();
+    expect(view.queryByTestId('b-error')).toBeNull();
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+  });
+
+  it('reports one failure once, however often the screen re-renders', async () => {
+    const view = render({ ...cached, error: NETWORK });
+    await view.findByText(en['state.error.network.title']);
+
+    view.rerender(
+      <AsyncBoundary query={{ ...cached, error: NETWORK }} testID="b" keepDataOnRefreshError>
+        {(data) => <Text>{`got ${data.length}`}</Text>}
+      </AsyncBoundary>,
+    );
+
+    expect(view.getAllByText(en['state.error.network.title'])).toHaveLength(1);
+  });
+
+  it('still replaces the records when the server now refuses them', () => {
+    // Forbidden is not a hiccup: a record the server will no longer show
+    // this patient is not one to keep on their screen.
+    const view = render({ ...cached, error: { kind: 'forbidden' } });
+
+    expect(view.getByTestId('b-error')).toBeTruthy();
+    expect(view.queryByText('got 1')).toBeNull();
+  });
+
+  it('shows the full error, with Retry, when a first load fails with nothing cached', () => {
+    const view = render({ data: undefined, isPending: false, isError: true, error: NETWORK });
+
+    expect(view.getByTestId('b-error')).toBeTruthy();
+    expect(view.getByTestId('b-error-retry')).toBeTruthy();
+  });
+
+  it('is opt-in: without the prop a failed refresh shows the error as before', () => {
+    const view = render({ ...cached, error: NETWORK }, false);
+
+    expect(view.getByTestId('b-error')).toBeTruthy();
+    expect(view.queryByText('got 1')).toBeNull();
+  });
+
+  it('never remounts the content when a refresh fails and then recovers', async () => {
+    // The content is a stateful component with a mount counter. A text
+    // assertion alone passes even when React tears the subtree down and
+    // builds a fresh one — which is exactly the defect: the notice placed
+    // ahead of the content shifted it one position and lost its state.
+    let mounts = 0;
+    let unmounts = 0;
+    function Counter() {
+      const [count, setCount] = useState(0);
+      useEffect(() => {
+        mounts += 1;
+        return () => {
+          unmounts += 1;
+        };
+      }, []);
+      return (
+        <Button label={`count ${count}`} onPress={() => setCount((c) => c + 1)} testID="counter" />
+      );
+    }
+    const boundary = (query: { isError: boolean; error: unknown }) => (
+      <AsyncBoundary
+        query={{ data: ['x'], isPending: false, ...query, refetch: jest.fn() }}
+        isEmpty={(d) => d.length === 0}
+        testID="b"
+        keepDataOnRefreshError
+      >
+        {() => <Counter />}
+      </AsyncBoundary>
+    );
+
+    const view = renderWithProviders(boundary({ isError: false, error: null }));
+    fireEvent.press(view.getByTestId('counter'));
+    fireEvent.press(view.getByTestId('counter'));
+    expect(view.getByText('count 2')).toBeTruthy();
+    expect(mounts).toBe(1);
+
+    // Refresh fails over the cached record: notice appears, content stays.
+    view.rerender(boundary({ isError: true, error: NETWORK }));
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('count 2')).toBeTruthy();
+
+    // Refresh recovers.
+    view.rerender(boundary({ isError: false, error: null }));
+    expect(view.getByText('count 2')).toBeTruthy();
+    expect(mounts).toBe(1);
+    expect(unmounts).toBe(0);
+  });
+
+  it('never remounts the empty state across a failing refresh either', () => {
+    // A remount builds a new host instance; the same instance across all
+    // three renders proves the empty state kept its place in the tree.
+    const boundary = (query: { isError: boolean; error: unknown }) => (
+      <AsyncBoundary
+        query={{ data: [] as string[], isPending: false, ...query }}
+        isEmpty={(d) => d.length === 0}
+        empty={{ title: 'Nothing here' }}
+        testID="b"
+        keepDataOnRefreshError
+      >
+        {() => null}
+      </AsyncBoundary>
+    );
+
+    const view = renderWithProviders(boundary({ isError: false, error: null }));
+    const original = view.getByTestId('b-empty');
+    view.rerender(boundary({ isError: true, error: NETWORK }));
+    expect(view.getByTestId('b-empty')).toBe(original);
+    view.rerender(boundary({ isError: false, error: null }));
+    expect(view.getByTestId('b-empty')).toBe(original);
+  });
+});
+
+describe('AsyncBoundary — which refresh failures keep cached records', () => {
+  const httpError = (status: number, headers: Record<string, string> = {}) =>
+    normalizeHttpError(new Response(JSON.stringify({}), { status, headers }));
+
+  const renderWith = (error: unknown) =>
+    renderWithProviders(
+      <AsyncBoundary
+        query={{ data: ['x'], isPending: false, isError: true, error, refetch: jest.fn() }}
+        isEmpty={(d) => d.length === 0}
+        testID="b"
+        keepDataOnRefreshError
+      >
+        {(data) => <Text>{`got ${data.length}`}</Text>}
+      </AsyncBoundary>,
+    );
+
+  it.each([
+    ['network', async () => ({ kind: 'network' as const }), 'state.error.network.title'],
+    ['timeout', async () => ({ kind: 'timeout' as const }), 'state.error.timeout.title'],
+    ['HTTP 500', () => httpError(500), 'state.error.server.title'],
+    ['HTTP 503', () => httpError(503), 'state.error.server.title'],
+    [
+      'HTTP 429 (no Retry button, but the records are still valid)',
+      () => httpError(429, { 'Retry-After': '12' }),
+      'state.error.rateLimited.title',
+    ],
+  ] as const)('keeps the records and toasts on %s', async (_name, make, titleKey) => {
+    const view = renderWith(await make());
+
+    expect(view.getByText('got 1')).toBeTruthy();
+    expect(view.queryByTestId('b-error')).toBeNull();
+    expect(await view.findByText(en[titleKey])).toBeTruthy();
+  });
+
+  it.each([
+    ['HTTP 401 (signed out)', () => httpError(401)],
+    ['HTTP 403', () => httpError(403)],
+    ['HTTP 404', () => httpError(404)],
+    ['HTTP 400', () => httpError(400)],
+    ['HTTP 409', () => httpError(409)],
+    // Statuses `normalizeHttpError` has no case for land on `server` too;
+    // they are not a known outage and must not be treated as one.
+    ['an unmapped HTTP 405', () => httpError(405)],
+    ['an unmapped HTTP 418', () => httpError(418)],
+    ['a server error with no status', async () => ({ kind: 'server' as const, ref: 'X' })],
+    ['a cancelled request', async () => ({ kind: 'cancelled' as const })],
+    [
+      'an unavailable endpoint',
+      async () => new EndpointNotImplementedError('BE-09', 'capability.booking'),
+    ],
+    ['a response contract error', async () => new ResponseContractError('GET /x', ['data'])],
+    ['an unknown thrown value', async () => new Error('boom')],
+  ] as const)('replaces the records with the error on %s', async (_name, make) => {
+    const view = renderWith(await make());
+
+    expect(view.getByTestId('b-error')).toBeTruthy();
+    expect(view.queryByText('got 1')).toBeNull();
+  });
+
+  it('leaves the first load unchanged: a 429 with nothing cached is the full error', async () => {
+    const error = await httpError(429);
+    const view = renderWithProviders(
+      <AsyncBoundary
+        query={{ data: undefined, isPending: false, isError: true, error }}
+        testID="b"
+        keepDataOnRefreshError
+      >
+        {() => <Text>never</Text>}
+      </AsyncBoundary>,
+    );
+
+    expect(view.getByTestId('b-error')).toBeTruthy();
+  });
+});
+
 describe('ConfirmSheet', () => {
   it('confirms and cancels through separate controls (R-06)', () => {
     const onConfirm = jest.fn();
@@ -388,5 +604,20 @@ describe('ConfirmSheet', () => {
       />,
     );
     expect(queryByTestId('confirm-confirm')).toBeNull();
+  });
+});
+
+describe('BottomSheet', () => {
+  it('lifts the sheet clear of the keyboard, so a reason field and Confirm stay visible', () => {
+    const { getByTestId, UNSAFE_getByType } = renderWithProviders(
+      <BottomSheet visible onClose={jest.fn()} title="Reason" testID="sheet">
+        <Input label="Reason" value="" onChangeText={jest.fn()} testID="sheet-input" />
+      </BottomSheet>,
+    );
+
+    // The jest-expo preset renders as iOS, where the modal window is not
+    // resized for the keyboard and padding is what moves the sheet.
+    expect(UNSAFE_getByType(KeyboardAvoidingView).props.behavior).toBe('padding');
+    expect(getByTestId('sheet-input')).toBeTruthy();
   });
 });

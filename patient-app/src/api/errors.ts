@@ -1,4 +1,4 @@
-import { type ApiError } from '@/types/api';
+import { isApiError, type ApiError } from '@/types/api';
 
 /**
  * Error normalisation. Nothing downstream of this module ever sees a
@@ -29,7 +29,9 @@ function toThrowable(error: ApiError): ApiError & Error {
 export async function normalizeHttpError(response: Response): Promise<ApiError & Error> {
   let body: ErrorBody = {};
   try {
-    body = (await response.json()) as ErrorBody;
+    const parsed: unknown = await response.json();
+    // `null` is valid JSON and not an object; reading `.code` off it threw.
+    if (typeof parsed === 'object' && parsed !== null) body = parsed;
   } catch {
     // Non-JSON body (a proxy's HTML 502, an empty 401) — fall through to
     // the status mapping. Never surface the raw text: it can carry
@@ -64,8 +66,53 @@ export async function normalizeHttpError(response: Response): Promise<ApiError &
       });
     }
     default:
-      return toThrowable({ ...code, kind: 'server', ref: body.ref ?? `HTTP-${response.status}` });
+      return toThrowable({
+        ...code,
+        kind: 'server',
+        ref: body.ref ?? `HTTP-${response.status}`,
+        status: response.status,
+      });
   }
+}
+
+/**
+ * May records already on screen stay there after a REFRESH failed this way?
+ *
+ * Deliberately not `shouldRetry` and not `ErrorState`'s Retry rule: those
+ * answer "can trying again help", this answers "is what the patient is
+ * reading still the server's answer". They differ in both directions —
+ * a 429 offers no Retry button (the patient must wait) but says nothing
+ * against the cached records, and an unrecognised failure may be worth a
+ * retry but is no evidence the cache is still good.
+ *
+ * Only failures that say "the server could not be asked" qualify:
+ * network, timeout, rate limiting, and a real 5xx. A `server` error
+ * without a 5xx status is a status `normalizeHttpError` had no case for,
+ * not a known outage, and fails closed — as do refusals (auth, forbidden,
+ * not found), unavailable endpoints, response-contract errors and
+ * anything that is not a normalized `ApiError`.
+ */
+export function isStaleDataSafeError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  switch (error.kind) {
+    case 'network':
+    case 'timeout':
+    case 'rate_limited':
+      return true;
+    case 'server':
+      return error.status !== undefined && error.status >= 500 && error.status <= 599;
+    case 'validation':
+    case 'auth':
+    case 'forbidden':
+    case 'not_found':
+    case 'conflict':
+    case 'cancelled':
+      return false;
+  }
+  // Unreachable for a typed ApiError, but `isApiError` only checks that
+  // `kind` is a string: a foreign `{ kind: 'foo' }` lands here and must
+  // fail closed with a real boolean.
+  return false;
 }
 
 export function normalizeNetworkError(): ApiError & Error {

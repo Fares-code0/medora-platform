@@ -17,6 +17,7 @@ import {
   useToast,
 } from '@/components';
 import { Checkbox } from '@/components/form/Checkbox';
+import { useFieldChain } from '@/components/form/useFieldChain';
 import { useT, type MessageKey, type TranslateFn } from '@/i18n';
 import { useTheme } from '@/theme';
 import type { NotificationCategory } from '@/types/vocabularies';
@@ -177,6 +178,18 @@ function FixedRow({
 }
 
 /**
+ * `HH:MM` is exactly five characters and never a word, so the length is
+ * capped and the keyboard is kept from "correcting" or capitalising it.
+ */
+const TIME_FIELD = {
+  keyboardType: 'numbers-and-punctuation',
+  maxLength: 5,
+  autoCorrect: false,
+  autoCapitalize: 'none',
+  autoComplete: 'off',
+} as const;
+
+/**
  * The quiet window.
  *
  * Two plain text fields rather than a native time picker: a picker is a
@@ -206,6 +219,9 @@ function QuietHoursFields({
   });
 
   const issue = quietHoursIssue(draft.from, draft.to);
+  // From → Next → To → Done. There is nothing to submit: a valid pair
+  // commits as it is typed, so Done just closes the keyboard.
+  const chain = useFieldChain({ length: 2 });
 
   const edit = useCallback(
     (field: 'from' | 'to', value: string) => {
@@ -226,7 +242,8 @@ function QuietHoursFields({
             label={t('notificationPrefs.quietHours.from')}
             value={draft.from}
             onChangeText={(value) => edit('from', value)}
-            keyboardType="numbers-and-punctuation"
+            {...TIME_FIELD}
+            {...chain.field(0)}
             hint={t('notificationPrefs.quietHours.hint')}
             testID="quiet-hours-from"
           />
@@ -236,7 +253,8 @@ function QuietHoursFields({
             label={t('notificationPrefs.quietHours.to')}
             value={draft.to}
             onChangeText={(value) => edit('to', value)}
-            keyboardType="numbers-and-punctuation"
+            {...TIME_FIELD}
+            {...chain.field(1)}
             hint={t('notificationPrefs.quietHours.hint')}
             testID="quiet-hours-to"
           />

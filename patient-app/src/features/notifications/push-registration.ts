@@ -1,31 +1,44 @@
 /**
  * Push notifications — **not implemented, deliberately**.
  *
- * ── Why there is no code here ────────────────────────────────────────
- * Push needs three things that do not exist:
+ * ── What stands in the way (re-checked 2026-11-20) ───────────────────
+ * The list used to name three blockers. Two have moved, and one that was
+ * never on it is the one that now decides the order of work.
  *
- * 1. **A registration endpoint.** `POST /me/devices` is roadmap M41.2 and
- *    unbuilt (audit BE-12). `notification_deliveries` has a `PUSH`
- *    channel in the schema and nothing behind it.
- * 2. **A provider.** No FCM/APNs credentials, no Expo push project, no
- *    server-side sender.
- * 3. **`AD-1`.** `Notification.userId -> User`, so there is no patient to
- *    deliver to.
+ * 1. **A registration endpoint — exists now, with a question attached.**
+ *    `POST /me/devices` (backend M41.2, migration
+ *    `20261030140000_trusted_device_push_token`) takes an optional
+ *    `pushToken`, stores it and never returns it; `DELETE
+ *    /me/devices/{id}` clears it. But the row it writes is a **trusted
+ *    device** (API §2.6) — a security record a patient sees under
+ *    Security. Whether asking for notifications should also create one is
+ *    a backend/owner question, not something this client should decide by
+ *    calling the route.
+ * 2. **A provider — still missing.** The backend binds only
+ *    `UnconfiguredPushProvider`, so every push delivery is recorded as
+ *    `skipped / no-provider`. No FCM/APNs credentials, no Expo push
+ *    project.
+ * 3. ~~`AD-1` — a patient has no user row.~~ Resolved by ADR-030: a
+ *    patient is an account, and `GET /notifications` already serves this
+ *    app.
+ * 4. **The OS permission — an owner decision.** Which runtime permissions
+ *    this app may request is `docs/STORE_PRIVACY.md` §6 (W-02), and
+ *    `src/test/store-privacy.test.ts` fails the build on
+ *    `expo-notifications` by name until it is answered.
  *
  * The wrong move would be to request the OS notification permission now,
  * store an Expo token locally, and call it "prepared". That trains the
- * patient to grant a permission the app cannot use, and a permission
- * granted for nothing is a permission that gets revoked before it is
- * needed.
+ * patient to grant a permission the app cannot use — nothing would ever
+ * arrive while (2) stands — and a permission granted for nothing is a
+ * permission that gets revoked before it is needed.
  *
  * ── What this file is instead ────────────────────────────────────────
  * The recorded dependency and the shape of the eventual call, so that
- * when BE-12 lands the work is "implement this interface", not "design
- * push". `expo-notifications` is deliberately NOT a dependency of this
- * package yet — adding it would be an install for a capability with no
- * server.
+ * when the provider and the permission decision land the work is
+ * "implement this interface", not "design push".
  *
- * Checklist rows O-03, O-04, O-05 and O-07 stay open and blocked.
+ * Checklist rows O-03, O-04 (its push half), O-05 and O-07 stay open and
+ * blocked.
  */
 
 export interface PushRegistration {
@@ -41,7 +54,9 @@ export interface PushService {
 }
 
 export const PUSH_BLOCKERS = {
-  registrationEndpoint: 'BE-12 — POST /me/devices does not exist (roadmap M41.2)',
-  provider: 'No push provider is configured for this project',
-  identity: 'AD-1 — Notification.userId references User; a patient has no user row',
+  registrationEndpoint:
+    'POST /me/devices accepts a pushToken (M41.2), but registers a trusted device; whether push should is undecided',
+  provider: 'No push provider: the backend binds only UnconfiguredPushProvider',
+  osPermission:
+    'W-02 §6 — the owner decides which runtime permissions the app may request; expo-notifications is refused until then',
 } as const;

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { View } from 'react-native';
+import { View, type TextInputProps } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import {
@@ -16,12 +16,46 @@ import {
   useToast,
 } from '@/components';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
+import { useFieldChain } from '@/components/form/useFieldChain';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { profileKeys } from '../keys';
 import type { ProfileFieldId } from '../model/types';
 import { profileService } from '../service';
+
+/**
+ * Keyboard, autofill and capitalisation per field.
+ *
+ * Every non-email field used to get sentence capitalisation, which leaves
+ * every word after the first lower-case — names and addresses want word
+ * capitalisation. `autoComplete` and `textContentType` let the OS offer the
+ * patient's own contact card, the fastest and least error-prone way to
+ * fill an email or phone number.
+ */
+type FieldInputProps = Pick<
+  TextInputProps,
+  'autoCapitalize' | 'autoComplete' | 'autoCorrect' | 'keyboardType' | 'textContentType'
+>;
+
+const FIELD_INPUT: Record<ProfileFieldId, FieldInputProps> = {
+  fullName: { autoCapitalize: 'words', autoComplete: 'name', textContentType: 'name' },
+  email: {
+    autoCapitalize: 'none',
+    autoComplete: 'email',
+    autoCorrect: false,
+    keyboardType: 'email-address',
+    textContentType: 'emailAddress',
+  },
+  phone: { autoComplete: 'tel', keyboardType: 'phone-pad', textContentType: 'telephoneNumber' },
+  address: {
+    autoCapitalize: 'words',
+    autoComplete: 'street-address',
+    textContentType: 'fullStreetAddress',
+  },
+  dateOfBirth: { autoCorrect: false },
+  bloodType: { autoCapitalize: 'characters', autoCorrect: false },
+};
 
 /**
  * Personal details.
@@ -59,8 +93,14 @@ export function EditProfileScreen() {
     setDraft(seeded);
   }, [profile.data]);
 
+  // `save.isPending` only turns true after a re-render, so two presses in the
+  // same tick would both reach `mutate`. A ref closes that window.
+  const inFlight = useRef(false);
   const save = useMutation({
     mutationFn: (values: Partial<Record<ProfileFieldId, string>>) => profileService.update(values),
+    onSettled: () => {
+      inFlight.current = false;
+    },
     onSuccess: () => {
       toast.show(t('profile.edit.saved'), 'success');
       void queryClient.invalidateQueries({ queryKey: profileKeys.all });
@@ -69,6 +109,14 @@ export function EditProfileScreen() {
       toast.show(t('profile.edit.saveFailed'), 'error');
     },
   });
+
+  // Next moves down the editable fields; Done on the last one only closes
+  // the keyboard. It never saves: saving is explicit (see above), and a
+  // patient pressing Done to get the keyboard out of the way has not asked
+  // for their profile to be written. The chain is given no `onSubmit` on
+  // purpose — Save is the one path to `save.mutate`.
+  const editableCount = profile.data?.fields.filter((field) => field.editable).length ?? 0;
+  const chain = useFieldChain({ length: editableCount });
 
   return (
     <Screen testID="edit-profile-screen">
@@ -84,7 +132,7 @@ export function EditProfileScreen() {
             <View style={{ rowGap: theme.space[5] }}>
               <Section title={t('profile.edit.editable')}>
                 <View style={{ rowGap: theme.space[4] }}>
-                  {editable.map((field) => (
+                  {editable.map((field, index) => (
                     <Input
                       key={field.id}
                       testID={`edit-profile-${field.id}`}
@@ -93,14 +141,8 @@ export function EditProfileScreen() {
                       onChangeText={(value) =>
                         setDraft((current) => ({ ...current, [field.id]: value }))
                       }
-                      keyboardType={
-                        field.id === 'email'
-                          ? 'email-address'
-                          : field.id === 'phone'
-                            ? 'phone-pad'
-                            : 'default'
-                      }
-                      autoCapitalize={field.id === 'email' ? 'none' : 'sentences'}
+                      {...FIELD_INPUT[field.id]}
+                      {...chain.field(index)}
                     />
                   ))}
                 </View>
@@ -112,7 +154,11 @@ export function EditProfileScreen() {
                     fullWidth
                     loading={save.isPending}
                     testID="edit-profile-save"
-                    onPress={() => save.mutate(draft)}
+                    onPress={() => {
+                      if (inFlight.current) return;
+                      inFlight.current = true;
+                      save.mutate(draft);
+                    }}
                   />
                   <Button
                     label={t('action.cancel')}

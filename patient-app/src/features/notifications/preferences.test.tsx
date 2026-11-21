@@ -213,6 +213,25 @@ describe('the screen', () => {
     });
   });
 
+  it('walks From → To on the keyboard and keeps each field to an HH:MM-shaped entry', async () => {
+    stub('updatePreferences').mockImplementation((next) => Promise.resolve(next));
+    const { findByTestId } = renderPrefs({
+      ...PREFERENCES,
+      quietHours: { enabled: true, from: '22:00', to: '07:00' },
+    });
+
+    const from = await findByTestId('quiet-hours-from');
+    const to = await findByTestId('quiet-hours-to');
+
+    expect(from.props.returnKeyType).toBe('next');
+    expect(to.props.returnKeyType).toBe('done');
+    for (const field of [from, to]) {
+      expect(field.props.maxLength).toBe(5);
+      expect(field.props.autoCorrect).toBe(false);
+      expect(field.props.autoCapitalize).toBe('none');
+    }
+  });
+
   it('says the settings are not available yet rather than showing invented ones', async () => {
     // A service that refuses by name (a build whose adapter cannot reach
     // the route) must not make the screen fall back to its own defaults.

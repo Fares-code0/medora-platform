@@ -2,6 +2,7 @@ import { act, fireEvent, waitFor } from '@testing-library/react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { AppState, Text, type AppStateStatus } from 'react-native';
 
+import { apiClient } from '@/api/client';
 import { PREFERENCE_KEYS, preferenceStore } from '@/storage/preference-store';
 import { createInMemorySecureStore } from '@/storage/secure-store';
 import { renderWithProviders } from '@/test/render';
@@ -54,6 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   preferenceStore.remove(PREFERENCE_KEYS.biometricUnlock);
+  apiClient.setAccessToken(null);
   jest.restoreAllMocks();
 });
 
@@ -286,6 +288,36 @@ describe('the lock screen, over a real backgrounding', () => {
     // photographs what is mounted on the way to the task switcher —
     // the same reason `PhiPrivacyShield` exists (T-09).
     const view = await backgroundedApp(stubGate({ authenticate: () => new Promise(() => {}) }));
+
+    expect(view.getByTestId('biometric-lock-screen')).toBeTruthy();
+    expect(view.queryByTestId('navigator')).toBeNull();
+  });
+
+  // A request still in flight across the backgrounding comes back 401 —
+  // the access token expired while the phone was away — and the transport
+  // refreshes. Refreshing renews the tokens; it is not the patient proving
+  // who they are, so it must not take the lock down.
+  it('stays up when a request refreshes the session behind it', async () => {
+    const view = await backgroundedApp(stubGate({ authenticate: () => new Promise(() => {}) }));
+    expect(view.getByTestId('biometric-lock-screen')).toBeTruthy();
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: 'Unauthorized', code: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { ok: true } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+    await act(async () => {
+      await expect(apiClient.get('me/appointments')).resolves.toEqual({ data: { ok: true } });
+    });
 
     expect(view.getByTestId('biometric-lock-screen')).toBeTruthy();
     expect(view.queryByTestId('navigator')).toBeNull();
