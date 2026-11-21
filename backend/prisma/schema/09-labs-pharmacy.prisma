@@ -1,0 +1,354 @@
+// Medora — laboratory and pharmacy (RM M5.8, DB §E, §F).
+//
+// DB §14.2 phase 10. The last two clinical fact families, and the three
+// cross-domain FKs earlier phases left as bare columns:
+// `patient_medications.prescription_id`, `record_medications.prescription_id`
+// and `patient_studies.lab_order_id` all gain their constraints here.
+//
+// ── Two columns carry more weight than the rest ──────────────────────
+//
+// `lab_orders.has_critical_result` is derived and *stored*, which DB
+// §14.5-6 otherwise forbids — it is the single exception the dictionary
+// grants, "for index use", because the "Critical unreviewed: N" chip is a
+// partial index scan and cannot be a join. It is trigger-maintained from
+// M5.10; nothing writes it directly.
+//
+// `prescriptions.refills_remaining` is the constraint this milestone
+// verifies. A refill count above the allowance dispenses medication
+// nobody authorized.
+
+/// A lab order (DB §E3).
+model LabOrder {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId String @unique @map("public_id") @db.VarChar(20)
+
+  patientId    String  @map("patient_id") @db.Uuid
+  testId       String  @map("test_id") @db.Uuid
+  departmentId String? @map("department_id") @db.Uuid
+  orderedBy    String  @map("ordered_by") @db.Uuid
+
+  clinicalIndication String      @map("clinical_indication") @db.VarChar(300)
+  status             LabStatus   @default(ORDERED)
+  priority           LabPriority @default(ROUTINE)
+
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  collectedAt DateTime? @map("collected_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  /// Present only once completed — an interpretation of results that do
+  /// not exist yet is a draft opinion in a clinical record.
+  interpretation String?
+
+  /// Derived, trigger-maintained (M5.10). See the file header for why
+  /// this one derived value is stored when DB §14.5-6 forbids the rest.
+  hasCriticalResult Boolean @default(false) @map("has_critical_result")
+
+  /// The "Mark reviewed" workflow UX 2.6 requires for critical results.
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  reviewedBy String?   @map("reviewed_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient    Patient          @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  test       LabTestCatalogue @relation(fields: [testId], references: [id], onDelete: Restrict)
+  department Department?      @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  orderer    Doctor           @relation("LabOrderedBy", fields: [orderedBy], references: [id], onDelete: Restrict)
+  reviewer   User?            @relation("LabReviewedBy", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  specimen   LabSpecimen?
+  results    LabResult[]
+  attachments LabAttachment[]
+  timeline    LabTimelineEvent[]
+  studies     PatientStudy[]
+  notifications Notification[]
+
+  /// DB §8 — the patient's lab history and the worklist filters.
+  @@index([patientId, requestedAt(sort: Desc)])
+  @@index([status, priority])
+  @@index([orderedBy])
+  @@index([deletedAt])
+  @@map("lab_orders")
+}
+
+/// The specimen document (DB §E4) — 1:1 with the order.
+///
+/// `collected_by` is ADR-003 §4's historical-fact pattern: the FK may go
+/// null when an account is removed, and the name snapshot keeps the chain
+/// of custody readable. A specimen whose collector became blank is a
+/// compliance problem, not a cosmetic one.
+model LabSpecimen {
+  labOrderId String @id @map("lab_order_id") @db.Uuid
+
+  type           LabSpecimenType
+  container      String                @db.VarChar(60)
+  collectionSite String                @map("collection_site") @db.VarChar(80)
+  collectedBy    String                @map("collected_by") @db.VarChar(120)
+  collectedById  String?               @map("collected_by_id") @db.Uuid
+  collectedAt    DateTime              @map("collected_at") @db.Timestamptz(3)
+  receivedAt     DateTime?             @map("received_at") @db.Timestamptz(3)
+  condition      LabSpecimenCondition  @default(ACCEPTABLE)
+  volume         String                @db.VarChar(20)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order     LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  collector User?    @relation("SpecimenCollectedBy", fields: [collectedById], references: [id], onDelete: SetNull)
+
+  @@map("lab_specimens")
+}
+
+/// A result item (DB §E5).
+///
+/// The reference range is **snapshotted** onto the row rather than read
+/// from `lab_analyte_specs` at display time. A range revised next year
+/// must not retroactively change whether last year's result was flagged
+/// abnormal — the flag is a clinical judgement made at the time, and
+/// `analyte_spec_id` is SET NULL precisely so the row survives a
+/// catalogue change.
+model LabResult {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  labOrderId    String  @map("lab_order_id") @db.Uuid
+  analyteSpecId String? @map("analyte_spec_id") @db.Uuid
+
+  analyte      String   @db.VarChar(80)
+  /// The value as reported — numeric string or categorical.
+  valueText    String   @map("value_text") @db.VarChar(60)
+  /// Null for qualitative results. Charting and trending read this.
+  valueNumeric Decimal? @map("value_numeric") @db.Decimal(12, 3)
+  unit         String   @db.VarChar(20)
+
+  refLow  Decimal? @map("ref_low") @db.Decimal(10, 3)
+  refHigh Decimal? @map("ref_high") @db.Decimal(10, 3)
+  refText String   @map("ref_text") @db.VarChar(60)
+
+  flag       LabResultFlag @default(NORMAL)
+  resultedAt DateTime      @default(now()) @map("resulted_at") @db.Timestamptz(3)
+  verifiedBy String?       @map("verified_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  order    LabOrder        @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  spec     LabAnalyteSpec? @relation(fields: [analyteSpecId], references: [id], onDelete: SetNull)
+  verifier User?           @relation("ResultVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+
+  @@unique([labOrderId, analyte])
+  /// DB §8 — per-analyte trend charts join through the order.
+  @@index([analyte, resultedAt])
+  @@index([deletedAt])
+  @@map("lab_results")
+}
+
+/// Files attached to a lab order (DB §E6).
+model LabAttachment {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  labOrderId String @map("lab_order_id") @db.Uuid
+
+  name   String            @db.VarChar(200)
+  kind   LabAttachmentKind
+  sizeKb Int               @map("size_kb")
+  fileId String            @map("file_id") @db.Uuid
+
+  uploadedBy String?  @map("uploaded_by") @db.Uuid
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  order    LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  file     File     @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  uploader User?    @relation("LabAttachmentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  @@index([labOrderId])
+  @@index([fileId])
+  @@map("lab_attachments")
+}
+
+/// The lab workflow timeline (DB §E7).
+///
+/// `actor` is NOT NULL here, unlike the record and appointment timelines:
+/// DB §E7 types it that way, and a lab step with no attributed actor
+/// breaks the chain of custody the specimen record exists to keep.
+model LabTimelineEvent {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  labOrderId String @map("lab_order_id") @db.Uuid
+
+  kind       LabTimelineKind
+  occurredAt DateTime        @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actor      String          @db.VarChar(120)
+  actorId    String?         @map("actor_id") @db.Uuid
+  detail     String?         @db.VarChar(300)
+
+  order     LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  actorUser User?    @relation("LabTimelineActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([labOrderId, occurredAt(sort: Desc)])
+  @@map("lab_timeline_events")
+}
+
+/// The prescription document (DB §F3, ADR-002).
+///
+/// **Defaults to `draft`, not to `pending-approval`.** DB §F3 predates
+/// ADR-002, which makes `draft` the creation state and explains why it is
+/// load-bearing: "A draft has not been prescribed: it does not appear in
+/// the patient's medication list, generates no notification, and produces
+/// no timeline `prescribed` event." It is the state that makes API §7.7's
+/// fail-closed rule expressible — a prescription whose safety check could
+/// not run **stays in draft**. Defaulting to `pending-approval` would
+/// mean a row that failed its safety check is already in the approval
+/// queue.
+model Prescription {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId String @unique @map("public_id") @db.VarChar(20)
+
+  patientId           String  @map("patient_id") @db.Uuid
+  medicationId        String  @map("medication_id") @db.Uuid
+  prescribingDoctorId String  @map("prescribing_doctor_id") @db.Uuid
+  departmentId        String? @map("department_id") @db.Uuid
+  recordId            String? @map("record_id") @db.Uuid
+
+  strength     String          @db.VarChar(30)
+  dosage       String          @db.VarChar(60)
+  frequency    String          @db.VarChar(60)
+  route        MedicationRoute
+  durationDays Int             @map("duration_days") @db.SmallInt
+  quantity     Int
+  instructions String
+
+  status PrescriptionStatus @default(DRAFT)
+
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+
+  refillsAllowed   Int          @default(0) @map("refills_allowed") @db.SmallInt
+  refillsRemaining Int          @default(0) @map("refills_remaining") @db.SmallInt
+  refillStatus     RefillStatus @default(NONE) @map("refill_status")
+
+  /// Required before send (UX 2.7 "Sign & send"). A prescription with no
+  /// signature has not been prescribed by anyone.
+  signedAt            DateTime? @map("signed_at") @db.Timestamptz(3)
+  /// Required when discontinued (P4) — enforced by CHECK.
+  discontinuedReason  String?   @map("discontinued_reason") @db.VarChar(300)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient    Patient        @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  medication Medication     @relation(fields: [medicationId], references: [id], onDelete: Restrict)
+  prescriber Doctor         @relation("PrescribedBy", fields: [prescribingDoctorId], references: [id], onDelete: Restrict)
+  department Department?    @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  record     MedicalRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  safetyWarnings   PrescriptionSafetyWarning[]
+  notes            PrescriptionNote[]
+  historyEntries   PrescriptionHistoryEntry[]
+  timeline         PrescriptionTimelineEvent[]
+  /// The cross-domain FKs closed by this migration's ALTERs.
+  patientMedications PatientMedication[]
+  recordMedications  RecordMedication[]
+  notifications      Notification[]
+
+  /// DB §8 — the patient's medication list, the prescriber's history,
+  /// and the expiry sweep of RM M13.5.
+  @@index([patientId, status])
+  @@index([prescribingDoctorId, createdAt(sort: Desc)])
+  @@index([status, endDate])
+  @@index([medicationId])
+  @@index([deletedAt])
+  @@map("prescriptions")
+}
+
+/// Safety-screen outcomes, persisted with the prescription (DB §F4).
+///
+/// The acknowledgment columns are the audit trail UX 2.7 requires: a
+/// severe interaction can only be passed with `{ acknowledgedWarningIds,
+/// reason }` (API §7.7), and the reason is what a later review reads.
+/// A CHECK ties the two together, so an acknowledgment with no reason is
+/// not representable.
+model PrescriptionSafetyWarning {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionId String @map("prescription_id") @db.Uuid
+
+  kind     SafetyWarningKind
+  severity SafetyWarningSeverity
+  title    String                @db.VarChar(200)
+  detail   String
+
+  acknowledgedBy     String?   @map("acknowledged_by") @db.Uuid
+  acknowledgedReason String?   @map("acknowledged_reason") @db.VarChar(300)
+  acknowledgedAt     DateTime? @map("acknowledged_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  acknowledger User?        @relation("WarningAcknowledgedBy", fields: [acknowledgedBy], references: [id], onDelete: SetNull)
+
+  @@index([prescriptionId])
+  @@map("prescription_safety_warnings")
+}
+
+/// Notes on a prescription (DB §F5).
+model PrescriptionNote {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionId String @map("prescription_id") @db.Uuid
+  authorId       String @map("author_id") @db.Uuid
+
+  authoredAt DateTime @default(now()) @map("authored_at") @db.Timestamptz(3)
+  body       String
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  author       User         @relation("PrescriptionNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([prescriptionId, authoredAt(sort: Desc)])
+  @@map("prescription_notes")
+}
+
+/// The medication-history entries shown on the detail page (DB §F6).
+model PrescriptionHistoryEntry {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionId String @map("prescription_id") @db.Uuid
+
+  occurredOn DateTime @map("occurred_on") @db.Date
+  event      String   @db.VarChar(120)
+  detail     String?  @db.VarChar(300)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId, occurredOn(sort: Desc)])
+  @@map("prescription_history_entries")
+}
+
+/// The prescription lifecycle timeline (DB §F7).
+model PrescriptionTimelineEvent {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionId String @map("prescription_id") @db.Uuid
+
+  kind       PrescriptionTimelineKind
+  occurredAt DateTime                 @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actorId    String?                  @map("actor_id") @db.Uuid
+  actorName  String?                  @map("actor_name") @db.VarChar(120)
+  detail     String?                  @db.VarChar(300)
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("PrescriptionTimelineActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([prescriptionId, occurredAt(sort: Desc)])
+  @@map("prescription_timeline_events")
+}

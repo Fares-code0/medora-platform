@@ -1,0 +1,601 @@
+// Medora — communication, AI, reports and settings
+// (RM M5.9, DB §G–J, §K10–K12, §S4–S5).
+//
+// DB §14.2 phase 11 — everything that hangs off a *user* rather than off
+// a patient, plus the two governance tables the admin communication
+// centre needs.
+//
+// ── `broadcast_channels` is not a table ──────────────────────────────
+//
+// DB §G8 says so itself: announcement and system channels are
+// "physically representable as `conversations` rows with kind
+// announcement/system; kept as a logical entity". A second table would
+// be the same columns under a different name, and every message query
+// would then have to union two of them.
+
+/// A messaging thread (DB §G1).
+model Conversation {
+  id    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind  ConversationKind @default(DIRECT)
+  topic String?          @db.VarChar(200)
+
+  /// The bound patient context (UX 2.8's third pane). Its presence is
+  /// what makes a thread a *patient thread*, which DB §7 forbids
+  /// deleting from — archive only, and API §9.5 returns 405 on a delete.
+  patientId String? @map("patient_id") @db.Uuid
+
+  readOnly       Boolean  @default(false) @map("read_only")
+  lastActivityAt DateTime @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  patient        Patient?                     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  participants   ConversationParticipant[]
+  messages       Message[]
+  sharedLinks    ConversationSharedLink[]
+  accessRequests CommunicationAccessRequest[]
+
+  @@index([lastActivityAt(sort: Desc)])
+  @@index([patientId])
+  @@index([deletedAt])
+  @@map("conversations")
+}
+
+/// Membership, and all per-viewer thread state (DB §G2).
+///
+/// Unread count, pinned, starred, archived, muted and the composer draft
+/// live here rather than on `conversations`, and DB §14.5 flags exactly
+/// why: they are per-viewer, not thread-global. A draft on the thread row
+/// would be visible to everyone in it.
+model ConversationParticipant {
+  conversationId String @map("conversation_id") @db.Uuid
+  userId         String @map("user_id") @db.Uuid
+
+  unreadCount Int     @default(0) @map("unread_count")
+  pinned      Boolean @default(false)
+  starred     Boolean @default(false)
+  archived    Boolean @default(false)
+  muted       Boolean @default(false)
+  draft       String  @default("")
+  favorite    Boolean @default(false)
+
+  lastReadAt DateTime? @map("last_read_at") @db.Timestamptz(3)
+  joinedAt   DateTime  @default(now()) @map("joined_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  /// DB §8 — the folder views (inbox, archived) are per user.
+  @@index([userId, archived])
+  @@map("conversation_participants")
+}
+
+/// A message (DB §G3).
+///
+/// `edited_at` within five minutes of `sent_at` is UX 2.8's edit window.
+/// It is *not* a CHECK: the window is a policy the platform settings can
+/// change, and a constraint would make yesterday's messages illegal the
+/// moment an administrator widened it.
+model Message {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String  @map("conversation_id") @db.Uuid
+  /// Null for system messages, and SET NULL when an account is removed.
+  authorId       String? @map("author_id") @db.Uuid
+
+  kind     MessageKind   @default(TEXT)
+  body     String
+  sentAt   DateTime      @default(now()) @map("sent_at") @db.Timestamptz(3)
+  status   MessageStatus @default(SENT)
+  editedAt DateTime?     @map("edited_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User?               @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  attachments  MessageAttachment[]
+  flags        MessageFlag[]
+
+  /// DB §8 — the thread view, newest first.
+  @@index([conversationId, sentAt(sort: Desc)])
+  @@index([deletedAt])
+  /// DB §8 — own-thread full-text search.
+  @@index([body(ops: raw("gin_trgm_ops"))], type: Gin, map: "messages_body_trgm_idx")
+  @@map("messages")
+}
+
+/// A file on a message (DB §G4).
+///
+/// `scanned_at` is the gate UX 2.8 describes: "attachments are scanned
+/// before download links activate". Null means not yet scanned, which the
+/// download path must not read as clean.
+model MessageAttachment {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId String @map("message_id") @db.Uuid
+  fileId    String @map("file_id") @db.Uuid
+
+  kind      AttachmentKind
+  name      String         @db.VarChar(200)
+  sizeBytes BigInt         @map("size_bytes")
+  scannedAt DateTime?      @map("scanned_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  file    File    @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@index([messageId])
+  @@index([fileId])
+  @@map("message_attachments")
+}
+
+/// Links surfaced in the conversation details drawer (DB §G5).
+model ConversationSharedLink {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+
+  label    String   @db.VarChar(120)
+  url      String
+  sharedBy String?  @map("shared_by") @db.Uuid
+  sharedAt DateTime @default(now()) @map("shared_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sharer       User?        @relation("LinkSharedBy", fields: [sharedBy], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@map("conversation_shared_links")
+}
+
+/// Safety flags on a message (DB §S5, UX §3.6).
+///
+/// `excerpt` is deliberately bounded: UX §3.6 calls it "minimum-necessary
+/// context". A flag is reviewed by an administrator who has not been
+/// granted content access, so the excerpt is the *only* message content
+/// they see, and its size is the size of that disclosure.
+model MessageFlag {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId String @map("message_id") @db.Uuid
+
+  /// emergency_language | harassment_abuse | phi_wrong_channel |
+  /// prescription_solicitation — closed by CHECK.
+  category String  @db.VarChar(40)
+  /// auto | user.
+  source   String  @db.VarChar(10)
+  flaggedBy String? @map("flagged_by") @db.Uuid
+  excerpt   String  @db.VarChar(300)
+
+  /// open | under_review | resolved.
+  status         String    @default("open") @db.VarChar(20)
+  /// dismissed | warned | escalated.
+  resolution     String?   @db.VarChar(30)
+  resolutionNote String?   @map("resolution_note")
+  resolvedBy     String?   @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  message  Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  flagger  User?   @relation("FlagRaisedBy", fields: [flaggedBy], references: [id], onDelete: SetNull)
+  resolver User?   @relation("FlagResolvedBy", fields: [resolvedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([messageId])
+  @@map("message_flags")
+}
+
+/// The content-access gate (DB §S4, UX §3.6, ADR-006).
+///
+/// Reading a patient thread's *content* is not a standing capability
+/// even for an administrator holding `communications.viewContent`: it
+/// requires a justified, time-boxed, audited grant. This table is that
+/// grant, and `access_ref` is the reference shown in the watermark banner
+/// so a screenshot can be traced back to the request that allowed it.
+model CommunicationAccessRequest {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+  requestedBy    String @map("requested_by") @db.Uuid
+
+  /// patient_complaint | safety_flag | legal_request | quality_audit.
+  justificationCategory String @map("justification_category") @db.VarChar(40)
+  reason                String
+
+  /// pending | approved | denied | expired | terminated.
+  status     String    @default("pending") @db.VarChar(20)
+  /// The second administrator, when ADR-006's approval mode is on. Never
+  /// the requester — a self-approved grant is not a second pair of eyes.
+  approvedBy String?   @map("approved_by") @db.Uuid
+  grantedAt  DateTime? @map("granted_at") @db.Timestamptz(3)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(3)
+  accessRef  String    @unique @map("access_ref") @db.VarChar(40)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  requester    User         @relation("AccessRequestedBy", fields: [requestedBy], references: [id], onDelete: Restrict)
+  approver     User?        @relation("AccessApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([conversationId])
+  @@map("communication_access_requests")
+}
+
+/// The bell feed and notifications centre (DB §G6).
+model Notification {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId String @map("recipient_id") @db.Uuid
+
+  title    String                 @db.VarChar(200)
+  body     String
+  category NotificationCategory
+  priority NotificationPriority   @default(NORMAL)
+  kind     NotificationKind
+  sender   String                 @db.VarChar(120)
+
+  readAt   DateTime? @map("read_at") @db.Timestamptz(3)
+  archived Boolean   @default(false)
+  favorite Boolean   @default(false)
+  /// Critical lab alerts stay pinned until acted on (UX 2.9).
+  pinned   Boolean   @default(false)
+
+  /// `NotificationRelated` deep links — all SET NULL, because a
+  /// notification outlives the thing it announced.
+  patientId      String? @map("patient_id") @db.Uuid
+  recordId       String? @map("record_id") @db.Uuid
+  labOrderId     String? @map("lab_order_id") @db.Uuid
+  prescriptionId String? @map("prescription_id") @db.Uuid
+  appointmentId  String? @map("appointment_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipient    User          @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  patient      Patient?      @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  record       MedicalRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+  labOrder     LabOrder?     @relation(fields: [labOrderId], references: [id], onDelete: SetNull)
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
+  appointment  Appointment?  @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  deliveries NotificationDelivery[]
+
+  /// DB §8 — the feed, newest first.
+  @@index([recipientId, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+/// Per-user notification settings (DB §G7).
+///
+/// The eight category flags are the eight `notification_category` values.
+/// `cat_security` carries a CHECK forcing it true — DB §G7 requires it
+/// ("security cannot be disabled — enforced in UI ... must also be a DB
+/// CHECK"), and the reason it is a *database* rule is that a UI-only
+/// guarantee is one API client away from a user who never learns their
+/// password was changed.
+model NotificationPreference {
+  userId String @id @map("user_id") @db.Uuid
+
+  channelEmail   Boolean @default(true) @map("channel_email")
+  channelSms     Boolean @default(false) @map("channel_sms")
+  channelPush    Boolean @default(true) @map("channel_push")
+  channelDesktop Boolean @default(false) @map("channel_desktop")
+  channelInApp   Boolean @default(true) @map("channel_in_app")
+
+  quietHoursEnabled Boolean  @default(false) @map("quiet_hours_enabled")
+  quietFrom         DateTime @default(dbgenerated("'22:00:00'::time without time zone")) @map("quiet_from") @db.Time(0)
+  quietTo           DateTime @default(dbgenerated("'07:00:00'::time without time zone")) @map("quiet_to") @db.Time(0)
+
+  catAppointments   Boolean @default(true) @map("cat_appointments")
+  catMedicalRecords Boolean @default(true) @map("cat_medical_records")
+  catLaboratory     Boolean @default(true) @map("cat_laboratory")
+  catPharmacy       Boolean @default(true) @map("cat_pharmacy")
+  catPatients       Boolean @default(true) @map("cat_patients")
+  catAi             Boolean @default(true) @map("cat_ai")
+  catSystem         Boolean @default(true) @map("cat_system")
+  catSecurity       Boolean @default(true) @map("cat_security")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+/// An AI thread (DB §H1).
+///
+/// `patient_id` is required for every mode except `general`, by CHECK.
+/// UX 2.5's rule is that "AI never has cross-patient context in a single
+/// thread", and a patient-mode thread with no patient bound is precisely
+/// the row that would let context leak between patients.
+model AiConversation {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+
+  title       String        @db.VarChar(200)
+  contextMode AiContextMode @default(GENERAL) @map("context_mode")
+  patientId   String?       @map("patient_id") @db.Uuid
+  /// e.g. `LAB-100429` for record/labs/pharmacy modes.
+  refPublicId String?       @map("ref_public_id") @db.VarChar(20)
+  favorite    Boolean       @default(false)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// DB §7 — AI conversations soft-delete, because a patient-bound
+  /// thread carries PHI.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  owner    User        @relation("AiConversationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  patient  Patient?    @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  messages AiMessage[]
+
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@index([patientId])
+  @@index([deletedAt])
+  @@map("ai_conversations")
+}
+
+/// A turn in an AI thread (DB §H2).
+model AiMessage {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String @map("conversation_id") @db.Uuid
+
+  role    AiChatRole
+  content String
+  status  AiMessageStatus @default(COMPLETE)
+  error   String?         @db.VarChar(300)
+  /// −1 / +1 thumbs (UX 2.5 telemetry).
+  feedback Int?           @db.SmallInt
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+/// Per-user AI settings (DB §H3).
+model AiUserSetting {
+  userId String @id @map("user_id") @db.Uuid
+
+  temperature       Decimal          @default(0.3) @db.Decimal(2, 1)
+  responseLength    AiResponseLength @default(BALANCED) @map("response_length")
+  language          AiLanguage       @default(EN)
+  autoContext       Boolean          @default(true) @map("auto_context")
+  streaming         Boolean          @default(true)
+  favoritePromptIds String[]         @default([]) @map("favorite_prompt_ids") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_user_settings")
+}
+
+/// A named filter snapshot (DB §I1).
+model SavedReport {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+
+  name      String         @db.VarChar(120)
+  category  ReportCategory
+  dateRange DateRangeKey   @default(MONTH) @map("date_range")
+  favorite  Boolean        @default(false)
+  /// The `ReportFilters` shape. `jsonb` because the filter set differs
+  /// per category and is read whole.
+  filters   Json           @default("{}")
+
+  lastViewedAt DateTime? @map("last_viewed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner User @relation("SavedReportOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, category])
+  @@map("saved_reports")
+}
+
+/// A recurring emailed export (DB §I2).
+model ScheduledReport {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+
+  name       String            @db.VarChar(120)
+  category   ReportCategory
+  frequency  ScheduleFrequency
+  format     ExportFormat      @default(PDF)
+  /// `text[]`, **not** `citext[]` as DB §I2 specifies — ADR-028.
+  ///
+  /// Prisma 7.9.1 cannot read a citext array at all: `node-postgres` has
+  /// no array parser registered for the citext OID, so it returns the
+  /// unparsed literal `{a@b.com}` and the client's data mapper throws
+  /// `TypeError: e.map is not a function`. A row inserted by raw SQL
+  /// fails identically, so it is the read path — and `create()` fails
+  /// too, because it reads the row back.
+  ///
+  /// The case-insensitive comparison this column was typed for moves to
+  /// a normalisation rule: recipients are stored lower-cased by the
+  /// endpoint that writes them (M21.5). Every *scalar* `@db.Citext` in
+  /// the schema is unaffected — the limitation is arrays only.
+  recipients String[]
+  status     ScheduleStatus    @default(ACTIVE)
+  nextRunAt  DateTime          @map("next_run_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner User                 @relation("ScheduledReportOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  runs  ScheduledReportRun[]
+
+  @@index([status, nextRunAt])
+  /// `listScheduled` reads `WHERE owner_id = $1 ORDER BY created_at DESC`,
+  /// and deleting a user cascades here. Without it both scan the table
+  /// (migration `20261113090000_index_review`).
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@map("scheduled_reports")
+}
+
+/// One execution of a scheduled report (DB §I3).
+model ScheduledReportRun {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scheduledReportId String    @map("scheduled_report_id") @db.Uuid
+  ranAt             DateTime  @map("ran_at") @db.Timestamptz(3)
+  status            RunStatus
+  error             String?
+
+  scheduledReport ScheduledReport @relation(fields: [scheduledReportId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledReportId, ranAt(sort: Desc)])
+  @@map("scheduled_report_runs")
+}
+
+/// The per-user settings document (DB §J1).
+model UserSetting {
+  userId String @id @map("user_id") @db.Uuid
+
+  privacyDataSharing Boolean @default(true) @map("privacy_data_sharing")
+  privacyAnalytics   Boolean @default(true) @map("privacy_analytics")
+  privacyCookies     Boolean @default(true) @map("privacy_cookies")
+  privacyAiDataUsage Boolean @default(true) @map("privacy_ai_data_usage")
+
+  landingPage       LandingPage @default(OVERVIEW) @map("landing_page")
+  defaultPatientTab PatientTab  @default(SUMMARY) @map("default_patient_tab")
+  defaultRecordsTab RecordsTab  @default(ALL) @map("default_records_tab")
+  autoSaveDrafts    Boolean     @default(true) @map("auto_save_drafts")
+
+  dateFormat String @default("MM/DD/YYYY") @map("date_format") @db.VarChar(10)
+  timeFormat String @default("12h") @map("time_format") @db.VarChar(3)
+  /// IANA. A varchar per DB §J1, validated by CHECK against the closed
+  /// format sets but not against the tz database, which moves.
+  timezone   String @default("UTC") @db.VarChar(60)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+/// Appearance and accessibility preferences (DB §J2).
+model UserInterfacePreference {
+  userId String @id @map("user_id") @db.Uuid
+
+  theme            String  @default("system") @db.VarChar(10)
+  locale           String  @default("en") @db.VarChar(10)
+  sidebarCollapsed Boolean @default(false) @map("sidebar_collapsed")
+  density          String  @default("comfortable") @db.VarChar(12)
+  textScale        Int     @default(100) @map("text_scale") @db.SmallInt
+  reduceMotion     Boolean @default(false) @map("reduce_motion")
+  highContrast     Boolean @default(false) @map("high_contrast")
+  focusRings       String  @default("default") @map("focus_rings") @db.VarChar(8)
+  keyboardNav      Boolean @default(false) @map("keyboard_nav")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_interface_preferences")
+}
+
+/// A connected calendar or meeting provider (DB §J3).
+model UserIntegration {
+  userId      String        @map("user_id") @db.Uuid
+  integration IntegrationId
+
+  connected    Boolean   @default(false)
+  connectedAt  DateTime? @map("connected_at") @db.Timestamptz(3)
+  accountLabel String?   @map("account_label") @db.VarChar(120)
+  /// Encrypted at rest, write-only in the UI (DB §10).
+  oauthTokensEnc Bytes?  @map("oauth_tokens_enc")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, integration])
+  @@map("user_integrations")
+}
+
+/// A clinic announcement (DB §K10).
+model Announcement {
+  id       String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title    String               @db.VarChar(200)
+  body     String
+  authorId String?              @map("author_id") @db.Uuid
+  priority AnnouncementPriority @default(NORMAL)
+  pinned   Boolean              @default(false)
+  archived Boolean              @default(false)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  author User? @relation("AnnouncementAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([pinned, createdAt(sort: Desc)])
+  @@index([deletedAt])
+  @@map("announcements")
+}
+
+/// A versioned clinic policy (DB §K11).
+model Policy {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title    String @db.VarChar(200)
+  category String @db.VarChar(80)
+  summary  String
+  version  String @db.VarChar(20)
+
+  /// From `database/medora.dbml`. `body` and `effective_date` are NOT NULL
+  /// there; they are optional here because no policy written through the
+  /// API so far has either, and the API contract does not carry them yet
+  /// (reconciliation §7).
+  body          String?
+  effectiveDate DateTime? @map("effective_date") @db.Date
+  authorId      String?   @map("author_id") @db.Uuid
+  active        Boolean   @default(true)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  author User? @relation("PolicyAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@unique([title, version])
+  @@index([deletedAt])
+  @@map("policies")
+}
+
+/// A document template (DB §K12).
+model DocumentTemplate {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String       @db.VarChar(120)
+  kind        TemplateKind
+  description String?      @db.VarChar(300)
+  usageCount  Int          @default(0) @map("usage_count")
+  archived    Boolean      @default(false)
+
+  /// From `database/medora.dbml`, optional for the reason `Policy` gives.
+  /// Its `active` is not added: it is `NOT archived`, and two flags for
+  /// one fact would disagree the first time only one is written.
+  title    String? @db.VarChar(200)
+  body     String?
+  authorId String? @map("author_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  author User? @relation("DocumentTemplateAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([kind, archived])
+  @@index([deletedAt])
+  @@map("document_templates")
+}

@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "Medora",
+    "slug": "medora-patient",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "medora",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.medora.patient",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Unlock Medora with Face ID instead of your password.",
+        "LSApplicationQueriesSchemes": [
+          "tel",
+          "telprompt",
+          "maps",
+          "geo",
+          "comgooglemaps"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.medora.patient",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2c5282"
+      },
+      "permissions": [
+        "android.permission.CALL_PHONE",
+        "android.permission.USE_BIOMETRIC"
+      ]
+    },
+    "extra": {
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-local-authentication",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#2c5282"
+        }
+      ],
+      "expo-asset",
+      "expo-font",
+      "expo-status-bar"
+    ]
+  }
+}

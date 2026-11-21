@@ -1,0 +1,370 @@
+// Medora — lookups and the file register (RM M5.1).
+//
+// DB §14.2 phase 2 (lookups) and phase 3 (files). These tables are the
+// vocabularies the fact families reference: nothing here holds PHI, and
+// everything here is seeded rather than authored through the API.
+//
+// ── The column conventions ────────────────────────────────────────────
+//
+// Every model in M5 copies `_conventions_reference` (M4.2): a database-
+// generated uuid PK, `timestamptz(3)` timestamps, `created_by`/`updated_by`,
+// and `deleted_at` where DB §7 requires soft delete. `@map` on every
+// multi-word field and `@@map` on every model — the naming law of M4.1.
+//
+// ── Which of these are soft-deletable, and why the rest are not ───────
+//
+// DB §7 gives soft delete to the clinic-administration group (which
+// `departments` belongs to) and to `files`. It gives roles, permissions
+// and role_permissions none — they are system rows. The remaining
+// vocabularies (visit types, conditions, ICD codes, insurers,
+// specialties) carry an `active` flag instead, which is the same pattern
+// DB §E1 and §F1 specify for the clinical catalogues: reference data that
+// is no longer offered is deactivated, never removed, because rows
+// already point at it.
+
+/// Coarse role — selects the route tree and shell (DB §A1).
+///
+/// `code` is a varchar, not an enum, and that is deliberate: UX §3.9 lets
+/// an administrator create a custom role from a base template, so the set
+/// is open. `is_system` is what protects the seeded five from deletion.
+model Role {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String  @unique @db.VarChar(30)
+  label      String  @db.VarChar(60)
+  /// The template a custom role was derived from (UX §3.9).
+  baseRoleId String? @map("base_role_id") @db.Uuid
+  isSystem   Boolean @default(true) @map("is_system")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  baseRole     Role?            @relation("RoleTemplate", fields: [baseRoleId], references: [id], onDelete: Restrict)
+  derivedRoles Role[]           @relation("RoleTemplate")
+  permissions  RolePermission[]
+  users        User[]
+  accessGrants PatientAccessGrant[] @relation("GrantGranteeRole")
+  /// ADR-035 — invitations that confer this role.
+  invitations  AdminInvitation[]
+
+  @@map("roles")
+}
+
+/// Fine-grained capability (DB §A2).
+///
+/// The 22 codes of the `Permission` union in `frontend/src/types/auth`,
+/// which states the rule this table has to keep true: "a capability that
+/// is not listed here cannot be referenced anywhere". The seed asserts
+/// the count, so a 23rd row cannot appear without the union growing too.
+model Permission {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique @db.VarChar(60)
+  /// Matrix group (UX §3.9): Clinical data · Scheduling · Communication ·
+  /// Administration · Audit · AI assistant.
+  domain      String  @db.VarChar(30)
+  description String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  roles           RolePermission[]
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+/// The permission matrix (DB §A3) — "capabilities × roles as a switch grid".
+///
+/// CASCADE on both sides: a deleted custom role takes its grants with it,
+/// and the grant row has no meaning without either end. `granted_by` and
+/// `granted_at` are the attribution DB §7 requires of this group; matrix
+/// changes are additionally audit-logged from M28.
+model RolePermission {
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  /// The FK itself was added by the M5.2 migration: `users` does not
+  /// exist yet at DB §14.2 phase 2.
+  grantedBy    String?  @map("granted_by") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+
+  role          Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  /// SET NULL: the grant outlives the administrator who made it.
+  grantedByUser User?      @relation(fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// The permission matrix's revision counter (RM M7.4, API §15.2–15.3).
+///
+/// ## Why the grid needs a row that is not part of the grid
+///
+/// The matrix *is* `role_permissions` — that join table is what every
+/// authorization decision resolves against, and a second denormalised
+/// copy of it would be a second thing to keep in step. What a set of
+/// rows cannot carry is an **aggregate identity**: "the matrix as it
+/// stood when this editor was opened" has nothing to compare against, so
+/// API §15.3's concurrent-edit 409 has nothing to detect.
+///
+/// This table is that identity and nothing else. One row, one counter,
+/// and the attribution columns a save needs.
+///
+/// ## Why not `platform_settings`
+///
+/// It was the obvious home — a keyed JSON value with `updated_by` and
+/// `updated_at` already on it — and it is the wrong one. DB §L1 names
+/// eleven slices and `platform_settings_key_check` enforces exactly
+/// those eleven, on purpose: the constraint's own comment says a twelfth
+/// key "would be a settings panel with nothing reading it, or a typo
+/// silently shadowing a real slice". A matrix revision is not a settings
+/// slice an administrator edits in a panel; it is authorization state.
+/// Widening that CHECK to fit it would have cost the constraint the
+/// property it exists for.
+///
+/// ## Why a singleton, enforced rather than assumed
+///
+/// There is one permission matrix. `id` is fixed at 1 by a CHECK, so a
+/// second row is not representable — without it, "the revision" becomes
+/// a query that can return two answers, and a compare-and-set against
+/// the wrong one silently overwrites somebody's save.
+///
+/// `revision` starts at 1, matching the frontend's
+/// `DEFAULT_PERMISSION_STATE.revision`, so a freshly seeded platform and
+/// an editor opened against it agree without a special case.
+model PermissionMatrixState {
+  /// Always 1 — the singleton guard (`permission_matrix_state_id_check`).
+  id Int @id @default(1) @db.SmallInt
+
+  /// Bumped on every successful save. A stale value in a `PUT` body is
+  /// the 409 of API §15.3.
+  revision Int @default(1)
+
+  /// SET NULL, like every other attribution column here: who last
+  /// changed the matrix outlives their account, and the row must not
+  /// disappear with them.
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updater User? @relation("MatrixUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("permission_matrix_state")
+}
+
+/// The one department list (DB §K1, ADR-004).
+///
+/// ADR-004: "One `departments` table is the single source. All modules
+/// reference it by FK." The three diverging per-module string arrays in
+/// the frontend become presentation-layer subsets over this table.
+///
+/// `head_staff_id` has no relation field yet — `staff_members` is created
+/// in M5.3, and DB §14.2 resolves the resulting FK cycle with a deferred
+/// ALTER in that phase. `staff_count` is derived, never stored (§14.5-6).
+model Department {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String       @unique @db.VarChar(80)
+  description String       @default("") @db.VarChar(300)
+  status      ActiveStatus @default(ACTIVE)
+  headStaffId String?      @map("head_staff_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  /// SET NULL: losing a department head does not delete the department.
+  headStaff StaffMember? @relation("DepartmentHead", fields: [headStaffId], references: [id], onDelete: SetNull)
+
+  doctors        Doctor[]
+  staff          StaffMember[]
+  rooms          Room[]
+  resources      Resource[]
+  appointments   Appointment[]
+  medicalRecords MedicalRecord[]
+  labOrders      LabOrder[]
+  prescriptions  Prescription[]
+
+  @@index([deletedAt])
+  @@map("departments")
+}
+
+/// Appointment visit types (DB §5) — `VISIT_TYPES` ∪ `RECORD_VISIT_TYPES`.
+///
+/// Eight rows. `appointments.visit_type_id` references this with RESTRICT
+/// (DB §9); `medical_records.visit_type` is a varchar by its own
+/// specification (DB §D1) and is left as the dictionary defines it.
+///
+/// `code`, `description`, `default_duration_min` and the 120-character
+/// `name` come from the Database branch's design (`database/medora.dbml`).
+/// `code` is nullable until every row has one: that design names codes for
+/// three of the eight types only (DATABASE_BRANCH_RECONCILIATION §7).
+model VisitType {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String? @unique @db.VarChar(30)
+  name               String  @unique @db.VarChar(120)
+  description        String?
+  defaultDurationMin Int?    @map("default_duration_min") @db.SmallInt
+  /// Display order in the select; the frontend arrays are ordered lists.
+  position           Int     @db.SmallInt
+  active             Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  appointments Appointment[]
+
+  @@map("visit_types")
+}
+
+/// The canonical chronic-condition vocabulary (DB §5, §B5) — 10 rows.
+///
+/// `code`, `description` and the 200-character `name` come from
+/// `database/medora.dbml`; `code` is nullable for the reason `VisitType`
+/// gives.
+model ChronicCondition {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String? @unique @db.VarChar(30)
+  name        String  @unique @db.VarChar(200)
+  description String?
+  position    Int     @db.SmallInt
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  patients PatientChronicCondition[]
+
+  @@map("chronic_conditions")
+}
+
+/// ICD-10 concepts (DB §5, §D2).
+///
+/// Seeded with the 14 the frontend `DIAGNOSES` vocabulary carries. DB §5
+/// recommends a full ICD-10 import; the table shape does not change when
+/// that happens, only the row count.
+///
+/// `description` and the 20/255-character widths come from
+/// `database/medora.dbml`, which names `label` `title`: a naming conflict
+/// with the dictionary left for the owners (reconciliation §7).
+model IcdCode {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String  @unique @db.VarChar(20)
+  label       String  @db.VarChar(255)
+  description String?
+  active      Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  diagnoses RecordDiagnosis[]
+
+  @@map("icd_codes")
+}
+
+/// Insurance provider master (DB §5, §B7; ADR-010 group 5 — IN).
+///
+/// Seeded empty: DB §5 records "none seeded (free-text `insurance` today)".
+/// The table exists because `patient_insurance.provider_id` references it
+/// with RESTRICT; rows arrive with real clinic data, not with the seed.
+///
+/// `code`, `phone`, `website` and the 200-character `name` come from
+/// `database/medora.dbml`. `code` is nullable because the rows that would
+/// carry one do not exist until a clinic adds its providers.
+model InsuranceProvider {
+  id      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code    String? @unique @db.VarChar(30)
+  name    String  @unique @db.VarChar(200)
+  phone   String? @db.VarChar(30)
+  website String?
+  active  Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  policies PatientInsurance[]
+
+  @@map("insurance_providers")
+}
+
+/// Specialty taxonomy (ADR-010 group 4 — IN).
+///
+/// IN because API §3.4 filters doctors by specialty and API §5.10 requires
+/// reassignment to a **same-specialty** doctor — a rule free text cannot
+/// enforce. `parent_id` carries the subspecialties UX 2.11 asks the
+/// taxonomy select to show.
+model Specialty {
+  id       String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name     String  @unique @db.VarChar(60)
+  parentId String? @map("parent_id") @db.Uuid
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  parent   Specialty?        @relation("SpecialtyTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Specialty[]       @relation("SpecialtyTree")
+  doctors  DoctorSpecialty[]
+
+  @@map("specialties")
+}
+
+/// The central file register (DB §11).
+///
+/// Required by patient documents, record and lab attachments, message
+/// attachments and verification documents — every one of which currently
+/// carries a "Null until the files service exists" comment in the
+/// frontend. The row exists before the object does: M25 fills in the
+/// storage service behind `storage_key`.
+///
+/// `storage_key` is an object-store key, never a public URL. A URL in
+/// this column would be a signed link with an expiry stored as if it were
+/// an identity.
+model File {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storageKey     String @map("storage_key")
+  originalName   String @map("original_name") @db.VarChar(255)
+  mimeType       String @map("mime_type") @db.VarChar(120)
+  sizeBytes      BigInt @map("size_bytes")
+  checksumSha256 String @map("checksum_sha256") @db.Char(64)
+  /// One of the eight DB §11 values, closed by CHECK rather than by an
+  /// enum: §6's complete enum inventory does not list this vocabulary.
+  kind           String @db.VarChar(30)
+  /// FK added by the M5.2 migration — see `role_permissions.granted_by`.
+  uploadedBy     String? @map("uploaded_by") @db.Uuid
+  /// The malware-scan gate — UX 2.8: "attachments are scanned before
+  /// download links activate". Null means not yet scanned, which is not
+  /// the same as clean, and the download path must treat it that way.
+  scannedAt      DateTime? @map("scanned_at") @db.Timestamptz(3)
+  scanResult     String?   @map("scan_result") @db.VarChar(20)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  /// SET NULL (DB §9): the file outlives the account that uploaded it.
+  uploadedByUser User? @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  patientDocuments      PatientDocument[]
+  verificationDocuments DoctorVerificationDocument[]
+  recordAttachments     RecordAttachment[]
+  labAttachments        LabAttachment[]
+  messageAttachments    MessageAttachment[]
+  reportExports         ReportExport[]
+
+  @@index([deletedAt])
+  @@map("files")
+}

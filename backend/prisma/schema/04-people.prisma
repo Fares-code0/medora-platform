@@ -1,0 +1,360 @@
+// Medora — people and clinic master data (RM M5.3, DB §B1–B2, §K1–K7).
+//
+// DB §14.2 phase 5. The professional profiles that extend an account, the
+// clinic's staff roster, and the physical resources a visit consumes.
+//
+// ── The FK cycle, and how it is resolved ─────────────────────────────
+//
+// `departments.head_staff_id` points at `staff_members`, and
+// `staff_members.department_id` points back at `departments`. Neither
+// table can be created second. DB §14.2 resolves it by creating
+// `departments` in phase 2 without the head FK (M5.1 did) and adding the
+// constraint here by ALTER, once staff exists. That is why M5.1 left
+// `head_staff_id` as a bare uuid column with a comment pointing here.
+
+/// The doctor's professional profile (DB §B1).
+///
+/// A 1:1 extension of `users` for accounts holding the doctor role, and
+/// "the SINGLE SOURCE OF TRUTH for the signed-in doctor's identity"
+/// (`DoctorProfileProvider`). Admin-side lifecycle lives here too:
+/// verification, suspension and the rating the satisfaction surveys feed.
+model Doctor {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+
+  photoUrl String? @map("photo_url")
+  fullName String  @map("full_name") @db.VarChar(80)
+  title    String? @db.VarChar(60)
+  /// The primary specialty as a display string, per DB §B1. The
+  /// id-bearing form is `doctor_specialties`, which is what API §5.10's
+  /// same-specialty reassignment rule can actually be enforced against.
+  specialty String @db.VarChar(60)
+
+  /// Unique: a licence number identifies one practitioner. Edits trigger
+  /// re-verification (UX 2.11), which the service layer enforces.
+  ///
+  /// **This column is the professional registration number** — the value
+  /// ADR-035 collects at doctor registration. It is a professional
+  /// identifier and never a login credential: nothing in `modules/auth`
+  /// reads it to authenticate anyone, and `users.email` remains the only
+  /// thing a sign-in is keyed on.
+  licenseNumber    String    @unique @map("license_number") @db.VarChar(40)
+  licenseExpiresOn DateTime? @map("license_expires_on") @db.Date
+  /// The register the number belongs to — `physician`, `dentist`,
+  /// `pharmacist`, `nurse`, `technician` (ADR-035 §4).
+  ///
+  /// A varchar rather than a native enum, and that is the whole point of
+  /// the column. Medora is specified to be jurisdiction-neutral, and the
+  /// category vocabulary is a *property of the register* a practitioner is
+  /// listed on — SCFHS names five, another regulator names a different
+  /// set. A Postgres enum would freeze one country's list into the schema
+  /// and make every future jurisdiction a migration; a varchar lets the
+  /// validated vocabulary live in the DTO, where a second register can be
+  /// added without touching the database.
+  ///
+  /// Nullable because every `doctors` row predating ADR-035 has no value
+  /// for it and inventing one would be fabricating regulatory data.
+  professionalCategory String? @map("professional_category") @db.VarChar(40)
+  employeeId       String?   @unique @map("employee_id") @db.VarChar(40)
+
+  departmentId String? @map("department_id") @db.Uuid
+  hospital     String? @db.VarChar(80)
+
+  yearsOfExperience Int      @default(0) @map("years_of_experience") @db.SmallInt
+  /// `text[]` for the bounded string lists of DB §14.3. A child table
+  /// would be five joins for data that is only ever read whole, and the
+  /// caps are CHECK constraints rather than schema shape.
+  languages         String[] @default([])
+  biography         String?
+  education         String[] @default([])
+  certifications    String[] @default([])
+  skills            String[] @default([])
+
+  linkedinUrl String? @map("linkedin_url")
+  websiteUrl  String? @map("website_url")
+
+  emergencyContactName  String? @map("emergency_contact_name") @db.VarChar(80)
+  emergencyContactPhone String? @map("emergency_contact_phone") @db.VarChar(30)
+
+  contactEmail   String  @map("contact_email") @db.Citext
+  contactPhone   String  @map("contact_phone") @db.VarChar(30)
+  officeLocation String? @map("office_location") @db.VarChar(80)
+  officeHours    String? @map("office_hours") @db.VarChar(80)
+
+  verificationStatus DoctorVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt         DateTime?                @map("verified_at") @db.Timestamptz(3)
+  verifiedBy         String?                  @map("verified_by") @db.Uuid
+  practiceStatus     DoctorPracticeStatus     @default(ACTIVE) @map("practice_status")
+  /// Derived from satisfaction surveys, stored so the admin roster can
+  /// sort on it (UX §3.2 Rating column).
+  ratingAvg          Decimal?                 @map("rating_avg") @db.Decimal(3, 2)
+
+  /// Scheduling defaults (ADR-005 §2). They live on the doctor rather
+  /// than on each availability row: they describe how this doctor books,
+  /// not when. `default_duration_min` is constrained to the fixed set the
+  /// API contract names.
+  defaultDurationMin Int @default(30) @map("default_duration_min") @db.SmallInt
+  bufferMin          Int @default(0) @map("buffer_min") @db.SmallInt
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department   Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  verifier     User?             @relation("DoctorVerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  specialties  DoctorSpecialty[]
+
+  assignedPatients      Patient[]                    @relation("PatientAssignedDoctor")
+  prescribedMedications PatientMedication[]          @relation("PatientMedicationPrescriber")
+  availability          DoctorAvailability[]
+  timeOff               DoctorTimeOff[]
+  verificationDocuments DoctorVerificationDocument[]
+  careAssignments       PatientDoctorAssignment[]
+  appointments          Appointment[]
+  surveys               SatisfactionSurvey[]
+  medicalRecords        MedicalRecord[]
+  labOrders             LabOrder[]                   @relation("LabOrderedBy")
+  prescriptions         Prescription[]               @relation("PrescribedBy")
+
+  @@index([deletedAt])
+  @@index([departmentId])
+  @@index([verificationStatus])
+  @@index([practiceStatus])
+  @@map("doctors")
+}
+
+/// A doctor's specialties, with one flagged primary (ADR-010 group 4).
+///
+/// `doctors.specialty` carries the display string DB §B1 specifies; this
+/// table carries the identity. API §5.10 requires reassignment to a
+/// **same-specialty** doctor — a comparison that has to run on ids,
+/// because "Paediatrics" and "Pediatrics" are two strings and one
+/// specialty, and the frontend fixtures contain both.
+model DoctorSpecialty {
+  doctorId    String  @map("doctor_id") @db.Uuid
+  specialtyId String  @map("specialty_id") @db.Uuid
+  isPrimary   Boolean @default(false) @map("is_primary")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  doctor    Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  specialty Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@id([doctorId, specialtyId])
+  @@index([specialtyId])
+  @@map("doctor_specialties")
+}
+
+/// The administrator profile (DB §B2).
+///
+/// The same 1:1-extension pattern as `doctors`, plus the two workspace
+/// preferences the admin shell reads. Not a singleton and not privileged
+/// by existing: ADR-017 is explicit that administrator is a role a user
+/// holds, so this table has no special-casing and no reserved row.
+model AdminProfile {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @unique @map("user_id") @db.Uuid
+
+  photoUrl String? @map("photo_url")
+  fullName String  @map("full_name") @db.VarChar(80)
+  title    String? @db.VarChar(80)
+  biography String?
+
+  contactEmail   String  @map("contact_email") @db.Citext
+  contactPhone   String? @map("contact_phone") @db.VarChar(30)
+  officeLocation String? @map("office_location") @db.VarChar(80)
+
+  emergencyContactName  String? @map("emergency_contact_name") @db.VarChar(80)
+  emergencyContactPhone String? @map("emergency_contact_phone") @db.VarChar(30)
+
+  education      String[] @default([])
+  certifications String[] @default([])
+  experience     String[] @default([])
+
+  linkedinUrl String? @map("linkedin_url")
+  websiteUrl  String? @map("website_url")
+
+  /// `AdministrationSectionSlug` — the admin's default landing panel.
+  landingSection String  @default("overview") @map("landing_section") @db.VarChar(30)
+  weeklyDigest   Boolean @default(true) @map("weekly_digest")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([deletedAt])
+  @@map("admin_profiles")
+}
+
+/// The clinic staff roster (DB §K2).
+///
+/// `user_id` is nullable and SET NULL: DB §K2 notes staff "may or may not
+/// hold accounts". A nurse who never signs in is still on the rota, still
+/// assigned to a department, and still the person a specimen was
+/// collected by.
+model StaffMember {
+  id     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+
+  name         String         @db.VarChar(120)
+  role         StaffRole
+  title        String         @db.VarChar(80)
+  departmentId String         @map("department_id") @db.Uuid
+  status       PresenceStatus @default(OFF_DUTY)
+  phone        String         @db.VarChar(30)
+  email        String         @unique @db.Citext
+  workingHours String         @map("working_hours") @db.VarChar(80)
+  /// Display labels, not `permissions.code` values. DB §K2 types this
+  /// `text[]` of labels; authorization runs off `user_permissions`, and
+  /// conflating the two would put a second capability vocabulary next to
+  /// the one `types/auth` says is the only one.
+  permissions  String[]       @default([])
+  avatarUrl    String?        @map("avatar_url")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// RESTRICT (DB §9): a department with staff on it cannot be deleted.
+  department Department  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  /// The other half of the DB §14.2 cycle — departments this member heads.
+  headedDepartments Department[] @relation("DepartmentHead")
+  shifts     StaffShiftAssignment[]
+
+  @@index([deletedAt])
+  @@index([departmentId])
+  @@map("staff_members")
+}
+
+/// A shift kind and the days it covers (DB §K3).
+///
+/// `days` is a seven-element boolean array, index 0 = Monday, exactly as
+/// DB §K3 and §14.3 specify. Postgres cannot enforce the length in the
+/// column type — `boolean[7]` is accepted and then ignored — so a CHECK
+/// on `array_length` does it instead.
+model StaffShiftAssignment {
+  id      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  staffId String    @map("staff_id") @db.Uuid
+  kind    ShiftKind
+  days    Boolean[]
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  staff StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, kind])
+  @@index([deletedAt])
+  @@map("staff_shift_assignments")
+}
+
+/// A physical room (DB §K4).
+model Room {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String     @unique @db.VarChar(80)
+  kind         RoomKind
+  status       RoomStatus @default(AVAILABLE)
+  capacity     Int        @db.SmallInt
+  note         String?    @db.VarChar(300)
+  departmentId String     @map("department_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  department   Department   @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  queueEntries QueueEntry[]
+
+  @@index([deletedAt])
+  @@index([departmentId])
+  @@map("rooms")
+}
+
+/// Consumable inventory with reorder alerts (DB §K5).
+///
+/// `status` is derivable from `quantity` vs `reorder_level`, and DB §K5
+/// stores it anyway "for filter parity" — the admin list filters on the
+/// badge. It is trigger-maintained rather than written by callers (M5.10),
+/// which is the only way a stored derivation stays true.
+model Resource {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String         @db.VarChar(120)
+  category     String         @db.VarChar(80)
+  location     String         @db.VarChar(120)
+  quantity     Int
+  reorderLevel Int            @map("reorder_level")
+  status       ResourceStatus @default(IN_STOCK)
+  /// The owning department, from `database/medora.dbml`. Optional: DB §K5
+  /// has no such link, so every existing resource is unassigned.
+  departmentId String?        @map("department_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  /// SET NULL, DB §9's rule for an optional link: a department going
+  /// away leaves its stock on the books.
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@map("resources")
+}
+
+/// The clinic's opening hours (DB §K6) — seven rows, keyed by weekday.
+///
+/// Distinct from `doctor_availability` (ADR-005 §8): this is the
+/// building's hours, admin-owned; a doctor's grid is personal and
+/// independent. The weekday is the primary key, so an eighth row or a
+/// duplicate Tuesday is not representable.
+model ClinicWorkingDay {
+  day        Weekday   @id
+  open       Boolean
+  startTime  DateTime  @map("start_time") @db.Time(0)
+  endTime    DateTime  @map("end_time") @db.Time(0)
+  breakLabel String?   @map("break_label") @db.VarChar(80)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("clinic_working_days")
+}
+
+/// Public and clinic holidays (DB §K7).
+model Holiday {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String      @db.VarChar(120)
+  date      DateTime    @db.Date
+  kind      HolidayKind
+  recurring Boolean     @default(false)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  @@unique([name, date])
+  @@index([date])
+  @@index([deletedAt])
+  @@map("holidays")
+}

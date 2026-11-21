@@ -1,0 +1,325 @@
+// Medora — medical records (RM M5.7, DB §D1–D9, §S6).
+//
+// DB §14.2 phase 9. The clinical encounter document and its children,
+// plus the ALTER that closes `patient_vital_signs.record_id` back to
+// M5.4 — the deferred FK that file left as a bare column.
+//
+// ── Records are never hard-deleted ───────────────────────────────────
+//
+// UX §1.5.3, DB §7 ("soft delete **mandatory**") and ADR-007 R1 all say
+// the same thing, and ADR-007 goes further: retention expiry on clinical
+// records means archival, not deletion. Every table here carries
+// `deleted_at`. The privilege half — DB §9's "no DELETE grant to the app
+// role on `medical_records`" — is RM M12.6's work, not the schema's; a
+// constraint cannot express a grant.
+//
+// ── Why the children duplicate rather than reference ─────────────────
+//
+// `record_allergies` repeats allergen, severity and reaction instead of
+// pointing at `patient_allergies`, and DB §D6 says why: "the record is an
+// immutable clinical document". A record documents what was known at the
+// encounter. If it pointed at the live allergy list, correcting a
+// severity next year would silently rewrite last year's note — which is
+// the opposite of what a clinical record is for.
+
+/// A clinical encounter (DB §D1).
+model MedicalRecord {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId String @unique @map("public_id") @db.VarChar(20)
+
+  patientId     String  @map("patient_id") @db.Uuid
+  doctorId      String  @map("doctor_id") @db.Uuid
+  departmentId  String? @map("department_id") @db.Uuid
+  /// The encounter usually stems from an appointment, but not always —
+  /// a walk-in has none, so this is nullable and SET NULL.
+  appointmentId String? @map("appointment_id") @db.Uuid
+
+  visitDate DateTime @map("visit_date") @db.Timestamptz(3)
+  /// A varchar, not the `visit_types` FK the appointment uses. DB §D1
+  /// types it that way and the two vocabularies differ (records add
+  /// Emergency and Telemedicine); the dictionary is followed per table
+  /// rather than harmonized here, which would be a contract change.
+  visitType String   @map("visit_type") @db.VarChar(40)
+
+  status   RecordStatus   @default(DRAFT)
+  priority RecordPriority @default(NORMAL)
+
+  chiefComplaint          String @map("chief_complaint")
+  historyOfPresentIllness String @map("history_of_present_illness")
+  physicalExamination     String @map("physical_examination")
+
+  followUpDate DateTime? @map("follow_up_date") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor      Doctor       @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  department  Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  diagnoses         RecordDiagnosis[]
+  treatmentPlan     RecordTreatmentPlanItem[]
+  medications       RecordMedication[]
+  allergies         RecordAllergy[]
+  notes             RecordNote[]
+  attachments       RecordAttachment[]
+  timeline          RecordTimelineEvent[]
+  versions          RecordVersion[]
+  issueReports      RecordIssueReport[]
+  /// The M5.4 deferred FK, closed by this migration's ALTER.
+  vitalSigns        PatientVitalSign[]
+  prescriptions     Prescription[]
+  notifications     Notification[]
+
+  /// DB §8 — the patient timeline, the doctor's queue, the triage view.
+  @@index([patientId, visitDate(sort: Desc)])
+  @@index([doctorId, status])
+  @@index([status, priority])
+  @@index([appointmentId])
+  @@index([deletedAt])
+  @@map("medical_records")
+}
+
+/// ICD-10 coded diagnoses (DB §D2).
+///
+/// At most one primary per record, by partial unique index — the
+/// constraint this milestone's verify step names. A record with two
+/// primary diagnoses has no answer to "what was this visit for", which
+/// every summary line and every analytics rollup asks.
+model RecordDiagnosis {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId  String @map("record_id") @db.Uuid
+  icdCodeId String @map("icd_code_id") @db.Uuid
+
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  recordedBy String?  @map("recorded_by") @db.Uuid
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  record   MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  /// RESTRICT: an ICD concept in use cannot leave the catalogue, or
+  /// historical records lose their meaning.
+  icdCode  IcdCode       @relation(fields: [icdCodeId], references: [id], onDelete: Restrict)
+  recorder User?         @relation("DiagnosisRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@unique([recordId, icdCodeId])
+  @@index([icdCodeId])
+  @@map("record_diagnoses")
+}
+
+/// The ordered treatment plan (DB §D4).
+///
+/// `treatmentPlan` is `readonly string[]` in the frontend, and order is
+/// meaningful — a plan is a sequence. `position` carries it explicitly
+/// rather than relying on insertion order, which no SQL guarantees.
+model RecordTreatmentPlanItem {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  position Int    @db.SmallInt
+  text     String @db.VarChar(500)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  record MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, position])
+  @@map("record_treatment_plan_items")
+}
+
+/// Medications prescribed within the encounter (DB §D5).
+model RecordMedication {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+
+  name         String           @db.VarChar(120)
+  dosage       String           @db.VarChar(60)
+  frequency    String           @db.VarChar(60)
+  instructions String?
+  status       MedicationStatus @default(ACTIVE)
+  /// The FK was added by the M5.8 migration — `prescriptions` is DB
+  /// §14.2 phase 10.
+  prescriptionId String?        @map("prescription_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  record       MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
+
+  @@index([recordId])
+  @@index([prescriptionId])
+  @@map("record_medications")
+}
+
+/// Allergies as documented at the encounter (DB §D6).
+///
+/// A snapshot, deliberately not a join onto `patient_allergies` — see the
+/// file header. The record says what was known then.
+model RecordAllergy {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+
+  allergen String          @db.VarChar(120)
+  severity AllergySeverity
+  reaction String          @db.VarChar(200)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  record MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, allergen])
+  @@map("record_allergies")
+}
+
+/// Clinical notes on the record (DB §D7).
+model RecordNote {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  authorId String @map("author_id") @db.Uuid
+
+  authoredAt DateTime  @default(now()) @map("authored_at") @db.Timestamptz(3)
+  title      String    @db.VarChar(200)
+  body       String
+  signed     Boolean   @default(false)
+  signedAt   DateTime? @map("signed_at") @db.Timestamptz(3)
+  aiAssisted Boolean   @default(false) @map("ai_assisted")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  record MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  author User          @relation("RecordNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([recordId, authoredAt(sort: Desc)])
+  @@map("record_notes")
+}
+
+/// Files attached to the record (DB §D8).
+model RecordAttachment {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+
+  name   String               @db.VarChar(200)
+  kind   RecordAttachmentKind
+  sizeKb Int                  @map("size_kb")
+  fileId String               @map("file_id") @db.Uuid
+
+  uploadedBy String?  @map("uploaded_by") @db.Uuid
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  record   MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  file     File          @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  uploader User?         @relation("RecordAttachmentUploader", fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  @@index([recordId])
+  @@index([fileId])
+  @@map("record_attachments")
+}
+
+/// The record's own timeline (DB §D9).
+///
+/// Same ADR-003 §4 treatment as `appointment_events`: FK plus a name
+/// snapshot, because this is a historical fact rather than current state.
+model RecordTimelineEvent {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+
+  kind       RecordTimelineKind
+  occurredAt DateTime           @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  actorId    String?            @map("actor_id") @db.Uuid
+  actorName  String?            @map("actor_name") @db.VarChar(120)
+  detail     String?            @db.VarChar(300)
+
+  record MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  actor  User?         @relation("RecordTimelineActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([recordId, occurredAt(sort: Desc)])
+  @@map("record_timeline_events")
+}
+
+/// "Report an issue with this record" (DB §S6, UX 2.3 → admin queue 3.1).
+///
+/// The record itself is never edited in place to fix a dispute — it is a
+/// clinical document. The report is the parallel track, and it resolves
+/// independently of the record's own status.
+model RecordIssueReport {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+
+  reportedBy  String? @map("reported_by") @db.Uuid
+  description String
+  /// open | investigating | resolved — closed by CHECK.
+  status      String  @default("open") @db.VarChar(20)
+
+  resolvedBy String?   @map("resolved_by") @db.Uuid
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  record   MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  reporter User?         @relation("IssueReportedBy", fields: [reportedBy], references: [id], onDelete: SetNull)
+  resolver User?         @relation("IssueResolvedBy", fields: [resolvedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([recordId])
+  @@map("record_issue_reports")
+}
+
+/// The before/after trail behind `GET /medical-records/{id}/versions`
+/// (API §6.8, RM M12.6).
+///
+/// Two consumers want the same thing from different directions: UX 1.5.3's
+/// version history on the record itself, and the logs diff viewer of API
+/// §14. Both render *what changed*, so that is what is stored — a diff,
+/// not a snapshot. A snapshot per update would copy the whole clinical
+/// document, children included, on every save; the diff is bounded by
+/// the size of the change.
+///
+/// **Insert-only.** There is no `updatedAt` and no `deletedAt`: a version
+/// row that can be edited is not a history, and one that can be deleted
+/// is worse than none, because it makes "nothing changed" and "the
+/// change was removed" indistinguishable.
+///
+/// `version` is per record and dense from 1, assigned inside the
+/// update's transaction. `@@unique([recordId, version])` is what makes
+/// two concurrent updates collide rather than silently share a number.
+model RecordVersion {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recordId String @map("record_id") @db.Uuid
+  version  Int
+
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz(3)
+  changedBy String?  @map("changed_by") @db.Uuid
+  /// The display name as it was (ADR-003 §4) — the FK may go null when
+  /// an account is removed, and a rename must not rewrite history.
+  actorName String?  @map("actor_name") @db.VarChar(120)
+
+  /// `{ field: { before, after } }` plus a `children` key naming the
+  /// collections that were replaced. Never the whole document.
+  changes Json
+  summary String? @db.VarChar(300)
+  /// Why the edit was made, as the editor gave it (BR-DEC-004). Null on
+  /// versions written before the column existed, and when none was given.
+  reason  String? @db.VarChar(300)
+
+  record MedicalRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  actor  User?         @relation("RecordVersionActor", fields: [changedBy], references: [id], onDelete: SetNull)
+
+  @@unique([recordId, version])
+  @@index([recordId, changedAt(sort: Desc)])
+  @@map("record_versions")
+}

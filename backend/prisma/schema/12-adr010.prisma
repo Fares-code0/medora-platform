@@ -1,0 +1,177 @@
+// Medora — the ADR-010 tables no other M5 step creates (RM M5.11).
+//
+// ADR-010 decided all seventeen DB §13 "inferred recommendation" groups
+// in or out, on one rule: a group is IN when a contract endpoint or an
+// accepted milestone cannot function without it. Nine were IN; five of
+// those (`patient_doctor_assignments`, `specialties`, `insurance_providers`,
+// `drug_interactions`, `medication_monographs`) were already built in
+// M5.1, M5.5 and M5.6. These four are the remainder.
+//
+// ── ⚠ `saved_views` is deliberately absent ───────────────────────────
+//
+// The roadmap's M5.11 item text lists it, but ADR-010 group 13 scoped it
+// **OUT**, and this step's own verify line — "every table marked *out* is
+// absent" — resolves the contradiction in the ADR's favour. The reason
+// ADR-010 gives is a contract gap rather than a product one: MG §5.4 and
+// §7.3 describe P7 saved views, and **no contract endpoint exists** to
+// read or write one. A table with no endpoint is schema debt that
+// constrains migrations without ever being read.
+//
+// Carried as RA-010.1 to RM M33.2, whose contract-coverage diff is where
+// a gap like this should surface.
+
+/// Explicit patient access grants (ADR-010 group 2 — IN).
+///
+/// IN because API §4.11 exposes access-grant list/revoke/approve on admin
+/// patient governance, and UX §3.4's Permissions tab renders the grid.
+///
+/// Distinct from `patient_doctor_assignments`, which is the *care*
+/// relationship: that answers "is this doctor on the team", this answers
+/// "who was additionally granted what, by whom, and until when". A grant
+/// is revoked rather than deleted, because the record of a past grant is
+/// what explains a past access in the audit log.
+model PatientAccessGrant {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+
+  /// The grantee — a user, or a whole role. Exactly one of the two, by
+  /// CHECK: a grant naming both is ambiguous about who it applies to,
+  /// and one naming neither applies to nobody.
+  granteeUserId String? @map("grantee_user_id") @db.Uuid
+  granteeRoleId String? @map("grantee_role_id") @db.Uuid
+
+  /// view | reveal_identity | manage — closed by CHECK.
+  scope String @db.VarChar(30)
+  /// Why. Every grant on PHI carries a justification (UX §1.5.6).
+  reason String
+
+  grantedBy String    @map("granted_by") @db.Uuid
+  grantedAt DateTime  @default(now()) @map("granted_at") @db.Timestamptz(3)
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedBy String?   @map("revoked_by") @db.Uuid
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  patient      Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  granteeUser  User?   @relation("GrantGrantee", fields: [granteeUserId], references: [id], onDelete: Cascade)
+  granteeRole  Role?   @relation("GrantGranteeRole", fields: [granteeRoleId], references: [id], onDelete: Cascade)
+  granter      User    @relation("GrantGrantedBy", fields: [grantedBy], references: [id], onDelete: Restrict)
+  revoker      User?   @relation("GrantRevokedBy", fields: [revokedBy], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@index([granteeUserId])
+  @@map("patient_access_grants")
+}
+
+/// A named saved selection of audit events (ADR-010 group 14 — IN).
+///
+/// IN because API §14.4 exposes `GET/POST/DELETE /me/incident-bookmarks`
+/// and RM M28.4 builds it. UX §3.7 describes it as "a named saved
+/// selection of events for a case".
+///
+/// The event ids are a `uuid[]` rather than a join table, and that is a
+/// deliberate consequence of M5.10: `audit_events` is partitioned with a
+/// composite primary key `(id, occurred_at)`, so a foreign key to it
+/// would have to carry both columns — and the ledger is append-only, so
+/// referential integrity buys nothing an array does not. See ADR-024.
+model IncidentBookmark {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId String @map("owner_id") @db.Uuid
+
+  name        String   @db.VarChar(120)
+  description String?  @db.VarChar(300)
+  eventIds    String[] @default([]) @map("event_ids") @db.Uuid
+  /// The incident this bookmark belongs to, matching
+  /// `audit_events.incident_ref`.
+  incidentRef String?  @map("incident_ref") @db.VarChar(40)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner User @relation("BookmarkOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, name])
+  @@index([incidentRef])
+  @@map("incident_bookmarks")
+}
+
+/// A generated export artefact (ADR-010 group 15 — IN).
+///
+/// IN because API §12.5 is an async export producing a file and a
+/// notification, and RM M21.5 needs an addressable row to hand back.
+///
+/// `watermark_ref` is what makes a *content* export traceable: UX §3.6
+/// watermarks disclosed content with a reference, and an export that
+/// leaves the building without one cannot be tied to the request that
+/// produced it.
+model ReportExport {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestedBy String @map("requested_by") @db.Uuid
+
+  category ReportCategory
+  format   ExportFormat
+
+  /// queued | running | ready | failed — closed by CHECK.
+  status String @default("queued") @db.VarChar(20)
+  /// Null until the artefact exists.
+  fileId String? @map("file_id") @db.Uuid
+  error  String?
+
+  watermarkRef String?  @map("watermark_ref") @db.VarChar(40)
+  filters      Json     @default("{}")
+  requestedAt  DateTime @default(now()) @map("requested_at") @db.Timestamptz(3)
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(3)
+  /// Exports of PHI do not live forever.
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(3)
+
+  requester User  @relation("ExportRequestedBy", fields: [requestedBy], references: [id], onDelete: Restrict)
+  file      File? @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@index([requestedBy, requestedAt(sort: Desc)])
+  @@index([status])
+  @@map("report_exports")
+}
+
+/// Per-channel delivery attempts (ADR-010 group 7 — IN).
+///
+/// IN because RM M19.5 requires per-channel delivery tracking and ADM-05
+/// already ships a `NotificationDelivery` type rendering per-party
+/// receipts — the UI exists and has nothing behind it.
+///
+/// One row per (notification, channel): "emailed but the SMS bounced" is
+/// the state the oversight drawer has to show, and a single status column
+/// on `notifications` cannot express it.
+model NotificationDelivery {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notificationId String              @map("notification_id") @db.Uuid
+  channel        NotificationChannel
+
+  /// pending | sending | sent | delivered | failed | skipped — closed by
+  /// CHECK.
+  /// `skipped` is a real outcome, not an absence: quiet hours and a
+  /// per-category opt-out both suppress a channel deliberately, and a
+  /// missing row would read as "never attempted".
+  /// `sending` is the worker's claim (M19.5): the channel worker takes
+  /// pending rows with FOR UPDATE SKIP LOCKED and moves them here in the
+  /// same statement, so two instances cannot both send one email. It is
+  /// deliberately not terminal — a row left in it by a crashed worker has
+  /// an unknown outcome, which is what M30.1's retry policy acts on.
+  status       String    @default("pending") @db.VarChar(20)
+  attempts     Int       @default(0)
+  lastAttemptAt DateTime? @map("last_attempt_at") @db.Timestamptz(3)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(3)
+  error        String?
+  /// The provider's own id, for reconciling against a delivery report.
+  providerRef  String?   @map("provider_ref") @db.VarChar(120)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, channel])
+  @@index([status])
+  @@map("notification_deliveries")
+}

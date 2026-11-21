@@ -1,0 +1,12 @@
+dist/
+node_modules/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+/src/generated/prisma
+
+# k6 summaries and logs from local or nightly perf runs (RM M32)
+/perf/results/

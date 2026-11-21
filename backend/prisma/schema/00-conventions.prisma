@@ -1,0 +1,88 @@
+// Medora — Prisma schema (RM M4).
+//
+// M4 establishes the *foundations*: the extensions, the naming rules and
+// the column conventions every model must follow. The domain schema —
+// roughly 105–110 tables per `frontend/DATABASE_SCHEMA_EXTRACTION.md` —
+// is built on top of this at M5, against ADR-001…ADR-005.
+//
+// ── Naming law (RM M4.1) ──────────────────────────────────────────────
+// **snake_case in the database, camelCase in the client.** Postgres
+// folds unquoted identifiers to lower case, so a camelCase column has to
+// be quoted forever in every hand-written query, migration and psql
+// session. The client side stays camelCase because the field names are
+// the API contract (MG §18.5) and the frontend reads them directly.
+//
+// That is not automatic: **every** multi-word field needs `@map` and
+// **every** model needs `@@map`. A missing one produces a quoted mixed
+// case column that works until someone writes raw SQL against it.
+//
+// ── Scalar lists are nullable unless a migration says otherwise ───────
+// `String[]` types as `string[]` in the client but migrates to a nullable
+// `TEXT[]`, and `db:check` ignores list nullability. A list the
+// dictionary declares NOT NULL needs `ALTER COLUMN … SET NOT NULL` written
+// into its migration by hand, and an entry in
+// `test/schema-scalar-lists.e2e-spec.ts`, which fails on any list column
+// it has not classified.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // The URL is supplied explicitly — by `prisma.config.ts` for the CLI
+  // and by `ConfigService` at runtime — so `process.env` is still read
+  // in exactly one place (RM M3.1, ADR-020 §1).
+}
+
+/// The column conventions of M4.2, as executable reference rather than prose.
+///
+/// Every model M5 adds copies this shape. It is deliberately not domain
+/// data: the leading underscore in the table name marks it as
+/// infrastructure, alongside Prisma's own `_prisma_migrations`.
+///
+/// It also proves all three extensions are live — `gen_random_uuid()` is
+/// pgcrypto, `@db.Citext` is citext, and the migration adds a trigram
+/// index on `label` for pg_trgm.
+model ConventionsReference {
+  /// uuid v4 generated **by the database**, not the client. An id minted
+  /// application-side is not unique across two processes inserting at
+  /// once, and it makes raw inserts and seeds carry their own generator.
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// citext: case-insensitive comparison without `lower()` on every
+  /// query, which also lets an index actually be used. Emails and
+  /// usernames use this throughout M5.
+  label String @db.Citext
+
+  /// `timestamptz`, always. A `timestamp` without a zone silently means
+  /// "whatever the server was set to", which for appointment times is a
+  /// clinical safety problem, not a formatting one.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  /// Soft delete. Null means live; a timestamp means deleted. Filtered
+  /// out of every read by the client extension in `shared/database`.
+  /// Clinical records are retained per ADR-007 — a hard delete would
+  /// destroy the audit trail that retention policy exists to keep.
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  /// Audit columns. Nullable because a system action has no user
+  /// (`shared/audit` models the same distinction as `actorId: null`).
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+
+  /// Every soft-deletable model needs this: the extension adds
+  /// `deleted_at IS NULL` to essentially every query, so without an
+  /// index it is a sequential scan on the platform's hottest predicate.
+  @@index([deletedAt], map: "conventions_reference_deleted_at_idx")
+  /// The pg_trgm index, declared here rather than left in raw SQL.
+  ///
+  /// It could have been written by hand in the migration — it was, at
+  /// first — but anything a migration creates and the schema does not
+  /// declare shows up forever as drift in `npm run db:check`. A drift
+  /// check with a known permanent failure is a drift check nobody reads.
+  @@index([label(ops: raw("gin_trgm_ops"))], type: Gin, map: "conventions_reference_label_trgm_idx")
+  @@map("_conventions_reference")
+}

@@ -1,0 +1,293 @@
+// Medora — scheduling (RM M5.6, DB §C1–C2, §K8–K9, §S3, §S7, §13.1).
+//
+// DB §14.2 phase 8. The appointment book and its transition history, the
+// reschedule proposals that make `awaiting-patient` reachable, the live
+// queue, and the care-relationship anchor everything downstream scopes
+// against.
+
+/// The care relationship (DB §13.1, ADR-010 group 1 — IN).
+///
+/// The most consequential table in M5.6, and the one with no UI. ADR-010
+/// scopes it in because RM M7.2's `PatientScopeService` and M37.3's RLS
+/// are "both unimplementable without it": API §0.4 makes every clinical
+/// route care-scoped, and a care relationship is what a scope predicate
+/// resolves against.
+///
+/// `revoked_at` rather than a delete, because "this doctor used to be on
+/// this patient's care team" is exactly what an audit review of a past
+/// PHI access needs to establish. A deleted row would make a legitimate
+/// historical access look unauthorized.
+model PatientDoctorAssignment {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  doctorId  String @map("doctor_id") @db.Uuid
+
+  /// primary | consulting — closed by CHECK; DB §13.1 names the values
+  /// and §6's enum inventory does not carry them.
+  role String @default("consulting") @db.VarChar(20)
+
+  assignedAt DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  grantedBy  String?   @map("granted_by") @db.Uuid
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor  Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  granter User?   @relation("AssignmentGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  /// The scope lookup: "which patients may this doctor reach". Partial on
+  /// live assignments, because that is the only question authorization
+  /// ever asks.
+  @@index([doctorId, patientId])
+  @@index([patientId])
+  @@map("patient_doctor_assignments")
+}
+
+/// The appointment book (DB §C1).
+///
+/// `status` carries the 8-value enum of ADR-001, `awaiting-patient`
+/// included. The legal transitions are the ADR-001 matrix, enforced by
+/// the DB §4.1 trigger added in M5.10 and by the `AppointmentStatusMachine`
+/// in `shared/` — a trigger is the backstop, not the primary rule, so
+/// that a migration or a psql session cannot walk a row into a state the
+/// service would refuse.
+model Appointment {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId String @unique @map("public_id") @db.VarChar(20)
+
+  patientId    String  @map("patient_id") @db.Uuid
+  doctorId     String  @map("doctor_id") @db.Uuid
+  departmentId String? @map("department_id") @db.Uuid
+  visitTypeId  String  @map("visit_type_id") @db.Uuid
+
+  startsAt    DateTime @map("starts_at") @db.Timestamptz(3)
+  /// Minutes. DB §9's `duration_min > 0` is the constraint M5.6 verifies:
+  /// a zero-length slot occupies no time and so conflicts with nothing,
+  /// which would let it be booked on top of any other appointment.
+  durationMin Int      @default(30) @map("duration_min") @db.SmallInt
+
+  status   AppointmentStatus   @default(PENDING)
+  priority AppointmentPriority @default(NORMAL)
+
+  isNewPatient Boolean @default(false) @map("is_new_patient")
+  isFollowUp   Boolean @default(false) @map("is_follow_up")
+
+  reason String  @db.VarChar(300)
+  notes  String?
+  /// Required when the status is cancelled — the P4 confirm-with-reason
+  /// modal. Enforced by CHECK, so a cancellation with no reason is not
+  /// representable rather than merely discouraged.
+  cancelledReason String? @map("cancelled_reason") @db.VarChar(300)
+
+  /// The Database branch's lifecycle columns (`database/medora.dbml`).
+  ///
+  /// All six are **derived, and written only by triggers**
+  /// (`20261030130000_db_branch_additive_columns`): `ends_at` is
+  /// `starts_at + duration_min` on every write, the three terminal
+  /// timestamps are set by the transition into that status,
+  /// `cancelled_by` is the actor of the `appointment_events` row that
+  /// recorded the cancellation, and `checked_in_at` mirrors the live
+  /// `waiting_room_entries` row. `appointment_events` stays the history;
+  /// these are its latest answers, on the row, for queries that need them.
+  ///
+  /// `ends_at` is NOT NULL in the design and is enforced by the CHECK
+  /// `appointments_ends_at_present`. It is optional here only because a
+  /// required field with no client-side default would have to be supplied
+  /// by every `create`, and the trigger overwrites whatever is supplied.
+  endsAt      DateTime? @map("ends_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  cancelledBy String?   @map("cancelled_by") @db.Uuid
+  noShowAt    DateTime? @map("no_show_at") @db.Timestamptz(3)
+  checkedInAt DateTime? @map("checked_in_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  /// RESTRICT on the clinical anchors (DB §9): a patient or doctor with
+  /// appointments is deactivated, never deleted.
+  patient    Patient     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  doctor     Doctor      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  visitType  VisitType   @relation(fields: [visitTypeId], references: [id], onDelete: Restrict)
+  /// SET NULL, DB §9's rule for an optional link to a user.
+  canceller  User?       @relation("AppointmentCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
+  creator    User?       @relation("AppointmentCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  events             AppointmentEvent[]
+  proposals          AppointmentRescheduleProposal[]
+  survey             SatisfactionSurvey?
+  waitingRoomEntries WaitingRoomEntry[]
+  medicalRecords     MedicalRecord[]
+  notifications      Notification[]
+
+  /// DB §8 — the calendar, the patient timeline, and the status tabs.
+  @@index([doctorId, startsAt])
+  @@index([patientId, startsAt(sort: Desc)])
+  @@index([status, startsAt])
+  @@index([departmentId])
+  @@index([deletedAt])
+  @@map("appointments")
+}
+
+/// Every appointment transition, with actor and timestamp (DB §C2).
+///
+/// UX §2.4's detail drawer and §3.5's admin drawer both render this, and
+/// it is what makes an accept/reject/reschedule reviewable after the
+/// fact. Insert-only in practice: an event that can be edited is not a
+/// history.
+///
+/// `actor_id` is SET NULL and `actor_name` is a snapshot written at
+/// insert time. ADR-003 §4 classes this as a **historical fact**: the FK
+/// may go null when an account is removed, and the snapshot keeps the
+/// trail readable. Serving the snapshot rather than resolving the FK is
+/// also what stops a later rename rewriting history.
+model AppointmentEvent {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId String @map("appointment_id") @db.Uuid
+
+  occurredAt DateTime          @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  action     AppointmentAction
+  fromStatus AppointmentStatus? @map("from_status")
+  toStatus   AppointmentStatus? @map("to_status")
+
+  actorId   String? @map("actor_id") @db.Uuid
+  /// The display name as it was. Never exposed as a separate API field —
+  /// it populates the existing `actor` string (ADR-003 §4).
+  actorName String? @map("actor_name") @db.VarChar(120)
+
+  /// Required for destructive actions (P4).
+  reason String? @db.VarChar(300)
+  /// Proposed slots, old/new times — shape varies by action, which is
+  /// what `jsonb` is for here rather than fifteen nullable columns.
+  detail Json?
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  actor       User?       @relation("AppointmentEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId, occurredAt(sort: Desc)])
+  @@map("appointment_events")
+}
+
+/// "Propose another time" — up to three slots (DB §S3).
+///
+/// The only way into `awaiting-patient` (ADR-001 §3). The proposal's own
+/// lifecycle is **distinct** from the appointment's status and must not
+/// be conflated with it: the appointment is `awaiting-patient` while the
+/// proposal is `pending`, and they resolve independently.
+model AppointmentRescheduleProposal {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId String @map("appointment_id") @db.Uuid
+  proposedBy    String? @map("proposed_by") @db.Uuid
+
+  /// Three columns rather than a child table: API §5.8 fixes the maximum
+  /// at three, and the first is mandatory. A child table would allow a
+  /// proposal with none, which is not a proposal.
+  slot1 DateTime  @map("slot_1") @db.Timestamptz(3)
+  slot2 DateTime? @map("slot_2") @db.Timestamptz(3)
+  slot3 DateTime? @map("slot_3") @db.Timestamptz(3)
+
+  /// pending | accepted | declined | expired — closed by CHECK.
+  status     String @default("pending") @db.VarChar(20)
+  /// 1, 2 or 3; set only when accepted.
+  chosenSlot Int?   @map("chosen_slot") @db.SmallInt
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  proposer    User?       @relation("ProposalProposedBy", fields: [proposedBy], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+  @@index([status])
+  @@map("appointment_reschedule_proposals")
+}
+
+/// Post-visit satisfaction (DB §S7).
+///
+/// One survey per appointment — a unique FK, so a second submission is a
+/// conflict rather than a silently double-counted rating. This is the
+/// source of `doctors.rating_avg` (UX §3.2) and of the dashboard's
+/// satisfaction widget.
+model SatisfactionSurvey {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId String @unique @map("appointment_id") @db.Uuid
+  patientId     String @map("patient_id") @db.Uuid
+  doctorId      String @map("doctor_id") @db.Uuid
+
+  rating      Int      @db.SmallInt
+  comment     String?
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(3)
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor      Doctor      @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  @@index([doctorId, submittedAt(sort: Desc)])
+  @@index([patientId])
+  @@map("satisfaction_surveys")
+}
+
+/// The live consultation queue (DB §K8).
+///
+/// `waiting_minutes` is derived from `enqueued_at` and is not a column
+/// (DB §14.5-6) — a stored waiting time is wrong one minute after it is
+/// written.
+model QueueEntry {
+  id     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticket String  @db.VarChar(10)
+
+  patientId   String? @map("patient_id") @db.Uuid
+  /// The display name, kept even when `patient_id` is null: the mock
+  /// stores only a name, and a walk-in may be queued before being
+  /// matched to a record.
+  patientName String  @map("patient_name") @db.VarChar(120)
+  reason      String  @db.VarChar(200)
+
+  priority         QueuePriority @default(ROUTINE)
+  enqueuedAt       DateTime      @default(now()) @map("enqueued_at") @db.Timestamptz(3)
+  estimatedMinutes Int           @map("estimated_minutes") @db.SmallInt
+  roomId           String?       @map("room_id") @db.Uuid
+  delayed          Boolean       @default(false)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  room    Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([enqueuedAt])
+  @@index([deletedAt])
+  @@map("queue_entries")
+}
+
+/// Checked-in patients by area (DB §K9).
+model WaitingRoomEntry {
+  id            String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId     String? @map("patient_id") @db.Uuid
+  appointmentId String? @map("appointment_id") @db.Uuid
+
+  patientName     String        @map("patient_name") @db.VarChar(120)
+  appointmentTime DateTime?     @map("appointment_time") @db.Timestamptz(3)
+  checkedInAt     DateTime      @default(now()) @map("checked_in_at") @db.Timestamptz(3)
+  area            String        @db.VarChar(80)
+  status          WaitingStatus @default(WAITING)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([status, checkedInAt])
+  @@index([deletedAt])
+  @@map("waiting_room_entries")
+}

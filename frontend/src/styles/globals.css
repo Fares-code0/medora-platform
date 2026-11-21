@@ -1,0 +1,313 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-text-primary);
+    background-color: var(--color-background);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Every scrollbar in the app, themed from one place. `scrollbar-color`
+       inherits, so this reaches the page, the sidebar, tables, drawers and
+       the portaled modals and menus without a rule per container; the
+       `[scrollbar-width:thin]` some panes set still applies on top. Engines
+       without it (Safari) fall back to the native bar, which `color-scheme`
+       in tokens.css already turns dark with the theme. */
+    scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+  }
+
+  /* Root font-size drives every rem-based token, so the Appearance font-size
+     and Accessibility text-scaling controls set `--font-scale` on <html> and
+     the whole UI zooms proportionally. Compact density trims another notch. */
+  html {
+    font-size: calc(100% * var(--font-scale, 1));
+  }
+
+  html[data-density='compact'] {
+    font-size: calc(100% * var(--font-scale, 1) * 0.94);
+  }
+
+  body {
+    min-height: 100dvh;
+    font-size: var(--text-body);
+    line-height: var(--leading-body);
+  }
+
+  /* ── Accessibility: high contrast (DS §11) ──────────────────────
+     Moves borders and secondary/tertiary text one step further along the
+     palette ladder, so structure and copy clear WCAG AA more comfortably.
+     Token overrides only — no component changes, no colour outside the
+     palette. */
+  html[data-contrast='high'] {
+    --color-border: var(--palette-gray-400);
+    --color-border-strong: var(--palette-gray-600);
+    --color-text-secondary: var(--palette-gray-900);
+    --color-text-tertiary: var(--palette-gray-900);
+    /* The placeholder role moves up with the rest. It takes the value the
+       tertiary role holds at normal contrast, which keeps the two a step
+       apart at both settings rather than collapsing them onto one colour. */
+    --color-text-placeholder: var(--palette-gray-600);
+  }
+
+  /* One step further along the ladder than each role sits at normal
+     contrast — the same move as the light theme, toward the light end. */
+  html[data-contrast='high'].dark {
+    --color-border: var(--palette-gray-600);
+    --color-border-strong: var(--palette-gray-300);
+    --color-text-secondary: var(--palette-gray-50);
+    --color-text-tertiary: var(--palette-gray-50);
+    /* Same step as the light theme's: normal-contrast tertiary. */
+    --color-text-placeholder: var(--palette-gray-300);
+  }
+
+  /* ── Accessibility: focus indicators ────────────────────────────
+     "High visibility" thickens the keyboard focus ring. "Keyboard
+     navigation" additionally shows the ring on pointer focus (:focus),
+     not just :focus-visible. */
+  html[data-focus='high'] :focus-visible {
+    box-shadow:
+      0 0 0 3px var(--color-surface),
+      0 0 0 6px var(--color-focus-ring);
+  }
+
+  html[data-keyboard-nav='on'] :focus {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* ── Accessibility: reduce motion (app-level override) ──────────
+     Matches the prefers-reduced-motion baseline below; Framer Motion is
+     additionally escalated to reducedMotion="always" in MotionProvider. */
+  html[data-reduce-motion='on'] *:not(.animate-spin):not(.animate-progress-sweep),
+  html[data-reduce-motion='on'] *::before,
+  html[data-reduce-motion='on'] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Universal focus indicator — DS §11.4. Rings appear for keyboard
+     navigation only (:focus-visible), never on pointer clicks. */
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    border-radius: var(--radius-control);
+  }
+
+  /* Clinical data alignment — DS §3.1: tabular figures wherever numbers
+     appear in columns. Applied via utility class, declared here once. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Scrolls with no visible scrollbar — opt-in, for the sidebar's navigation
+     list. `scrollbar-width: none` (Firefox, Chromium 121+, Safari 18.2+)
+     removes the bar and gives its width back to the content, so no gutter is
+     left behind; the ::-webkit-scrollbar rule does the same for older
+     Chromium and Safari. Only the bar goes: wheel, trackpad, touch and
+     keyboard scrolling are untouched. Declared here, with the app's other
+     scrollbar rule, so no component styles scrollbars on its own. */
+  .scrollbar-hidden {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ── Target size — WCAG 2.5.8 (24x24 CSS px minimum) ─────────────
+     For an icon-only control whose GLYPH must stay small because it sits
+     inline in dense data: the PHI reveal eye in an admin table cell (14px),
+     a Chip's dismiss X (16px). Sizing the button to its glyph is what made
+     them 14px targets — twenty-four of them in one appointments table.
+
+     The hit area is painted by a pseudo-element rather than by padding or a
+     min-height, because those would grow the layout box and reflow the row
+     the control is inline in — which is the reason the glyph is small in the
+     first place. The box stays 14px; the target becomes 24px.
+
+     Not for standalone buttons: IconButton is already >=28px and should stay
+     sized honestly. Two of these must not sit closer than 24px apart, or
+     their hit areas overlap. */
+  .hit-target {
+    position: relative;
+  }
+
+  .hit-target::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 24px;
+    height: 24px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Indeterminate progress sweep — DS §8.24 (1.2s linear infinite). */
+  @keyframes progress-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+
+  .animate-progress-sweep {
+    animation: progress-sweep 1.2s linear infinite;
+  }
+
+  /* Surface entrances — the interaction scale (tokens.css, styles/motion.ts)
+     for the floating surfaces that mount without Framer Motion: select and
+     context menus, tooltips, the notification panel, the rail's flyout,
+     search results. One keyframe, two lengths by surface size. A short
+     rise plus a fade, so a surface arrives instead of appearing; the
+     reduced-motion rules below collapse it to an instant. */
+  @keyframes surface-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+
+  .animate-menu-in {
+    animation: surface-in var(--duration-menu) var(--ease-emphasized);
+  }
+
+  /* Fade only: tooltips centre themselves with a translate, which a
+     transform keyframe would override for the length of the entrance. */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  .animate-popover-in {
+    animation: fade-in var(--duration-popover) var(--ease-emphasized);
+  }
+
+  /* Modal dialogs (Drawer, Modal, the mobile nav) — the scrim fades in on
+     open and back out while the panel's exit plays; the dialog stays open
+     until that exit completes (`useModalDialog`). Literal fallbacks because
+     older engines do not let ::backdrop inherit custom properties. */
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  dialog[data-motion]::backdrop {
+    animation: backdrop-in var(--dialog-motion, 600ms) cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--dialog-motion, 600ms) cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  dialog[data-motion][data-closing]::backdrop {
+    opacity: 0;
+  }
+
+  html[data-reduce-motion='on'] dialog[data-motion]::backdrop {
+    animation: none;
+    transition: none;
+  }
+
+  /* Reduced motion — DS §9.5 baseline. Framer Motion is additionally
+     configured via <MotionConfig reducedMotion="user">. */
+  @media (prefers-reduced-motion: reduce) {
+    /* Spinners and progress sweeps keep animating: progress indication
+       is functional, not decorative (DS §9.5). */
+    *:not(.animate-spin):not(.animate-progress-sweep),
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    dialog[data-motion]::backdrop {
+      animation: none;
+      transition: none;
+    }
+  }
+}
+
+/* ── Touch targets — DEC-008, DS §7.1 (44 x 44 CSS px on touch) ──────
+   On a device whose primary pointer is a finger, a control smaller than
+   44px reserves the difference as MARGIN, and an invisible pseudo-element
+   fills exactly that margin box. Two consequences, both deliberate:
+
+   - The control looks the same — same height, same padding, same type —
+     and is tapped over 44px. Desktop (pointer: fine) is untouched.
+   - Hit areas cannot overlap. A margin box is layout space: no neighbour
+     can be laid out inside it, so no neighbour's visible box sits under
+     this control's hit area, and two hit areas meet at most edge to edge.
+     That is the guarantee a pseudo-element alone (`.hit-target`) cannot
+     give — it grows over whatever is next to it.
+
+   Each control states its own gutter, (44 - its height) / 2, through
+   `--touch-y` and, for a square control, `--touch-x`; the style builders
+   in components/ui/internal/styles.ts set them per size. A margin utility
+   on the element (`ms-auto`, `-me-1`) wins over the gutter, as a utility
+   should. An absolutely positioned control is laid over another surface
+   on purpose, so it reserves nothing and extends nothing: its target is
+   solved where it is placed. */
+@layer components {
+  @media (pointer: coarse) {
+    .touch-target:not(.absolute):not(.fixed) {
+      position: relative;
+      margin: var(--touch-y, 0px) var(--touch-x, 0px);
+    }
+
+    .touch-target:not(.absolute):not(.fixed)::after {
+      content: '';
+      position: absolute;
+      inset: calc(var(--touch-y, 0px) * -1) calc(var(--touch-x, 0px) * -1);
+      /* Replaces a `.hit-target` 24px square on the same element. */
+      width: auto;
+      height: auto;
+      transform: none;
+    }
+  }
+}
+
+/* ── Right-to-left (F-19) ─────────────────────────────────────────
+   Everything here exists because logical CSS could not express it.
+   Spacing, alignment, borders and radii are handled by logical
+   utilities at the call site (`ms-`, `pe-`, `text-start`, `border-s`,
+   `start-0`), which mirror on their own; these are the leftovers. */
+@layer base {
+  /*
+   * Directional icons.
+   *
+   * A chevron that means "forward" points left in Arabic. Lucide stamps
+   * every icon with its own class (`lucide-chevron-right`), so ONE rule
+   * mirrors all 56 call sites — no `dir` prop threaded through the tree,
+   * no RTL variant of any component, and nothing to remember when the
+   * 57th is added.
+   *
+   * The list is deliberately short. `arrow-up-right` is NOT here: it means
+   * "trending up", a chart convention that reads the same in every script,
+   * and mirroring it would turn growth into decline. Only icons whose
+   * meaning is *reading order* belong.
+   */
+  [dir='rtl'] .lucide-chevron-left,
+  [dir='rtl'] .lucide-chevron-right,
+  [dir='rtl'] .lucide-chevrons-left,
+  [dir='rtl'] .lucide-chevrons-right,
+  [dir='rtl'] .lucide-arrow-left,
+  [dir='rtl'] .lucide-arrow-right,
+  [dir='rtl'] .lucide-corner-down-left,
+  [dir='rtl'] .lucide-log-out,
+  [dir='rtl'] .lucide-log-in {
+    transform: scaleX(-1);
+  }
+}

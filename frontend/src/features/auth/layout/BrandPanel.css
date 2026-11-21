@@ -1,0 +1,227 @@
+/* ==========================================================================
+   Auth brand panel — the dark medical-tech canvas beside the sign-in form
+   --------------------------------------------------------------------------
+   Why this file exists at all: the panel used to be `bg-primary` with
+   `text-text-inverse`, which meant it followed the theme's brand tone. That
+   token is a dark slate-blue in the light theme and a LIGHT blue (#8fb4e0) in
+   the dark one, so signing in produced a full-bleed blue slab in a product
+   whose surfaces are black and charcoal — the one screen that did not look
+   like Medora.
+
+   The panel is now a fixed dark canvas in BOTH themes: a brand moment, like
+   the entrance overlay, rather than a themed surface. That is why it reads
+   the `--palette-*` primitives and not the semantic roles — a
+   `var(--color-*)` would flip with `.dark` and reintroduce exactly the drift
+   this replaces, while the primitives hold one value in both themes. It is
+   the one place outside the token files allowed to (palette.test.ts).
+
+   The canvas is the sidebar's charcoal (ink 950, ADR-0005), so signing in
+   and the workspace share one dark chrome. Contrast on it: ink (gray 50)
+   18.1:1, muted ink (gray 300) 8.8:1, accent (blue 400) 7.5:1 — comfortably
+   past AA in both themes, which the old panel was not (a white wordmark on
+   dark-mode `bg-primary` measured 1.68:1).
+   ========================================================================== */
+
+.auth-brand {
+  /* --- canvas --------------------------------------------------------- */
+  --ab-canvas: var(--palette-ink-950);
+  --ab-canvas-lift: var(--palette-ink-800);
+  --ab-canvas-top: color-mix(in srgb, var(--palette-ink-800) 40%, var(--palette-ink-950));
+
+  /* --- ink ------------------------------------------------------------ */
+  --ab-ink: var(--palette-gray-50);
+  --ab-ink-muted: var(--palette-gray-300);
+
+  /* --- lines ---------------------------------------------------------- */
+  --ab-line: color-mix(in srgb, var(--palette-gray-50) 7%, transparent);
+  --ab-line-strong: color-mix(in srgb, var(--palette-gray-50) 16%, transparent);
+
+  /* --- accent: blue 400, the one lit tone on this canvas; the glow behind
+         the study is the brand blue 600, kept faint. --- */
+  --ab-accent: var(--palette-blue-400);
+  --ab-accent-soft: color-mix(in srgb, var(--palette-blue-400) 55%, transparent);
+  --ab-accent-glow: color-mix(in srgb, var(--palette-blue-600) 28%, transparent);
+
+  --ab-ease: cubic-bezier(0.2, 0.7, 0.25, 1);
+
+  background-color: var(--ab-canvas);
+  background-image:
+    radial-gradient(78% 52% at 50% 30%, var(--ab-accent-glow) 0%, transparent 64%),
+    radial-gradient(130% 92% at 50% 118%, var(--ab-canvas-lift) 0%, transparent 72%),
+    linear-gradient(180deg, var(--ab-canvas-top) 0%, var(--ab-canvas) 52%);
+  color: var(--ab-ink);
+}
+
+/* Copy sits over the lower half of the artwork; this is what keeps it
+   readable there without dimming the illustration everywhere.
+
+   The two negative layers are ordered, not incidental: the panel carries
+   `isolate`, so -2 (artwork) and -1 (scrim) sit above its background and below
+   the copy. Left on `auto` the scrim would paint last — over the text. */
+.auth-brand::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent 38%,
+    color-mix(in srgb, var(--palette-ink-950) 82%, transparent) 100%
+  );
+}
+
+.auth-brand__lede,
+.auth-brand__benefit {
+  color: var(--ab-ink-muted);
+}
+
+.auth-brand__seal {
+  color: var(--ab-ink-muted);
+}
+
+.auth-brand__chip {
+  border: 1px solid var(--ab-line-strong);
+  background: color-mix(in srgb, var(--palette-blue-400) 10%, transparent);
+  color: var(--ab-accent);
+}
+
+/* --------------------------------------------------------------------------
+   The artwork
+   --------------------------------------------------------------------------
+   An anatomical bust drawn as a clinical line study — head, shoulders, ribs,
+   sternum, and the heart marked where it actually sits — over concentric
+   registration rings, with one ECG complex holding the band lower down that
+   the copy leaves empty. Everything is geometry: no raster asset to ship, no
+   second visual language to maintain, and it recolours with the panel by
+   inheriting these four line values.
+
+   The two pieces are placed against the panel's own empty bands rather than
+   stretched across it: the study in the gap between the wordmark and the
+   welcome copy, the trace in the gap between the benefits and the seal. Both
+   need an explicit `width` — an SVG is a replaced element, so `left: 0;
+   right: 0` leaves it at its intrinsic 300px and off-centre.
+   -------------------------------------------------------------------------- */
+
+.auth-brand__art,
+.auth-brand__trace {
+  position: absolute;
+  left: 0;
+  z-index: -2;
+  width: 100%;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.auth-brand__art {
+  top: 5%;
+  height: 47%;
+  animation: ab-art-in 1100ms var(--ab-ease) 140ms forwards;
+}
+
+.auth-brand__trace {
+  bottom: 22%;
+  height: 48px;
+  animation: ab-trace-in 1100ms var(--ab-ease) 340ms forwards;
+}
+
+@keyframes ab-art-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ab-trace-in {
+  to {
+    opacity: 0.7;
+  }
+}
+
+.auth-brand__rings {
+  fill: none;
+  stroke: var(--ab-line);
+  stroke-width: 1;
+}
+
+.auth-brand__body {
+  fill: none;
+  stroke: var(--ab-line-strong);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.auth-brand__ribs {
+  fill: none;
+  stroke: var(--ab-line-strong);
+  stroke-width: 1;
+  stroke-linecap: round;
+  opacity: 0.72;
+}
+
+/* The scan band's gradient stops — painted from the accent here rather than
+   pinned in the SVG markup, so the band recolours with the panel. */
+.auth-brand__scan-stop {
+  stop-color: var(--ab-accent);
+}
+
+.auth-brand__heart {
+  fill: var(--ab-accent);
+}
+
+.auth-brand__pulse {
+  fill: none;
+  stroke: var(--ab-accent-soft);
+  stroke-width: 1;
+}
+
+.auth-brand__ecg {
+  fill: none;
+  stroke: var(--ab-accent-soft);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* One pass of a scan band, then nothing — the panel is a backdrop, not a
+   screensaver. It ends at `opacity: 0`, which is also where the global
+   reduce-motion rule lands it when it collapses the duration to 0.01ms. */
+.auth-brand__scan {
+  animation: ab-scan 2600ms var(--ab-ease) 420ms forwards;
+  opacity: 0;
+}
+
+@keyframes ab-scan {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+
+  14% {
+    opacity: 1;
+  }
+
+  86% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(620px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-brand__art {
+    opacity: 1;
+    animation: none;
+  }
+
+  .auth-brand__trace {
+    opacity: 0.7;
+    animation: none;
+  }
+
+  .auth-brand__scan {
+    animation: none;
+  }
+}

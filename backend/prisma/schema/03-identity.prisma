@@ -1,0 +1,524 @@
+// Medora — the identity domain (RM M5.2, DB §A4–A12).
+//
+// DB §14.2 phase 4. Everything the auth lifecycle of M6 writes to:
+// accounts, the credential row kept away from them, sessions and their
+// refresh tokens, the single-use tokens behind email verification and
+// password reset, OTP codes, and the two history tables.
+//
+// ── The separation that matters most ─────────────────────────────────
+//
+// `users` and `user_credentials` are two tables on purpose (DB §A6). No
+// query that loads a user for display can accidentally serialize a hash,
+// a TOTP secret or a lockout counter, because none of them is on the row.
+// Every secret in this file is a hash or a ciphertext, and DB §10 classes
+// all of them "never in API responses; write-only in the UI".
+//
+// ── Deletion policy ──────────────────────────────────────────────────
+//
+// DB §7: users are deactivated, never deleted — hence `status` and
+// `deleted_at`, and no hard-delete path. The satellites CASCADE, because
+// a session or an OTP without its account is not history, it is a
+// dangling secret. The two *history* tables do not: `login_events` uses
+// SET NULL so a failed-login trail survives the account it refers to,
+// which is the whole point of keeping it.
+
+/// A platform account (DB §A4).
+///
+/// One row per sign-in identity. Clinical and professional detail lives
+/// on `doctors`; administrators get `admin_profiles`; a patient's clinical
+/// record is `patients`, linked through `patients.user_id` (ADR-030).
+///
+/// **A patient account is a `User` like any other**, which is the point of
+/// ADR-030 §5: it goes through the same M6 lifecycle — Argon2id, lockout,
+/// anti-enumeration timing, `login_events`, sessions, refresh rotation —
+/// because none of that inspects the role. It differs in one respect only:
+/// the `patient` role has no column in the permission matrix, so it
+/// resolves to **zero capabilities**, and every `@Can(...)` route in the
+/// platform therefore denies it without a line of code (ADR-030 §6).
+///
+/// The link is optional in both directions. A patient account with no
+/// `patients` row is the normal state immediately after registration —
+/// account creation and clinical-record claiming are separate problems
+/// (ADR-030 §4, RA-030.1).
+model User {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The client-facing id (`usr_…`). Distinct from the surrogate key so
+  /// the value the frontend already shows survives a database rebuild.
+  publicId String @unique @map("public_id") @db.VarChar(40)
+
+  firstName   String  @map("first_name") @db.VarChar(60)
+  lastName    String  @map("last_name") @db.VarChar(60)
+  /// `SessionUser.name` — stored rather than derived, because "Dr. Amelia
+  /// Chen" is not `firstName + ' ' + lastName`.
+  displayName String  @map("display_name") @db.VarChar(120)
+  /// citext: unique on the case-insensitive value, so `Doctor@…` and
+  /// `doctor@…` cannot be two accounts, and the index is still usable.
+  email       String  @unique @db.Citext
+  username    String? @unique @db.VarChar(30)
+  phone       String  @db.VarChar(30)
+
+  roleId String @map("role_id") @db.Uuid
+
+  /// Null means unverified. M6.2 blocks login on it (`email_unverified`).
+  emailVerifiedAt  DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  twoFactorEnabled Boolean   @default(false) @map("two_factor_enabled")
+  status           UserStatus @default(ACTIVE)
+
+  licenseNumber String? @map("license_number") @db.VarChar(40)
+
+  /// Consent timestamps, both required at signup (API §1.1). NOT NULL:
+  /// an account with no recorded consent is a compliance gap, and a
+  /// nullable column would let one exist.
+  termsAcceptedAt   DateTime @map("terms_accepted_at") @db.Timestamptz(3)
+  privacyAcceptedAt DateTime @map("privacy_accepted_at") @db.Timestamptz(3)
+
+  lastActiveAt DateTime? @map("last_active_at") @db.Timestamptz(3)
+  avatarUrl    String?   @map("avatar_url")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  /// RESTRICT (DB §9): a role with accounts on it cannot be deleted.
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  /// The clinical record this account belongs to, when it has been linked
+  /// (ADR-030). Null for every staff account, and for a patient account
+  /// that has not yet claimed a record.
+  patient            Patient?            @relation("PatientAccount")
+  credentials        UserCredential?
+  permissions        UserPermission[]
+  sessions           Session[]
+  trustedDevices     TrustedDevice[]
+  idempotencyRecords IdempotencyRecord[]
+  loginEvents        LoginEvent[]
+  verificationTokens VerificationToken[]
+  otpCodes           OtpCode[]
+  activity           UserActivityLog[]
+  grantedRolePermissions RolePermission[]
+  grantedUserPermissions UserPermission[] @relation("UserPermissionGrantedBy")
+  uploadedFiles      File[]
+
+  doctor           Doctor?
+  adminProfile     AdminProfile?
+  staffMember      StaffMember[]
+  verifiedDoctors  Doctor[] @relation("DoctorVerifiedBy")
+
+  /// ADR-035. `sentInvitations` is the audit trail of who provisioned
+  /// which administrator; `invitation` is the one that created this
+  /// account, absent for every self-registered user.
+  sentInvitations AdminInvitation[] @relation("InvitationInvitedBy")
+  invitation      AdminInvitation[] @relation("InvitationAccount")
+
+  recordedAllergies        PatientAllergy[]
+  recordedConditions       PatientChronicCondition[]
+  uploadedPatientDocuments PatientDocument[]
+  authoredPatientNotes     PatientNote[]
+  recordedHistory          PatientMedicalHistory[]
+  recordedVitals           PatientVitalSign[]
+  verificationDecisions    DoctorVerificationDocument[] @relation("VerificationDecidedBy")
+
+  grantedAssignments   PatientDoctorAssignment[]       @relation("AssignmentGrantedBy")
+  createdAppointments  Appointment[]                   @relation("AppointmentCreatedBy")
+  cancelledAppointments Appointment[]                  @relation("AppointmentCancelledBy")
+  appointmentEvents    AppointmentEvent[]              @relation("AppointmentEventActor")
+  proposedReschedules  AppointmentRescheduleProposal[] @relation("ProposalProposedBy")
+
+  recordedDiagnoses    RecordDiagnosis[]     @relation("DiagnosisRecordedBy")
+  authoredRecordNotes  RecordNote[]          @relation("RecordNoteAuthor")
+  recordAttachments    RecordAttachment[]    @relation("RecordAttachmentUploader")
+  recordTimelineEvents RecordTimelineEvent[] @relation("RecordTimelineActor")
+  recordVersions       RecordVersion[]       @relation("RecordVersionActor")
+  reportedIssues       RecordIssueReport[]   @relation("IssueReportedBy")
+  resolvedIssues       RecordIssueReport[]   @relation("IssueResolvedBy")
+
+  reviewedLabOrders      LabOrder[]                  @relation("LabReviewedBy")
+  collectedSpecimens     LabSpecimen[]               @relation("SpecimenCollectedBy")
+  verifiedResults        LabResult[]                 @relation("ResultVerifiedBy")
+  labAttachments         LabAttachment[]             @relation("LabAttachmentUploader")
+  labTimelineEvents      LabTimelineEvent[]          @relation("LabTimelineActor")
+  acknowledgedWarnings   PrescriptionSafetyWarning[] @relation("WarningAcknowledgedBy")
+  prescriptionNotes      PrescriptionNote[]          @relation("PrescriptionNoteAuthor")
+  prescriptionTimeline   PrescriptionTimelineEvent[] @relation("PrescriptionTimelineActor")
+
+  conversations        ConversationParticipant[]
+  authoredMessages     Message[]                    @relation("MessageAuthor")
+  sharedLinks          ConversationSharedLink[]     @relation("LinkSharedBy")
+  raisedFlags          MessageFlag[]                @relation("FlagRaisedBy")
+  resolvedFlags        MessageFlag[]                @relation("FlagResolvedBy")
+  accessRequests       CommunicationAccessRequest[] @relation("AccessRequestedBy")
+  accessApprovals      CommunicationAccessRequest[] @relation("AccessApprovedBy")
+  notifications        Notification[]               @relation("NotificationRecipient")
+  notificationPrefs    NotificationPreference?
+  aiConversations      AiConversation[]             @relation("AiConversationOwner")
+  aiSettings           AiUserSetting?
+  savedReports         SavedReport[]                @relation("SavedReportOwner")
+  scheduledReports     ScheduledReport[]            @relation("ScheduledReportOwner")
+  settings             UserSetting?
+  interfacePreferences UserInterfacePreference?
+  integrations         UserIntegration[]
+  announcements        Announcement[]               @relation("AnnouncementAuthor")
+  authoredPolicies     Policy[]                     @relation("PolicyAuthor")
+  authoredTemplates    DocumentTemplate[]           @relation("DocumentTemplateAuthor")
+
+  updatedPlatformSettings PlatformSetting[]     @relation("SettingUpdatedBy")
+  updatedPermissionMatrix PermissionMatrixState[] @relation("MatrixUpdatedBy")
+  updatedIntegrations     PlatformIntegration[] @relation("IntegrationUpdatedBy")
+  createdApiKeys          ApiKey[]              @relation("ApiKeyCreatedBy")
+  createdBackups          Backup[]              @relation("BackupCreatedBy")
+
+  accessGrantsReceived PatientAccessGrant[] @relation("GrantGrantee")
+  accessGrantsMade     PatientAccessGrant[] @relation("GrantGrantedBy")
+  accessGrantsRevoked  PatientAccessGrant[] @relation("GrantRevokedBy")
+  incidentBookmarks    IncidentBookmark[]   @relation("BookmarkOwner")
+  reportExports        ReportExport[]       @relation("ExportRequestedBy")
+
+  @@index([deletedAt])
+  @@index([status])
+  @@index([roleId])
+  @@map("users")
+}
+
+/// Per-user capability overrides (DB §A5).
+///
+/// The role bundle is the baseline; this table is the exception list.
+/// `allowed` is a boolean rather than a presence flag because an override
+/// must be able to *remove* a capability the role grants, not only add
+/// one — a doctor who may not prescribe is a row with `allowed = false`,
+/// and there is no other way to express it.
+model UserPermission {
+  userId       String   @map("user_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  allowed      Boolean  @default(true)
+  grantedBy    String?  @map("granted_by") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission  Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  grantedByUser User?    @relation("UserPermissionGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  @@id([userId, permissionId])
+  @@index([permissionId])
+  @@map("user_permissions")
+}
+
+/// Password and second-factor material (DB §A6).
+///
+/// Keyed on `user_id` — one row per account, and the PK *is* the FK, so
+/// a second credential row for one user is not representable.
+///
+/// `failed_attempts` and `locked_until` live here rather than on `users`
+/// for the same reason the hash does: the lockout counter is written on
+/// every failed sign-in attempt, and a hot write column on the row every
+/// read joins to is a contention problem as well as a disclosure one.
+model UserCredential {
+  userId String @id @map("user_id") @db.Uuid
+
+  /// Argon2id (MG §11.1). Never plaintext, never returned.
+  passwordHash      String   @map("password_hash")
+  passwordUpdatedAt DateTime @default(now()) @map("password_updated_at") @db.Timestamptz(3)
+
+  /// Counted against `security.loginAttemptLimit` (seeded 5). Reset on
+  /// a successful sign-in, not on a schedule.
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(3)
+
+  /// Encrypted at rest, app-layer envelope encryption (DB §10). `bytea`
+  /// and not text: this is ciphertext, and storing it as text invites
+  /// someone to log it.
+  totpSecretEnc    Bytes? @map("totp_secret_enc")
+  recoveryCodesEnc Bytes? @map("recovery_codes_enc")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_credentials")
+}
+
+/// An active session (DB §A7).
+///
+/// One row per refresh-token family. M6.3 rotates the token on every
+/// refresh and detects reuse; the stored value is a hash, so a database
+/// read cannot mint a session.
+model Session {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  refreshTokenHash String   @unique @map("refresh_token_hash")
+  /// The hash this row held before the most recent rotation (M6.3).
+  ///
+  /// Null until the session is first refreshed. It exists because
+  /// rotation alone cannot detect reuse: once `refresh_token_hash` is
+  /// overwritten, a replayed old token matches no row and is
+  /// indistinguishable from a random string. Keeping one generation back
+  /// makes the canonical theft visible — an attacker refreshes with the
+  /// stolen token, the real client then presents the one it still holds,
+  /// and that presentation lands here rather than nowhere.
+  ///
+  /// One generation and not a chain: the row *is* the family (see the
+  /// model comment), so a chain would need a second table to hold what a
+  /// single column already catches. ADR-026 records the trade — a token
+  /// two or more rotations old goes undetected, which requires an
+  /// attacker who kept an older token and never used it.
+  ///
+  /// Unique for the same reason `refresh_token_hash` is: two sessions
+  /// sharing a previous hash is not a state that should be reachable,
+  /// and Postgres allows any number of NULLs under a unique index.
+  previousTokenHash String? @unique @map("previous_token_hash")
+  /// Chooses the TTL: 30 days vs 12 hours (API §1.2, ADR-007).
+  rememberMe       Boolean  @default(false) @map("remember_me")
+  expiresAt        DateTime @map("expires_at") @db.Timestamptz(3)
+
+  device    String? @db.VarChar(120)
+  browser   String? @db.VarChar(80)
+  /// `inet`, not text: it sorts and compares as an address, which the
+  /// audit correlation in UX §3.7 needs.
+  ipAddress String? @map("ip_address") @db.Inet
+  location  String? @db.VarChar(120)
+
+  startedAt    DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  lastActiveAt DateTime @default(now()) @map("last_active_at") @db.Timestamptz(3)
+  /// The idle lock (`AuthStatus 'locked'`, the lock-screen route). A
+  /// locked session is still a session — it is not revoked.
+  locked       Boolean  @default(false)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// DB §8: `sessions (user_id) WHERE revoked_at IS NULL` — the live-session
+  /// lookup that the single-session policy and "sign out all others" run.
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// A device the user has marked trusted (DB §A8).
+///
+/// `removed_at` rather than a delete: "Remove trusted device" is a
+/// security event, and the record of when a device stopped being trusted
+/// is worth more than the row it saves.
+model TrustedDevice {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  name       String         @db.VarChar(80)
+  platform   DevicePlatform
+  addedAt    DateTime       @default(now()) @map("added_at") @db.Timestamptz(3)
+  lastSeenAt DateTime?      @map("last_seen_at") @db.Timestamptz(3)
+  isCurrent  Boolean        @default(false) @map("is_current")
+  removedAt  DateTime?      @map("removed_at") @db.Timestamptz(3)
+  /// The device's push registration (RM M41.2, mobile contract P5.8): the
+  /// token a push provider addresses this device by. Optional — a device
+  /// can be trusted without accepting push. Never returned by the API
+  /// (a token is enough to send this device a notification); the view
+  /// says only `pushEnabled`. One device holds a given token: registering
+  /// it again moves it, so a handset passed to another user stops
+  /// receiving the first user's notifications.
+  pushToken  String?        @map("push_token") @db.VarChar(1024)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([pushToken])
+  @@map("trusted_devices")
+}
+
+/// Every sign-in attempt, successful or not (DB §A9).
+///
+/// `user_id` is nullable and SET NULL on delete — the history has to
+/// survive the account, or the trail of a compromised account disappears
+/// with the account. `attempted_email` is recorded separately for the
+/// same reason: a failure against an address that matches no user is
+/// exactly the event worth keeping, and it has no `user_id` to record.
+model LoginEvent {
+  id     String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String? @map("user_id") @db.Uuid
+
+  attemptedEmail String      @map("attempted_email") @db.Citext
+  occurredAt     DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  device         String?     @db.VarChar(120)
+  ipAddress      String?     @map("ip_address") @db.Inet
+  location       String?     @db.VarChar(120)
+  result         LoginResult
+  /// One of the eight `MockAuthErrorCode` values when `result = failed`.
+  /// A varchar rather than an enum: DB §6 files these under "auth error
+  /// codes (API, not DB)", so they are the API's vocabulary, not a type.
+  failureCode    String?     @map("failure_code") @db.VarChar(30)
+  /// Auto-flags — impossible-travel, new-location, burst (UX §3.3, §3.9).
+  anomalyFlag    String?     @map("anomaly_flag") @db.VarChar(40)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// DB §8: the login-history page and the failed-burst alert rule.
+  @@index([userId, occurredAt(sort: Desc)])
+  @@index([result, occurredAt(sort: Desc)])
+  @@map("login_events")
+}
+
+/// Single-use tokens for email verification and password reset (DB §A10).
+///
+/// Only the hash is stored. The raw token exists in the emailed link and
+/// nowhere else, so a database disclosure cannot be replayed into an
+/// account takeover. `used_at` enforces single use; a resend inserts a
+/// new row rather than mutating this one, which keeps the history of how
+/// many were issued.
+model VerificationToken {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  kind      TokenKind
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+  @@map("verification_tokens")
+}
+
+/// 2FA one-time codes (DB §A11).
+///
+/// Hashed like everything else. `attempts` is the bounded-guess counter
+/// behind the `rate_limited` error code; ADR-007 PD-5 records that no
+/// source states a TTL for these rows, so nothing purges them yet.
+model OtpCode {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  codeHash String @map("code_hash")
+  /// app / sms / email. A varchar with a CHECK — DB §A11 types this
+  /// column `varchar(10)` and §6 lists no enum for it.
+  channel  String @default("app") @db.VarChar(10)
+
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// DB §8: `otp_codes (user_id, expires_at)`.
+  @@index([userId, expiresAt])
+  @@map("otp_codes")
+}
+
+/// An administrator invitation (ADR-035 §5).
+///
+/// The table exists because an invitation is the one credential in this
+/// file that has **no user to hang off**. `verification_tokens.user_id` is
+/// NOT NULL, and rightly so — a verification token proves something about
+/// an account that already exists. An invitation is the opposite: it is
+/// the authority to *create* an account, issued before there is one. That
+/// is not a shape `verification_tokens` can hold, so this is a second
+/// table rather than a nullable column bolted onto the first.
+///
+/// ── Why administrators are invited and never self-register ───────────
+///
+/// Until ADR-035, `POST /auth/register` accepted `role: 'admin'` from
+/// anyone who could reach it, subject only to email verification —
+/// `registration.service.ts` named the risk in a comment and deferred it
+/// to M8.2 as RA-025.1. The deferral is what this table closes. An
+/// administrator holds `roles.manage`, `settings.manageSystem` and
+/// `patients.revealIdentity`; a role that can re-write the permission
+/// matrix cannot be obtainable by filling in a public form.
+///
+/// ── Two phases, one token ────────────────────────────────────────────
+///
+/// `accepted_at` is stamped when the invitee sets a password and the
+/// account is created INACTIVE with a TOTP secret provisioned;
+/// `completed_at` when they prove a code from it and the account becomes
+/// ACTIVE. One token spans both, and each phase is guarded by a different
+/// column, so neither can be replayed: phase 1 refuses a row that already
+/// has `accepted_at`, phase 2 refuses one that does not.
+///
+/// Splitting it in two is what makes MFA structurally mandatory rather
+/// than merely policy. An administrator account cannot reach ACTIVE
+/// without an enrolled second factor, because the only code path that
+/// sets ACTIVE is the one that just verified a TOTP code.
+model AdminInvitation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// citext, matching `users.email` — an invitation to `Admin@…` and an
+  /// account at `admin@…` must be the same address, or acceptance would
+  /// create a duplicate the unique index then rejects.
+  email String @db.Citext
+
+  /// Hashed like every other single-use secret here (DB §A10). The raw
+  /// token exists in the emailed link and nowhere else.
+  tokenHash String @unique @map("token_hash")
+
+  /// The role the invitation confers. A FK and not a literal `'admin'`:
+  /// ADR-017 models administrator as a role a user holds, and the same
+  /// provisioning flow is what `reception` and `laboratory` will need.
+  roleId String @map("role_id") @db.Uuid
+
+  /// Per-user capability overrides to apply on acceptance, as
+  /// `permissions.code` values. Empty means "the role bundle, unmodified",
+  /// which is the ordinary case.
+  ///
+  /// Codes rather than ids, deliberately: an id would pin the invitation
+  /// to one seeded database and break the moment it is re-seeded, and the
+  /// code is the vocabulary every other layer already speaks.
+  permissions String[] @default([])
+
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  /// Phase 1 — password set, account created, awaiting MFA enrolment.
+  acceptedAt  DateTime? @map("accepted_at") @db.Timestamptz(3)
+  /// Phase 2 — second factor proved, account ACTIVE. The invitation is
+  /// spent.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  /// Withdrawn by an administrator before it was used.
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  /// The administrator who sent it. **Null only for the bootstrap
+  /// invitation** — the first administrator of a deployment, issued by an
+  /// operator running `npm run admin:bootstrap` on the server when no
+  /// administrator exists yet (ADR-035's "the first administrator must be
+  /// seeded"). Every invitation sent through the API names its sender.
+  invitedBy String? @map("invited_by") @db.Uuid
+  /// The account phase 1 created, which phase 2 activates. Null until then.
+  userId    String? @map("user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// RESTRICT, like `users.role_id`: a role with invitations outstanding
+  /// cannot be deleted out from under them.
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  /// The invitation record outlives the administrator who sent it — who
+  /// invited whom is exactly what an audit of a privileged account needs,
+  /// and it must not disappear when that person leaves.
+  inviter User? @relation("InvitationInvitedBy", fields: [invitedBy], references: [id], onDelete: Cascade)
+  user    User? @relation("InvitationAccount", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([expiresAt])
+  @@map("admin_invitations")
+}
+
+/// The user-facing activity feed (DB §A12).
+///
+/// Deliberately not `audit_events`. That table is the platform ledger,
+/// immutable and admin-read-only; this one is the subset a user sees
+/// about their own account in Settings → Activity. Keeping them separate
+/// means the feed can be paged and filtered without touching the ledger.
+model UserActivityLog {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  occurredAt DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  kind       ActivityKind
+  summary    String       @db.VarChar(200)
+  detail     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt(sort: Desc)])
+  @@map("user_activity_log")
+}

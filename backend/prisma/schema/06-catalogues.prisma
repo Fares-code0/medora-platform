@@ -1,0 +1,227 @@
+// Medora — clinical catalogues (RM M5.5, DB §E1–E2, §F1–F2, §H4).
+//
+// DB §14.2 phase 7. Orderable tests with their analytes and reference
+// ranges, the medication formulary with its strengths, the interaction
+// and monograph references ADR-010 scopes in, and the AI prompt library.
+//
+// Every table here is reference data: seeded, deactivated rather than
+// deleted (`active`), and referenced with RESTRICT by the fact families
+// that come later. A catalogue row that disappears takes the meaning of
+// every historical order with it.
+
+/// Orderable test definitions (DB §E1).
+///
+/// The frontend's `TEST_CATALOGUE` carries a comment saying it is
+/// "replaced by the catalogue endpoint when the API lands"; this is the
+/// table behind that endpoint.
+model LabTestCatalogue {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String          @db.VarChar(120)
+  /// LOINC. Unique because it is the interchange identifier — two rows
+  /// with one code means an external result cannot be matched.
+  code         String          @unique @db.VarChar(20)
+  category     LabTestCategory
+  specimenType LabSpecimenType @map("specimen_type")
+  container    String          @db.VarChar(60)
+  active       Boolean         @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  analytes LabAnalyteSpec[]
+  orders   LabOrder[]
+
+  /// DB §8 — typeahead on the order form.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "lab_test_catalogue_name_trgm_idx")
+  @@map("lab_test_catalogue")
+}
+
+/// Per-test analytes with reference ranges and critical thresholds (DB §E2).
+///
+/// The critical thresholds are what turn a number into an alert, so the
+/// CHECKs on them are clinical: a `critical_low` above `ref_low` would
+/// mark ordinary results critical and bury the real ones.
+///
+/// `ref_low` and `ref_high` both null means a qualitative analyte, whose
+/// possible values are in `qualitative_options` with index 0 the normal
+/// result. That convention comes straight from `AnalyteSpec`.
+model LabAnalyteSpec {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  testId  String @map("test_id") @db.Uuid
+  analyte String @db.VarChar(80)
+  unit    String @db.VarChar(20)
+
+  refLow  Decimal? @map("ref_low") @db.Decimal(10, 3)
+  refHigh Decimal? @map("ref_high") @db.Decimal(10, 3)
+  /// Display precision, 0–3.
+  decimals Int?    @default(0) @db.SmallInt
+
+  criticalLow  Decimal? @map("critical_low") @db.Decimal(10, 3)
+  criticalHigh Decimal? @map("critical_high") @db.Decimal(10, 3)
+
+  qualitativeOptions String[] @map("qualitative_options")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  test    LabTestCatalogue @relation(fields: [testId], references: [id], onDelete: Cascade)
+  results LabResult[]
+
+  @@unique([testId, analyte])
+  @@map("lab_analyte_specs")
+}
+
+/// The medication formulary (DB §F1).
+model Medication {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String             @db.VarChar(120)
+  genericName String             @map("generic_name") @db.VarChar(120)
+  category    MedicationCategory
+  form        MedicationForm
+  route       MedicationRoute
+  manufacturer String            @db.VarChar(80)
+
+  isControlled Boolean @default(false) @map("is_controlled")
+  isHighRisk   Boolean @default(false) @map("is_high_risk")
+
+  /// The single canned note the frontend synthesizes warnings from.
+  /// Retained because DB §F1 specifies it, but it is *not* the safety
+  /// source: ADR-010 group 8 brings in `drug_interactions` precisely
+  /// because "the safety check degrades to one canned string per drug"
+  /// without it.
+  interactionNote String? @map("interaction_note")
+  /// Matched against `patient_allergies.allergen` in the safety screen.
+  /// API §7.7 gives an allergy conflict no override path, so this column
+  /// is load-bearing rather than advisory.
+  allergyClass    String? @map("allergy_class") @db.VarChar(60)
+
+  frequencies   String[] @default([])
+  durationsDays Int[]    @default([]) @map("durations_days") @db.SmallInt
+  active        Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  strengths      MedicationStrength[]
+  monograph      MedicationMonograph?
+  prescriptions  Prescription[]
+  interactionsA  DrugInteraction[]    @relation("DrugInteractionA")
+  interactionsB  DrugInteraction[]    @relation("DrugInteractionB")
+
+  @@unique([name, genericName])
+  /// DB §8 — typeahead searches brand and generic together.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "medications_name_trgm_idx")
+  @@index([genericName(ops: raw("gin_trgm_ops"))], type: Gin, map: "medications_generic_name_trgm_idx")
+  @@map("medications")
+}
+
+/// Dispensable strengths (DB §F2).
+model MedicationStrength {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  medicationId String @map("medication_id") @db.Uuid
+  strength     String @db.VarChar(30)
+  position     Int    @db.SmallInt
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  medication Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@unique([medicationId, strength])
+  @@map("medication_strengths")
+}
+
+/// Pairwise interaction reference (ADR-010 group 8 — IN).
+///
+/// IN because RM M13.2 specifies a **severity-graded** screen, and one
+/// canned note per drug cannot grade anything: it says the same thing
+/// whatever the other drug is.
+///
+/// The pair is stored **once**, ordered, with a CHECK forcing
+/// `medication_a_id < medication_b_id`. Storing both directions would let
+/// the two rows disagree about severity, which for an interaction check
+/// is the worst possible failure — the answer would depend on which drug
+/// the caller happened to name first.
+model DrugInteraction {
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  medicationAId String @map("medication_a_id") @db.Uuid
+  medicationBId String @map("medication_b_id") @db.Uuid
+
+  severity    SafetyWarningSeverity
+  title       String                @db.VarChar(200)
+  detail      String
+  /// The clinical action, e.g. "Monitor INR closely". Distinct from
+  /// `detail`, which explains the mechanism.
+  management  String?
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  medicationA Medication @relation("DrugInteractionA", fields: [medicationAId], references: [id], onDelete: Cascade)
+  medicationB Medication @relation("DrugInteractionB", fields: [medicationBId], references: [id], onDelete: Cascade)
+
+  @@unique([medicationAId, medicationBId])
+  @@index([medicationBId])
+  @@map("drug_interactions")
+}
+
+/// Prescribing reference (ADR-010 group 9 — IN).
+///
+/// IN because "API §7.2 has no other data source" — the pharmacy
+/// database tab renders indications, contraindications, standard dosing
+/// and pregnancy category, and nothing else holds them.
+model MedicationMonograph {
+  medicationId String @id @map("medication_id") @db.Uuid
+
+  indications       String?
+  contraindications String?
+  standardDosing    String? @map("standard_dosing")
+  /// A, B, C, D or X. Free text would eventually hold "probably fine".
+  pregnancyCategory String? @map("pregnancy_category") @db.VarChar(1)
+  warnings          String?
+  sideEffects       String? @map("side_effects")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  medication Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+
+  @@map("medication_monographs")
+}
+
+/// The AI prompt library (DB §H4).
+///
+/// `context_mode` is the affinity the frontend uses for *ranking* only —
+/// its own comment says "never a gate". Nullable, because a prompt with
+/// no affinity is general-purpose rather than mis-tagged.
+model AiPromptTemplate {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String         @unique @db.VarChar(60)
+  label       String         @db.VarChar(120)
+  description String?        @db.VarChar(300)
+  promptText  String         @map("prompt_text")
+  contextMode AiContextMode? @map("context_mode")
+  position    Int            @db.SmallInt
+  active      Boolean        @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("ai_prompt_templates")
+}

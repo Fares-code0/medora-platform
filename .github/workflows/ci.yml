@@ -1,0 +1,363 @@
+name: CI
+
+# Push CI runs on the integration branches only. A task branch used to be
+# validated twice for one commit — once by its push and again by its pull
+# request — because the two events land in different concurrency groups
+# (`refs/heads/<branch>` vs `refs/pull/<n>/merge`) and so never cancel each
+# other. Over a representative 16-hour window, 32 of 68 commits ran both.
+# The pull request is the run worth keeping: it tests the merge result,
+# which is what actually lands, rather than the branch tip in isolation.
+#
+# Nothing stops being validated. A task branch reaches an integration
+# branch only through a pull request, and that pull request still runs
+# every suite.
+#
+# `frontend` is deliberately absent from the push list below. Its work
+# reaches `main` only through a pull request, and that pull request runs
+# every suite against the merge result — so a push run on the branch tip
+# validates nothing the pull request will not validate again, at twice
+# the cost. The other four integration branches keep their push run:
+# `main` is what deploys, and `backend`, `Database` and `patient-app`
+# each carry a required push check that other work depends on.
+on:
+  push:
+    branches:
+      - main
+      - backend
+      - Database
+      - Ai
+      - patient-app
+    # A documentation-only push cannot change a suite's result — no test
+    # or build reads a markdown file, and the parity specs read .prisma
+    # and .ts sources. Without this the `changes` job correctly skips all
+    # three suites but the run still bills two minutes for `changes` and
+    # the `ci` gate.
+    #
+    # Deliberately NOT applied to `pull_request` below: a workflow skipped
+    # by a path filter never reports its checks, so a required `ci` check
+    # would stay pending forever and block every documentation pull
+    # request. Job-level skipping plus the always() `ci` gate is what
+    # handles that case on pull requests, and it already works.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+  # Left unfiltered on purpose. Filtering by base branch would save
+  # nothing — these are the runs being kept — while creating a gap: now
+  # that push CI no longer covers task branches, a pull request opened
+  # against a base outside the filter would receive no validation at all.
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Which trees changed. A backend commit should not run the frontend
+  # suite and report green having tested nothing of the change (RM M1.7).
+  #
+  # Path detection is done with plain git rather than a marketplace
+  # action: this repository's working agreement is lockfile-only installs
+  # and a clean dependency audit (MG §11.11), and a CI action is
+  # third-party code with write access to the workflow.
+  changes:
+    name: Detect changed trees
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      patient_app: ${{ steps.filter.outputs.patient_app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        name: Compare against the base commit
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # A new branch reports an all-zero "before" SHA, and a force
+          # push can leave a base commit that no longer exists. Both
+          # resolve to "run everything" — over-running CI is cheap;
+          # skipping a suite that should have run is not.
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "Base commit unavailable — running every suite."
+            echo "frontend=true"    >> "$GITHUB_OUTPUT"
+            echo "backend=true"     >> "$GITHUB_OUTPUT"
+            echo "patient_app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE_SHA" "${{ github.sha }}")
+          echo "Changed files:"; echo "$CHANGED"
+
+          # The workflow itself affects both suites.
+          if echo "$CHANGED" | grep -qE '^frontend/|^\.github/workflows/'; then
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # The three frontend files below are the backend's sources of
+          # truth for the authorization vocabulary and PHI masking
+          # (RM M7.1, M7.3). The backend transcribes them and proves the
+          # transcription with parity specs that load the frontend
+          # modules directly — so a change to one of them must run the
+          # backend suite, or the only test guarding the agreement never
+          # runs on the change that breaks it.
+          AUTHZ_SOURCES_OF_TRUTH='^frontend/src/types/auth/|^frontend/src/features/admin/permissions\.ts$|^frontend/src/utils/phi-mask\.ts$'
+
+          if echo "$CHANGED" | grep -qE "^backend/|^\.github/workflows/|$AUTHZ_SOURCES_OF_TRUTH"; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # The patient app transcribes the backend's status vocabularies
+          # and its password policy, and `src/test/parity.test.ts` reads
+          # those backend files directly to prove the transcription. A
+          # change to either must run this suite, or the only test binding
+          # the two never runs on the change that breaks it — the same
+          # arrangement the frontend↔backend parity specs already have.
+          PATIENT_APP_SOURCES_OF_TRUTH='^backend/prisma/schema/01-enums\.prisma$|^backend/src/modules/auth/dto/'
+
+          if echo "$CHANGED" | grep -qE "^patient-app/|^\.github/workflows/|$PATIENT_APP_SOURCES_OF_TRUTH"; then
+            echo "patient_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "patient_app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  frontend:
+    name: Frontend · Typecheck · Lint · Test · Build
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The repo's quality gate is zero ERRORS; a small number of
+      # react-refresh warnings are pre-existing and accepted.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  backend:
+    name: Backend · Typecheck · Lint · Test · Build
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # A real Postgres, not a mock (RM M4.3). Everything M4 established is
+    # the database's behaviour rather than the client's — `gen_random_uuid()`
+    # is pgcrypto, case-insensitive matching is citext, the search index
+    # is pg_trgm — and none of it can be verified against a fake.
+    #
+    # An Actions service container rather than Testcontainers: it is the
+    # same containerized Postgres with none of the in-test lifecycle code
+    # or the Docker-socket dependency, and it starts once per job instead
+    # of once per suite. See ADR-021.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: medora
+          POSTGRES_PASSWORD: medora
+          POSTGRES_DB: medora_test
+        ports:
+          - 5432:5432
+        # Without this the first migration races the server's startup.
+        options: >-
+          --health-cmd "pg_isready -U medora"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      # M30.1's BullMQ driver is tested against a real broker rather than
+      # a mock: the three things it exists to get right — an upserted
+      # repeatable schedule, name-based dispatch, and the registry's retry
+      # policy reaching the worker — are all BullMQ's semantics, and a
+      # mocked `Queue` would only assert this repository's spelling.
+      # `REDIS_URL` is already a required variable and `docker-compose.yml`
+      # already runs one; this is the same broker in CI.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://medora:medora@localhost:5432/medora_test?schema=public
+      # `migrate dev` and the drift check replay history here. Separate
+      # from the working database so a check can never touch test data.
+      SHADOW_DATABASE_URL: postgresql://medora:medora@localhost:5432/medora_shadow?schema=public
+      # The broker the M30.1 driver spec talks to. `test/setup-env.ts`
+      # defaults to the same address, so this is the explicit form rather
+      # than a new requirement.
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `npm ci` and not `npm install` — the lockfile is the contract
+      # (MG §11.11), and a resolution that drifts in CI is a build that
+      # cannot be reproduced. `postinstall` runs `prisma generate`, so
+      # the generated client exists before anything typechecks.
+      - run: npm ci
+
+      - name: Create the shadow database
+        run: PGPASSWORD=medora createdb -h localhost -U medora medora_shadow
+
+      # Fails when `prisma/schema.prisma` and `prisma/migrations/`
+      # disagree — the drift that happens when someone edits the schema
+      # and forgets to generate the migration. Caught here rather than on
+      # whoever deploys next.
+      - name: Migration drift check
+        run: npm run db:check
+
+      # `migrate deploy`, not `migrate dev`: deploy applies committed
+      # migrations and never generates one, which is what production
+      # runs. If the migrations only work when Prisma is allowed to
+      # rewrite them, they do not work.
+      - name: Apply migrations
+        run: npm run db:deploy
+
+      - name: Seed
+        run: npm run db:seed
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  patient-app:
+    name: Patient app · Typecheck · Lint · Test · Build
+    needs: changes
+    if: needs.changes.outputs.patient_app == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: patient-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: patient-app/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # `parity.test.ts` reads backend/prisma/schema and
+      # backend/src/modules/auth/dto directly. The full checkout above is
+      # what makes that possible; a sparse checkout of patient-app/ would
+      # silently skip those suites.
+      #
+      # Run WITH coverage rather than as a second pass (U-10): the suite
+      # takes about nine seconds and running it twice to print one
+      # summary would double that for nothing. `text-summary` puts the
+      # number in this job's log, where a reviewer already is.
+      #
+      # There is deliberately no threshold and no failure on a drop — the
+      # checklist says the threshold is the owner's call, and a gate
+      # nobody agreed to is a gate that fails an honest pull request.
+      - name: Test · with coverage
+        run: npm run test:coverage
+
+      # `expo export` runs the same Metro bundle a release build does, so
+      # a module that resolves in ts-jest and not in Metro fails here
+      # rather than in a store submission.
+      - name: Build
+        run: npm run build
+
+      # W-08's bundle budget reads the Hermes bytecode `expo export`
+      # produces, so it can only run AFTER the build — and the Test step
+      # above necessarily runs before it. Until this step existed the
+      # guard skipped in every CI run, and a P0 budget was enforced only
+      # on whichever machine happened to run `build` then `test` in that
+      # order. That is a gate nobody is holding.
+      #
+      # Re-running the one file rather than reordering the job: Test has
+      # to stay before Build, so that a failing suite does not pay for a
+      # two-minute bundle first. This costs under a second.
+      #
+      # `PATIENT_APP_BUNDLE_REQUIRED` turns the file's "no build yet"
+      # skip into a failure. Without it a build that silently produced no
+      # bundle would skip the budget and report this step green, which is
+      # the failure this step exists to prevent.
+      - name: Bundle budget
+        run: npx jest src/test/bundle-budget.test.ts
+        env:
+          PATIENT_APP_BUNDLE_REQUIRED: '1'
+
+  # A single check both branch protection and the exit gates can require.
+  # It succeeds when every suite that needed to run passed, and when a
+  # suite was legitimately skipped — which is what stops a path-filtered
+  # required check from blocking a pull request forever.
+  ci:
+    name: CI
+    if: always()
+    needs: [frontend, backend, patient-app]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no suite failed
+        run: |
+          set -euo pipefail
+          echo "frontend:     ${{ needs.frontend.result }}"
+          echo "backend:      ${{ needs.backend.result }}"
+          echo "patient-app:  ${{ needs['patient-app'].result }}"
+          for result in "${{ needs.frontend.result }}" "${{ needs.backend.result }}" "${{ needs['patient-app'].result }}"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "A required suite did not pass."; exit 1 ;;
+            esac
+          done

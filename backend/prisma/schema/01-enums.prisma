@@ -1,0 +1,824 @@
+// Medora — native enum types (RM M5.1).
+//
+// Every closed vocabulary in `DATABASE_SCHEMA_EXTRACTION.md` §6, as a
+// PostgreSQL native ENUM. §14.3 fixes the choice: "native ENUM types for
+// closed vocabularies". A varchar with a CHECK would accept a typo until
+// someone read the constraint; an enum rejects it at parse time and gives
+// the column a name in `pg_type` that migrations can alter deliberately.
+//
+// ── Why every member carries an explicit `@map` ───────────────────────
+//
+// The DB value is the API vocabulary. ADR-001 and ADR-002 are explicit
+// that the literals are preserved verbatim, hyphens included — `no-show`,
+// `awaiting-patient`, `pending-approval`, `critical-low`. Prisma
+// identifiers cannot contain a hyphen, a space or a leading digit, so the
+// member name and the stored value cannot always be the same string.
+//
+// They are therefore *never* assumed to be the same string. Every member
+// maps explicitly, even where the two coincide (`active @map("active")`).
+// The alternative — mapping only where the compiler forces it — leaves a
+// reader working out which spelling reaches the database on a per-value
+// basis, which is exactly the ambiguity the verbatim rule exists to stop.
+//
+// The consequence for the modules from M6 onward: the Prisma client speaks
+// `NO_SHOW`, the wire speaks `no-show`, and the translation is a mapping
+// the API layer owns. See ADR-023.
+//
+// ── Vocabularies that are deliberately NOT enums ──────────────────────
+//
+//  * `roles.code` — A1 allows administrators to create custom roles from a
+//    base template (UX §3.9). A closed type cannot hold an open set.
+//  * The §S1–S6 spec entities' status columns — DB §6 is the "complete
+//    enum inventory" and does not list them; those columns are typed
+//    `varchar` by their own specification and are closed by CHECK instead.
+//  * `contact_role`, `presence`, `age_band`, `insight_kind` — listed in §6
+//    but no column in §2 uses them; they are frontend view vocabularies.
+//  * theme / density / focus_rings / date_format / time_format — §J1/§J2
+//    type these as `varchar` with defaults, and are followed literally.
+
+// ── Identity & access — DB §6 “Identity/auth” ─────────────────────────
+
+enum UserStatus {
+  ACTIVE @map("active")
+  INACTIVE @map("inactive")
+  LOCKED @map("locked")
+  SUSPENDED @map("suspended")
+
+  @@map("user_status")
+}
+
+enum LoginResult {
+  SUCCESS @map("success")
+  FAILED @map("failed")
+
+  @@map("login_result")
+}
+
+enum TokenKind {
+  EMAIL_VERIFICATION @map("email_verification")
+  PASSWORD_RESET @map("password_reset")
+
+  @@map("token_kind")
+}
+
+enum ActivityKind {
+  PROFILE @map("profile")
+  PASSWORD @map("password")
+  LOGIN @map("login")
+  SETTINGS @map("settings")
+  SECURITY @map("security")
+  INTEGRATION @map("integration")
+  PRIVACY @map("privacy")
+
+  @@map("activity_kind")
+}
+
+enum DevicePlatform {
+  WINDOWS @map("windows")
+  MAC @map("mac")
+  IOS @map("ios")
+  ANDROID @map("android")
+  DESKTOP @map("desktop")
+  MOBILE @map("mobile")
+  TABLET @map("tablet")
+
+  @@map("device_platform")
+}
+
+// ── Patient — DB §6 “Patient” ─────────────────────────────────────────
+
+enum Gender {
+  FEMALE @map("female")
+  MALE @map("male")
+
+  @@map("gender")
+}
+
+enum BloodType {
+  A_POSITIVE @map("A+")
+  A_NEGATIVE @map("A-")
+  B_POSITIVE @map("B+")
+  B_NEGATIVE @map("B-")
+  AB_POSITIVE @map("AB+")
+  AB_NEGATIVE @map("AB-")
+  O_POSITIVE @map("O+")
+  O_NEGATIVE @map("O-")
+
+  @@map("blood_type")
+}
+
+enum PatientStatus {
+  ACTIVE @map("active")
+  UNDER_TREATMENT @map("under-treatment")
+  CRITICAL @map("critical")
+  FOLLOW_UP @map("follow-up")
+  DISCHARGED @map("discharged")
+
+  @@map("patient_status")
+}
+
+enum RiskLevel {
+  LOW @map("low")
+  MEDIUM @map("medium")
+  HIGH @map("high")
+  CRITICAL @map("critical")
+
+  @@map("risk_level")
+}
+
+enum AllergySeverity {
+  MILD @map("mild")
+  MODERATE @map("moderate")
+  SEVERE @map("severe")
+
+  @@map("allergy_severity")
+}
+
+enum MedicationStatus {
+  ACTIVE @map("active")
+  COMPLETED @map("completed")
+  DISCONTINUED @map("discontinued")
+
+  @@map("medication_status")
+}
+
+enum HistoryEventKind {
+  DIAGNOSIS @map("diagnosis")
+  SURGERY @map("surgery")
+  PROCEDURE @map("procedure")
+  HOSPITALIZATION @map("hospitalization")
+  VACCINATION @map("vaccination")
+
+  @@map("history_event_kind")
+}
+
+enum StudyStatus {
+  COMPLETED @map("completed")
+  PENDING @map("pending")
+  CRITICAL @map("critical")
+
+  @@map("study_status")
+}
+
+enum StudyModality {
+  LAB @map("lab")
+  IMAGING @map("imaging")
+
+  @@map("study_modality")
+}
+
+enum DocumentCategory {
+  REFERRAL @map("referral")
+  CONSENT @map("consent")
+  EXTERNAL_RECORD @map("external-record")
+  INSURANCE @map("insurance")
+  REPORT @map("report")
+
+  @@map("document_category")
+}
+
+enum AlertSeverity {
+  CRITICAL @map("critical")
+  WARNING @map("warning")
+
+  @@map("alert_severity")
+}
+
+// ── Appointments — DB §6 “Appointments”, ADR-001 ──────────────────────
+
+enum AppointmentStatus {
+  SCHEDULED @map("scheduled")
+  CONFIRMED @map("confirmed")
+  PENDING @map("pending")
+  COMPLETED @map("completed")
+  CANCELLED @map("cancelled")
+  RESCHEDULED @map("rescheduled")
+  NO_SHOW @map("no-show")
+  AWAITING_PATIENT @map("awaiting-patient")
+
+  @@map("appointment_status")
+}
+
+enum AppointmentPriority {
+  LOW @map("low")
+  NORMAL @map("normal")
+  HIGH @map("high")
+  URGENT @map("urgent")
+
+  @@map("appointment_priority")
+}
+
+enum AppointmentAction {
+  APPROVE @map("approve")
+  REJECT @map("reject")
+  CANCEL @map("cancel")
+  RESCHEDULE @map("reschedule")
+  COMPLETE @map("complete")
+  NO_SHOW @map("no-show")
+  CREATED @map("created")
+  NUDGED @map("nudged")
+  REASSIGNED @map("reassigned")
+
+  @@map("appointment_action")
+}
+
+// ── Records — DB §6 “Records” ─────────────────────────────────────────
+
+enum RecordStatus {
+  DRAFT @map("draft")
+  ACTIVE @map("active")
+  COMPLETED @map("completed")
+  ARCHIVED @map("archived")
+
+  @@map("record_status")
+}
+
+enum RecordPriority {
+  LOW @map("low")
+  NORMAL @map("normal")
+  HIGH @map("high")
+  CRITICAL @map("critical")
+
+  @@map("record_priority")
+}
+
+enum RecordAttachmentKind {
+  LAB_RESULT @map("lab-result")
+  IMAGING @map("imaging")
+  REFERRAL @map("referral")
+  CONSENT @map("consent")
+  EXTERNAL_REPORT @map("external-report")
+
+  @@map("record_attachment_kind")
+}
+
+enum RecordTimelineKind {
+  CREATED @map("created")
+  VITALS_RECORDED @map("vitals-recorded")
+  DIAGNOSIS_ADDED @map("diagnosis-added")
+  MEDICATION_PRESCRIBED @map("medication-prescribed")
+  NOTE_ADDED @map("note-added")
+  ATTACHMENT_ADDED @map("attachment-added")
+  STATUS_CHANGED @map("status-changed")
+
+  @@map("record_timeline_kind")
+}
+
+// ── Laboratory — DB §6 “Laboratory” ───────────────────────────────────
+
+enum LabStatus {
+  ORDERED @map("ordered")
+  COLLECTED @map("collected")
+  PROCESSING @map("processing")
+  COMPLETED @map("completed")
+  CANCELLED @map("cancelled")
+
+  @@map("lab_status")
+}
+
+enum LabPriority {
+  ROUTINE @map("routine")
+  URGENT @map("urgent")
+  STAT @map("stat")
+
+  @@map("lab_priority")
+}
+
+enum LabTestCategory {
+  HEMATOLOGY @map("Hematology")
+  CHEMISTRY @map("Chemistry")
+  MICROBIOLOGY @map("Microbiology")
+  IMMUNOLOGY @map("Immunology")
+  PATHOLOGY @map("Pathology")
+  URINALYSIS @map("Urinalysis")
+  HORMONES @map("Hormones")
+  BLOOD_BANK @map("Blood Bank")
+
+  @@map("lab_test_category")
+}
+
+enum LabResultFlag {
+  NORMAL @map("normal")
+  LOW @map("low")
+  HIGH @map("high")
+  CRITICAL_LOW @map("critical-low")
+  CRITICAL_HIGH @map("critical-high")
+  ABNORMAL @map("abnormal")
+
+  @@map("lab_result_flag")
+}
+
+enum LabSpecimenType {
+  SERUM @map("Serum")
+  PLASMA @map("Plasma")
+  WHOLE_BLOOD @map("Whole blood")
+  URINE @map("Urine")
+  SWAB @map("Swab")
+  TISSUE_BIOPSY @map("Tissue biopsy")
+  STOOL @map("Stool")
+  SPUTUM @map("Sputum")
+  CSF @map("CSF")
+
+  @@map("lab_specimen_type")
+}
+
+enum LabSpecimenCondition {
+  ACCEPTABLE @map("Acceptable")
+  HEMOLYZED @map("Hemolyzed")
+  CLOTTED @map("Clotted")
+  INSUFFICIENT_VOLUME @map("Insufficient volume")
+
+  @@map("lab_specimen_condition")
+}
+
+enum LabAttachmentKind {
+  REPORT @map("report")
+  ADDENDUM @map("addendum")
+  EXTERNAL @map("external")
+  RAW_DATA @map("raw-data")
+
+  @@map("lab_attachment_kind")
+}
+
+enum LabTimelineKind {
+  ORDERED @map("ordered")
+  COLLECTED @map("collected")
+  RECEIVED @map("received")
+  PROCESSING @map("processing")
+  RESULTED @map("resulted")
+  VERIFIED @map("verified")
+  CANCELLED @map("cancelled")
+
+  @@map("lab_timeline_kind")
+}
+
+// ── Pharmacy — DB §6 “Pharmacy”, ADR-002 ──────────────────────────────
+
+enum PrescriptionStatus {
+  DRAFT @map("draft")
+  PENDING_APPROVAL @map("pending-approval")
+  ACTIVE @map("active")
+  DISPENSED @map("dispensed")
+  COMPLETED @map("completed")
+  DISCONTINUED @map("discontinued")
+  EXPIRED @map("expired")
+
+  @@map("prescription_status")
+}
+
+enum RefillStatus {
+  NONE @map("none")
+  AVAILABLE @map("available")
+  DUE @map("due")
+  PENDING @map("pending")
+
+  @@map("refill_status")
+}
+
+enum MedicationCategory {
+  ANTIBIOTICS @map("Antibiotics")
+  ANALGESICS @map("Analgesics")
+  ANTIHYPERTENSIVES @map("Antihypertensives")
+  ANTIDIABETICS @map("Antidiabetics")
+  LIPID_LOWERING @map("Lipid-lowering")
+  ANTICOAGULANTS @map("Anticoagulants")
+  CORTICOSTEROIDS @map("Corticosteroids")
+  BRONCHODILATORS @map("Bronchodilators")
+  PSYCHIATRIC @map("Psychiatric")
+  GASTROINTESTINAL @map("Gastrointestinal")
+  OPIOIDS @map("Opioids")
+  THYROID @map("Thyroid")
+
+  @@map("medication_category")
+}
+
+enum MedicationForm {
+  TABLET @map("Tablet")
+  CAPSULE @map("Capsule")
+  SYRUP @map("Syrup")
+  INJECTION @map("Injection")
+  INHALER @map("Inhaler")
+  CREAM @map("Cream")
+  DROPS @map("Drops")
+  PATCH @map("Patch")
+
+  @@map("medication_form")
+}
+
+enum MedicationRoute {
+  ORAL @map("Oral")
+  INTRAVENOUS @map("Intravenous")
+  INTRAMUSCULAR @map("Intramuscular")
+  SUBCUTANEOUS @map("Subcutaneous")
+  TOPICAL @map("Topical")
+  INHALATION @map("Inhalation")
+  OPHTHALMIC @map("Ophthalmic")
+  TRANSDERMAL @map("Transdermal")
+
+  @@map("medication_route")
+}
+
+enum SafetyWarningKind {
+  INTERACTION @map("interaction")
+  ALLERGY @map("allergy")
+  DUPLICATE @map("duplicate")
+  DOSAGE @map("dosage")
+
+  @@map("safety_warning_kind")
+}
+
+enum SafetyWarningSeverity {
+  INFO @map("info")
+  WARNING @map("warning")
+  CRITICAL @map("critical")
+
+  @@map("safety_warning_severity")
+}
+
+enum PrescriptionTimelineKind {
+  PRESCRIBED @map("prescribed")
+  DISPENSED @map("dispensed")
+  REFILL_REQUESTED @map("refill-requested")
+  REFILL_APPROVED @map("refill-approved")
+  RENEWED @map("renewed")
+  NOTE_ADDED @map("note-added")
+  DISCONTINUED @map("discontinued")
+  EXPIRED @map("expired")
+
+  @@map("prescription_timeline_kind")
+}
+
+// ── Communication — DB §6 “Communication” ─────────────────────────────
+
+enum AttachmentKind {
+  FILE @map("file")
+  IMAGE @map("image")
+
+  @@map("attachment_kind")
+}
+
+enum MessageStatus {
+  SENDING @map("sending")
+  SENT @map("sent")
+  DELIVERED @map("delivered")
+  READ @map("read")
+  FAILED @map("failed")
+
+  @@map("message_status")
+}
+
+enum MessageKind {
+  TEXT @map("text")
+  SYSTEM @map("system")
+
+  @@map("message_kind")
+}
+
+enum ConversationKind {
+  DIRECT @map("direct")
+  GROUP @map("group")
+  ANNOUNCEMENT @map("announcement")
+  SYSTEM @map("system")
+
+  @@map("conversation_kind")
+}
+
+enum NotificationCategory {
+  APPOINTMENTS @map("appointments")
+  MEDICAL_RECORDS @map("medical-records")
+  LABORATORY @map("laboratory")
+  PHARMACY @map("pharmacy")
+  PATIENTS @map("patients")
+  AI @map("ai")
+  SYSTEM @map("system")
+  SECURITY @map("security")
+
+  @@map("notification_category")
+}
+
+enum NotificationPriority {
+  NORMAL @map("normal")
+  IMPORTANT @map("important")
+  CRITICAL @map("critical")
+
+  @@map("notification_priority")
+}
+
+enum NotificationKind {
+  ALERT @map("alert")
+  REMINDER @map("reminder")
+  UPDATE @map("update")
+
+  @@map("notification_kind")
+}
+
+enum NotificationChannel {
+  EMAIL @map("email")
+  SMS @map("sms")
+  PUSH @map("push")
+  DESKTOP @map("desktop")
+  IN_APP @map("inApp")
+
+  @@map("notification_channel")
+}
+
+// ── AI assistant — DB §6 “AI” ─────────────────────────────────────────
+
+enum AiContextMode {
+  GENERAL @map("general")
+  PATIENT @map("patient")
+  RECORD @map("record")
+  LABS @map("labs")
+  PHARMACY @map("pharmacy")
+
+  @@map("ai_context_mode")
+}
+
+enum AiChatRole {
+  USER @map("user")
+  ASSISTANT @map("assistant")
+
+  @@map("ai_chat_role")
+}
+
+enum AiMessageStatus {
+  COMPLETE @map("complete")
+  STOPPED @map("stopped")
+  ERROR @map("error")
+
+  @@map("ai_message_status")
+}
+
+enum AiResponseLength {
+  CONCISE @map("concise")
+  BALANCED @map("balanced")
+  DETAILED @map("detailed")
+
+  @@map("ai_response_length")
+}
+
+enum AiLanguage {
+  EN @map("en")
+  AR @map("ar")
+
+  @@map("ai_language")
+}
+
+// ── Reports — DB §6 “Reports” ─────────────────────────────────────────
+
+enum ReportCategory {
+  OVERVIEW @map("overview")
+  REVENUE @map("revenue")
+  PATIENTS @map("patients")
+  APPOINTMENTS @map("appointments")
+  LABORATORY @map("laboratory")
+  RECORDS @map("records")
+  PHARMACY @map("pharmacy")
+  MESSAGES @map("messages")
+  AI @map("ai")
+
+  @@map("report_category")
+}
+
+enum DateRangeKey {
+  TODAY @map("today")
+  WEEK @map("week")
+  MONTH @map("month")
+  QUARTER @map("quarter")
+  YEAR @map("year")
+  CUSTOM @map("custom")
+
+  @@map("date_range_key")
+}
+
+enum ScheduleFrequency {
+  DAILY @map("daily")
+  WEEKLY @map("weekly")
+  MONTHLY @map("monthly")
+
+  @@map("schedule_frequency")
+}
+
+enum ScheduleStatus {
+  ACTIVE @map("active")
+  PAUSED @map("paused")
+
+  @@map("schedule_status")
+}
+
+enum ExportFormat {
+  CSV @map("csv")
+  EXCEL @map("excel")
+  PDF @map("pdf")
+  PRINT @map("print")
+
+  @@map("export_format")
+}
+
+enum RunStatus {
+  SENT @map("sent")
+  FAILED @map("failed")
+
+  @@map("run_status")
+}
+
+// ── User settings — DB §6 “Settings” ──────────────────────────────────
+
+enum LandingPage {
+  OVERVIEW @map("overview")
+  PATIENTS @map("patients")
+  APPOINTMENTS @map("appointments")
+  LABS @map("labs")
+  MESSAGES @map("messages")
+
+  @@map("landing_page")
+}
+
+enum PatientTab {
+  SUMMARY @map("summary")
+  RECORDS @map("records")
+  LABS @map("labs")
+  PRESCRIPTIONS @map("prescriptions")
+
+  @@map("patient_tab")
+}
+
+enum RecordsTab {
+  ALL @map("all")
+  RECENT @map("recent")
+  CRITICAL @map("critical")
+
+  @@map("records_tab")
+}
+
+enum IntegrationId {
+  GOOGLE_CALENDAR @map("google-calendar")
+  OUTLOOK @map("outlook")
+  ZOOM @map("zoom")
+  TEAMS @map("teams")
+
+  @@map("integration_id")
+}
+
+// ── Clinic administration — DB §6 “Administration” ────────────────────
+
+enum StaffRole {
+  DOCTOR @map("doctor")
+  NURSE @map("nurse")
+  RECEPTIONIST @map("receptionist")
+  LABORATORY @map("laboratory")
+  PHARMACY @map("pharmacy")
+
+  @@map("staff_role")
+}
+
+enum PresenceStatus {
+  ON_DUTY @map("on-duty")
+  ON_BREAK @map("on-break")
+  OFF_DUTY @map("off-duty")
+  ON_LEAVE @map("on-leave")
+
+  @@map("presence_status")
+}
+
+enum RoomKind {
+  CONSULTATION @map("consultation")
+  LAB @map("lab")
+  PROCEDURE @map("procedure")
+  PHARMACY @map("pharmacy")
+  WAITING @map("waiting")
+
+  @@map("room_kind")
+}
+
+enum RoomStatus {
+  AVAILABLE @map("available")
+  OCCUPIED @map("occupied")
+  CLEANING @map("cleaning")
+  MAINTENANCE @map("maintenance")
+
+  @@map("room_status")
+}
+
+enum ActiveStatus {
+  ACTIVE @map("active")
+  INACTIVE @map("inactive")
+
+  @@map("active_status")
+}
+
+enum ShiftKind {
+  MORNING @map("morning")
+  EVENING @map("evening")
+  ON_CALL @map("on-call")
+  VACATION @map("vacation")
+  LEAVE @map("leave")
+
+  @@map("shift_kind")
+}
+
+enum QueuePriority {
+  ROUTINE @map("routine")
+  PRIORITY @map("priority")
+  URGENT @map("urgent")
+
+  @@map("queue_priority")
+}
+
+enum WaitingStatus {
+  WAITING @map("waiting")
+  CALLED @map("called")
+  IN_ROOM @map("in-room")
+
+  @@map("waiting_status")
+}
+
+enum AnnouncementPriority {
+  LOW @map("low")
+  NORMAL @map("normal")
+  HIGH @map("high")
+
+  @@map("announcement_priority")
+}
+
+enum TemplateKind {
+  PRESCRIPTION @map("prescription")
+  CERTIFICATE @map("certificate")
+  REFERRAL @map("referral")
+  LAB_REQUEST @map("lab-request")
+  RADIOLOGY_REQUEST @map("radiology-request")
+  DISCHARGE @map("discharge")
+
+  @@map("template_kind")
+}
+
+enum HolidayKind {
+  PUBLIC @map("public")
+  CLINIC @map("clinic")
+
+  @@map("holiday_kind")
+}
+
+enum ResourceStatus {
+  IN_STOCK @map("in-stock")
+  LOW @map("low")
+  OUT @map("out")
+
+  @@map("resource_status")
+}
+
+enum Weekday {
+  MON @map("Mon")
+  TUE @map("Tue")
+  WED @map("Wed")
+  THU @map("Thu")
+  FRI @map("Fri")
+  SAT @map("Sat")
+  SUN @map("Sun")
+
+  @@map("weekday")
+}
+
+enum DoctorVerificationStatus {
+  PENDING @map("pending")
+  VERIFIED @map("verified")
+  REJECTED @map("rejected")
+  DOCS_REQUESTED @map("docs_requested")
+
+  @@map("doctor_verification_status")
+}
+
+enum DoctorPracticeStatus {
+  ACTIVE @map("active")
+  SUSPENDED @map("suspended")
+  VACATION @map("vacation")
+
+  @@map("doctor_practice_status")
+}
+
+// ── Platform — DB §6 “Platform” ───────────────────────────────────────
+
+enum BackupKind {
+  AUTOMATIC @map("automatic")
+  MANUAL @map("manual")
+
+  @@map("backup_kind")
+}
+
+enum AuditCategory {
+  AUTHENTICATION @map("authentication")
+  SECURITY @map("security")
+  USER_ACTION @map("user_action")
+  ADMIN_ACTIVITY @map("admin_activity")
+  SYSTEM @map("system")
+
+  @@map("audit_category")
+}
+
+enum AuditSeverity {
+  INFO @map("info")
+  WARNING @map("warning")
+  CRITICAL @map("critical")
+
+  @@map("audit_severity")
+}

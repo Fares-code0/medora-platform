@@ -1,0 +1,100 @@
+# Development stack (RM M1.6, MG §14).
+#
+# Brings up the four backing services the backend expects. The API itself
+# runs on the host (`npm --prefix backend run dev`) so edits reload without
+# a rebuild; M35 adds the prod-like profile that containerises the API and
+# puts nginx in front of it.
+#
+#   docker compose up -d
+#   docker compose ps          # all four should report healthy
+#
+# Credentials here are development-only and deliberately obvious. Nothing
+# in this file may be reused in staging or production (MG §11.10).
+
+name: medora
+
+services:
+  postgres:
+    # 16 is the version the database dictionary targets (DB §14.3), and
+    # the extensions it needs — pgcrypto, citext, pg_trgm — ship with it.
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medora
+      POSTGRES_PASSWORD: medora
+      POSTGRES_DB: medora
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone reports true before the database accepts
+      # connections on first boot; naming the user and database avoids a
+      # migration racing an unready server.
+      test: ['CMD-SHELL', 'pg_isready -U medora -d medora']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    # S3-compatible object storage for the files service (M25).
+    #
+    # `minio/minio` is gone from Docker Hub (404 since late 2025: MinIO
+    # stopped publishing images), and a plain `docker compose up -d`
+    # aborted on its pull before anything else, mailhog included, started.
+    # `pgsty/minio` is the community-maintained fork (Pigsty), built from
+    # the same source with the same layout: entrypoint, `minio` and `mc`
+    # binaries, `RELEASE.*` tags, amd64 and arm64. So `command`, the
+    # environment and the `mc ready` healthcheck below carry over unchanged.
+    # It is not published by MinIO Inc. Development only, like everything
+    # in this file.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: medora
+      MINIO_ROOT_PASSWORD: medora-dev-secret
+    ports:
+      - '9000:9000' # S3 API
+      - '9001:9001' # web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailhog:
+    # Catches every outbound email so verification and reset flows (M6)
+    # are testable without a real SMTP provider.
+    image: mailhog/mailhog:v1.0.1
+    restart: unless-stopped
+    ports:
+      - '1025:1025' # SMTP
+      - '8025:8025' # web UI
+    healthcheck:
+      # The image has no shell utilities beyond wget, and no /bin/sh -c
+      # is needed for this form.
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost:8025']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

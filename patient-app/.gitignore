@@ -1,0 +1,20 @@
+# Expo / Metro
+.expo/
+dist/
+coverage/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Native projects, when `expo prebuild` generates them locally
+/ios
+/android
+
+# Local environment. `.env.example` is committed; nothing else is.
+.env
+.env.*
+!.env.example

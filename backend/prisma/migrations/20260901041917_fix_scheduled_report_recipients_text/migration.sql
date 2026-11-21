@@ -1,0 +1,23 @@
+-- `scheduled_reports.recipients`: citext[] -> text[] (ADR-028).
+--
+-- The column as typed is unreadable. Prisma 7.9.1 cannot read a citext
+-- array at all: `node-postgres` registers no array parser for the citext
+-- OID, so it hands back the unparsed literal `{a@b.com}` and the
+-- client's data mapper calls `.map` on a string —
+-- `TypeError: e.map is not a function`. A row inserted by raw SQL fails
+-- identically, so the fault is on the read path, and `create()` fails
+-- with it because it reads the row back.
+--
+-- The conversion is safe and needs no data migration. citext and text
+-- share a representation, so the cast is a metadata change; and nothing
+-- writes this table yet — M21 is unbuilt, and the only existing test
+-- asserts that an *empty* recipient list is rejected, so no row has ever
+-- been stored.
+--
+-- What the column type was for moves up a layer: recipients are stored
+-- lower-cased by the endpoint that writes them (M21.5, RA-028.1). Every
+-- scalar `@db.Citext` in the schema is untouched — the limitation is
+-- arrays only, and this is the schema's only citext array.
+
+-- AlterTable
+ALTER TABLE "scheduled_reports" ALTER COLUMN "recipients" SET DATA TYPE TEXT[];

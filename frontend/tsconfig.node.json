@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "vite.config.ts",
+    "scripts/demo-access-boundary.ts",
+    "scripts/demo-access-boundary.test.ts",
+    "scripts/mock-boundary.ts",
+    "scripts/mock-boundary.test.ts",
+    "scripts/theme-playground-boundary.ts",
+    "scripts/theme-playground-boundary.test.ts",
+    "vite.artifact.config.ts",
+    "vitest.config.ts",
+    "tailwind.config.ts",
+    "eslint.config.js",
+    "postcss.config.js",
+    ".storybook/main.ts"
+  ]
+}

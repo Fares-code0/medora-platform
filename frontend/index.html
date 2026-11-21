@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Medora — healthcare management platform" />
+    <title>Medora</title>
+    <!-- The `d·o` ligature alone, from src/shared/components/branding. The SVG
+         carries its own prefers-color-scheme rule so the mark stays legible on
+         a dark browser chrome; the touch icon is opaque because iOS composites
+         it onto an unknown ground. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111519" media="(prefers-color-scheme: dark)" />
+    <script>
+      // No-flash theme + interface boot — FRONTEND_ARCHITECTURE.md §11.
+      // Reads the stored preferences and applies `.dark` plus the appearance
+      // and accessibility attributes before first paint, so nothing flashes.
+      // Deployment note: this inline script must be nonce'd/hashed in the CSP.
+      (function () {
+        var root = document.documentElement;
+        // This block must resolve the theme exactly as ThemeProvider does
+        // (`getPreference('theme') ?? 'system'`). When the two readers
+        // disagree the class is applied late, which is the flash this script
+        // exists to prevent — so any change here belongs in both places.
+        var system = false;
+        try {
+          system = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch (e) {
+          /* no matchMedia — treat the OS as light */
+        }
+
+        var stored = null;
+        try {
+          // JSON.parse, not the raw item: services/preferences.ts writes every
+          // preference through JSON.stringify, so what is stored is `"dark"`
+          // with the quotes. Comparing the raw string to 'dark' never matched,
+          // so a dark-mode user got a light flash on every load and 'system'
+          // never consulted the OS. Any failure leaves `stored` null, which is
+          // what `getPreference` returns in the same circumstances.
+          var rawTheme = localStorage.getItem('medora.theme');
+          if (rawTheme !== null) stored = JSON.parse(rawTheme);
+        } catch (e) {
+          /* storage unavailable or unparseable — fall back to the OS */
+        }
+
+        if (stored === 'dark' || ((stored === null || stored === 'system') && system)) {
+          root.classList.add('dark');
+        }
+        try {
+          var raw = localStorage.getItem('medora.interface');
+          if (raw) {
+            var s = JSON.parse(raw);
+            if (s && typeof s === 'object') {
+              root.dataset.density = s.density === 'compact' ? 'compact' : 'comfortable';
+              root.dataset.contrast = s.highContrast ? 'high' : 'normal';
+              root.dataset.focus = s.focusRings === 'high' ? 'high' : 'default';
+              root.dataset.keyboardNav = s.keyboardNav ? 'on' : 'off';
+              root.dataset.reduceMotion = s.reduceMotion ? 'on' : 'off';
+              var scale = typeof s.textScale === 'number' ? s.textScale : 100;
+              if (scale < 90) scale = 90;
+              if (scale > 130) scale = 130;
+              root.style.setProperty('--font-scale', String(scale / 100));
+            }
+          }
+        } catch (e) {
+          /* storage unavailable — defaults apply */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

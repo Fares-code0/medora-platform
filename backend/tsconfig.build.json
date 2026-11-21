@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "**/*.spec.ts",
+    "vitest.config.ts",
+    // Fixtures that exist to fail lint (RM M2.2). They typecheck, so
+    // they stay in the editor's project, but nothing should ship them.
+    "src/**/__boundary-fixtures__/**"
+  ]
+}

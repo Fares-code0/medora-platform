@@ -1,0 +1,607 @@
+// Medora — patients and their satellites (RM M5.4, DB §B3–B14, §S1–S2).
+//
+// DB §14.2 phase 6. The patient master record and the eleven tables that
+// hang off it, plus the availability model ADR-005 adopts from DB §S2.
+//
+// ── Everything here is PHI ───────────────────────────────────────────
+//
+// DB §10 classes allergies, conditions, history, vitals, alerts and
+// medications as HIPAA-sensitive, and the patient row itself as PII.
+// Three consequences are structural rather than procedural:
+//
+//   · **Soft delete throughout.** DB §7: "PHI never hard-deleted". Every
+//     table below carries `deleted_at` and is filtered by the M4.2 client
+//     extension.
+//   · **Every satellite carries `patient_id` directly**, never only
+//     through a parent. ADR-022 makes that a requirement rather than a
+//     convenience: an RLS policy at M37 has to name the owning patient
+//     without a multi-table join, and a table that cannot be reached that
+//     way would have to be restructured to get one.
+//   · **CASCADE from the patient**, because a satellite without its
+//     patient is an unattributable clinical fact. The patient itself is
+//     never deleted — it is deactivated — so the cascade is a guarantee
+//     about consistency rather than a deletion path anyone uses.
+//
+// ── Two cross-domain FKs are deferred ────────────────────────────────
+//
+// `patient_vital_signs.record_id` and `patient_medications.prescription_id`
+// (and `patient_studies.lab_order_id`) point at tables DB §14.2 creates in
+// phases 9 and 10. They are bare uuid columns here and gain their
+// constraints in M5.7 and M5.8 — the same deferred-ALTER pattern M5.1
+// used for `departments.head_staff_id`.
+
+/// The patient master record (DB §B3).
+///
+/// **A clinical record, optionally linked to an account (ADR-030).** The
+/// record is still owned and created by clinicians, and still carries no
+/// credential row of its own — `user_credentials` hangs off `users`, not
+/// off this table. What ADR-030 adds is `user_id`: a link to the platform
+/// account of the person this record describes, when one exists.
+///
+/// ADR-018 §3 previously read "patients are records, not users" and is
+/// amended in that clause only, by owner decision of 2026-09-02. The rest
+/// of ADR-018 — single clinic, billing off, mobile readiness — stands.
+///
+/// `age`, `next_appointment` and `has_severe_allergy` are **not** columns.
+/// DB §14.5-6 lists them among the values the DTOs store alongside the
+/// source data; storing an age next to a date of birth guarantees the two
+/// disagree within a year.
+model Patient {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId String @unique @map("public_id") @db.VarChar(20)
+  /// The medical record number. Displayed to administrators as last-4
+  /// only (UX §1.5.6); the masking lives in the projection, not here —
+  /// a masked value in the column would be unusable for lookup.
+  mrn      String @unique @db.VarChar(20)
+
+  fullName    String    @map("full_name") @db.VarChar(120)
+  dateOfBirth DateTime  @map("date_of_birth") @db.Date
+  gender      Gender
+  bloodType   BloodType @map("blood_type")
+  phone       String    @db.VarChar(30)
+  email       String?   @db.Citext
+  address     String?
+  photoUrl    String?   @map("photo_url")
+
+  /// The platform account of the person this record describes (ADR-030 §1).
+  ///
+  /// **Nullable, and that is the load-bearing choice.** A patient is
+  /// registered at the front desk by a clinician and must be a complete,
+  /// usable record before that person has ever downloaded an app — and for
+  /// the many who never will. `NOT NULL` would make an account a
+  /// precondition for receiving care, and would force a backfill that has
+  /// to guess which account owns which record. That guess is the
+  /// identity-proofing hazard ADR-030 §4 exists to avoid, so the column is
+  /// nullable and there is no backfill at all.
+  ///
+  /// **Unique**, because the mapping is one-to-at-most-one in both
+  /// directions. Postgres permits unlimited NULLs under a unique
+  /// constraint, so this one column says "every linked record is linked to
+  /// a different account, and unlinked records are unconstrained" exactly.
+  ///
+  /// `SET NULL`, never `CASCADE` (DB §7: PHI is never hard-deleted). If a
+  /// `users` row were ever removed, the clinical record must survive it and
+  /// revert to unlinked. `CASCADE` here would delete a person's entire
+  /// medical history because their app account went away.
+  ///
+  /// Note this is **not** `email`. `patients.email` above is a nullable,
+  /// non-unique, clinician-typed *contact* field; `users.email` is the
+  /// citext-unique login. The two are never joined implicitly — one typo
+  /// or one shared family address would disclose a stranger's chart.
+  userId String? @unique @map("user_id") @db.Uuid
+
+  status    PatientStatus @default(ACTIVE)
+  riskLevel RiskLevel     @default(LOW) @map("risk_level")
+
+  medicalNotes String? @map("medical_notes")
+
+  /// A denormalized cache; the source of truth is appointments/records.
+  /// Kept because the patient list sorts on it and the join would be a
+  /// lateral over four fact tables.
+  lastVisitAt  DateTime? @map("last_visit_at") @db.Timestamptz(3)
+  registeredAt DateTime  @default(now()) @map("registered_at") @db.Timestamptz(3)
+
+  assignedDoctorId String? @map("assigned_doctor_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  user           User?   @relation("PatientAccount", fields: [userId], references: [id], onDelete: SetNull)
+  assignedDoctor Doctor? @relation("PatientAssignedDoctor", fields: [assignedDoctorId], references: [id], onDelete: SetNull)
+
+  allergies         PatientAllergy[]
+  chronicConditions PatientChronicCondition[]
+  emergencyContacts PatientEmergencyContact[]
+  insurance         PatientInsurance[]
+  documents         PatientDocument[]
+  notes             PatientNote[]
+  medicalHistory    PatientMedicalHistory[]
+  vitalSigns        PatientVitalSign[]
+  clinicalAlerts    PatientClinicalAlert[]
+  medications       PatientMedication[]
+  studies           PatientStudy[]
+
+  careAssignments    PatientDoctorAssignment[]
+  appointments       Appointment[]
+  medicalRecords     MedicalRecord[]
+  labOrders          LabOrder[]
+  prescriptions      Prescription[]
+  conversations      Conversation[]
+  notifications      Notification[]
+  aiConversations    AiConversation[]
+  accessGrants       PatientAccessGrant[]
+  surveys            SatisfactionSurvey[]
+  queueEntries       QueueEntry[]
+  waitingRoomEntries WaitingRoomEntry[]
+
+  @@index([deletedAt])
+  @@index([status])
+  @@index([assignedDoctorId])
+  /// DB §8 — the identifier auto-detect search runs one query against
+  /// name, MRN and phone. Three trigram indexes, declared in the schema
+  /// rather than left in raw SQL: ADR-021 §6 records what happens when a
+  /// migration creates an index the schema does not declare.
+  @@index([fullName(ops: raw("gin_trgm_ops"))], type: Gin, map: "patients_full_name_trgm_idx")
+  @@index([mrn(ops: raw("gin_trgm_ops"))], type: Gin, map: "patients_mrn_trgm_idx")
+  @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "patients_phone_trgm_idx")
+  @@map("patients")
+}
+
+/// Allergies (DB §B4) — safety-critical.
+///
+/// UX §1.5.4: "Critical information cannot be missed." `allergen` is
+/// matched against `medications.allergy_class` in the prescription safety
+/// screen, and API §7.7 gives an allergy conflict **no override path**.
+model PatientAllergy {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String  @map("patient_id") @db.Uuid
+
+  allergen String          @db.VarChar(120)
+  severity AllergySeverity
+  reaction String          @db.VarChar(200)
+  notes    String?
+
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  recordedBy String?  @map("recorded_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recorder User?   @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@unique([patientId, allergen])
+  @@index([deletedAt])
+  @@map("patient_allergies")
+}
+
+/// Chronic conditions, from the canonical vocabulary (DB §B5).
+model PatientChronicCondition {
+  patientId   String @map("patient_id") @db.Uuid
+  conditionId String @map("condition_id") @db.Uuid
+
+  diagnosedOn DateTime? @map("diagnosed_on") @db.Date
+  recordedBy  String?   @map("recorded_by") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  patient   Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  /// RESTRICT (DB §9): a condition in use cannot leave the vocabulary.
+  condition ChronicCondition @relation(fields: [conditionId], references: [id], onDelete: Restrict)
+  recorder  User?            @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@id([patientId, conditionId])
+  @@index([conditionId])
+  @@map("patient_chronic_conditions")
+}
+
+/// Emergency contacts (DB §B6) — at most one primary, by partial unique.
+model PatientEmergencyContact {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+
+  name         String  @db.VarChar(120)
+  relationship String  @db.VarChar(60)
+  phone        String  @db.VarChar(30)
+  isPrimary    Boolean @default(true) @map("is_primary")
+  /// Why the contact was removed, when the remover gave one (BR-DEC-003).
+  removalReason String? @map("removal_reason") @db.VarChar(300)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([deletedAt])
+  @@map("patient_emergency_contacts")
+}
+
+/// Insurance policies (DB §B7) — at most one active, by partial unique.
+model PatientInsurance {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId  String @map("patient_id") @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+
+  /// PII (DB §10). Unique per patient so the same policy cannot be
+  /// recorded twice and then expire on only one of the rows.
+  policyNumber String    @map("policy_number") @db.VarChar(60)
+  plan         String?   @db.VarChar(80)
+  validUntil   DateTime? @map("valid_until") @db.Date
+  isActive     Boolean   @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  provider InsuranceProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+
+  @@unique([patientId, policyNumber])
+  @@index([providerId])
+  @@index([deletedAt])
+  @@map("patient_insurance")
+}
+
+/// Uploaded patient files (DB §B8).
+model PatientDocument {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+
+  name     String           @db.VarChar(200)
+  category DocumentCategory
+  sizeKb   Int              @map("size_kb")
+  fileId   String           @map("file_id") @db.Uuid
+
+  uploadedBy String?  @map("uploaded_by") @db.Uuid
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  file     File    @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  uploader User?   @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@index([fileId])
+  @@index([deletedAt])
+  @@map("patient_documents")
+}
+
+/// Clinical notes on the patient (DB §B9).
+///
+/// `signed` gates the record: an unsigned note appears in the Overview
+/// action queue and cannot be part of a final record. RESTRICT on the
+/// author, because an unattributable clinical note is not a note.
+model PatientNote {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  authorId  String @map("author_id") @db.Uuid
+
+  authoredAt DateTime  @default(now()) @map("authored_at") @db.Timestamptz(3)
+  title      String    @db.VarChar(200)
+  body       String
+  signed     Boolean   @default(false)
+  signedAt   DateTime? @map("signed_at") @db.Timestamptz(3)
+  /// AI-draft provenance — "AI-assisted, reviewed by …" (UX 2.5).
+  aiAssisted Boolean   @default(false) @map("ai_assisted")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([patientId, authoredAt(sort: Desc)])
+  @@index([deletedAt])
+  @@map("patient_notes")
+}
+
+/// The medical-history timeline (DB §B10).
+model PatientMedicalHistory {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+
+  kind       HistoryEventKind
+  title      String           @db.VarChar(200)
+  occurredOn DateTime         @map("occurred_on") @db.Date
+  detail     String?
+  facility   String?          @db.VarChar(120)
+  recordedBy String?          @map("recorded_by") @db.Uuid
+  /// Why the event was removed — mandatory on removal (BR-DEC-003, DEC-003).
+  /// Null on a live row and on rows removed before the requirement.
+  removalReason String? @map("removal_reason") @db.VarChar(300)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recorder User?   @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+
+  @@index([patientId, occurredOn(sort: Desc)])
+  @@index([deletedAt])
+  @@map("patient_medical_history")
+}
+
+/// Vital-sign snapshots (DB §B11, and §D3).
+///
+/// One physical table serves both the profile's "latest vitals" and the
+/// per-encounter capture: DB §D3 records that `VitalSigns` and
+/// `RecordVitalSigns` are the same shape, and sets `record_id` when the
+/// reading was taken during an encounter. A second table would be the
+/// same columns with a different name and two places to change a range.
+///
+/// **Blood pressure is two columns**, not the string `"128/82"` the
+/// frontend carries (DB §14.5-14). A single string cannot be range-checked
+/// and cannot be charted, and both are requirements here.
+///
+/// `bmi` is a **stored generated column** — Postgres computes it from
+/// weight and height on write. DB §14.5-6 says derived values should not
+/// be double-stored; a generated column is the form of storage that
+/// cannot disagree with its inputs.
+model PatientVitalSign {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String  @map("patient_id") @db.Uuid
+  /// The FK was added by the M5.7 migration: `medical_records` is DB
+  /// §14.2 phase 9, so the column existed here before its target did.
+  recordId  String? @map("record_id") @db.Uuid
+
+  recordedAt DateTime @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  bloodPressureSystolic  Int     @map("blood_pressure_systolic") @db.SmallInt
+  bloodPressureDiastolic Int     @map("blood_pressure_diastolic") @db.SmallInt
+  heartRateBpm           Int     @map("heart_rate_bpm") @db.SmallInt
+  temperatureC           Decimal @map("temperature_c") @db.Decimal(4, 1)
+  respiratoryRate        Int     @map("respiratory_rate") @db.SmallInt
+  oxygenSaturation       Int     @map("oxygen_saturation") @db.SmallInt
+  weightKg               Decimal @map("weight_kg") @db.Decimal(5, 2)
+  heightCm               Decimal @map("height_cm") @db.Decimal(5, 1)
+
+  /// Generated by the database. The `dbgenerated` default is how the
+  /// generation expression is declared to Prisma — without it the drift
+  /// check reads the expression as a missing default and reports drift
+  /// on every run (measured during M5.1; see ADR-023 §4).
+  bmi Decimal? @default(dbgenerated("round((weight_kg / ((NULLIF(height_cm, (0)::numeric) / (100)::numeric) * (NULLIF(height_cm, (0)::numeric) / (100)::numeric))), 1)")) @db.Decimal(4, 1)
+
+  recordedBy String? @map("recorded_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  recorder User?          @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+  /// SET NULL: the reading is the patient's, not the encounter's. Losing
+  /// the record must not lose the vital sign.
+  record   MedicalRecord? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, recordedAt(sort: Desc)])
+  @@index([recordId])
+  @@index([deletedAt])
+  @@map("patient_vital_signs")
+}
+
+/// Fixed, non-dismissible banner content (DB §B12).
+model PatientClinicalAlert {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+
+  severity AlertSeverity
+  message  String        @db.VarChar(300)
+  active   Boolean       @default(true)
+  /// Why the alert was resolved, when the resolver gave one (BR-DEC-003).
+  /// Written when `active` goes false; kept if the alert is reactivated.
+  resolutionReason String? @map("resolution_reason") @db.VarChar(300)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@index([deletedAt])
+  @@map("patient_clinical_alerts")
+}
+
+/// The current-medication list (DB §B13).
+///
+/// Rows are usually materialized from a prescription, but not always:
+/// external and self-reported medications exist with no Rx, which is why
+/// `prescription_id` is nullable. The safety screen reads this list, so a
+/// self-reported drug still participates in interaction checking.
+model PatientMedication {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId      String  @map("patient_id") @db.Uuid
+  /// The FK was added by the M5.8 migration: `prescriptions` is DB
+  /// §14.2 phase 10, so this column existed before its target did.
+  prescriptionId String? @map("prescription_id") @db.Uuid
+
+  name      String    @db.VarChar(120)
+  dosage    String    @db.VarChar(60)
+  frequency String    @db.VarChar(60)
+  startDate DateTime  @map("start_date") @db.Date
+  endDate   DateTime? @map("end_date") @db.Date
+
+  prescribedBy String?          @map("prescribed_by") @db.Uuid
+  status       MedicationStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient    Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  prescriber Doctor? @relation("PatientMedicationPrescriber", fields: [prescribedBy], references: [id], onDelete: SetNull)
+  /// SET NULL: an externally reported medication has no prescription, and
+  /// losing the Rx must not remove the drug from the patient's list.
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, status])
+  @@index([prescriptionId])
+  @@index([deletedAt])
+  @@map("patient_medications")
+}
+
+/// Lab and imaging study placeholders (DB §B14).
+///
+/// Radiology has no module yet (ADR-010 group 10 — OUT), and this is its
+/// confirmed foothold: the Imaging tab renders these rows.
+model PatientStudy {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String  @map("patient_id") @db.Uuid
+  /// The FK was added by the M5.8 migration — see
+  /// `patient_medications.prescription_id`.
+  labOrderId String? @map("lab_order_id") @db.Uuid
+
+  modality      StudyModality
+  categoryLabel String        @map("category_label") @db.VarChar(80)
+  name          String        @db.VarChar(200)
+  performedOn   DateTime      @map("performed_on") @db.Date
+  status        StudyStatus
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  patient  Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  labOrder LabOrder? @relation(fields: [labOrderId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, performedOn(sort: Desc)])
+  @@index([labOrderId])
+  @@index([deletedAt])
+  @@map("patient_studies")
+}
+
+/// The weekly availability grid (DB §S2, ADR-005 §1).
+///
+/// One row per contiguous range on one weekday. A break is a row with
+/// `is_break = true` *inside* a working range — which is why there are
+/// no `break_start`/`break_end` columns: those would limit a day to one
+/// break, and ADR-005 rejects that explicitly.
+///
+/// **A weekday with no rows is a non-working day.** There is no "enabled"
+/// boolean, because the absence of rows already says it, and two ways to
+/// say the same thing eventually disagree.
+model DoctorAvailability {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId String   @map("doctor_id") @db.Uuid
+  weekday  Weekday
+  startTime DateTime @map("start_time") @db.Time(0)
+  endTime   DateTime @map("end_time") @db.Time(0)
+  isBreak   Boolean  @default(false) @map("is_break")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  /// Also serves every `(doctor_id, weekday)` lookup as its leading
+  /// prefix. A separate `(doctor_id, weekday)` index duplicated it and was
+  /// dropped (migration `20261113090000_index_review`).
+  @@unique([doctorId, weekday, startTime])
+  @@map("doctor_availability")
+}
+
+/// Absolute-time unavailability (DB §S2, ADR-005 §3).
+///
+/// Separate from the weekly grid because it is a different kind of time:
+/// the grid is recurring civil time, this is a specific interval.
+/// Conflating them is why DB §S2 specifies two tables.
+model DoctorTimeOff {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId String   @map("doctor_id") @db.Uuid
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  endsAt   DateTime @map("ends_at") @db.Timestamptz(3)
+
+  /// vacation | emergency-block — a varchar with a CHECK: DB §S2 names
+  /// the values and §6's complete enum inventory does not list them.
+  kind String @db.VarChar(30)
+  /// block-new | reschedule-existing. ADR-005 RA-005.2 reads the second
+  /// as a default pre-selection, never as automatic action: the
+  /// blast-radius confirmation of §7 is mandatory.
+  autoBehavior String @map("auto_behavior") @db.VarChar(30)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, startsAt, endsAt])
+  @@map("doctor_time_off")
+}
+
+/// Verification documents (DB §S1, UX §3.3 Documents tab).
+///
+/// The three `check_*` booleans are the reviewer's checklist, and the
+/// overall verification completes only when every required document is
+/// approved — a service rule (M9), not a constraint, because "required"
+/// depends on the document kind.
+model DoctorVerificationDocument {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId String @map("doctor_id") @db.Uuid
+
+  /// medical_license | degree_certificate | national_id | other.
+  kind      String    @db.VarChar(40)
+  fileId    String    @map("file_id") @db.Uuid
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+  /// Expiring documents are flagged in the queue (UX §3.3).
+  expiresOn DateTime? @map("expires_on") @db.Date
+
+  checkAuthentic     Boolean @default(false) @map("check_authentic")
+  checkCurrent       Boolean @default(false) @map("check_current")
+  checkIdentityMatch Boolean @default(false) @map("check_identity_match")
+
+  /// pending | approved | rejected.
+  decision     String    @default("pending") @db.VarChar(20)
+  decidedBy    String?   @map("decided_by") @db.Uuid
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz(3)
+  rejectReason String?   @map("reject_reason") @db.VarChar(300)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  doctor  Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  file    File   @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  decider User?  @relation("VerificationDecidedBy", fields: [decidedBy], references: [id], onDelete: SetNull)
+
+  @@index([doctorId])
+  @@index([decision])
+  @@index([deletedAt])
+  @@map("doctor_verification_documents")
+}

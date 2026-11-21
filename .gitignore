@@ -1,0 +1,27 @@
+node_modules/
+node_modules.corrupt-quarantine/
+dist/
+dist-artifact/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.local
+
+# Component workbench build output (F-09)
+frontend/storybook-static/
+
+
+# Local editor history and workspace
+.history/
+.vscode/
+
+# Local SDK upgrade backups
+**/node_modules.old-sdk52/
+patient-app/package-changes-backup.patch
+patient-app/package-lock.before-clean-install
+patient-app/package-lock.json.backup
+patient-app/package-lock.old-sdk52.json
+patient-app/package.json.backup
+patient-app/package.json.before-clean-install

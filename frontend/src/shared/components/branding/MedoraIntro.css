@@ -1,0 +1,663 @@
+/* ==========================================================================
+   Medora — logo entrance
+   --------------------------------------------------------------------------
+   One orchestrated moment, then the interface. The mark is never redrawn or
+   recoloured: the real outline is revealed by stroking its own centreline
+   inside a mask, so the two ribbons appear to be laid down from the crossing
+   outward and pass behind each other exactly where the artwork says they do.
+
+   Every timing below is a variable. Retune the sequence here and nowhere else,
+   then mirror the two totals in MedoraIntro.tsx (MEDORA_INTRO_TIMING).
+
+   Surface colours come from tokens.css, so the overlay follows the active
+   theme — a dark-mode boot needs nothing extra here.
+   ========================================================================== */
+
+.medora-intro {
+  /* --- surface -------------------------------------------------------- */
+  --mi-bg: var(--color-background);
+  --mi-ink: var(--color-text-primary);
+
+  /* --- size ----------------------------------------------------------- */
+  --mi-lockup-width: clamp(232px, 38vw, 468px);
+
+  /* --- easing --------------------------------------------------------- */
+  --mi-ease-appear: cubic-bezier(0.4, 0, 0.2, 1);
+  --mi-ease-draw: cubic-bezier(0.16, 0.68, 0.3, 1);
+  --mi-ease-settle: cubic-bezier(0.2, 0.62, 0.2, 1);
+  --mi-ease-word: cubic-bezier(0.2, 0.7, 0.25, 1);
+
+  /* --- timeline (ms) -------------------------------------------------- */
+  --mi-appear-dur: 300ms;
+
+  --mi-draw-delay: 120ms;
+  --mi-draw-dur: 620ms;
+
+  --mi-stem-delay: 400ms;
+  --mi-stem-dur: 340ms;
+
+  --mi-seal-delay: 760ms;
+  --mi-seal-dur: 140ms;
+
+  --mi-settle-delay: 740ms;
+  --mi-settle-dur: 320ms;
+
+  --mi-word-delay: 860ms;
+  --mi-word-dur-left: 460ms;
+  --mi-word-dur-right: 400ms;
+  --mi-word-slide-dur: 420ms;
+
+  /* The ligature circulates once the lockup is complete: two laps of the
+     figure-eight, 820ms each, then the mark returns to full ink and holds
+     still. Bounded on purpose — a brand mark that never stops animating stops
+     reading as a mark. Laps are set on the animation shorthand below; change
+     the count there and `--mi-solid-delay` moves with it. */
+  --mi-glint-delay: 880ms;
+  --mi-glint-dur: 820ms;
+  --mi-glint-dash: 150;
+  --mi-mark-dim: 0.62;
+
+  --mi-solid-delay: 2420ms;
+  --mi-solid-dur: 200ms;
+
+  /* Held back a second from the original 1420ms so the entrance is perceived
+     rather than glimpsed, and so the loop above finishes inside it. */
+  --mi-exit-delay: 2620ms;
+  --mi-exit-dur: 300ms;
+
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-splash);
+  display: grid;
+  place-items: center;
+  background: var(--mi-bg);
+  color: var(--mi-ink);
+  /* `linear`, because the curve is in the keyframes (see `mi-exit` below). */
+  animation: mi-exit var(--mi-exit-dur) linear var(--mi-exit-delay) forwards;
+}
+
+/* Skipped by tap, key, or a repeat visit: leave immediately but still fade. */
+.medora-intro[data-skipping='true'] {
+  animation: mi-exit-skip 220ms linear forwards;
+}
+
+/* The exit — the approved crossfade, reproduced by the overlay alone (NEW-22).
+
+   Until DEC-012 the app faded in under the overlay as the overlay faded out:
+   app opacity a(t) over 320ms, overlay o(t) over 300ms, both
+   cubic-bezier(0.4, 0, 0.2, 1) from the same instant. The overlay is the
+   same `--color-background` as <html>, so every frame was the page at weight
+   a(t)·(1 − o(t)) over that background. DEC-012 keeps the app opaque (a paint
+   at opacity 0 is not a Largest Contentful Paint), so the overlay now carries
+   the whole curve: its opacity is 1 − a(t)·(1 − o(t)), sampled at 41 stops
+   with linear timing — under half an 8-bit step from the exact curve. The
+   frames match the approved animation; nothing outside `.medora-intro` is
+   ever transparent. MedoraIntro.test.tsx recomputes every stop.
+
+   Skip (220ms against the old 320ms app fade) matches until the overlay
+   leaves, then drops its last 6.8 % rather than holding clicks for another
+   100ms. Under reduced motion (the OS query or the in-app toggle) the
+   global 0.01ms rule wins and the overlay cuts out — as both fades did
+   before. */
+@keyframes mi-exit {
+  0% {
+    opacity: 1;
+  }
+  2.5% {
+    opacity: 1;
+  }
+  5% {
+    opacity: 1;
+  }
+  7.5% {
+    opacity: 0.9998;
+  }
+  10% {
+    opacity: 0.9994;
+  }
+  12.5% {
+    opacity: 0.9984;
+  }
+  15% {
+    opacity: 0.9963;
+  }
+  17.5% {
+    opacity: 0.9921;
+  }
+  20% {
+    opacity: 0.9847;
+  }
+  22.5% {
+    opacity: 0.9723;
+  }
+  25% {
+    opacity: 0.9525;
+  }
+  27.5% {
+    opacity: 0.9234;
+  }
+  30% {
+    opacity: 0.8838;
+  }
+  32.5% {
+    opacity: 0.8346;
+  }
+  35% {
+    opacity: 0.7783;
+  }
+  37.5% {
+    opacity: 0.718;
+  }
+  40% {
+    opacity: 0.6566;
+  }
+  42.5% {
+    opacity: 0.5961;
+  }
+  45% {
+    opacity: 0.538;
+  }
+  47.5% {
+    opacity: 0.483;
+  }
+  50% {
+    opacity: 0.4315;
+  }
+  52.5% {
+    opacity: 0.3835;
+  }
+  55% {
+    opacity: 0.3392;
+  }
+  57.5% {
+    opacity: 0.2984;
+  }
+  60% {
+    opacity: 0.2609;
+  }
+  62.5% {
+    opacity: 0.2267;
+  }
+  65% {
+    opacity: 0.1955;
+  }
+  67.5% {
+    opacity: 0.1673;
+  }
+  70% {
+    opacity: 0.1418;
+  }
+  72.5% {
+    opacity: 0.1189;
+  }
+  75% {
+    opacity: 0.0984;
+  }
+  77.5% {
+    opacity: 0.0803;
+  }
+  80% {
+    opacity: 0.0644;
+  }
+  82.5% {
+    opacity: 0.0505;
+  }
+  85% {
+    opacity: 0.0385;
+  }
+  87.5% {
+    opacity: 0.0284;
+  }
+  90% {
+    opacity: 0.0201;
+  }
+  92.5% {
+    opacity: 0.0133;
+  }
+  95% {
+    opacity: 0.0082;
+  }
+  97.5% {
+    opacity: 0.0045;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+@keyframes mi-exit-skip {
+  0% {
+    opacity: 1;
+  }
+  2.5% {
+    opacity: 1;
+  }
+  5% {
+    opacity: 1;
+  }
+  7.5% {
+    opacity: 0.9999;
+  }
+  10% {
+    opacity: 0.9997;
+  }
+  12.5% {
+    opacity: 0.9992;
+  }
+  15% {
+    opacity: 0.9982;
+  }
+  17.5% {
+    opacity: 0.9962;
+  }
+  20% {
+    opacity: 0.9928;
+  }
+  22.5% {
+    opacity: 0.9872;
+  }
+  25% {
+    opacity: 0.9783;
+  }
+  27.5% {
+    opacity: 0.9651;
+  }
+  30% {
+    opacity: 0.9468;
+  }
+  32.5% {
+    opacity: 0.9227;
+  }
+  35% {
+    opacity: 0.8927;
+  }
+  37.5% {
+    opacity: 0.8569;
+  }
+  40% {
+    opacity: 0.8161;
+  }
+  42.5% {
+    opacity: 0.7711;
+  }
+  45% {
+    opacity: 0.7233;
+  }
+  47.5% {
+    opacity: 0.674;
+  }
+  50% {
+    opacity: 0.6245;
+  }
+  52.5% {
+    opacity: 0.5758;
+  }
+  55% {
+    opacity: 0.5286;
+  }
+  57.5% {
+    opacity: 0.4835;
+  }
+  60% {
+    opacity: 0.4409;
+  }
+  62.5% {
+    opacity: 0.4007;
+  }
+  65% {
+    opacity: 0.3631;
+  }
+  67.5% {
+    opacity: 0.3281;
+  }
+  70% {
+    opacity: 0.2955;
+  }
+  72.5% {
+    opacity: 0.2655;
+  }
+  75% {
+    opacity: 0.2377;
+  }
+  77.5% {
+    opacity: 0.2122;
+  }
+  80% {
+    opacity: 0.1889;
+  }
+  82.5% {
+    opacity: 0.1676;
+  }
+  85% {
+    opacity: 0.1482;
+  }
+  87.5% {
+    opacity: 0.1307;
+  }
+  90% {
+    opacity: 0.115;
+  }
+  92.5% {
+    opacity: 0.1009;
+  }
+  95% {
+    opacity: 0.0884;
+  }
+  97.5% {
+    opacity: 0.0775;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   The lockup
+   -------------------------------------------------------------------------- */
+
+.medora-intro__logo {
+  width: var(--mi-lockup-width);
+  height: auto;
+  overflow: visible;
+  opacity: 0;
+  transform: scale(0.94);
+  /* MEDORA_CROSSING as a fraction of the lockup viewBox — the point where the
+     two ribbons cross, so the whole lockup grows out of the place the drawing
+     starts. Logo.test.tsx holds these two numbers to that constant. */
+  transform-origin: 57.4% 60.3%;
+  animation:
+    mi-appear var(--mi-appear-dur) var(--mi-ease-appear) forwards,
+    mi-settle var(--mi-settle-dur) var(--mi-ease-settle) var(--mi-settle-delay) forwards;
+}
+
+@keyframes mi-appear {
+  to {
+    opacity: 1;
+    transform: scale(0.975);
+  }
+}
+
+@keyframes mi-settle {
+  from {
+    transform: scale(0.975);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Mark: the ribbons write themselves out of the crossing
+   -------------------------------------------------------------------------- */
+
+.medora-intro__mark {
+  opacity: 0.88;
+  animation:
+    mi-mark-lift var(--mi-settle-dur) var(--mi-ease-settle) var(--mi-settle-delay) forwards,
+    mi-mark-dim 240ms linear var(--mi-glint-delay) forwards,
+    mi-mark-solid var(--mi-solid-dur) var(--mi-ease-settle) var(--mi-solid-delay) forwards;
+}
+
+@keyframes mi-mark-lift {
+  to {
+    opacity: 1;
+  }
+}
+
+/* The ribbons drop back while the light travels them, so the travelling band
+   reads as the brightest thing on screen, then come back up to full ink as it
+   leaves. Both directions are opacity on the same element, which is why they
+   are three animations rather than one — a later one in the list wins while it
+   is running, so they hand over cleanly. */
+@keyframes mi-mark-dim {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: var(--mi-mark-dim);
+  }
+}
+
+@keyframes mi-mark-solid {
+  from {
+    opacity: var(--mi-mark-dim);
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.medora-intro__trace {
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* --mi-trace-len is set per path from MEDORA_TRACE_LENGTHS. */
+  stroke-dasharray: var(--mi-trace-len);
+  stroke-dashoffset: var(--mi-trace-len);
+}
+
+.medora-intro__trace--left,
+.medora-intro__trace--right {
+  animation: mi-trace var(--mi-draw-dur) var(--mi-ease-draw) var(--mi-draw-delay) forwards;
+}
+
+/* The ascender comes down to meet the loop instead of growing out of it. */
+.medora-intro__trace--stem {
+  animation: mi-trace var(--mi-stem-dur) var(--mi-ease-settle) var(--mi-stem-delay) forwards;
+}
+
+@keyframes mi-trace {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Safety net: once the ribbons have landed, the mask opens completely so a
+   sub-pixel sliver can never be left behind. It crossfades under a finished
+   drawing, so nothing is visible at this step. */
+.medora-intro__seal {
+  fill: #fff;
+  opacity: 0;
+  animation: mi-seal var(--mi-seal-dur) linear var(--mi-seal-delay) forwards;
+}
+
+@keyframes mi-seal {
+  to {
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   The loop: light travelling the figure-eight
+   --------------------------------------------------------------------------
+   The `d·o` ligature IS an infinity figure, so the loop is a band of full-ink
+   mark travelling the two ribbons in turn — left lobe, then right — over a
+   version of itself held at `--mi-mark-dim`. Same mechanism as the drawing
+   above (a stroked centreline inside a mask), same centrelines, same stroke
+   width: nothing about the artwork moves, rotates or scales, which is what
+   keeps it a brand mark rather than a spinner.
+
+   One lap is `--mi-glint-dur`, split in half between the two lobes by the
+   keyframes: the left band travels 0-50% and waits out the rest, the right
+   waits and travels 50-100%. Two laps, then it stops.
+   -------------------------------------------------------------------------- */
+
+.medora-intro__glint {
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Dash, then a gap longer than either centreline, so exactly one band is on
+     the ribbon at a time. Parked at +dash, which is off the near end. */
+  stroke-dasharray: var(--mi-glint-dash) 1200;
+  stroke-dashoffset: var(--mi-glint-dash);
+}
+
+.medora-intro__glint--left {
+  animation: mi-glint-left var(--mi-glint-dur) linear var(--mi-glint-delay) 2 both;
+}
+
+.medora-intro__glint--right {
+  animation: mi-glint-right var(--mi-glint-dur) linear var(--mi-glint-delay) 2 both;
+}
+
+/* -720 is past the far end of the longer centreline (680), so the band leaves
+   the ribbon completely instead of stalling on it. */
+@keyframes mi-glint-left {
+  0% {
+    stroke-dashoffset: var(--mi-glint-dash);
+  }
+
+  50%,
+  100% {
+    stroke-dashoffset: -720;
+  }
+}
+
+@keyframes mi-glint-right {
+  0%,
+  50% {
+    stroke-dashoffset: var(--mi-glint-dash);
+  }
+
+  100% {
+    stroke-dashoffset: -720;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Wordmark: revealed outward from the mark, not typed on
+   -------------------------------------------------------------------------- */
+
+.medora-intro__wipe {
+  fill: #fff;
+  transform: scaleX(0);
+  transform-box: fill-box;
+}
+
+.medora-intro__wipe--left {
+  transform-origin: 100% 50%;
+  animation: mi-wipe var(--mi-word-dur-left) var(--mi-ease-word) var(--mi-word-delay) forwards;
+}
+
+.medora-intro__wipe--right {
+  transform-origin: 0% 50%;
+  animation: mi-wipe var(--mi-word-dur-right) var(--mi-ease-word) var(--mi-word-delay) forwards;
+}
+
+@keyframes mi-wipe {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* A few units of drift so the letters read as being drawn out of the mark. */
+.medora-intro__letters {
+  opacity: 0.5;
+  animation: mi-letters var(--mi-word-slide-dur) var(--mi-ease-word) var(--mi-word-delay) forwards;
+}
+
+.medora-intro__letters--left {
+  transform: translateX(18px);
+}
+
+.medora-intro__letters--right {
+  transform: translateX(-18px);
+}
+
+@keyframes mi-letters {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced motion: the same arrival, without the travel
+   --------------------------------------------------------------------------
+   Two triggers, one result. The OS preference is the media query; the
+   in-app Accessibility toggle is `html[data-reduce-motion='on']`, which
+   globals.css already collapses every animation-duration to 0.01ms — that
+   lands the sequence on its end state but leaves the overlay sitting there
+   for the full `--mi-exit-delay`, so the delay is shortened here to match
+   the media query. `prefersReducedMotion()` in MedoraIntro.tsx reads the
+   same two signals, which is what keeps JS and CSS agreeing on the total.
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Only the delay is ours to set here. globals.css collapses every
+     animation-duration to 0.01ms !important under this same query, so no
+     duration declared in this file can apply: the overlay cuts out at 520ms
+     rather than fading — verified in the browser (FRONTEND_CHECKLIST §19). A
+     cut, not a fade, is what reduced motion asks for. */
+  .medora-intro {
+    --mi-exit-delay: 520ms;
+  }
+
+  .medora-intro__logo {
+    transform: none;
+    animation: mi-appear-static 260ms var(--mi-ease-appear) forwards;
+  }
+
+  @keyframes mi-appear-static {
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .medora-intro__mark {
+    opacity: 1;
+    animation: none;
+  }
+
+  .medora-intro__trace {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  /* Parked off the near end of the ribbon, which is the base state — the loop
+     simply never runs. */
+  .medora-intro__glint {
+    animation: none;
+  }
+
+  .medora-intro__seal {
+    opacity: 1;
+    animation: none;
+  }
+
+  .medora-intro__wipe {
+    transform: scaleX(1);
+    animation: none;
+  }
+
+  .medora-intro__letters {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
+html[data-reduce-motion='on'] .medora-intro {
+  --mi-exit-delay: 520ms;
+}
+
+/* --------------------------------------------------------------------------
+   The app underneath
+   --------------------------------------------------------------------------
+   Deliberately unstyled (DEC-012). The app paints at full opacity under the
+   overlay, which is opaque in the same `--color-background` as <html>, so the
+   overlay's own `mi-exit` fade is the reveal. The app used to wear a
+   `medora-app-reveal` wrapper starting at opacity 0; Chrome does not report a
+   paint at opacity 0 as contentful, so every first visit had no Largest
+   Contentful Paint at all. Do not start anything outside the overlay
+   transparent — MedoraIntro.test.tsx holds this file to that.
+   -------------------------------------------------------------------------- */

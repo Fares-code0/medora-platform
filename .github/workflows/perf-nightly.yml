@@ -1,0 +1,217 @@
+# Nightly performance run (RM M32.1).
+#
+# Boots the API against a throwaway PostgreSQL and Redis, fills the
+# database with the synthetic dataset (`backend/perf/dataset/generate.ts`,
+# small scale), and drives it with the k6 suite (`backend/perf/k6/medora.js`):
+# the smoke profile first (does every scenario work at all), then the load
+# profile (does it meet the latency budgets). A breached threshold makes k6
+# exit non-zero, which fails the run.
+#
+# What it never does:
+#
+# - deploy, or talk to any environment outside this runner — the API is
+#   `localhost:3200`, the database and broker are this job's service
+#   containers, and both are destroyed with the job;
+# - use real data — every account is `@perf.medora.test`, and the
+#   generator refuses a database that is not named `medora_perf*` or that
+#   already holds a user outside that domain;
+# - run on every push or pull request. `ci.yml` is the gate for those;
+#   this is a trend, on a schedule and on demand. The one exception is a
+#   pull request that changes the suite itself (`backend/perf/**` or this
+#   file): it runs once there, because GitHub only schedules and
+#   dispatches a workflow that is already on the default branch, so a new
+#   or changed suite could otherwise never be exercised before it merges.
+#
+# Numbers from a shared GitHub runner are noisier than the dedicated
+# measurements in `backend/docs/PERFORMANCE.md` and are not comparable to
+# them; the run's value is catching a regression against its own history.
+name: Performance (nightly)
+
+on:
+  schedule:
+    # 02:17 UTC daily — off the hour, so the run is not queued behind
+    # every other scheduled workflow on GitHub.
+    - cron: "17 2 * * *"
+  pull_request:
+    paths:
+      - "backend/perf/**"
+      - ".github/workflows/perf-nightly.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "k6 profile after the smoke run"
+        type: choice
+        options: [load, stress, badge-herd]
+        default: load
+      duration:
+        description: "Override the profile duration (e.g. 5m); empty = the profile default"
+        type: string
+        default: ""
+      vus:
+        description: "Override the reader VUs; empty = the profile default"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per ref. A newer push to a pull request supersedes its older
+  # run; the nightly run on the default branch is never cancelled.
+  group: perf-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  k6:
+    name: k6 · smoke + ${{ inputs.profile || 'load' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: perf
+          POSTGRES_PASSWORD: perf
+          POSTGRES_DB: medora_perf_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U perf -d medora_perf_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Every value here addresses this runner. None is a credential for
+      # anything that outlives the job.
+      DATABASE_URL: postgresql://perf:perf@localhost:5432/medora_perf_ci?schema=public
+      REDIS_URL: redis://localhost:6379
+      APP_ENV: staging
+      PORT: "3200"
+      CORS_ORIGINS: http://localhost:5173
+      APP_PUBLIC_URL: http://localhost:5173
+      COOKIE_DOMAIN: localhost
+      S3_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: medora-perf
+      S3_ACCESS_KEY_ID: perf-unused
+      S3_SECRET_ACCESS_KEY: perf-unused
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      SMTP_FROM: "Medora Perf <no-reply@perf.medora.test>"
+      JOBS_ENABLED: "false"
+      JOBS_DRIVER: inline
+      K6_IMAGE: grafana/k6:1.3.0
+      RESULTS_DIR: ${{ github.workspace }}/backend/perf/results
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      # Generated per run and masked: the JWT and encryption keys sign and
+      # encrypt nothing that survives the job, and the doctors' password is
+      # never a constant in the repository.
+      - name: Generate run secrets
+        run: |
+          for name in JWT_SECRET DATA_ENCRYPTION_KEY PERF_PASSWORD; do
+            value=$(openssl rand -base64 32)
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Apply migrations
+        run: npm run db:deploy
+
+      - name: Seed reference data
+        run: npm run db:seed:production
+
+      - name: Generate the synthetic dataset (small)
+        run: npx tsx perf/dataset/generate.ts --scale small
+
+      - name: Build
+        run: npm run build
+
+      - name: Start the API
+        run: |
+          mkdir -p "$RESULTS_DIR"
+          nohup node dist/main.js > "$RESULTS_DIR/api.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:3200/api/v1/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::The API did not become healthy within 60 s"
+          tail -50 "$RESULTS_DIR/api.log"
+          exit 1
+
+      - name: Pull k6
+        run: docker pull "$K6_IMAGE"
+
+      # `-e PERF_PASSWORD` is docker's flag (before the image), so the
+      # password reaches k6 through the environment, never its argv.
+      #
+      # Correctness: every scenario runs, nothing fails. Latency budgets are
+      # reported but not enforced on a 30-second cold run.
+      - name: k6 smoke
+        run: |
+          docker run --rm --network host -u "$(id -u)" \
+            -e PERF_PASSWORD -v "$PWD/perf/k6:/scripts:ro" -v "$RESULTS_DIR:/out" "$K6_IMAGE" \
+            run -q -e BASE_URL=http://localhost:3200/api/v1 \
+            -e PROFILE=smoke -e DOCTORS=10 -e RESULTS_DIR=/out /scripts/medora.js
+
+      # The budgets: reads p95 < 200 ms, badge p95 < 50 ms, writes p95 < 500 ms,
+      # errors < 1 %. A breach exits non-zero and fails the workflow.
+      - name: k6 ${{ inputs.profile || 'load' }}
+        run: |
+          docker run --rm --network host -u "$(id -u)" \
+            -e PERF_PASSWORD -v "$PWD/perf/k6:/scripts:ro" -v "$RESULTS_DIR:/out" "$K6_IMAGE" \
+            run -q -e BASE_URL=http://localhost:3200/api/v1 \
+            -e PROFILE="$PROFILE" -e DOCTORS=10 \
+            ${DURATION:+-e DURATION="$DURATION"} ${VUS:+-e VUS="$VUS"} \
+            -e RESULTS_DIR=/out /scripts/medora.js
+        env:
+          PROFILE: ${{ inputs.profile || 'load' }}
+          DURATION: ${{ inputs.duration }}
+          VUS: ${{ inputs.vus }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo '## Medora k6'
+            for f in "$RESULTS_DIR"/summary-*.txt; do
+              [ -f "$f" ] || continue
+              echo
+              echo '```text'
+              cat "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: backend/perf/results/
+          retention-days: 30
+          if-no-files-found: warn

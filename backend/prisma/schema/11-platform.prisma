@@ -1,0 +1,250 @@
+// Medora — platform administration and the audit ledger
+// (RM M5.10, DB §L1–L4, §M1).
+//
+// DB §14.2 phase 12 — the last tables, and the one that is not shaped
+// like the others.
+
+/// Platform configuration, one JSONB row per slice (DB §L1).
+///
+/// Eleven slices — general, organization, branding, localization,
+/// notifications, security, email, sms, backup, retention, privacy.
+/// DB §L1 recommends exactly this shape and gives the reason: "slices are
+/// read/written whole", because each form panel edits one. Eleven tables
+/// of scalar columns would make adding a field a migration; one keyed
+/// JSONB row makes it a schema change at the API, which is where the
+/// validation already lives (M24).
+model PlatformSetting {
+  key   String @id @db.VarChar(30)
+  value Json
+
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updater User? @relation("SettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("platform_settings")
+}
+
+/// A connected platform service (DB §L2).
+model PlatformIntegration {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String    @unique @db.VarChar(120)
+  description String?   @db.VarChar(300)
+  connected   Boolean   @default(false)
+  lastSyncAt  DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  /// Credentials as write-only secrets (DB §10) — encrypted at rest and
+  /// never returned by the API.
+  configEnc   Bytes?    @map("config_enc")
+
+  updatedBy String?  @map("updated_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updater User? @relation("IntegrationUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("platform_integrations")
+}
+
+/// Programmatic access (DB §L3).
+///
+/// "The full key is only shown once at creation" — so only a hash is
+/// stored, and `prefix` is the displayable fragment that lets an
+/// administrator recognise a key in a list without it being usable.
+/// Revocation is a timestamp, never a delete: a revoked key's history is
+/// what explains what it did before it was revoked.
+model ApiKey {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label   String @db.VarChar(120)
+  prefix  String @unique @db.VarChar(16)
+  keyHash String @map("key_hash")
+
+  createdBy  String?   @map("created_by") @db.Uuid
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  creator User? @relation("ApiKeyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@map("api_keys")
+}
+
+/// The backup catalogue (DB §L4).
+model Backup {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label      String     @db.VarChar(120)
+  sizeMb     Decimal    @map("size_mb") @db.Decimal(10, 1)
+  kind       BackupKind
+  createdBy  String?    @map("created_by") @db.Uuid
+  storageRef String     @map("storage_ref")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  creator User? @relation("BackupCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([createdAt(sort: Desc)])
+  @@map("backups")
+}
+
+/// The immutable platform audit ledger (DB §M1).
+///
+/// ── Why the primary key is composite ─────────────────────────────────
+///
+/// DB §M1 specifies `PK: id` **and** "partition by month". PostgreSQL
+/// cannot have both: a partitioned table's primary key must contain every
+/// partition-key column. The PK is therefore `(id, occurred_at)`.
+///
+/// `id` alone stays unique in practice — it is a `gen_random_uuid()` — and
+/// nothing references this table by foreign key, so the composite key
+/// costs nothing at the application layer. See ADR-024.
+///
+/// ── Why partitioning is not a performance nicety here ────────────────
+///
+/// ADR-007 R2: audit retention is executed by **dropping whole monthly
+/// partitions**, never by deleting rows. The app role holds no DELETE
+/// grant on this table (DB §7/§9), so partitioning is the only mechanism
+/// by which anything ever leaves it.
+///
+/// The BRIN index on `occurred_at` is the right shape for the access
+/// pattern: rows arrive in timestamp order and are queried by time range,
+/// which is exactly when a block-range index beats a B-tree at a fraction
+/// of the size — and this table is specified to hold 100k+ rows (UX §3.7).
+model AuditEvent {
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Millisecond precision, per UX §3.7.
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(3)
+
+  actorId   String? @map("actor_id") @db.Uuid
+  /// Doctor / Admin / System — the role chip, snapshotted. ADR-003 §4:
+  /// a historical fact, so a later role change cannot rewrite what this
+  /// event says the actor was at the time.
+  actorRole String? @map("actor_role") @db.VarChar(20)
+
+  category  AuditCategory
+  eventType String        @map("event_type") @db.VarChar(60)
+  severity  AuditSeverity @default(INFO)
+  summary   String        @db.VarChar(300)
+  target    String?       @db.VarChar(120)
+
+  ipAddress String? @map("ip_address") @db.Inet
+  device    String? @db.VarChar(120)
+  /// Correlation — "same session" in UX §3.7. Deliberately **not** a
+  /// foreign key: `sessions` rows are purged, and an audit event whose
+  /// session vanished must keep the id it correlated on.
+  sessionId String? @map("session_id") @db.Uuid
+
+  /// Structured detail, including the before/after diff UX §3.7 requires.
+  payload     Json?
+  incidentRef String? @map("incident_ref") @db.VarChar(40)
+
+  @@id([id, occurredAt])
+  /// DB §8 — the audit browser's filters.
+  @@index([occurredAt(sort: Desc)])
+  /// DB §8 — BRIN on `occurred_at`, the right shape for this access
+  /// pattern: rows arrive in timestamp order and are read by time range,
+  /// which is exactly when a block-range index beats a B-tree at a
+  /// fraction of its size. Complementary to the B-tree above, which
+  /// serves the ORDER BY.
+  ///
+  /// Declared here rather than written as raw SQL, and that distinction
+  /// cost a migration to learn: BRIN *is* expressible in the schema
+  /// language, so an undeclared one is drift — `migrate dev` generated a
+  /// corrective migration dropping it. ADR-023 §4's rule holds exactly:
+  /// raw SQL is for what Prisma cannot represent, and nothing else.
+  @@index([occurredAt], type: Brin, map: "audit_events_occurred_at_brin_idx")
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@index([category, severity, occurredAt(sort: Desc)])
+  @@index([sessionId])
+  @@index([ipAddress])
+  @@index([summary(ops: raw("gin_trgm_ops"))], type: Gin, map: "audit_events_summary_trgm_idx")
+  @@map("audit_events")
+}
+
+/// The transactional outbox (RM M19.1; ADR-019 §4 defined the port).
+///
+/// ## Why a table and not a queue client
+///
+/// A module that needs another module's *behaviour* publishes a message
+/// (ADR-019 §4). Publishing to a broker from inside a request is the
+/// failure the outbox pattern exists to prevent: the broker accepts the
+/// message, the transaction then rolls back, and an event now exists for
+/// a fact that never happened. Writing the row **inside the caller's
+/// transaction** makes the event and the fact atomic — either both land
+/// or neither does.
+///
+/// Draining this table into BullMQ is **M30.1**, which owns the queue
+/// registry, retries and dead-lettering. Until then M19.2's dispatcher
+/// claims rows directly; what M30 adds is the schedule and the retry
+/// policy, not the fan-out.
+///
+/// ## `dedupe_key` is UNIQUE, and that is the idempotency guarantee
+///
+/// Delivery is at-least-once by design (ADR-019 §4), so a publisher may
+/// retry. A plain UNIQUE over a nullable column is exactly the rule
+/// wanted: every message that names a key is deduplicated, and one that
+/// declines to name one never is, because Postgres permits many NULLs.
+model DomainEvent {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  topic   String @db.VarChar(120)
+  /// Scalar identifiers only — never clinical content (MG §11.6).
+  payload Json
+
+  dedupeKey     String? @unique @map("dedupe_key") @db.VarChar(200)
+  correlationId String? @map("correlation_id") @db.VarChar(64)
+
+  /// pending | delivered | failed — closed by CHECK, like
+  /// `notification_deliveries.status` (ADR-010 group 7).
+  status      String    @default("pending") @db.VarChar(20)
+  attempts    Int       @default(0)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(3)
+  lastError   String?   @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  /// The dispatcher's access pattern: oldest pending first, claimed with
+  /// FOR UPDATE SKIP LOCKED so two instances never build the same
+  /// notification twice.
+  @@index([status, createdAt])
+  @@map("domain_events")
+}
+
+/// `Idempotency-Key` replays (ADR-014, API §0.5, MG §8.4).
+///
+/// One row per `(user_id, key)`: the first request with a key executes
+/// and its response is stored here; a replay within 24 h returns the
+/// stored response without re-executing. Scoped per user, so one
+/// account's key can never return another account's result.
+///
+/// Durable rather than Redis-held, which is the open store choice ADR-014
+/// flagged for M31: "a replay must survive a Redis restart if it is to be
+/// trusted; a durable store is the safer choice for prescription send".
+///
+/// `response_body` is the stored result of a clinical write — the same
+/// PHI the write's own tables hold, kept for the 24 h retry window and
+/// then purged by `idempotency.expiry-sweep`. Deleting the account
+/// cascades.
+model IdempotencyRecord {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  key    String @db.VarChar(128)
+
+  /// `METHOD /path` as sent, ids included: a key reused on another
+  /// prescription's `/sign` is a different request.
+  endpoint    String @db.VarChar(300)
+  /// SHA-256 hex of the canonical request body.
+  fingerprint String @db.Char(64)
+
+  /// in_progress | completed — closed by CHECK.
+  status       String @default("in_progress") @db.VarChar(20)
+  responseBody Json?  @map("response_body")
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  /// The sweep's access pattern: everything past its window.
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}

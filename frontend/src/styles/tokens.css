@@ -1,0 +1,535 @@
+/**
+ * Medora Design Tokens — semantic layer.
+ * Source of truth: DESIGN_SYSTEM.md §12.1, revalued by ADR-0001 (Wave 1a);
+ * colour and elevation re-based by ADR-0005 (the EMR visual language).
+ * Application code never uses raw hex values — only these variables,
+ * consumed through the Tailwind theme (tailwind.config.ts).
+ *
+ * ── Colour: one approved palette, declared once ──────────────────────
+ * Every theme colour resolves to one of the `--palette-*` primitives below,
+ * or to a `color-mix()` of two of them where a role needs a step the
+ * primitives do not provide. Nothing else enters the theme. The one
+ * exception is the four clinical status tones — see "Color: status".
+ * palette.test.ts enforces this.
+ *
+ * ADR-0005 replaced ADR-0001's six slate-blue values with the EMR palette:
+ * a clinical blue, a cool neutral ladder for the light application, and a
+ * charcoal ink ladder for the sidebar and the dark theme. The values are the
+ * design brief's, except where the brief's value failed WCAG AA for the role
+ * it would paint — those are named where they are declared.
+ *
+ * The primitives are not for application code: a component that reaches
+ * for `--palette-blue-600` has opted out of theming. The exception is a
+ * surface that must hold one look in BOTH themes (the auth brand panel),
+ * where a non-flipping value is the point.
+ *
+ * ── Naming: a token says what it is FOR ─────────────────────────────
+ * The t-shirt ladders are gone (Wave 1b). `--radius-lg` implied a size in a
+ * range of six; `--radius-surface` names the one decision there actually
+ * was. Reaching for elevation now means naming the thing that floats.
+ *
+ *   radius   control (4px) · surface (8px) · pill
+ *   shadow   card · popover · modal · focus
+ *
+ * Elevation is carried by a 1px BORDER first. A card adds the faintest
+ * possible lift (`--shadow-card`, ADR-0005) so white cards separate from the
+ * light-gray page the way the EMR reference does; it is a hairline under a
+ * border, never a substitute for one. Only a transient overlay and a modal
+ * actually float. If you find yourself adding a size to either scale, the
+ * question to answer first is which role it serves; there is usually one
+ * already.
+ *
+ * Contrast: every text/background pair below is verified against WCAG
+ * 2.1 AA (4.5:1 body, 3:1 large text and control boundaries) in BOTH
+ * themes. --color-border-strong is the boundary of every input, checkbox
+ * and secondary button, so it is held at >=3:1 against surface, page
+ * background AND sunken. Do not lighten it.
+ */
+
+:root {
+  /* Tells the browser which palette its OWN chrome should use — scrollbars,
+     form-control internals, the default canvas. Without it every native
+     scrollbar in the app (page, sidebar, tables, drawers, modals) stayed the
+     light default under the dark theme: a white bar beside a black page.
+     The dark theme block below flips it, so it tracks the theme with no
+     per-component rule. */
+  color-scheme: light;
+
+  /* ── Palette: the approved colours (ADR-0005) ── */
+  /* Declared here only — `.dark` re-points the semantic roles, never these.
+
+     Blue. 600 is the brand blue and the FILL of a primary control. It is
+     4.66:1 under white text but only 4.25:1 on the page, so it cannot be
+     text there; 700 (the brief's hover value) is the interactive TEXT tone
+     on every light ground. 400 is the blue a dark ground can read. 200 and
+     100 are the active and selected tints. */
+  --palette-blue-700: #1268ad;
+  --palette-blue-600: #1677c8;
+  --palette-blue-400: #5aa6ea;
+  --palette-blue-200: #d8eafb;
+  --palette-blue-100: #e8f2fc;
+
+  /* Neutral — the light application, light to dark. 600 is the brief's
+     secondary text after the AA correction (#7b8794 measured 3.34:1 on the
+     page). 400 is the control boundary: the brief had no value for it, and
+     it is the lightest gray that holds 3:1 on the page. The brief's muted
+     (#9aa5b1, 2.50:1) and disabled (#b7c0ca, 1.84:1) text values cannot be
+     text roles and are not adopted; see ADR-0005. */
+  --palette-white: #ffffff;
+  --palette-gray-50: #f5f7fa;
+  --palette-gray-100: #f1f5f8;
+  --palette-gray-200: #e5eaf0;
+  --palette-gray-300: #a5afba;
+  --palette-gray-400: #7e8b99;
+  --palette-gray-600: #5f6b78;
+  --palette-gray-900: #202832;
+
+  /* Ink — the charcoal sidebar, and the grounds of the dark theme. */
+  --palette-ink-950: #0b0d0f;
+  --palette-ink-900: #111519;
+  --palette-ink-800: #1b252e;
+  --palette-ink-700: #25303b;
+
+  /* ── Color: brand ─────────────────────────────── */
+  /* Two blues, split by what they paint (ADR-0005):
+
+     --color-primary is the interactive TONE — links, active nav labels,
+     secondary-button text, tab indicators, checked controls. It is read as
+     text, so it is 700: 5.82:1 on the card, 5.31:1 on the page, 5.14:1 on
+     its own -subtle selection. 600 measures 4.25 and 4.11 on those last two.
+
+     --color-primary-fill is the brand blue as a FILL — the primary button
+     and every checked checkbox, radio and switch. 600 is 4.66:1 under white
+     and 4.66:1 against the card; its hover steps to 700. --color-primary-
+     pressed is the primary button's pressed fill (its only consumer).
+     --color-primary-fill-text is the ink ON that fill — the button label,
+     the checkbox tick and the switch knob — kept apart from
+     --color-text-inverse so the fill can be re-themed light without
+     breaking every other filled tone (fill 4.66, hover 5.82, pressed 7.81). */
+  --color-primary: var(--palette-blue-700);
+  --color-primary-hover: color-mix(in srgb, var(--palette-blue-700) 70%, var(--palette-gray-900));
+  --color-primary-pressed: color-mix(in srgb, var(--palette-blue-700) 45%, var(--palette-gray-900));
+  --color-primary-subtle: var(--palette-blue-100);
+  --color-primary-fill: var(--palette-blue-600);
+  --color-primary-fill-hover: var(--palette-blue-700);
+  --color-primary-fill-text: var(--palette-white);
+  /* COPIES, not roles. Retained through Wave 1a only — scheduled for
+     removal, its call sites moving to primary or the chart ramp. It has no
+     hue of its own; it IS primary, so it is a reference rather than a value
+     and cannot drift. Declared here only: the reference resolves against
+     `.dark`'s primary on the same element. The Theme Playground lists these
+     as copies (COPIED_TOKENS) instead of editor rows. */
+  --color-secondary: var(--color-primary);
+  --color-secondary-hover: var(--color-primary-hover);
+  --color-secondary-subtle: var(--color-primary-subtle);
+  /* AI layer only. Carries PROVENANCE, not decoration: it marks
+     AI-generated content apart from clinician-entered content. It takes the
+     ink end of the neutral ladder (900 here, 50 in dark) — a step apart from
+     the blue, so an AI button still reads apart from a primary one. Colour
+     was never the only carrier (WCAG 1.4.1): AI surfaces are told apart by
+     their left rule and the visible "AI-generated" label. */
+  --color-accent: var(--palette-gray-900);
+  --color-accent-subtle: var(--palette-gray-200);
+  /* The AI badge — its own fill and ink, so the badge can be re-themed
+     without moving the accent that marks every other AI surface (accent-
+     subtle also tints AI panels and chat). Defaults are the values the badge
+     already painted: 12.30:1. */
+  --color-ai-badge: var(--palette-gray-200);
+  --color-ai-badge-text: var(--palette-gray-900);
+  /* The navbar's Medora AI button — its own roles: a white tile with a black
+     edge in BOTH themes (not redeclared in `.dark`). Its boundary is the
+     edge on a light navbar (19.47:1 on white) and the fill on a dark one
+     (15.55:1 on ink-800). */
+  --color-ai-launcher: var(--palette-white);
+  --color-ai-launcher-border: var(--palette-ink-950);
+
+  /* ── Color: status ────────────────────────────── */
+  /* The one deliberate exception to the palette. A critical alert, an
+     abnormal result and a successful save carry clinical meaning: these are
+     the clinical red/amber/green/blue, kept at the values they already held
+     rather than retuned to the new ground, and kept identical to the patient
+     app's (patient-parity.test.ts).
+
+     Each base is dark enough to serve as body text (>=4.5:1 on surface AND
+     on its own -subtle background) — on the white card: success 6.51,
+     warning 6.16, error 5.91, info 6.62; on a sunken row 5.51–6.17. */
+  --color-success: #136c35;
+  --color-success-subtle: #ecf6f0;
+  --color-warning: #8a5600;
+  --color-warning-subtle: #fdf4e3;
+  --color-error: #c0271f;
+  --color-error-hover: #9d1f18;
+  --color-error-subtle: #fcefee;
+  --color-info: #0c6291;
+  --color-info-subtle: #ecf4fa;
+
+  /* ── Color: surfaces & text ───────────────────── */
+  /* White cards on a light-gray page. Depth comes from the ground falling
+     away (gray-100) under a white card, with gray-50 for what is recessed
+     inside one: table headers, hovered rows, chips. */
+  --color-background: var(--palette-gray-100);
+  --color-surface: var(--palette-white);
+  --color-surface-sunken: var(--palette-gray-50);
+  --color-surface-overlay: var(--palette-white);
+  /* Load-bearing: this line IS the edge of every card and panel. 1.21:1 on
+     the card — a separator, held well below 3:1 on purpose so it is never
+     mistaken for a control boundary. */
+  --color-border: var(--palette-gray-200);
+  /* Boundary of every interactive control. WCAG 1.4.11 wants 3:1: surface
+     3.48, sunken 3.24, page 3.17. */
+  --color-border-strong: var(--palette-gray-400);
+  /* 14.88:1 on the card, 13.58:1 on the page. */
+  --color-text-primary: var(--palette-gray-900);
+  /* Secondary and tertiary share 600. The two roles keep their separate
+     names so a later palette can split them again without touching a call
+     site; size and weight carry the difference today. 5.44:1 on the card,
+     5.07:1 sunken, 4.96:1 on the page. Tertiary is for metadata only. */
+  --color-text-secondary: var(--palette-gray-600);
+  --color-text-tertiary: var(--palette-gray-600);
+  /* The hint inside an empty field, and the ONLY role between tertiary and
+     disabled. A placeholder in a field you can type into is content, so it
+     wants 4.5:1 (1.4.3 exempts only INACTIVE components) — and it must stay
+     quieter than tertiary, or an empty field stops looking empty. Mixed
+     toward 400 until both hold: surface 5.05, sunken 4.71, page 4.61. Do
+     not lighten it. */
+  --color-text-placeholder: color-mix(in srgb, var(--palette-gray-600) 85%, var(--palette-gray-400));
+  /* Inactive controls: 3.48:1 on the card — past the 3:1 non-text bar and
+     deliberately short of 4.5:1, so it is never quietly a text role. */
+  --color-text-disabled: var(--palette-gray-400);
+  /* Foreground of a FILLED tone (primary/destructive/AI button, count badge,
+     checkbox tick). NOT a fixed light — see the `.dark` override, where the
+     filled tones themselves are light and this inverts with them. Against
+     the fills here: primary-fill 4.66, primary 5.82, AI 14.88, and the
+     status fills 5.91–6.62. Anything that wants a permanently light surface
+     (a knob, a mark on a fixed dark photo) wants --color-control-knob or its
+     own value. */
+  --color-text-inverse: var(--palette-white);
+  /* The movable knob of a control (Switch). Light in BOTH themes — a knob is
+     a physical affordance, not a foreground-on-fill, and it has to read
+     against four different tracks (primary, border-strong, border) rather
+     than against one. Deliberately not an alias of --color-surface: that
+     would make it follow the theme and vanish on the dark disabled track. */
+  --color-control-knob: var(--palette-white);
+  /* The brand blue: 4.66:1 against the card the ring is offset over, 4.25:1
+     against the page. */
+  --color-focus-ring: var(--palette-blue-600);
+  --color-scrim: color-mix(in srgb, var(--palette-ink-950) 55%, transparent);
+  /* Scrollbars, app-wide (globals.css). The thumb is held at >=3:1 against
+     every ground a scroll container is painted on — surface, sunken,
+     background and overlay — so it stays findable (contrast.test.ts). The
+     track is transparent: it shows the container's own surface, which is
+     already themed, rather than a fixed light gutter. */
+  --color-scrollbar-thumb: var(--color-border-strong);
+  --color-scrollbar-track: transparent;
+
+  /* ── Color: sidebar ───────────────────────────── */
+  /* The application sidebar is charcoal in BOTH themes (ADR-0005) — the EMR
+     reference's dark rail beside a light workspace. These roles are not
+     redeclared in `.dark`, which is what holds them still.
+
+       sidebar             950  the rail
+       sidebar-raised      900  brand header / user footer band
+       sidebar-hover       800  a hovered item; also the rail's own dividers
+       sidebar-active      blue-600, with white ink: the current item
+
+     Contrast: text (gray-50) 18.14:1 on the rail and 14.49:1 hovered; muted
+     text (gray-300) 8.75:1 and 6.99:1; the active label 4.66:1 on its blue;
+     the active pill itself 4.18:1 against the rail (1.4.11). */
+  --color-sidebar: var(--palette-ink-950);
+  --color-sidebar-raised: var(--palette-ink-900);
+  --color-sidebar-hover: var(--palette-ink-800);
+  --color-sidebar-border: var(--palette-ink-800);
+  --color-sidebar-text: var(--palette-gray-50);
+  --color-sidebar-text-muted: var(--palette-gray-300);
+  --color-sidebar-active: var(--palette-blue-600);
+  --color-sidebar-active-text: var(--palette-white);
+
+  /* ── Color: components ────────────────────────── */
+  /* The tab bar's own roles, so a tab can be re-themed without moving body
+     text or links. Defaults are what tabs already painted: the active label
+     in the primary ink (14.88:1 on the card), the line indicator in the
+     interactive blue (5.82:1 against the card, past 1.4.11's 3:1). */
+  --color-tab-active-text: var(--palette-gray-900);
+  --color-tab-indicator: var(--palette-blue-700);
+
+  /* ── Chart ramp ───────────────────────────────── */
+  /*
+   * A CATEGORICAL ramp, deliberately outside the semantic budget (ADR-0001
+   * §9). Charts used to auto-assign from the semantic tones, so the fourth
+   * series in a specialty mix came out warning-amber and the second
+   * success-green — clinical alarm colours applied for no clinical reason.
+   *
+   * The ramp alternates the brand blue with the neutral ladder, which keeps
+   * it clear of every alarm hue and lets adjacent series differ in hue AND
+   * luminance: blue 600, ink 900, blue 400, gray 300, then a pale blue 200.
+   * A chart that needs more than five series needs a legend and labels, not
+   * a sixth colour.
+   *
+   * `-edge` is the darker outline every chart type draws. It is
+   * load-bearing for slots 3–5, whose fills are lighter — the edge is what
+   * holds every mark to >=3:1 against the card (4.66–14.88 here). Never
+   * render a chart mark without its edge.
+   */
+  --color-chart-1: var(--palette-blue-600);
+  --color-chart-1-edge: var(--palette-blue-700);
+  --color-chart-2: var(--palette-gray-900);
+  --color-chart-2-edge: var(--palette-gray-900);
+  --color-chart-3: var(--palette-blue-400);
+  --color-chart-3-edge: var(--palette-blue-700);
+  --color-chart-4: var(--palette-gray-300);
+  --color-chart-4-edge: var(--palette-gray-600);
+  --color-chart-5: var(--palette-blue-200);
+  --color-chart-5-edge: var(--palette-blue-600);
+
+  /* ── Typography ───────────────────────────────── */
+  --font-sans: 'Open Sans Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  /* Enterprise-dense type scale — tightened from the DS §3.2 baseline for
+     data-heavy clinical screens (13px body, compact headings). Phase 17
+     stepped the heading tier down one more notch (h1 24px, h2 18px, h3 16px,
+     h4 14px) so titles read as enterprise chrome, not marketing headlines.
+     Body copy (13px), small text (12px), and caption (11px) are already at
+     the accessibility floor and do not step down further. On a coarse
+     pointer caption steps back up to DESIGN_SYSTEM §3.2's 12px (DEC-017,
+     the override after `.dark`): a phone held at arm's length is where 11px
+     stops being legible meta text. */
+  --text-display: 2.25rem;
+  --leading-display: 2.75rem;
+  --text-h1: 1.5rem;
+  --leading-h1: 2rem;
+  --text-h2: 1.125rem;
+  --leading-h2: 1.625rem;
+  --text-h3: 1rem;
+  --leading-h3: 1.4375rem;
+  --text-h4: 0.875rem;
+  --leading-h4: 1.3125rem;
+  --text-h5: 0.8125rem;
+  --leading-h5: 1.1875rem;
+  --text-h6: 0.75rem;
+  --leading-h6: 1.0625rem;
+  --text-body: 0.8125rem;
+  --leading-body: 1.25rem;
+  --text-body-sm: 0.75rem;
+  --leading-body-sm: 1.125rem;
+  --text-caption: 0.6875rem;
+  --leading-caption: 1rem;
+  /* Large numerals — KPI values. 20px, not h1's 24px, which is too loud in a
+     dense clinical layout. Adopted by StatisticCard in Wave 2d-a, retiring
+     the text-[20px] one-off.
+     NOT the PieChart centre: that numeral is 22px and deliberately stays a
+     declared exception in check-retired-tokens.mjs, because a donut label is
+     sized against the ring it sits inside rather than against a card. An
+     earlier version of this comment claimed it, which is how one token came
+     to describe two decisions. */
+  --text-metric: 1.25rem;
+  --leading-metric: 1.625rem;
+  /* Dense-data floor — chart axis ticks and heatmap labels, the only
+     things allowed below caption. Retires the text-[10px] one-offs.
+     Nothing a clinician must READ may use this. */
+  --text-micro: 0.625rem;
+  --leading-micro: 0.875rem;
+  --font-regular: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* ── Spacing (4px grid) ───────────────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* ── Radius ───────────────────────────────────── */
+  /* Three decisions, named for what they are. The old xs/sm/md/lg/xl/2xl
+     ladder implied six sizes where there were three, so the name never told
+     you which to reach for; these do. */
+  --radius-control: 4px;
+  --radius-surface: 8px;
+  --radius-pill: 9999px;
+
+  /* ── Elevation ────────────────────────────────── */
+  /* A surface takes a 1px border first (see the token header). `card` is the
+     one lift a surface may add — a hairline shadow under that border, so a
+     white card separates from the gray page (ADR-0005). The other two are
+     for the things that genuinely float. Cast in ink-950, so a shadow is the
+     palette's own darkest value rather than a foreign black. */
+  --shadow-card: 0 1px 2px color-mix(in srgb, var(--palette-ink-950) 6%, transparent);
+  --shadow-popover:
+    0 2px 6px color-mix(in srgb, var(--palette-ink-950) 12%, transparent),
+    0 1px 2px color-mix(in srgb, var(--palette-ink-950) 8%, transparent);
+  --shadow-modal:
+    0 8px 28px color-mix(in srgb, var(--palette-ink-950) 18%, transparent),
+    0 2px 8px color-mix(in srgb, var(--palette-ink-950) 10%, transparent);
+  /* Not elevation — the keyboard focus indicator. Deleting it would break
+     keyboard accessibility; it is not counted among the lifts above. */
+  --shadow-focus: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-focus-ring);
+
+  /* ── Motion ───────────────────────────────────── */
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+  --duration-moderate: 200ms;
+  --duration-slow: 250ms;
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-entrance: 300ms;
+  /* Per-item entrance delay — see styles/motion.ts for the rationale. */
+  --motion-stagger: 50ms;
+  /* Interaction scale — styles/motion.ts says which surface takes which.
+     A larger surface travels further, so it takes longer: a sidebar group or
+     the floating customize panel 700ms, a drawer 600ms, a menu 350ms, a
+     popover 250ms. All share the emphasized curve, which leaves fast and
+     settles over a long tail, so even 700ms reads as responsive. */
+  --duration-popover: 250ms;
+  --duration-menu: 350ms;
+  --duration-panel: 600ms;
+  --duration-expand: 700ms;
+  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Z-index ──────────────────────────────────── */
+  --z-sticky: 100;
+  --z-dropdown: 1000;
+  --z-drawer: 1100;
+  --z-modal: 1200;
+  --z-toast: 1300;
+  /* The brand entrance covers everything, including a toast raised by a
+     request that resolved while it was still playing. Nothing else may sit
+     here: it is the top of the stack by definition. */
+  --z-splash: 1400;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /*
+   * ── Brand: blue 400 is the interactive tone here ──────────────────
+   * 600 and 700 are too dark to be text on a charcoal card. And the filled
+   * tones in this theme have to be LIGHT, because the status fills (error,
+   * success…) must be light to read as text on a dark card, and the primary
+   * button stays in that family: its label (--color-primary-fill-text) is
+   * the same ink-900 as --color-text-inverse. So primary and its
+   * fill are both 400 (5.98:1 as text on the card; 7.05:1 for the ink-900
+   * label on it), hover up toward 100, and select on a deep blue tint
+   * (4.73:1 for 400 on it).
+   */
+  --color-primary: var(--palette-blue-400);
+  --color-primary-hover: color-mix(in srgb, var(--palette-blue-400) 50%, var(--palette-blue-100));
+  --color-primary-pressed: color-mix(in srgb, var(--palette-blue-400) 70%, var(--palette-blue-600));
+  --color-primary-subtle: color-mix(in srgb, var(--palette-blue-600) 22%, var(--palette-ink-800));
+  --color-primary-fill: var(--palette-blue-400);
+  --color-primary-fill-hover: color-mix(in srgb, var(--palette-blue-400) 50%, var(--palette-blue-100));
+  /* Ink on the light fill: 7.05:1 on it, 10.87 hovered, 5.96 pressed. It is
+     also the dark switch knob on the checked track — a white knob measured
+     2.60:1 on blue 400, short of 1.4.11's 3:1. */
+  --color-primary-fill-text: var(--palette-ink-900);
+  --color-accent: var(--palette-gray-50);
+  --color-accent-subtle: var(--palette-ink-700);
+  --color-ai-badge: var(--palette-ink-700);
+  --color-ai-badge-text: var(--palette-gray-50);
+  --color-tab-active-text: var(--palette-gray-50);
+  --color-tab-indicator: var(--palette-blue-400);
+  --color-success: #6fc48d;
+  --color-success-subtle: rgba(111, 196, 141, 0.16);
+  --color-warning: #e0b055;
+  --color-warning-subtle: rgba(224, 176, 85, 0.16);
+  --color-error: #f0908a;
+  --color-error-hover: #f5aca7;
+  --color-error-subtle: rgba(240, 144, 138, 0.16);
+  --color-info: #6fb6dd;
+  --color-info-subtle: rgba(111, 182, 221, 0.16);
+  /*
+   * ── Surfaces: the ink ladder ───────────────────────────────────────
+   *
+   *   background   900          the page
+   *   sunken       900/800 mix  recessed inside a card: table headers, chips
+   *   surface      800          cards and panels
+   *   overlay      700          things that float: menus, dropdowns, modals
+   *
+   * Every step is lighter than the last, so no two surfaces read as one.
+   * The sidebar (950, not redeclared here) sits below the page. Roles
+   * painted on the overlay were checked there too: primary text 12.51,
+   * secondary 6.03, control boundary and scrollbar 3.48.
+   */
+  --color-background: var(--palette-ink-900);
+  --color-surface: var(--palette-ink-800);
+  --color-surface-sunken: color-mix(in srgb, var(--palette-ink-900) 50%, var(--palette-ink-800));
+  --color-surface-overlay: var(--palette-ink-700);
+  /* Load-bearing: with elevation on borders, this line IS the edge of every
+     card. 1.51:1 against surface — a separator, not a control boundary. */
+  --color-border: color-mix(in srgb, var(--palette-ink-700) 70%, var(--palette-gray-600));
+  /* Boundary of every interactive control, so WCAG 1.4.11's 3:1 is held
+     against all three grounds AND the overlay a modal's fields sit on:
+     surface 4.03, sunken 4.41, background 4.75, overlay 3.48. */
+  --color-border-strong: color-mix(in srgb, var(--palette-gray-300) 35%, var(--palette-gray-600));
+  /* 14.49:1 on the card, 17.09:1 on the page. */
+  --color-text-primary: var(--palette-gray-50);
+  /* 300 for both, as in light (where 600 does the job). 6.99:1 on the card,
+     8.24:1 on the page. */
+  --color-text-secondary: var(--palette-gray-300);
+  --color-text-tertiary: var(--palette-gray-300);
+  /* The placeholder role, dark. Same rule as light: quieter than tertiary,
+     still past 4.5:1 — surface 5.50, sunken 6.01, background 6.48. Do not
+     darken it. */
+  --color-text-placeholder: color-mix(in srgb, var(--palette-gray-300) 70%, var(--palette-gray-600));
+  /* 4.03:1 on the card: past 3:1, short of 4.5:1. Shares border-strong's
+     value. */
+  --color-text-disabled: color-mix(in srgb, var(--palette-gray-300) 35%, var(--palette-gray-600));
+  /*
+   * The foreground of a FILLED tone — a primary button, a destructive button,
+   * an AI button, a count badge, a checked checkbox's tick, a selected chip.
+   * It is "inverse" of the theme's text, and the dark theme inverts it too:
+   * every filled tone above is LIGHT here, so a light ink would land
+   * light-on-light. Held at the page's own ink-900. Against the filled
+   * tones: primary 7.05, AI 17.09, error 7.91, success 8.69, warning 9.18.
+   */
+  --color-text-inverse: var(--palette-ink-900);
+  --color-focus-ring: var(--palette-blue-400);
+  --color-scrim: color-mix(in srgb, var(--palette-ink-950) 72%, transparent);
+  /* --color-scrollbar-thumb is a copy of border-strong (declared in :root):
+     it clears 3:1 on the overlay (3.48), the ground a light thumb finds
+     hardest. */
+
+  /*
+   * The ramp inverts: light marks on a dark surface. Edges move toward
+   * whichever end gains contrast against the card — slot 1's edge steps up
+   * to blue 200; the darker fills (3–5) take a light edge. Every edge is
+   * >=5.98:1 against the card.
+   */
+  --color-chart-1: var(--palette-blue-400);
+  --color-chart-1-edge: var(--palette-blue-200);
+  --color-chart-2: var(--palette-gray-50);
+  --color-chart-2-edge: var(--palette-gray-300);
+  --color-chart-3: var(--palette-blue-600);
+  --color-chart-3-edge: var(--palette-blue-400);
+  --color-chart-4: var(--palette-gray-600);
+  --color-chart-4-edge: var(--palette-gray-300);
+  --color-chart-5: color-mix(in srgb, var(--palette-blue-600) 40%, var(--palette-ink-800));
+  --color-chart-5-edge: var(--palette-blue-400);
+
+  /* Dark mode reached the border-first conclusion first (DS §6.3). Overlays
+     keep a shadow behind the border because a dark surface on a dark page
+     needs the separation. The shadow stays neutral black: it has to read
+     below the page, and nothing in the palette is darker. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-popover: 0 0 0 1px var(--color-border), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 0 0 1px var(--color-border), 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* DEC-017 — caption on touch. The dense scale keeps caption at 11px for a
+   mouse; a finger-driven screen gets the design system's 12px. Same query as
+   DEC-008's touch targets (`touch:` in tailwind.config.ts), so a device gets
+   both or neither. Only the size moves: `--leading-caption` stays 1rem, so a
+   12px caption does not change any row's height. */
+@media (pointer: coarse) {
+  :root {
+    --text-caption: 0.75rem;
+  }
+}

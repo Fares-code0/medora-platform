@@ -1,0 +1,398 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { ReactNode } from 'react';
+
+import { useQueryClient } from '@tanstack/react-query';
+
+import { apiClient } from '@/api/client';
+import { sessionPolicy } from '@/configs/session';
+import { authService } from '@/features/auth/service';
+import { clearUserPreferences } from '@/services/preferences';
+import { AuthError } from '@/types/auth';
+import type {
+  AuthSession,
+  AuthStatus,
+  Permission,
+  PendingSignIn,
+  RegisterInput,
+  RegisterResult,
+  SessionUser,
+} from '@/types/auth';
+
+/**
+ * Auth provider — session lifecycle over the DP-04 seam.
+ *
+ * The original login/logout/lock/unlock signatures are preserved so
+ * guards, `useCan` and `RootRedirect` are untouched; `login` additionally
+ * *returns* the signed-in user, so `LoginPage` can resolve its
+ * destination from the real session instead of looking the email up in
+ * the mock's seed list.
+ *
+ * ## What lives here, and what does not
+ *
+ * Here: session state, the pending-sign-in handoff between login and the
+ * OTP/verification screens, the idle auto-lock (A-11), and the
+ * registration of `ApiClient`'s 401 refresh handler.
+ *
+ * Not here: any knowledge of *where* a session comes from. This file
+ * imports `@/features/auth/service` — the seam — and nothing from
+ * `mock/`. Swapping backends is `VITE_ENABLE_MOCKS`, not an edit.
+ *
+ * ## No client-only sessions
+ *
+ * Every session this provider holds was issued by the active auth backend
+ * — the live API, or the mock adapter when `VITE_ENABLE_MOCKS` is on. The
+ * development demo-doctor button (`features/auth/dev/`) used
+ * to mint a session here with no server behind it and an empty bearer
+ * token, so against the live API every request it made was a 401. It now
+ * signs in through `login` with the seeded demo account instead
+ * (`backend/docs/LOCAL_DEMO_ACCOUNTS.md`), and the client-only path is gone.
+ */
+
+interface AuthContextValue {
+  readonly status: AuthStatus;
+  readonly user: SessionUser | null;
+  /**
+   * The last session ended without the user asking: a refresh the server
+   * refused (expired, revoked from another device, a suspended account).
+   * The sign-in page says so instead of appearing out of nowhere. Cleared by
+   * the next sign-in and by an explicit logout.
+   */
+  readonly sessionEnded: boolean;
+  readonly login: (
+    email: string,
+    password: string,
+    opts?: { rememberMe?: boolean },
+  ) => Promise<SessionUser | null>;
+  readonly logout: () => Promise<void>;
+  readonly lock: () => void;
+  readonly unlock: (password: string) => Promise<void>;
+  readonly register: (input: RegisterInput) => Promise<RegisterResult>;
+  readonly forgotPassword: (email: string) => Promise<void>;
+  readonly resetPassword: (token: string, password: string) => Promise<void>;
+  readonly verifyEmail: (token: string) => Promise<void>;
+  readonly verifyOtp: (code: string) => Promise<void>;
+  /** Completes the pending two-factor sign-in with a recovery code (R1). */
+  readonly redeemRecoveryCode: (recoveryCode: string) => Promise<void>;
+  readonly resendOtp: () => Promise<void>;
+  readonly resendVerification: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const;
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<AuthStatus>('booting');
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [sessionEnded, setSessionEnded] = useState(false);
+  const pendingRef = useRef<PendingSignIn | null>(null);
+  /** Remember Me for the live session, so a refresh can re-persist it. */
+  const rememberRef = useRef(false);
+  /**
+   * Who this tab's session belongs to, for the 401 handler below — which is
+   * registered once and so cannot read `user` from its closure.
+   */
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null;
+  }, [user]);
+  /**
+   * The query cache is PHI held in memory, so it ends with the session that
+   * fetched it (FRONTEND_ARCHITECTURE.md §6.3, §12.5) — on logout, on a
+   * refresh the server refuses (which is also how an ended employment
+   * reaches this tab, OD-12), and on lock, so a walked-away workstation
+   * holds nothing behind the lock screen. Without it a second account
+   * signing in on the same tab was served the first one's cached lists.
+   */
+  const queryClient = useQueryClient();
+
+  // ── Session lifecycle helpers ───────────────────────────────────────────
+  const finalize = useCallback(
+    (session: AuthSession, rememberMe: boolean): SessionUser => {
+      // A sign-in starts from an empty cache, whoever held the tab before: the
+      // cached lists are another session's patient data, never this one's.
+      queryClient.clear();
+      authService.persist(session, rememberMe);
+      pendingRef.current = null;
+      rememberRef.current = rememberMe;
+      setSessionEnded(false);
+      setUser(session.user);
+      setStatus('authenticated');
+      return session.user;
+    },
+    [queryClient],
+  );
+
+  const endSession = useCallback(() => {
+    authService.clear();
+    queryClient.clear();
+    pendingRef.current = null;
+    setUser(null);
+    setStatus('unauthenticated');
+  }, [queryClient]);
+
+  // Boot: restore whatever the active backend can restore — the persisted
+  // snapshot on the mock path, a silent `POST /auth/refresh` against the
+  // httpOnly cookie on the HTTP one. Either way an absent or expired
+  // session lands on login rather than hanging on the splash.
+  useEffect(() => {
+    let cancelled = false;
+
+    void authService
+      .restore()
+      .then((session) => {
+        if (cancelled) return;
+        if (session) {
+          setUser(session.user);
+          setStatus('authenticated');
+        } else {
+          setStatus('unauthenticated');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('unauthenticated');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── The 401 → refresh → replay handler (F-07, backend M6.3) ─────────────
+  // Registered once, for the lifetime of the provider. `ApiClient` owns the
+  // single-flight guarantee; this only supplies the exchange and decides
+  // what a failed one means. That guarantee is not a nicety here: the
+  // backend rotates the refresh token on every use and treats a replay of
+  // the previous one as theft, revoking the whole session family. Two
+  // concurrent refreshes would present the same token twice and log the
+  // user out — so the shared promise is what keeps a burst of parallel
+  // 401s from destroying the session it is trying to save.
+  useEffect(() => {
+    apiClient.setUnauthorizedHandler(async () => {
+      const session = await authService.restore();
+      if (!session) {
+        // Refresh failed: the session is gone (expired, revoked, or a
+        // detected reuse). Terminal by contract — hard log out, and say so.
+        setSessionEnded(true);
+        endSession();
+        return null;
+      }
+      if (userIdRef.current !== null && session.user.id !== userIdRef.current) {
+        // The refresh cookie is shared by every tab, so it now belongs to an
+        // account signed in from another one. This tab's session — and the
+        // patient data it cached and still shows — was the previous
+        // account's: end it here, fail closed, rather than carry that data
+        // into the new account or replay the request under its token (the
+        // MED-SEC-014 review). The other tab's session is untouched:
+        // `endSession` drops only this tab's token and cache.
+        setSessionEnded(true);
+        endSession();
+        return null;
+      }
+      authService.persist(session, rememberRef.current);
+      setUser(session.user);
+      return session.accessToken;
+    });
+    return () => {
+      apiClient.setUnauthorizedHandler(null);
+    };
+  }, [endSession]);
+
+  // ── Auth operations ─────────────────────────────────────────────────────
+  const login = useCallback(
+    async (email: string, password: string, opts?: { rememberMe?: boolean }) => {
+      const rememberMe = opts?.rememberMe ?? false;
+      pendingRef.current = null;
+      try {
+        const outcome = await authService.login({ email, password, rememberMe });
+
+        if (outcome.kind === 'otp') {
+          // A second factor is a suspended sign-in, not a failure — but
+          // the pages branch on a thrown code, so the outcome becomes one
+          // here. The challenge handle rides along for `verifyOtp`.
+          pendingRef.current = { email, rememberMe, otpToken: outcome.otpToken || null };
+          throw new AuthError('otp_required');
+        }
+
+        return finalize(outcome.session, rememberMe);
+      } catch (error) {
+        if (
+          error instanceof AuthError &&
+          (error.code === 'otp_required' || error.code === 'email_unverified')
+        ) {
+          // Stash the in-flight sign-in so verifyOtp/verifyEmail can
+          // complete it. `otp_required` already set it above, with a token.
+          pendingRef.current ??= { email, rememberMe, otpToken: null };
+        }
+        throw error;
+      }
+    },
+    [finalize],
+  );
+
+  const logout = useCallback(async () => {
+    const currentId = user?.id;
+    try {
+      await authService.logout();
+    } finally {
+      // Always end the session locally, even if the server call failed —
+      // a user who pressed "Log out" must not stay signed in.
+      setSessionEnded(false);
+      endSession();
+      if (currentId) clearUserPreferences(currentId);
+    }
+  }, [user, endSession]);
+
+  const lock = useCallback(() => {
+    // The lock screen replaces the routed tree, so nothing mounted still
+    // reads what this drops; unlocking refetches what the next page needs.
+    queryClient.clear();
+    setStatus((prev) => (prev === 'authenticated' ? 'locked' : prev));
+  }, [queryClient]);
+
+  const unlock = useCallback(
+    async (password: string) => {
+      if (!user) throw new AuthError('invalid_credentials');
+      const session = await authService.reauthenticate(user.email, password);
+      // `null` — the server verified the password for the held session
+      // (`/me/password/verify`, or the mock) — and it simply resumes. A
+      // session comes back only from the `/auth/login` fallback against an
+      // API without the verify route.
+      if (session) finalize(session, rememberRef.current);
+      else setStatus('authenticated');
+    },
+    [user, finalize],
+  );
+
+  const register = useCallback(async (input: RegisterInput) => {
+    pendingRef.current = null;
+    const result = await authService.register(input);
+    // Registration does not sign anyone in, but the address it returns is
+    // what a later resend-verification needs.
+    pendingRef.current = { email: result.email, rememberMe: false, otpToken: null };
+    return result;
+  }, []);
+
+  const forgotPassword = useCallback((email: string) => authService.forgotPassword(email), []);
+
+  const resetPassword = useCallback(
+    (token: string, password: string) => authService.resetPassword(token, password),
+    [],
+  );
+
+  const verifyEmail = useCallback(
+    async (token: string) => {
+      const session = await authService.verifyEmail(token, pendingRef.current);
+      // Only the mock signs the user straight in; the backend requires a
+      // fresh sign-in afterwards and returns no session.
+      if (session) finalize(session, pendingRef.current?.rememberMe ?? false);
+    },
+    [finalize],
+  );
+
+  const verifyOtp = useCallback(
+    async (code: string) => {
+      const pending = pendingRef.current;
+      const session = await authService.verifyOtp(code, pending);
+      if (session) finalize(session, pending?.rememberMe ?? false);
+    },
+    [finalize],
+  );
+
+  const redeemRecoveryCode = useCallback(
+    async (recoveryCode: string) => {
+      const pending = pendingRef.current;
+      const session = await authService.redeemRecoveryCode(recoveryCode, pending);
+      if (session) finalize(session, pending?.rememberMe ?? false);
+    },
+    [finalize],
+  );
+
+  const resendOtp = useCallback(() => authService.resendOtp(pendingRef.current), []);
+  const resendVerification = useCallback(
+    () => authService.resendVerification(pendingRef.current),
+    [],
+  );
+
+  // ── Idle auto-lock ──────────────────────────────────────────────────────
+  // Only armed while authenticated; any user activity resets the countdown.
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+
+    let timer = window.setTimeout(function trip() {
+      lock();
+    }, sessionPolicy.idleLockMs);
+
+    const reset = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => lock(), sessionPolicy.idleLockMs);
+    };
+
+    ACTIVITY_EVENTS.forEach((event) => window.addEventListener(event, reset, { passive: true }));
+    return () => {
+      window.clearTimeout(timer);
+      ACTIVITY_EVENTS.forEach((event) => window.removeEventListener(event, reset));
+    };
+  }, [status, lock]);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      status,
+      user,
+      sessionEnded,
+      login,
+      logout,
+      lock,
+      unlock,
+      register,
+      forgotPassword,
+      resetPassword,
+      verifyEmail,
+      verifyOtp,
+      redeemRecoveryCode,
+      resendOtp,
+      resendVerification,
+    }),
+    [
+      status,
+      user,
+      sessionEnded,
+      login,
+      logout,
+      lock,
+      unlock,
+      register,
+      forgotPassword,
+      resetPassword,
+      verifyEmail,
+      verifyOtp,
+      redeemRecoveryCode,
+      resendOtp,
+      resendVerification,
+    ],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  return ctx;
+}
+
+/** Capability check — FRONTEND_ARCHITECTURE.md §6.5. */
+export function useCan(): (permission: Permission) => boolean {
+  const { user } = useAuth();
+  return useCallback(
+    (permission: Permission) => user?.permissions.includes(permission) ?? false,
+    [user],
+  );
+}
