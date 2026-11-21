@@ -95,8 +95,14 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_SHA" "${{ github.sha }}")
           echo "Changed files:"; echo "$CHANGED"
 
+          # Each test below reads $CHANGED from a here-string, not a pipe.
+          # `grep -q` exits at its first match; with `pipefail`, an `echo`
+          # still writing a large list then dies of SIGPIPE ("Broken pipe"),
+          # the pipeline fails, and the suite is reported unchanged. That
+          # skipped all three suites on a 2,695-file push.
+
           # The workflow itself affects both suites.
-          if echo "$CHANGED" | grep -qE '^frontend/|^\.github/workflows/'; then
+          if grep -qE '^frontend/|^\.github/workflows/' <<< "$CHANGED"; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
@@ -111,7 +117,7 @@ jobs:
           # runs on the change that breaks it.
           AUTHZ_SOURCES_OF_TRUTH='^frontend/src/types/auth/|^frontend/src/features/admin/permissions\.ts$|^frontend/src/utils/phi-mask\.ts$'
 
-          if echo "$CHANGED" | grep -qE "^backend/|^\.github/workflows/|$AUTHZ_SOURCES_OF_TRUTH"; then
+          if grep -qE "^backend/|^\.github/workflows/|$AUTHZ_SOURCES_OF_TRUTH" <<< "$CHANGED"; then
             echo "backend=true" >> "$GITHUB_OUTPUT"
           else
             echo "backend=false" >> "$GITHUB_OUTPUT"
@@ -125,7 +131,7 @@ jobs:
           # arrangement the frontend↔backend parity specs already have.
           PATIENT_APP_SOURCES_OF_TRUTH='^backend/prisma/schema/01-enums\.prisma$|^backend/src/modules/auth/dto/'
 
-          if echo "$CHANGED" | grep -qE "^patient-app/|^\.github/workflows/|$PATIENT_APP_SOURCES_OF_TRUTH"; then
+          if grep -qE "^patient-app/|^\.github/workflows/|$PATIENT_APP_SOURCES_OF_TRUTH" <<< "$CHANGED"; then
             echo "patient_app=true" >> "$GITHUB_OUTPUT"
           else
             echo "patient_app=false" >> "$GITHUB_OUTPUT"
