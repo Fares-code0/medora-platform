@@ -66,6 +66,7 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 | [ADR-040](../backend/docs/PENDING_ADRS.md#adr-040--platform-settings-the-crypto-kernel-the-policy-delegate-and-the-three-conventions-m24-had-to-name) | Platform Settings — The Crypto Kernel, the Policy Delegate, and the Three Conventions M24 Had to Name | **Accepted** (M24) · text held in `backend/docs/PENDING_ADRS.md` |
 | [ADR-041](../backend/docs/PENDING_ADRS.md#adr-041--background-jobs-one-registry-two-drivers-and-the-four-schedules-that-are-declared-rather-than-run) | Background Jobs — One Registry, Two Drivers, and the Four Schedules That Are Declared Rather Than Run | **Accepted** (M30) · text held in `backend/docs/PENDING_ADRS.md` |
 | [ADR-044](#adr-044--discarding-an-unsigned-prescription-draft-is-a-soft-delete) | Discarding an Unsigned Prescription Draft Is a Soft Delete | **Accepted** (BR-DEC-002) |
+| [ADR-045](#adr-045--refresh-rotation-is-idempotent-for-30-seconds) | Refresh Rotation Is Idempotent for 30 Seconds | **Accepted** — owner decision, 2026-11-21 (amends ADR-026) |
 
 **Numbers allocated outside this file (recorded 2026-10-22).** The register sweep in `CLAUDE.md`
 greps this file's `## ADR-` headings, and four numbers have no heading here:
@@ -84,8 +85,9 @@ greps this file's `## ADR-` headings, and four numbers have no heading here:
 - **ADR-043** is **reserved** by Phase 20 for an optional split of ADR-042 (cross-hospital access
   and AI retention). No text exists.
 
-The next unallocated number is **ADR-045** (ADR-044 was allocated 2026-10-24 to BR-DEC-002, after the
-sweep below found it free on every branch). Before using it, run the `CLAUDE.md` sweep **and**
+The next unallocated number is **ADR-046** (ADR-045 was allocated 2026-11-21 to the refresh grace
+window, after the sweep below found it free on every remote branch; ADR-044 was allocated 2026-10-24
+to BR-DEC-002 the same way). Before using it, run the `CLAUDE.md` sweep **and**
 `git grep -l 'ADR-04[2-9]' origin/frontend origin/backend origin/patient-app -- docs backend/docs`.
 
 **Schema-freeze note.** ADR-001 through ADR-005 are prerequisites of RM M5 (Prisma schema). MG §18.4 — "Freeze enums and status machines before the Prisma schema. Schema churn after data exists is the second-biggest risk."
@@ -2046,6 +2048,12 @@ generalises the cooldowns; the auth resends did not need to wait for it.
 ## ADR-026 — Refresh Rotation Keeps One Generation, and the Row Is the Family
 
 **Status:** Accepted · **Milestone:** M6 · **Date:** 2026-08-26
+
+> **Amended by [ADR-045](#adr-045--refresh-rotation-is-idempotent-for-30-seconds) (2026-11-21).**
+> A retired token re-presented within 30 seconds of its rotation is now
+> answered with the successor that rotation issued, not treated as reuse.
+> Outside that window, and whenever a grace check fails, this ADR's
+> behaviour stands unchanged. The text below is preserved as written.
 
 ### Context
 
@@ -4152,6 +4160,488 @@ This is that record.
   The client gains a third action that is offered only on a draft.
 - Soft-deleted drafts accumulate. They are bounded by how often prescribers abandon drafts, and
   any retention rule for them belongs with the M28.5 retention work, not here.
+
+---
+
+## ADR-045 — Refresh Rotation Is Idempotent for 30 Seconds
+
+**Status:** Accepted — owner decision, 2026-11-21 (encrypted successor, 30 s window); revised the
+same day after the owner's review (one locked transaction, database clock, AAD, honest retention
+bound) · **Amends:** ADR-026, and `SecretService`'s rule that "the database never holds the value
+that grants access" · **Route:** `POST /auth/refresh` (API §1.5)
+
+### Context
+
+ADR-026 treats any presentation of a session's previous refresh token as theft: the family is
+revoked and `auth.refresh_reuse_detected` is written at `critical`. Three ordinary client
+behaviours present exactly that token without any theft:
+
+1. **A lost response.** The rotation commits, the response never reaches the client (a dropped
+   connection, a proxy timeout, a phone changing networks), and the client retries with the token
+   it still holds.
+2. **Two tabs, one cookie.** Both tabs' access tokens expire together; both refresh; the second
+   request carries the cookie the first just rotated.
+3. **Concurrent requests.** Before this ADR exactly one of N concurrent refreshes won the
+   conditional update; the losers got a 401 and the next request from that client presented a
+   retired token — a reuse event.
+
+Each one signed a user out and wrote a critical audit row an investigator then had to dismiss. A
+critical row that is usually a false positive teaches people to ignore critical rows.
+
+### Decision
+
+**For 30 seconds after a rotation, the retired token is answered with the successor that rotation
+already issued — and only while that successor is still the session's current token.**
+
+- **Storage.** `sessions` gains `rotated_at timestamptz(3)` and `successor_token_ct bytea`
+  (migration `20261121090000_session_refresh_grace`). The ciphertext is an `EnvelopeService`
+  AES-256-GCM envelope under `DATA_ENCRYPTION_KEY`, whose plaintext is `{ v, sid: session id,
+  prev: the retired hash, token: the successor }` and whose GCM additional data is
+  `medora:session-refresh-successor:v1:<session id>` (§Encryption).
+- **What a grace replay returns.** The same successor (by cookie for web, in the body for
+  `X-Client-Type: mobile`, through the unchanged `deliverRefreshToken`) and a freshly minted access
+  token. It does **not** rotate again and does **not** slide `expires_at`; the cookie's `Max-Age`
+  is the session's remaining lifetime. One `auth.refresh_grace_replay_accepted` audit row is
+  written: `authentication`, `info`, system actor, the subject in metadata — no token, no
+  ciphertext.
+- **Everything else is unchanged.** Outside the window, or when any check fails — including a
+  decrypt failure, which fails closed — the family is revoked and `auth.refresh_reuse_detected` is
+  written at `critical`, exactly as ADR-026 specifies. A token two generations old matches nothing
+  and is the plain 401 (ADR-026's accepted gap). Every refusal is the same 401
+  `{ code: 'unauthorized', message: 'Session expired' }`, so the window is not an oracle.
+- **The window is a constant** — `REFRESH_GRACE_WINDOW_SECONDS` in `session.service.ts`, not a
+  `PolicyService` value or an environment variable. Widening it is an amendment to this ADR.
+
+### Concurrency: one transaction over one locked row
+
+The first implementation read the row, rotated with a conditional `UPDATE`, and answered a retired
+token from a **separate** read. A grace retry could therefore read T1 as current while a concurrent
+T1 → T2 rotation committed, and hand the client T1 after it had been superseded. That is fixed by
+construction, not by a re-check: `SessionService.refresh` makes the whole decision inside one
+Prisma interactive `$transaction`.
+
+1. `SELECT s.id FROM sessions s WHERE s.refresh_token_hash = $h OR s.previous_token_hash = $h
+   LIMIT 1 FOR UPDATE OF s` locks the one row the presented token names. It reads **nothing else**.
+2. **Only once the lock is held**, a second statement reads the row by id, joined to `users`, and
+   computes on the database clock `live`, `inGraceWindow` and the remaining lifetime, and the
+   account status *as it is now*. (Review finding 1: a projection in the locking statement is
+   evaluated before the lock wait, and PostgreSQL re-evaluates it only when the lock holder
+   *modified* the row. Behind a holder that released without writing — a grace answer, a refusal,
+   a rollback, an external `SELECT … FOR UPDATE` — a request that queued at 28 s was answered as
+   grace at 31.6 s, and a session that expired during the wait could rotate and slide. `FOR UPDATE
+   OF s` also neither locks nor refreshes the joined `users` row. Both are fixed by reading after
+   the lock; the post-commit `findById` status check stays as defence in depth.)
+3. `decideRefresh` (pure; unit-tested branch by branch) decides from that row alone:
+   - presented == current, live, not revoked, account active → **rotate**: one `UPDATE` in the same
+     transaction writes the new hash, the previous hash, `rotated_at`, the new ciphertext and the
+     slid `expires_at`;
+   - presented == previous, and *all* of: not revoked, not expired, inside the window, ciphertext
+     opens (current or previous key, this session's AAD) and parses, the plaintext names this
+     session and this retired hash, **and the successor still hashes to the locked row's current
+     `refresh_token_hash`** → **grace**: no write;
+   - presented == previous, any of those false → **reuse**: revoked in the same transaction by
+     `UPDATE … WHERE revoked_at IS NULL`, whose row count says whether *this* transaction revoked;
+   - account no longer active → the session is revoked and the request refused, as before (M8.2);
+   - presented == current of a revoked or expired session → refused.
+4. The audit row and the error log line are written **after the transaction commits**, by
+   `RefreshService`, on the dispatcher's own connection — never for a decision that rolled back,
+   and **one critical row per revocation**: only the request whose transaction actually revoked
+   writes `auth.refresh_reuse_detected` (critical). A reuse that finds the family **already**
+   revoked — by a concurrent replay, or earlier by a logout, password reset, administrator or
+   sign-out everywhere — writes `auth.refresh_replay_on_revoked_session` (warning) instead.
+   Every one of them gets the identical 401. So N concurrent out-of-window replays give 1 critical
+   + N−1 warning rows (review findings 3 and M1; specs "N concurrent replays outside the window"
+   and "a retired token replayed after the session was already revoked"). Not inside the transaction: the dispatcher's contract
+   (`audit.types.ts`) is that an audit outage never fails the mutation it records, and the
+   `TransactionalAuditWriter` exists only for *disclosures*. A crash between commit and audit
+   loses the row, not the revocation — the safe way round.
+
+What the lock guarantees, and the specs prove (`test/auth-refresh.e2e-spec.ts`, "concurrent
+refreshes, serialized on the row lock"), with interleavings forced by a second connection holding
+the row lock and PostgreSQL's own `pg_stat_activity` / `pg_blocking_pids` reporting each request
+waiting before the next is started:
+
+- **N refreshes of one token (2, 3 and 5; and web + mobile mixed)** → exactly one rotation, every
+  response carries the identical successor, zero reuse audits, N−1 grace audits.
+- **A retry of T0 racing T1 → T2**: if the rotation takes the lock first, the retry is the plain
+  401 and is never handed T1; if the retry takes it first, it receives T1 *while T1 is still
+  current*, the rotation then proceeds, and T1 re-presented inside the window converges on T2.
+- **A retry racing a revocation**, both orders: revocation first → 401, no token; retry first → it
+  is answered with the then-current token, and after the revocation commits nothing refreshes and
+  no successor remains.
+- **A retry racing the sweep** (job and fallback): while the retry holds the row, which has lapsed
+  meanwhile, the sweep returns at once and **skips** it (`FOR UPDATE SKIP LOCKED`); the retry
+  (decided inside the window) is answered with the successor; the next sweep clears the row. A
+  separate spec holds one lapsed row locked from another connection: the sweep returns promptly,
+  clears the unlocked lapsed rows, and takes the held one after it is released.
+- **A lock wait across a limit, behind a holder that writes nothing**: a retry that queued at a
+  row age of 28 s and was released only after the database clock passed 30 s is reuse (401,
+  revoked, one critical audit), not grace; a current token whose session expired during the wait
+  is refused with `expires_at` not slid and nothing rotated. A mutation that judges the window by
+  `now()` (transaction start) fails the first.
+- **N concurrent replays outside the window** → identical 401s, one revocation, exactly one
+  `auth.refresh_reuse_detected` and N−1 `auth.refresh_replay_on_revoked_session`.
+
+Waiters wake under READ COMMITTED and re-evaluate the `WHERE` against the version the lock holder
+committed (EvalPlanQual), so the loser of a race finds the winner's row through the
+`previous_token_hash` branch rather than as an unknown token. `FOR UPDATE` rather than
+`FOR NO KEY UPDATE`: rotating changes `refresh_token_hash`, which has a unique index, so
+PostgreSQL takes `FOR UPDATE` for that `UPDATE` anyway; taking the weaker lock first would make
+every rotation an in-transaction lock upgrade, the classic deadlock shape.
+
+**Deadlock.** The refresh transaction takes exactly one row lock (`LIMIT 1`, `FOR UPDATE OF s` —
+the joined `users` row is not locked) and writes only that row; it never waits on a second lock
+while holding the first. Every other session writer — `revokeAllFor` (including inside the
+password-reset and 2FA transactions that first lock `user_credentials`), the account-security and
+administration revocations, the re-encryption compare-and-set — may wait on it, but it waits on
+none of them, so it cannot be part of a cycle. The successor sweep does not even wait: it skips
+locked rows. (Two multi-row writers, e.g. two concurrent
+`revokeAllFor` for one user, could deadlock with *each other* as before this ADR; PostgreSQL aborts
+one, unchanged.) Lock hold time is a few statements.
+
+**Timeouts (review finding 2).** The transaction runs with explicit bounds:
+`REFRESH_TX_MAX_WAIT_MS = 2000` (Prisma: obtain a pooled connection), `REFRESH_TX_TIMEOUT_MS =
+5000` (Prisma: the whole transaction), and **`REFRESH_LOCK_TIMEOUT_MS = 4000`, set as PostgreSQL's
+`lock_timeout` local to the transaction** (`set_config('lock_timeout', '4000ms', true)`) before the
+locking statement. The last one is what actually bounds the row-lock wait: verifying this showed
+that Prisma's transaction timeout does **not** interrupt a statement blocked on a lock — a refresh
+behind a held lock had not returned after 20 s. With `lock_timeout` the wait fails at 4 s with
+PostgreSQL error 55P03, the transaction rolls back, and the request fails with a **retryable 500**,
+not a 401: nothing was decided, nothing rotated, and the same token works on retry (spec "a lock
+wait past REFRESH_TX_TIMEOUT_MS is a retryable 500"). It is deliberately not mapped to
+401, which the clients treat as "sign out" and which would turn a transient lock wait into a
+logout. So the invariant is "every **refusal** is the same 401", not "every outcome is 401".
+
+### Clock
+
+All window and expiry decisions on this path use **PostgreSQL's `clock_timestamp()`** — the wall
+clock at evaluation. Not `now()`/`transaction_timestamp()`, which inside a transaction is its
+*start*: a request that waited on the lock would judge the window by when it began waiting, and a
+rotation would stamp `rotated_at` earlier than the moment it actually rotated. `statement_timestamp()`
+would do for the single-statement checks, but `clock_timestamp()` is correct in every position,
+including the multi-row sweep. The clock is only half of it: the predicates are evaluated in the
+statement that runs **after** the row lock is acquired (§Concurrency step 2), so the time they read
+is the time at which the decision is actually made.
+
+- `rotated_at` is written as `date_trunc('milliseconds', clock_timestamp())`: truncated, not rounded,
+  to the column's `timestamptz(3)`, so the stamp is never in the future and the window is never
+  wider than 30 s (it may be up to 1 ms narrower).
+- Grace iff `rotated_at > clock_timestamp() - 30 s`; the sweep clears iff
+  `rotated_at <= clock_timestamp() - 30 s` — exact complements on one clock. Boundary specs set
+  `rotated_at` relative to the database clock: 29.9 s → grace (asserted only when the row's age,
+  read back from the database clock after the decision, is still under 30 s — otherwise the attempt
+  is repeated on a fresh session, so a slow machine cannot make it pass or fail by accident),
+  30.0 s → reuse.
+- No application timestamp enters the decision; the sweep ignores the job's `now`. Specs fake the
+  application clock ±10 min and ±1 day and the outcome does not move; a mutation that compares
+  against an app timestamp fails them.
+- **Remaining assumptions:** a single primary database whose clock is the authority (this path
+  never reads a replica — every query is on the primary in a read-write transaction); NTP on the
+  database host. A database clock step changes the window by the size of the step; nothing in the
+  application can detect that.
+
+### Encryption
+
+- **No plaintext at rest or in logs.** A spec dumps the whole row (`row_to_json`), the
+  ciphertext's raw bytes, the audit rows and every captured log line (Nest `Logger`, stdout,
+  stderr) across rotation, grace and reuse, and finds neither token in any of them. pino's request
+  serialiser logs no headers or bodies (`redaction.ts`).
+- **AAD.** `EnvelopeService.encrypt/decrypt/inspect/reseal` gained an **optional** `aad` argument.
+  Omitted, the output and the accepted inputs are byte-for-byte what they were — every existing
+  caller and every stored envelope is unchanged (unit-tested). Given, it is bound as GCM additional
+  data (after the 9-byte header in the keyed layout) and required verbatim to open. The successor
+  uses `sessionRefreshSuccessorAad(sessionId)` (`shared/crypto/envelope-context.ts`), binding
+  purpose and row: a valid ciphertext copied onto another row, or into another envelope column,
+  fails authentication before its plaintext is parsed. The `sid`/`prev` binding inside the
+  plaintext is kept as defence in depth.
+- **Decrypt failure fails closed** to the reuse path, never a 500 (e2e: tampered bytes, another
+  row's ciphertext, another retired hash, non-JSON plaintext; unit: missing ciphertext, wrong or
+  absent AAD, key left the ring).
+
+### Key rotation
+
+`npm run crypto:reencrypt` covers `sessions.successor_token_ct`, so the "every `bytea` column is
+covered" assertion in `test/envelope-key-rotation.e2e-spec.ts` holds. Because the column carries a
+per-row AAD, the generic walker could not open it; `EnvelopeColumn` gained an optional
+`aad(id)` and the walker passes it to `reseal` and to the verification pass's `inspect`, so the
+successor is re-sealed under the new key **with the same AAD** (the row id is the context). The
+recovery story, in order of a rotation:
+
+1. Step 1 (new key current, old key in `DATA_ENCRYPTION_KEY_PREVIOUS`): successors sealed under the
+   old key still open, so in-window retries keep working; new rotations seal under the new key.
+2. `crypto:reencrypt --confirm` re-seals any successor still on a row (in practice only rows inside
+   their window or not yet swept). A rotation racing the walk wins the compare-and-set, as for every
+   column.
+3. Retiring the old key: a successor that somehow still sits under it is a decrypt failure and
+   therefore reuse. The worst case is a retry presented within 30 s of a rotation that straddled
+   the retirement without being re-sealed — one user signed in again. No data is lost.
+
+`test/envelope-key-rotation.e2e-spec.ts` seeds a successor under the old key, runs the CLI, and
+proves it re-sealed (`1 re-sealed`, verification `1 conforming`), opens under the new key alone only
+with its AAD, and is honoured by the running application as a grace retry.
+
+### Retention — logical and physical, stated as bounds
+
+**Acceptance (logical, exact).** A successor is re-delivered only if
+`rotated_at > clock_timestamp() - 30 s` on the primary **when evaluated by the statement that runs
+after the session row lock is held** — so the grace *decision* is never made later than 30 s after
+the rotating statement stamped `rotated_at`, however long the request queued for the lock, and
+whether or not any cleanup has run (unit and e2e specs present a still-valid ciphertext after the
+window and get reuse; the lock-wait spec queues at 28 s and is refused after 30 s). What is not
+bounded by this clause is delivery: the answer to a decision made at 29.99 s leaves after the
+transaction commits and the HTTP response is written, which may be milliseconds later.
+
+**Storage on the live row (logical).** The ciphertext leaves the row at the first of: the next
+rotation (overwritten), a revocation (cleared by the service and by the
+`sessions_clear_revoked_successor` trigger on any writer), or a sweep. Two sweepers run the same
+statement (`SessionService.clearLapsedSuccessors`, the exact complement of the grace predicate on
+`clock_timestamp()`):
+
+1. **`SuccessorRetentionService` — on every API instance, unconditionally (RA-045.2).** Jobs are
+   not mandatory in production (`JOBS_ENABLED=false` is valid, and PERFORMANCE.md tells
+   multi-replica deployments to turn it off on all but one instance), so the bound cannot rest on
+   the job registry. Every instance sweeps once during `onApplicationBootstrap` (awaited) and then
+   every `REFRESH_SUCCESSOR_SWEEP_INTERVAL_SECONDS` (default **30**, schema-bounded to **5–60**, no
+   off switch) on an `unref`'d timer that ignores `JOBS_ENABLED` and `JOBS_DRIVER`. A failed run is
+   logged and retried at the next tick; a tick that finds the previous run still going is skipped;
+   `onModuleDestroy` disarms the timer, refuses new runs and waits for one in flight.
+2. **`auth.refresh-successor-sweep`** — the registry job, every minute, where jobs fire. Kept: a
+   second run of an idempotent statement is harmless, and it costs one index probe.
+
+**This is an explicit exception to M30's exit gate** ("all periodic behaviour runs from the
+registry, none ad hoc", `test/background-jobs.e2e-spec.ts`). The registry's contract is
+"registered everywhere, fired where `JOBS_ENABLED`", and that switch is exactly the dependency the
+bound must not have. The gate now carries a one-entry `EXEMPT` set naming
+`successor-retention.service.ts`, with a spec asserting it has exactly one entry. Adding another
+is an ADR decision. The fallback is not listed on `GET /administration/jobs`; its interval is in
+the environment, and it logs a failed run at error level.
+
+**Temporary, owner-approved M30 exemption (2026-11-21).** M30 remains the general architectural
+rule: periodic behaviour runs through the job registry. This exception is temporary. It exists
+because the current registry has no job type that executes on every API instance independently
+of `JOBS_ENABLED` and `JOBS_DRIVER`, while successor ciphertext retention must not depend on
+those settings. The retention sweep is intentionally absent from `GET /administration/jobs`
+because that endpoint lists registered jobs only.
+
+**Tracked follow-up: migrate the retention sweep into a Job Registry type.** Acceptance criteria:
+
+1. The sweep is registered through the job registry and the private timer in
+   `SuccessorRetentionService` is removed.
+2. It executes on every API instance with `JOBS_ENABLED=false`.
+3. It executes on every API instance with `JOBS_DRIVER=bullmq`.
+4. It appears in `GET /administration/jobs` with its interval and last-run information.
+5. The M30 exemption set becomes empty and the architectural gate rejects further exceptions.
+6. The actual ciphertext retention bound and its tests remain unchanged.
+
+Running the sweep on N instances is safe: it is idempotent (a cleared row no longer matches), it
+never touches a successor that can still be honoured (complementary predicate, same clock), and it
+**never waits on a lock** (review L1/L2). It claims lapsed rows in a CTE with `ORDER BY id FOR
+UPDATE SKIP LOCKED` and updates only those, restating the lapsed predicate in the `UPDATE`. A row a
+refresh, a revocation or another sweeper holds is skipped and taken by a later run. So the sweep
+cannot block bootstrap or shutdown, cannot deadlock with another sweeper or with `revokeAllFor`,
+and never holds a row a refresh is waiting for. The specs ran two instances with separate
+connection pools concurrently without error, and forced a held lapsed row to be skipped.
+
+So, **while at least one API instance is running:**
+
+> **bound = 30 s (window) + I (the fallback interval, ≤ 60 s, default 30 s) + L**
+
+where **L** is the sweep's own latency (the statement: an index probe on the partial index
+`sessions_successor_rotated_at_idx`, with no lock wait), **plus one more interval for each run in
+which that row was skipped** — because it was locked at that moment (`SKIP LOCKED`), because the
+previous run was still going, or because the run failed (database unreachable). A row is locked
+only for the few short statements of a refresh or revocation, so a skip is rare and a repeated
+skip of the same row is not expected. With the defaults that is **about 60 s plus sweep latency**,
+not 30 s.
+
+**If no instance was running** (a full outage, or the time between deploys), nothing clears the
+row while nothing runs. The first instance to boot runs the bootstrap sweep before it finishes
+bootstrapping, **and clears the row then if that sweep succeeds**; if it fails (for example, the
+database is not reachable yet) the failure is logged and the next tick retries, so the bound
+restarts from that tick. Storage is therefore bounded by `max(30 s + I + L, the time until an
+instance's first successful sweep)`. While the service is up and the database reachable, no
+configuration leaves it unbounded. (RA-045.2 is
+closed by this; the absence of a purge for ended `sessions` rows is unrelated to the successor and
+no longer matters for it, because the sweep does not depend on the row being purged.)
+
+**Physical retention** is longer than any of the above and is not controlled by this ADR:
+
+- PostgreSQL MVCC: an overwritten or nulled `successor_token_ct` remains in the old tuple version
+  (a dead tuple, possibly TOASTed) until `VACUUM` reclaims it, and in freed-but-not-overwritten
+  pages after that.
+- WAL: every rotation's ciphertext is written to the write-ahead log and survives there for the WAL
+  retention period, in WAL archives, and on any streaming or logical replica.
+- Backups (`platform-settings.backup-run`, operator snapshots, PITR base backups) capture whatever
+  ciphertext is on the row at backup time, for the backup's retention.
+
+All of these hold **ciphertext only**, useless without `DATA_ENCRYPTION_KEY`; a successor
+recovered from them is honoured only if it is still the session's current token and inside its
+30 s window, which a replayed backup cannot make true again. The exposure that matters is the one
+in the threat analysis: database read access **plus** the key.
+
+**Options considered for a tighter bound.**
+
+| Option | Verdict |
+|---|---|
+| (a) Sweep more often | Not through the job registry: its minimum interval is one minute by design (`job-schedule.ts`), and it only fires where `JOBS_ENABLED` is on. **Adopted instead as the per-instance `SuccessorRetentionService` timer (5–60 s, default 30 s), independent of the registry** — see "Storage on the live row". |
+| (b) Opportunistic clearing on refresh / session read | Adds nothing on refresh: every path that reads the row under the lock either overwrites the ciphertext (rotate) or revokes (reuse), and a grace read is inside the window by definition. On `isActive` (every authenticated request) it would add a write to the hottest read path and still not reach the idle session the sweep exists for. Not adopted. |
+| (c) Successor in Redis with a 30 s TTL | Rejected. The decision would span two stores, so the row lock no longer makes "successor is current" atomic with the read; I2 makes PostgreSQL the source of truth for session state. Redis also persists to disk: the repository's `docker-compose.yml` mounts `redis-data:/data` with the image defaults (RDB snapshots on), so ciphertext would reach disk anyway, with expiry enforced lazily/actively rather than by the lock. |
+
+### Why 30 seconds
+
+A retry after a lost response arrives within one client timeout of the rotation; two tabs and
+concurrent requests arrive within milliseconds. Thirty seconds covers a slow mobile retry with
+margin and is short against the 15-minute access token. Anything longer buys little legitimate
+coverage and widens the interval in which a stolen retired token is silently honoured.
+
+### Threat analysis
+
+| Attacker holds | Before | After |
+|---|---|---|
+| A stolen retired token, used **more than 30 s** after its rotation | Reuse detected, family revoked | Unchanged |
+| A stolen retired token, used **within 30 s** of its rotation | Reuse detected, family revoked | **Not detected.** The attacker receives the successor, as the legitimate client does; both now hold one token, and whoever rotates next leaves the other with a retired token that is again subject to the window. Detection resumes as soon as the two parties' refreshes are more than 30 s apart. |
+| A database read only | Hashes only; nothing mintable | Unchanged in effect: `successor_token_ct` is AES-256-GCM ciphertext and useless without `DATA_ENCRYPTION_KEY`, which is not in the database |
+| A database read **and** `DATA_ENCRYPTION_KEY` | Nothing mintable from sessions (TOTP secrets and integration credentials were already exposed) | **The current refresh token of every session whose successor is still on the row** — for the storage bound above (about 30 s + the fallback interval, 60 s by default, plus sweep latency after the last rotation while any instance runs; until the next boot if none does). Such an attacker already holds every second factor and every stored integration credential; this adds session hijack for sessions that rotated and then went idle. |
+| Write access to the database | Could already revoke, or forge `previous_token_hash` to force revocations | A copied or edited ciphertext fails GCM (AAD names the row) or the session-id / retired-hash binding, and fails closed to the reuse path |
+
+### Cross-client compatibility
+
+The wire format is unchanged. The web client still receives `medora_rt` via `Set-Cookie`
+(`Path=/api/v1/auth`, ADR-011) and the same `{ user, accessToken, expiresIn }` body; the patient
+app still receives `data.refreshToken` in the body under `X-Client-Type: mobile` (ADR-034). A grace
+replay is indistinguishable from a normal refresh to either client. Clients that already replace the
+stored token on every refresh need no change; a client that failed hard on the lost-race 401 now
+succeeds.
+
+### Consequences
+
+- One additive migration (two nullable columns, one trigger, one partial index); no backfill. Rows
+  that have never rotated keep ADR-026's behaviour until their next refresh.
+- A refresh is now one short transaction holding one row lock; concurrent refreshes of one session
+  serialize (by design) instead of racing. A rotation costs one AES-GCM encryption; a
+  superseded-token refresh one decryption.
+- `auth.refresh_grace_replay_accepted` joins the taxonomy at `info`. A sharp rise in it is itself
+  worth investigating.
+- **RA-045.1** — the sweep that bounds at-rest storage. Done: `auth.refresh-successor-sweep`, every
+  minute, on the database clock, where jobs fire.
+- **RA-045.2** — **closed.** The bound no longer depends on jobs firing: `SuccessorRetentionService`
+  sweeps on every instance at bootstrap and every `REFRESH_SUCCESSOR_SWEEP_INTERVAL_SECONDS`
+  (5–60 s, default 30 s), whatever `JOBS_ENABLED` says (§Retention). What remains is stated
+  there: storage is bounded only while some instance runs, and until the next boot otherwise; and
+  physical copies are outside any of it.
+- **Reuse auditing: one critical row per revocation, and every replay still recorded** (review
+  findings 3 and M1). Only the request whose transaction revoked the family writes the critical
+  `auth.refresh_reuse_detected` (and the error log line). A retired token presented against a
+  family that was **already** revoked — by a concurrent replay, or earlier by a logout, password
+  reset, administrator, single-session sign-in or sign-out everywhere — writes
+  `auth.refresh_replay_on_revoked_session` at `warning` (category `authentication`, system actor,
+  session id and subject user id, no token) and a warning log line. Both answer with the identical
+  401. Before this ADR, ADR-026's handler wrote a critical row for every such presentation; now the
+  later ones are recorded one level down, so one theft is one critical event.
+
+### Deployment and rollback (review findings 5, I2–I4)
+
+Every statement below was run against PostgreSQL 16 on a throwaway database on 2026-11-21: the
+lock modes were read from `pg_locks`, and the failure and recovery paths were run with `prisma
+migrate deploy`.
+
+**Locks the migration takes on `sessions`** (observed in `pg_locks`):
+
+| Statement | Lock | Blocks | Duration |
+|---|---|---|---|
+| `ALTER TABLE … ADD COLUMN` ×2 (nullable, no default) | `ACCESS EXCLUSIVE` | everything, reads included | metadata only — brief, **but** it must first wait for every transaction already touching `sessions`, and while it waits every new query on `sessions` queues behind it |
+| `CREATE TRIGGER` | `SHARE ROW EXCLUSIVE` | writes | brief |
+| `CREATE INDEX … WHERE successor_token_ct IS NOT NULL` | `SHARE` | writes (sign-in, refresh, logout, revocation) | one sequential scan of `sessions`; it inserts no index entries, because every row's `successor_token_ct` is NULL immediately after the columns are added |
+
+**The index cannot be pre-created.** An earlier revision of this ADR recommended building it
+`CONCURRENTLY` before the deploy. That does not work, and both variants were verified:
+
+- before the migration the columns do not exist, so `CREATE INDEX CONCURRENTLY …` fails with
+  `column "successor_token_ct" does not exist`;
+- pre-adding the columns and the index out of band makes `prisma migrate deploy` fail with
+  **P3018** (42701, column already exists) and leaves the migration marked failed.
+
+Editing the migration (`IF NOT EXISTS`, or splitting the index into a `CONCURRENTLY` file) would
+diverge from the repository copy whose checksum Prisma records, so it is not recommended either.
+
+One out-of-band route does work, and is **possible but not recommended**. An operator applies the
+whole migration by hand: the columns, then the function and trigger, then the index built
+`CONCURRENTLY`. They then run `prisma migrate resolve --applied
+20261121090000_session_refresh_grace`, after which `migrate status` reports the database up to
+date. The risk is that `resolve --applied` marks the migration applied whether or not every
+statement ran. The trigger and the index are not in the Prisma schema, so `db:check` would not
+notice either one missing. Anyone taking this route must verify `sessions_clear_revoked_successor`
+and `sessions_successor_rotated_at_idx` exist before resolving.
+
+The migration therefore stays as written. Its cost is one sequential scan under `SHARE`, plus the
+`ACCESS EXCLUSIVE` queueing risk.
+
+**Production deployment order.**
+
+1. Deploy in a low-traffic window if `sessions` is large.
+2. **Bound the lock waits for the deploy session**, so the migration fails fast instead of queueing
+   traffic behind its `ACCESS EXCLUSIVE` request. Verified approach: a database- or role-level
+   setting, which the Prisma schema engine's session inherits, e.g. `ALTER ROLE <migration role>
+   SET lock_timeout = '5s';` (or `ALTER DATABASE … SET lock_timeout`). With it, a deploy blocked by
+   a long-running reader failed in seconds with `P3018` / `55P03 canceling statement due to lock
+   timeout`. **Nothing had been applied** (the migration runs as one implicit transaction: no new
+   column existed afterwards), and `prisma migrate deploy` then refused with **P3009** until
+   `npx prisma migrate resolve --rolled-back 20261121090000_session_refresh_grace`, after which a
+   retry applied it. Reset the setting afterwards if it should not apply to the application.
+3. **Apply the migration before any new code serves** (`npm run db:deploy`). It is additive, so
+   builds from before this ADR keep working against it: they neither read nor write the new
+   columns, and the trigger only clears them.
+4. Roll out the new code. During a rolling deploy old and new instances coexist safely. An old
+   instance rotates without writing a successor (so a retry of *that* rotation is reuse, as
+   before); a new instance writes one; and an old instance presented with a retired token treats
+   it as reuse (ADR-026) — never worse than before this ADR. A successor an old instance leaves
+   behind is cleared by the new instances' sweeps.
+5. Nothing else to configure: `REFRESH_SUCCESSOR_SWEEP_INTERVAL_SECONDS` defaults to 30, and the
+   fallback sweep runs on every instance regardless of `JOBS_ENABLED`.
+
+**Rolling the code back.** Code built before this ADR neither writes nor clears
+`successor_token_ct` and `rotated_at`, so a reverted deployment would leave every successor
+written before the revert on its row indefinitely (no sweep runs in the old build). After
+reverting the code, run:
+
+```sql
+UPDATE sessions
+   SET successor_token_ct = NULL, rotated_at = NULL
+ WHERE successor_token_ct IS NOT NULL OR rotated_at IS NOT NULL;
+```
+
+The columns, trigger and index can stay: the old build ignores them, and the trigger only clears
+them. The old build also re-enables ADR-026's behaviour in full (lost responses and concurrent
+refreshes are reuse again). Dropping the schema objects is a separate, optional down-migration.
+It was verified end to end: after it, `prisma migrate status` reports the migration as not yet
+applied, and a later `prisma migrate deploy` re-applies it cleanly.
+
+```sql
+UPDATE sessions SET successor_token_ct = NULL, rotated_at = NULL
+ WHERE successor_token_ct IS NOT NULL OR rotated_at IS NOT NULL;
+DROP INDEX "sessions_successor_rotated_at_idx";
+DROP TRIGGER sessions_clear_revoked_successor ON "sessions";
+DROP FUNCTION clear_revoked_session_successor();
+ALTER TABLE "sessions" DROP COLUMN "successor_token_ct", DROP COLUMN "rotated_at";
+DELETE FROM _prisma_migrations WHERE migration_name = '20261121090000_session_refresh_grace';
+```
+
+The `DROP COLUMN` takes `ACCESS EXCLUSIVE`; the same `lock_timeout` advice applies. Removing the
+migration *directory* from the repository is a separate code change, and is only needed if the
+schema files are reverted too.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Keep ADR-026 as is | Signs users out for lost responses and concurrent tabs; trains people to ignore critical audit rows |
+| Return 401 to the loser but do not revoke within 30 s | The client is still left with a dead token and must sign in again — the user-visible failure remains |
+| Re-rotate on a grace replay (issue a third token) | Two clients diverge onto two tokens, and the next refresh from the slower one is reuse again |
+| Compare-and-set plus a re-read, without a lock (the first implementation) | A retry could be handed a successor that a concurrent rotation had already superseded (§Concurrency) |
+| `SERIALIZABLE` isolation instead of a row lock | Converts the race into serialization failures the caller must retry; the lock gives the same guarantee with ordinary waiting and no retry loop |
+| Store the successor in Redis with a 30 s TTL | See §Retention option (c) |
+| Store the successor in clear | Turns any database read into session hijack |
+| Make the window an environment variable | A security bound an operator can widen silently; an ADR amendment is the right friction |
 
 ---
 

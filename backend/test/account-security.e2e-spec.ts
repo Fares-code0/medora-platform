@@ -245,6 +245,7 @@ describe('GET /me/sessions (M8.3)', () => {
     const raw = JSON.stringify(response.body);
     expect(raw).not.toContain('refreshTokenHash');
     expect(raw).not.toContain('previousTokenHash');
+    expect(raw).not.toContain('successorTokenCt');
     expect(raw).not.toContain('expiresAt');
   });
 

@@ -5,6 +5,7 @@
  * `crypto.module.ts` for why there is nothing here to swap.
  */
 export { CryptoKernelModule } from './crypto.module';
+export { sessionRefreshSuccessorAad } from './envelope-context';
 export {
   ENVELOPE_FORMATS,
   EnvelopeDecryptError,

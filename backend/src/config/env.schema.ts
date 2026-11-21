@@ -342,6 +342,17 @@ export const envSchema = z.object({
    * idempotent sweep — the broker buys single-firing, not correctness.
    */
   JOBS_DRIVER: z.enum(['inline', 'bullmq']).default('inline'),
+  /**
+   * How often every API instance clears lapsed refresh successors
+   * (ADR-045, RA-045.2), in seconds.
+   *
+   * Deliberately **not** governed by `JOBS_ENABLED`/`JOBS_DRIVER`: those
+   * may legitimately be off on every instance, and this bounds how long an
+   * encrypted live refresh token stays at rest. So it cannot be turned off,
+   * only tuned within 5–60 s; the ceiling is what makes ADR-045's stated
+   * bound (30 s window + this interval + latency) true.
+   */
+  REFRESH_SUCCESSOR_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(60).default(30),
 
   // ── Client address and rate limiting (M37.2) ───────────────────────
   /**

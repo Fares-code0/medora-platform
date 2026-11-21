@@ -97,9 +97,24 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
  * find first — a replayed refresh token, which is either theft or a
  * client bug and is treated as theft (ADR-026), and a permission matrix
  * rewritten, which can change what everyone on the platform may reach.
+ *
+ * `auth.refresh_grace_replay_accepted` is deliberately absent, and so
+ * `info`: it is the retired token re-presented inside ADR-045's 30-second
+ * window and answered with the same successor — a lost response or a
+ * second tab, not a replay. A retired token that fails the grace checks
+ * is still `auth.refresh_reuse_detected`, and still critical.
+ *
+ * `auth.refresh_replay_on_revoked_session` is `warning`: a retired token
+ * presented against a session that was **already** revoked — by a
+ * logout, a password reset, an administrator, or a concurrent replay that
+ * already raised the critical row. Nothing is revoked by it (nothing is
+ * left to revoke), so it is not a second critical event for one theft;
+ * it is still recorded, because a stolen token being tried after the
+ * victim signed out is exactly what an investigator needs to see.
  */
 const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   'auth.refresh_reuse_detected': 'critical',
+  'auth.refresh_replay_on_revoked_session': 'warning',
   'roles.matrix_update': 'critical',
 
   // Reaching past a privacy boundary, or changing who can.

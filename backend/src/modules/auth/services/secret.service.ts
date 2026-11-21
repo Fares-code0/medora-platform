@@ -12,6 +12,20 @@ import { Injectable } from '@nestjs/common';
  * SHA-256 digest in a row. A database disclosure then leaks digests,
  * which cannot be replayed into an account.
  *
+ * ## The one bounded exception (ADR-045)
+ *
+ * `sessions.successor_token_ct` holds a refresh token — the successor a
+ * rotation just issued — so that a retry inside the 30-second grace
+ * window can be answered with it instead of being mistaken for reuse.
+ * It is not a digest and not stored in clear: it is an `EnvelopeService`
+ * AES-256-GCM envelope under `DATA_ENCRYPTION_KEY`, bound to its session
+ * and to the token it replaced, overwritten by the next rotation and
+ * nulled on revocation. A database read alone still mints nothing; a
+ * read **together with** the data key exposes the current refresh token
+ * of a session whose last rotation left a successor on the row. ADR-045
+ * records that trade. Nothing else may follow this precedent without an
+ * ADR of its own.
+ *
  * ## Why SHA-256 and not Argon2 here
  *
  * Passwords are Argon2id (`PasswordService`) because they are chosen by

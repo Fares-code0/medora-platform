@@ -62,7 +62,7 @@ cold start
               └─ 401 ▶ clear secure storage ▶ Welcome / Login
 ```
 
-Send `X-Client-Type: mobile` on login, OTP verify and refresh alike; each returns `data.refreshToken` and sets no cookie. **Replace the stored token on every refresh** — presenting a rotated-away token is treated as reuse and revokes the whole session family (ADR-026), logging the user out everywhere. That behaviour is unchanged by the body variant and is covered by tests.
+Send `X-Client-Type: mobile` on login, OTP verify and refresh alike; each returns `data.refreshToken` and sets no cookie. **Replace the stored token on every refresh** — presenting a rotated-away token is treated as reuse and revokes the whole session family (ADR-026), logging the user out everywhere. That behaviour is unchanged by the body variant and is covered by tests. **One exception (ADR-045):** within 30 seconds of a rotation, re-sending the token it retired — a retry after a lost response, or two concurrent refreshes — returns `200` with the *same* `data.refreshToken` the rotation issued, rather than revoking. Store whatever the response carries, as always; after 30 seconds the reuse rule above applies.
 
 **Storage rules, non-negotiable:** the access token lives in memory only — never `AsyncStorage`, never a persisted store, never a log line. The refresh token lives in iOS Keychain / Android Keystore (`expo-secure-store`). Logout clears secure storage **and** calls `POST /auth/logout`. A biometric gate protects the app, never the token.
 

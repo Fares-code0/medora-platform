@@ -33,11 +33,12 @@ import {
  * the one nobody notices, where a future milestone adds a timer beside
  * its sweep and the registry silently stops being the whole picture.
  *
- * ## The eleven schedules are listed by name, not counted
+ * ## The schedules are listed by name, not counted
  *
- * The list is M30.2's own, transcribed. A count would pass while a
- * schedule was renamed or swapped, and this is the assertion that says
- * the roadmap's nine named jobs plus M30.1's two drains all exist.
+ * The list is M30.2's own, transcribed, plus ADR-045's refresh-successor
+ * sweep. A count would pass while a schedule was renamed or swapped, and
+ * this is the assertion that says the roadmap's nine named jobs, M30.1's
+ * two drains and that sweep all exist.
  *
  * ## The dead letter is planted, not provoked
  *
@@ -110,6 +111,8 @@ interface DeadLetterView {
  */
 const RUNNABLE = [
   'audit.retention-sweep',
+  // ADR-045, RA-045.1 — not a roadmap schedule; bounds a secret at rest.
+  'auth.refresh-successor-sweep',
   'doctors.license-expiry-warning',
   'files.malware-scan',
   'files.orphan-sweep',
@@ -205,7 +208,7 @@ afterAll(async () => {
 });
 
 describe('the registry holds every schedule M30 names (M30.2)', () => {
-  it('registers the nine of M30.2 plus M30.1’s two drains, and nothing else', async () => {
+  it('registers the nine of M30.2, M30.1’s two drains and ADR-045’s sweep, and nothing else', async () => {
     const view = await overview();
 
     expect(view.jobs.map((job) => job.name)).toEqual([...RUNNABLE, ...BLOCKED].sort());
@@ -327,9 +330,31 @@ describe('the exit gate: none ad hoc (M30)', () => {
     const offenders = roots
       .flatMap((root) => sources(root))
       .filter((file) => !file.includes(join('shared', 'jobs')))
+      .filter((file) => !EXEMPT.has(file))
       .filter((file) => RECURRING.test(withoutComments(readFileSync(file, 'utf8'))));
 
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The one exception, named rather than hidden (ADR-045, RA-045.2).
+   *
+   * `SuccessorRetentionService` bounds how long an encrypted live refresh
+   * token stays at rest. The registry fires only where `JOBS_ENABLED` is
+   * on, which may be no instance at all, so that bound cannot run from the
+   * registry; the timer runs on every instance by design, and the registry
+   * job `auth.refresh-successor-sweep` still runs the same sweep where jobs
+   * fire. Adding a file here is an ADR decision, not a test fix.
+   */
+  const EXEMPT = new Set([
+    resolve(__dirname, '../src/modules/auth/services/successor-retention.service.ts'),
+  ]);
+
+  it('exempts exactly the files ADR-045 names, and they really do repeat something', () => {
+    for (const file of EXEMPT) {
+      expect(RECURRING.test(withoutComments(readFileSync(file, 'utf8')))).toBe(true);
+    }
+    expect(EXEMPT.size).toBe(1);
   });
 });
 

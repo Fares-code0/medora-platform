@@ -70,6 +70,8 @@ const CREDENTIAL_KEYS = new Set([
   'passwordHash',
   'refreshTokenHash',
   'previousTokenHash',
+  // ADR-045: the encrypted successor refresh token.
+  'successorTokenCt',
   'totpSecretEnc',
   'recoveryCodesEnc',
   'keyHash',

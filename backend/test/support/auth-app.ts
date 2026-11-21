@@ -314,6 +314,42 @@ export async function markVerified(prisma: PrismaService, email: string): Promis
   await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
 }
 
+/**
+ * Moves every rotation of `email`'s sessions past ADR-045's 30-second
+ * grace window, so a retired token re-presented afterwards is a replay
+ * rather than a retry.
+ *
+ * The specs that assert ADR-026's reuse detection call this between the
+ * rotation and the replay. Without it, the replay lands inside the window
+ * and is — correctly — answered with the successor instead.
+ *
+ * On the database clock, which is the only clock the window is measured
+ * by: an application timestamp would make this helper disagree with the
+ * check it is meant to defeat whenever the two clocks drift.
+ */
+export async function endGraceWindow(prisma: PrismaService, email: string): Promise<void> {
+  await rotatedSecondsAgo(prisma, email, 31);
+}
+
+/**
+ * Sets every rotated session of `email` to have rotated `seconds` ago by
+ * the database clock (`clock_timestamp()`) — the fixture ADR-045's
+ * boundary specs need.
+ */
+export async function rotatedSecondsAgo(
+  prisma: PrismaService,
+  email: string,
+  seconds: number,
+): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE sessions s
+       SET rotated_at = clock_timestamp() - ${seconds}::float8 * interval '1 second'
+      FROM users u
+     WHERE u.id = s.user_id
+       AND u.email = ${email}
+       AND s.rotated_at IS NOT NULL`;
+}
+
 /** The `token` query parameter of the single link in a captured mail. */
 export function tokenFromLink(text: string): string {
   const match = /[?&]token=([A-Za-z0-9_-]+)/.exec(text);

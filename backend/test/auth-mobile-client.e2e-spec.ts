@@ -5,6 +5,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  endGraceWindow,
   errorBody,
   registrationBody,
   testEmail,
@@ -161,6 +162,10 @@ describe('a native client completes login → refresh → logout without cookies
 
     const second = dataOf<MobilePayload>(refreshed).refreshToken!;
 
+    // Past ADR-045's 30-second grace window, a retired token is a replay
+    // again; inside it, the retry would be answered with `second`.
+    await endGraceWindow(harness.prisma, email);
+
     // Replay the token that was already rotated away.
     await request(harness.server)
       .post(REFRESH)
@@ -174,6 +179,46 @@ describe('a native client completes login → refresh → logout without cookies
       .set('X-Client-Type', 'mobile')
       .send({ refreshToken: second })
       .expect(401);
+  });
+
+  it('answers a retry inside the grace window with the same token, in the body (ADR-045)', async () => {
+    // A phone on a flaky network: the rotation succeeded, the response
+    // never arrived, and the app re-sends the token it still has. The
+    // body variant must re-deliver exactly what the rotation issued, so
+    // the app's secure store converges on one token.
+    const email = await seedAccount('sara');
+
+    const login = await request(harness.server)
+      .post(LOGIN)
+      .set('X-Client-Type', 'mobile')
+      .send({ email, password: PASSWORD })
+      .expect(200);
+    const first = dataOf<MobilePayload>(login).refreshToken!;
+
+    const lost = await request(harness.server)
+      .post(REFRESH)
+      .set('X-Client-Type', 'mobile')
+      .send({ refreshToken: first })
+      .expect(200);
+    const issued = dataOf<MobilePayload>(lost).refreshToken!;
+
+    const retry = await request(harness.server)
+      .post(REFRESH)
+      .set('X-Client-Type', 'mobile')
+      .send({ refreshToken: first })
+      .expect(200);
+
+    expect(dataOf<MobilePayload>(retry).refreshToken).toBe(issued);
+    expect(retry.headers['set-cookie']).toBeUndefined();
+    const session = await harness.prisma.session.findFirstOrThrow({ where: { user: { email } } });
+    expect(session.revokedAt).toBeNull();
+
+    // And the re-delivered token is live.
+    await request(harness.server)
+      .post(REFRESH)
+      .set('X-Client-Type', 'mobile')
+      .send({ refreshToken: issued })
+      .expect(200);
   });
 
   it('logs out with the access token, no cookie involved', async () => {
