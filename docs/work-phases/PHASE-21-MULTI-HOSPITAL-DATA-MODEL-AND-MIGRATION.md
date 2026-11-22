@@ -61,7 +61,7 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 - [ ] [BLOCKED] Ownership backfill/default hospital assignment requires verified row-level mappings and separate approval; none is inferred.
 - [ ] [DATABASE] Deliberate existing-admin mapping via reviewed list; no automatic conversion (OD-07).
 - [ ] [DATABASE] Expand-only migrations; destructive contract/down migrations are outside Phase 21.
-- [x] [DATABASE] Fictional, repeatable development-only hospital, location, clinic, department, staff, role, patient-record, appointment and clinical sample seed; explicitly gated on `APP_ENV=development`.
+- [x] [DATABASE] Fictional, repeatable development-only hospital, location, clinic, department, staff, role, patient-record, appointment and clinical sample seed; runner requires `APP_ENV=development`, `MEDORA_DISPOSABLE_DB=true` and loopback `medora_test:5432`.
 
 ClinicWorkingDay remains the historical platform-wide weekday schedule. ClinicOperatingHour gives each Clinic its own weekday rows without changing the old primary key. Room.name retains unique names for legacy unassigned rooms while permitting same names in different hospitals.
 
@@ -92,11 +92,13 @@ Fresh PostgreSQL 16 CI validation of this migration. Verified status of the earl
 - Existing patient/clinical identifiers and patient FKs are preserved. Eight patient clinical tables and related encounter, appointment, lab, prescription, messaging, notification and AI conversation tables gain nullable hospital/HMR anchors with composite patient/hospital FKs. PatientEmergencyContact and PatientChronicCondition are unchanged; the new HMR condition association is additive.
 - File hospital ownership remains nullable. New scoped patient documents and attachments require same-hospital files; legacy files remain unassigned.
 - Published-slot capacity is protected by a partial unique index; cancelled, rescheduled, completed and no-show appointments release capacity.
-- The new transaction-wrapped migration follows 20261122160000_facility_foundation. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment.
-- Local validation: Prisma schema validation, Prisma Client generation, TypeScript typecheck, ESLint and git diff --check pass. Source-only Vitest run: 94 test files passed; five Redis-dependent files failed (6 tests) or skipped (17 tests) because no local Redis service is available. PostgreSQL migration/drift/integration tests await disposable CI. No database was accessed.
-- Development seed was implemented but not executed; no disposable PostgreSQL 16 environment was available locally. Repeated-seed behavior is protected through natural-key upserts and stable slot IDs; verify actual row counts and constraints in disposable CI before treating it as validated.
+- The new transaction-wrapped migration follows 20261122160000_facility_foundation. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment. PR #5 facility tests passed earlier in disposable CI run 45038104419; Phase 21 migration and seed checks are pending on this PR.
+- Historical local validation on commit 68c864a: Prisma validation/client generation, typecheck, ESLint and diff check passed. That full source test run had 94 files pass; five Redis-dependent files failed (6 tests) or skipped (17 tests) because Redis was unavailable.
+- Added the guarded multi-hospital seed runner, ERD generator and database guide. The seed was not run locally; CI is configured to run it twice against its disposable PostgreSQL 16 service.
 - Persistent application status for 20261122150000_hospital_core and 20261122160000_facility_foundation remains unknown; see docs/multi-hospital/MIGRATION_AND_COMPATIBILITY.md. Fresh-history CI cannot establish persistent-environment state.
 - OQ-02 identity proofing, cross-hospital grants, Break-Glass, AI C2 retention, provenance and RLS remain deferred. This phase does not yet enable multi-hospital backend access.
+
+- Continuation validation: Prisma validate/generate, typecheck, lint, build, workflow YAML parse, diff check and the offline seed guard test (4/4) passed. A full local Vitest run was stopped after database-backed tests targeted `localhost:5432/medora_test`; the database disposable status and possible fixture writes are unknown. No cleanup or further database access was performed. Phase 21 PostgreSQL 16 migration, drift and integration results remain pending CI.
 
 ## Source / evidence
 

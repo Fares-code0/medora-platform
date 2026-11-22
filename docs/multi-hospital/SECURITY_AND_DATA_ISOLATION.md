@@ -2,7 +2,9 @@
 
 **Governing decisions (FINAL):** DR-01…DR-12, OD-01…OD-08, OD-12, OD-13, OQ-01.
 **Work phases:** 22, 22A, 28, and **30 (the critical gate)**.
-**Status:** NOT STARTED. No hospital isolation and no cross-hospital test exist today (AF-23).
+**Status:** FOUNDATION ONLY on PR #5's unmerged branch. Hospital, HospitalLocation, and Clinic tables
+exist there, but no hospital isolation or cross-hospital security test has been implemented (AF-23).
+The foundation does not authorize real multi-hospital access.
 
 > **Correction history.**
 > - Rev. 1 required AI to exclude grant-covered data.
@@ -15,6 +17,33 @@
 >     (OD-05);
 >   - doctor-approved selective documentation into the requesting hospital's record is allowed
 >     (OQ-01 = A).
+
+---
+
+## 0. PR #5 implementation boundary and remaining production gates
+
+PR #5 adds the Hospital/Clinic/Location schema foundation and PostgreSQL constraint tests. It does not
+implement hospital context, tenant-scoped application access, staff affiliations, clinical-record
+ownership, grants, Break-Glass, consultations, or AI data-class retention. Treat the new tables as
+inert foundation until the following gates are implemented, reviewed, and passed. The approved owner
+safeguards also prohibit record claiming while OQ-02 is open and prohibit implementing cross-hospital
+access, Break-Glass, AI C2 retention, or provenance before their technical specifications are approved.
+
+| Gate | Required before real multi-hospital access | Evidence required |
+|---|---|---|
+| **Tenant context and default access** | Resolve Hospital server-side from the doctor’s active employment; never trust a client-supplied hospital id. Enforce hospital + role + permission in the shared data-access/authorization layer; return 404 for another hospital’s ids. | Cross-hospital negative tests for direct IDs, lists, search, filters, exports, aggregates, admin endpoints, assignments, messages, AI context, files, and cached data. |
+| **Structural ownership** | Add `HospitalMedicalRecord`; bind clinical children to that record and hospital with composite foreign keys. Add staff/doctor employment and hospital-scoped affiliations. | Constraint tests proving cross-hospital parent/child combinations cannot be stored; migration rehearsal and data mapping review. |
+| **Admin and employment lifecycle** | Separate Platform Admin (no implicit clinical access) from one-hospital Hospital Admin. Ending a doctor employment immediately revokes access derived from that employment, without revoking unrelated access. | Role-boundary and termination tests for sessions, refresh tokens, caches, grants, and any Break-Glass session. |
+| **Cross-hospital access** | Implement purpose/category-scoped grants approved by the target Hospital Admin and time-bounded, attributable Break-Glass with minimum necessary access. Apply only after the technical specifications are approved. | Grant/revoke/expiry and Break-Glass negative/lifecycle tests; audit evidence for access and denials. |
+| **Consultations, messages, and files** | Scope each consultation, message, attachment and signed download to authorized participants and the active grant/Break-Glass window; revoke access when authorization ends. | Cross-hospital participant, attachment, guessed-ID, URL-expiry, revocation, and employment-termination tests. |
+| **Discovery and booking** | Require authenticated discovery; derive booking Hospital from the published slot; enforce capacity 1 and no double-booking at the database boundary. | Concurrent booking tests prove exactly one success; discovery tests ensure reviews and comparison never expose clinical information. |
+| **RLS and pooled connections** | Enable RLS on clinical tables as defence in depth; set tenant context transaction-locally and fail closed when missing. Prevent context leakage across pooled connections and cover background jobs. | Pool reuse/missing-context tests plus negative queries across two hospitals. RLS is not complete until tenant-context handling and negative tests pass. |
+| **Patient identity and records** | Keep patient identity global and create one HospitalMedicalRecord per hospital interaction. Do not implement record claiming until OQ-02 identity proofing is decided. | Identity/claim negative tests and verified ownership mapping; no default-hospital assignment without separate approval. |
+| **AI and provenance** | Keep AI hospital-only by default. Cross-hospital inputs require a valid grant or Break-Glass; C2 raw content is removed or inaccessible when authorization ends; doctor-approved saved content carries provenance. Wait for approved technical specifications. | Per-turn authorization, expiry/revocation, retention/purge, saved-content provenance, and cross-hospital negative tests before enabling a real provider. |
+| **Audit and readiness** | Audit cross-hospital access and denial events; define retention and recovery; complete G-1…G-8 with no unresolved High/Critical isolation findings. | Security review, migration rehearsal, backup/restore drill, operational sign-off; no second real Hospital before all gates pass. |
+
+These requirements are not satisfied by adding `hospital_id` alone. PR #5 has no RLS policy or application
+tenant-context code; all downstream access features remain blocked by this gate.
 
 ---
 
