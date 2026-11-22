@@ -6,29 +6,26 @@ breaking the running single-hospital system.
 
 ---
 
-## 1. Conflicting decisions (to be superseded by ADR-042, not edited)
+## 1. Conflicting decisions (superseded by accepted ADR-042; source ADR text retained)
 
-ADR-018 is **not modified** by this documentation. ADR-042 records the supersession, as ADR-030 did for
+ADR-018 is **not modified** by this documentation. Accepted ADR-042 records the supersession, as ADR-030 did for
 ADR-018 §3.
 
 | Record | What it says | Conflicts with | Required action |
 |---|---|---|---|
-| **ADR-018 §1** | Single clinic; no `clinic_id`; no tenant isolation tests | DR-01, DR-03, DR-04, DR-11 | Supersede §1 in **ADR-042**. §2 (billing off) and §4 (mobile readiness) stand. §3 is already superseded by ADR-030 |
-| **ADR-010** clinics/facilities OUT + `backend/test/schema-adr010.e2e-spec.ts` | No clinic or facility entities, enforced by test | DR-01, OD-06 (Hospital, Clinic, Location are entities) | Supersede that clause; replace the test assertion (Phase 21) |
-| **ADR-022** care-relationship scoping | "A doctor reaches a patient iff an assignment links them" (M7.2) | DR-05, DR-07 | Partially supersede (the anchor). Keep 404-not-403 and RLS-before-production |
+| **ADR-018 §1** | Single clinic; no `clinic_id`; no tenant isolation tests | DR-01, DR-03, DR-04, DR-11 | Superseded by **ADR-042**; §1 source text is retained. §2 (billing off) and §4 (mobile readiness) stand. §3 is already superseded by ADR-030 |
+| **ADR-010** clinics/facilities OUT + `backend/test/schema-adr010.e2e-spec.ts` | No clinic or facility entities, enforced by test | DR-01, OD-06 (Hospital, Clinic, Location are entities) | Superseded by **ADR-042**; replace the test assertion in Phase 21 |
+| **ADR-022** care-relationship scoping | "A doctor reaches a patient iff an assignment links them" (M7.2) | DR-05, DR-07 | Superseded in part by ADR-042 (the anchor only). Keep 404-not-403 and RLS-before-production |
 | **ADR-033 / RA-033.1** | Patient booking policy undecided | — | Answered at model level by OD-08 (published slot, capacity 1). Policy values are implementation policy (Phase 24) |
 | **ADR-030 / RA-030.1** | Global patient identity; claim flow deferred | Compatible with OD-09 | Keep. The claim identity-proofing **method** is OQ-02, open and deferred to implementation; the architecture does not change |
 | **2026-10-06 realignment** (frontend ORG-01, A-08, API-W01/W03/W04/W09; patient-app G-11, E-01, H-06, API-P01–P08, P11; `docs/handoff/clinic-isolation.md` §1) | Organization boundary, memberships, switcher, signed-out discovery, computed slots, shared safety summary | DR-01, DR-02, DR-06, DR-08, DR-09, DR-10 | Superseded. Re-realign those files on their own branches (outside this documentation's scope). Mapping: `API_CONTRACT_CHANGES.md` §9 |
 | **Earlier revisions of this folder** | "Locations undecided", "admin split undecided", "AI never uses granted data", "no Break-Glass", "every cross-hospital access needs Admin approval", "no documentation into the requester's record", "booking/discovery/insurance/messaging undecided" | OD-04…OD-14, OQ-01 | Superseded by the final `OWNER_DECISIONS.md` |
 | **D-27b** (2026-09-02) "one doctor, one primary clinic" | Single primary clinic per doctor | — (close to DR-02) | Becomes "one active hospital employment"; clinic is an attribute of the employment |
 
-**ADR number:** **ADR-042** (draft: `ADR-042-DRAFT.md`, Proposed). Re-verified 2026-10-07:
-- highest published ADR-039 (`backend`);
-- ADR-040 and ADR-041 in `origin/backend:backend/docs/PENDING_ADRS.md`;
-- ADR-042 appears only as "next free number" text.
-
-Re-run the sweep (including `PENDING_ADRS.md`) before allocating. The ADR is not created here.
-
+**ADR number:** **ADR-042**, accepted and registered 2026-11-22 after a fresh sweep:
+- No collision was found in the current canonical register or available pending-ADR files.
+- ADR-043 remains reserved; ADR-044 is registered on origin/main.
+- Re-run the sweep, including pending ADR files, before allocating another number.
 ## 2. Single-clinic assumptions in the current implementation
 
 | # | Assumption | Where | Target | Compatibility note |

@@ -1,30 +1,13 @@
-# ADR-042 (DRAFT) — Hospital Is the Isolation Boundary
+# ADR-042 — Hospital Is the Isolation Boundary
 
-> **Draft held outside the register.** This text uses the format of `docs/DECISIONS.md` so it can be
-> appended verbatim once the owner approves it. Until then it is **not** in the register. This follows the
-> precedent of `backend/docs/PENDING_ADRS.md`, and it avoids a number collision while ADR-039…041 exist
-> only on `backend`.
->
-> **Before appending, re-run the register sweep**, including `PENDING_ADRS.md`:
->
-> ```bash
-> git grep -h '^## ADR-' origin/main origin/frontend origin/backend \
->     origin/Database origin/Ai origin/patient-app -- docs/DECISIONS.md | sort -u
-> git grep -h '^## ADR-' origin/backend -- backend/docs/PENDING_ADRS.md
-> ```
->
-> Verified 2026-10-07:
-> - highest published ADR-039 (`backend`);
-> - ADR-040 and ADR-041 pending (`backend/docs/PENDING_ADRS.md`);
-> - ADR-042 unallocated.
-
+> **Accepted 2026-11-22 and registered in `docs/DECISIONS.md`.** This file remains at its original
+> path as the proposal record. The accepted entry in `docs/DECISIONS.md` is canonical.
 ---
 
 ## ADR-042 — Hospital Is the Isolation Boundary
 
-**Status:** 🟠 **PROPOSED — PENDING OWNER APPROVAL.** The owner decisions it records are final
-(`docs/multi-hospital/OWNER_DECISIONS.md`). This ADR formalizes them and the technical choices built on
-them.
+**Status:** **Accepted** · **Date:** 2026-11-22 · **Owner:** Fares Al-Almashharawi. The owner-approved
+implementation safeguards below are part of this decision.
 **Supersedes:**
 - **ADR-018 §1** (single clinic, no `clinic_id`, no tenant isolation tests). ADR-018 §2 (billing off) and
   §4 (mobile readiness) remain Accepted; §3 is already superseded by ADR-030.
@@ -35,10 +18,9 @@ them.
 `patient_doctor_assignments` row links them", RM M7.2). ADR-022's 404-not-403 rule and "RLS before
 production" remain.
 **Decided by:** project owner (Fares Al-Almashharawi), 2026-10-06 / 2026-10-07: DR-01…DR-13,
-OD-01…OD-14, OQ-01.
-**Open:** OQ-02, the record-claim identity-proofing method. It is deferred to implementation with
-RA-030.1 and does not affect this decision.
-
+OD-01…OD-14, OQ-01. Additional safeguards were approved 2026-11-22.
+**Open:** OQ-02, the record-claim identity-proofing method. Patient record claiming remains blocked until
+identity-proofing is explicitly decided.
 ### Context
 
 Medora was specified and built as a single clinic (ADR-018 §1, ADR-010). The owner has decided that
@@ -58,7 +40,7 @@ AF-01…AF-40) shows that:
 2. **Doctors:**
    - at most one active hospital employment, with history kept;
    - no hospital switcher; hospital context resolved server-side from the active employment;
-   - employment end revokes access immediately, with no grace period.
+   - employment end revokes access derived from that employment to that hospital immediately, with no grace period; unrelated access is not revoked.
 
    (DR-02, DR-08, OD-12)
 3. **Patients:**
@@ -113,12 +95,24 @@ AF-01…AF-40) shows that:
   - extend or replace `PatientAccessGrant`, never with role-wide cross-hospital grants (AF-38).
 - **AI:** `ai_messages` gains data-class tagging; C2 is purged or made inaccessible at authorization end.
 
+### Implementation safeguards
+
+- Preserve all existing data, identifiers, clinical history, soft-deleted records and migration history.
+  Existing migrations are not modified or replayed as part of this architecture decision.
+- Never assign legacy clinical records to a default Hospital without a verified ownership mapping.
+  Any data backfill requires separate explicit approval.
+- Patient record claiming remains blocked while OQ-02 is open.
+- Cross-hospital grants, Break-Glass, consultations, AI C2 retention/purge and provenance are architectural
+  targets only. Do not implement them until their technical specifications are reviewed and approved.
+- RLS is not considered complete until tenant-context handling and cross-hospital negative tests pass.
+- This ADR does not authorize production database access, destructive migration, data backfill, deployment,
+  push or merge. Each requires separate explicit approval.
 ### Consequences
 
 **Database.**
 - New: Hospital, Clinic, Location, employment, admin scope, per-hospital Medical Record, grants,
   Break-Glass, provenance, published slots, insurance coverage.
-- `hospital_id` on hospital-owned tables, with a default-hospital backfill.
+- `hospital_id` on hospital-owned tables. Backfill only rows with verified ownership mappings and only after separate explicit approval; never assign unmapped records by default.
 - Per-hospital uniques.
 
 **API.**
@@ -139,8 +133,7 @@ AF-01…AF-40) shows that:
 
 **Testing.**
 - Negative and lifecycle tests N-1…N-30.
-- Gates G-1…G-8 (`docs/multi-hospital/SECURITY_AND_DATA_ISOLATION.md`). No second real hospital
-  before they pass.
+- Gates G-1…G-8 (`docs/multi-hospital/SECURITY_AND_DATA_ISOLATION.md`). No second real hospital before they pass, including tenant-context handling and cross-hospital negative tests.
 
 ### Alternatives considered
 

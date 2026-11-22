@@ -8,7 +8,7 @@
 
 > ⚠ **Multi-Hospital programme — FINAL owner decisions (2026-10-07).** Medora becomes a
 > multi-hospital platform. The canonical plan is [`docs/multi-hospital/`](../../docs/multi-hospital/README.md)
-> (decisions: [`OWNER_DECISIONS.md`](../../docs/multi-hospital/OWNER_DECISIONS.md); draft **ADR-042**, *Proposed*;
+> (decisions: [`OWNER_DECISIONS.md`](../../docs/multi-hospital/OWNER_DECISIONS.md); accepted **ADR-042** (registered 2026-11-22);
 > backend work: [`BACKEND_CHECKLIST.md`](../../docs/multi-hospital/BACKEND_CHECKLIST.md) and
 > [`API_CONTRACT_CHANGES.md`](../../docs/multi-hospital/API_CONTRACT_CHANGES.md); phases 20–31 and 22A in
 > [`docs/work-phases/`](../../docs/work-phases/README.md)). **Nothing in it is implemented.**

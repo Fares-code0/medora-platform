@@ -1,0 +1,73 @@
+/// Hospital tenant boundary. New additive foundation; no legacy rows are
+/// reassigned until an approved backfill plan exists.
+model Hospital {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId   String @unique @map("public_id") @db.VarChar(40)
+  name      String @db.VarChar(160)
+  legalName String? @map("legal_name") @db.VarChar(200)
+  status     String @default("ACTIVE") @db.VarChar(20)
+  timezone  String @default("UTC") @db.VarChar(64)
+  phone     String? @db.VarChar(30)
+  email     String? @unique @db.Citext
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  locations HospitalLocation[]
+  clinics   Clinic[]
+
+  @@index([status], map: "hospitals_status_idx")
+  @@index([deletedAt], map: "hospitals_deleted_at_idx")
+  @@map("hospitals")
+}
+
+/// Physical location belonging to one hospital. The direct foreign key
+/// prevents an orphan; tenant-scoped use is added with dependent models.
+model HospitalLocation {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  name       String @db.VarChar(120)
+
+  addressLine1 String  @map("address_line_1") @db.VarChar(200)
+  addressLine2 String? @map("address_line_2") @db.VarChar(200)
+  city         String  @db.VarChar(120)
+  region       String? @db.VarChar(120)
+  postalCode   String? @map("postal_code") @db.VarChar(24)
+  countryCode  String  @map("country_code") @db.VarChar(2)
+  latitude     Decimal? @db.Decimal(9, 6)
+  longitude    Decimal? @db.Decimal(9, 6)
+  status       String  @default("ACTIVE") @db.VarChar(20)
+  timezone     String? @db.VarChar(64)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  hospital       Hospital          @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+
+  @@unique([hospitalId, name], map: "hospital_locations_hospital_id_name_key")
+  @@index([hospitalId, status], map: "hospital_locations_hospital_id_status_idx")
+  @@index([deletedAt], map: "hospital_locations_deleted_at_idx")
+  @@map("hospital_locations")
+}
+
+/// Operational clinic that belongs to a hospital but is not a security boundary.
+model Clinic {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicId   String @unique @map("public_id") @db.VarChar(40)
+  hospitalId String @map("hospital_id") @db.Uuid
+  name       String @db.VarChar(120)
+  status     String @default("ACTIVE") @db.VarChar(20)
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+
+  @@unique([hospitalId, name], map: "clinics_hospital_id_name_key")
+  @@index([hospitalId, status], map: "clinics_hospital_id_status_idx")
+  @@index([deletedAt], map: "clinics_deleted_at_idx")
+  @@map("clinics")
+}
