@@ -81,6 +81,15 @@ model MedicalRecord {
   @@index([status, priority])
   @@index([appointmentId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "medical_records_hospital_scope_idx")
+  doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+
   @@map("medical_records")
 }
 

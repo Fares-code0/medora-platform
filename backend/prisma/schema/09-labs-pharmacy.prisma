@@ -71,6 +71,15 @@ model LabOrder {
   @@index([status, priority])
   @@index([orderedBy])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "lab_orders_hospital_scope_idx")
+  doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, orderedBy], references: [id, hospitalId, doctorId], onDelete: Restrict)
+
   @@map("lab_orders")
 }
 
@@ -265,6 +274,15 @@ model Prescription {
   @@index([status, endDate])
   @@index([medicationId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "prescriptions_hospital_scope_idx")
+  doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, prescribingDoctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+
   @@map("prescriptions")
 }
 

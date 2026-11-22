@@ -2,10 +2,12 @@
 
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Database (+ Backend)
-**Status:** NOT STARTED (blocked on Phase 20)
+**Status:** IN PROGRESS — additive model and migration implementation on codex/phase21-data-model; fresh PostgreSQL 16 CI validation pending
 **Valid after the final decisions:** yes
-**Depends On:** Phase 20
+**Depends On:** PR #5 foundation merged into Database; persistent migration status remains unknown and blocks deployment
 **Enables:** 22, 22A, 23, 24, 26
+
+**Implementation update (2026-11-22):** The current branch adds hospital departments, one-active-employment-per-doctor, multi-hospital staff affiliations, hospital role assignments, HospitalMedicalRecord, hospital-owned chronic-condition links, published slots, hospital insurance coverage and nullable hospital ownership for clinical rows/files. Legacy clinical identifiers and soft-deleted rows remain in place; no ownership backfill, default hospital assignment, patient claim, or existing migration edit is part of this phase. Details and validation evidence are appended under “Current implementation”.
 
 **Related documentation:** `docs/multi-hospital/DATA_MODEL_CHANGES.md`, `DATABASE_CHECKLIST.md`,
 `MIGRATION_AND_COMPATIBILITY.md`
@@ -25,8 +27,7 @@ Patient AI assistant prerequisites (added 2026-10-10): `DATABASE_CHECKLIST.md` �
 
 ## Objective
 
-Add the Hospital model to `backend/prisma/` and move existing single-clinic data under a default
-Hospital without breaking the running system.
+Complete the additive multi-hospital database model on top of the merged Hospital foundation while preserving all legacy records. New ownership keys remain nullable until verified ownership mappings exist. Do not assign a default hospital or infer legacy ownership.
 
 ## Why it exists
 
@@ -39,37 +40,40 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 
 ## Deliverables
 
-**Stage 1 — model** (`DATABASE_CHECKLIST.md` A–F)
-- [ ] [DATABASE] `Hospital`; `Clinic` (separate entity); `HospitalLocation` (multiple, with
-  coordinates)
-- [ ] [DATABASE] `DoctorEmployment` (one active, history; department/clinic on the employment);
-  Hospital Admin assignment; Platform Admin role
-- [ ] [DATABASE] Global patient identity + `HospitalMedicalRecord (patient, hospital)`, created on the
-  first real interaction; patient clinical tables re-homed
-- [ ] [DATABASE] `hospital_id` + composite FKs (structural ownership, DR-04); hospital-scoped
-  assignments
-- [ ] [DATABASE] Grant entity (purpose, categories, explicit end, revocation, employment link);
-  `BreakGlassSession` (reason, minimum-necessary scope, bounded window, review); access events for both;
-  documentation provenance (OQ-01); `Consultation`
-- [ ] [DATABASE] `PublishedSlot` (capacity 1); `Appointment.hospital_id NOT NULL`; booking
-  constraints
-- [ ] [DATABASE] `HospitalInsuranceCoverage`; per-hospital uniques and settings
-- [ ] [DATABASE] AI storage: `AiConversation.hospital_id`; `AiMessage` data class (C1/C2) and authorization tag (AF-39)
+**Stage 1 — model** (implementation complete; CI validation pending)
+- [x] [DATABASE] Hospital, HospitalLocation and Clinic foundation from merged PR #5; new per-clinic operating hours leave the legacy global weekday schedule unchanged.
+- [x] [DATABASE] HospitalDepartment linked to the global Department catalogue; same-hospital local department references cover employment, staff affiliations, encounters, appointments, labs, prescriptions, rooms and resources. Legacy department IDs remain intact.
+- [x] [DATABASE] DoctorEmployment history with one active employment per doctor globally; HospitalStaffAffiliation supports multiple hospitals and alone grants no access.
+- [x] [DATABASE] HospitalRoleAssignment stores hospital role provenance; termination revokes only assignments sourced from the ended affiliation/employment. Runtime authorization remains deferred.
+- [x] [DATABASE] Global Patient plus one HospitalMedicalRecord per patient/hospital; nullable HMR ownership for eight patient clinical tables and related encounters, appointments, labs, prescriptions, conversations, notifications and AI conversations. No legacy ownership backfill.
+- [x] [DATABASE] HospitalMedicalRecordCondition association; existing PatientChronicCondition composite key and PatientEmergencyContact remain unchanged.
+- [x] [DATABASE] PublishedSlot and partial active-booking uniqueness; cancellation, rescheduling, completion and no-show release slot capacity.
+- [x] [DATABASE] PatientInsurance remains the patient-owned actual policy; HospitalInsuranceCoverage lists plans accepted by each hospital.
+- [x] [DATABASE] Nullable File hospital ownership and same-hospital attachment checks; existing files remain unassigned.
+- [ ] [TESTING] PostgreSQL 16 fresh migration, drift and integration results are pending disposable CI. Local Prisma validation, client generation, typecheck and lint pass.
+- [ ] [BACKEND] Tenant context, scoped queries/authorization and deliberate admin mapping remain backend integration work. This schema does not enable access.
+- [ ] [DATABASE] Historical schema.sql reconciliation remains a separate source-of-truth cleanup task.
+- [ ] [DEFERRED] Cross-hospital grants/consultations, Break-Glass, provenance, AI C2 retention, patient claiming and RLS await their specifications, approvals and security tests.
 
-**Stage 2 — migration** (`DATABASE_CHECKLIST.md` G)
-- [ ] [DATABASE] Default hospital and location; backfill; one active employment per doctor; one Medical
-  Record per existing patient at the default hospital
-- [ ] [DATABASE] **Existing admin accounts mapped deliberately** to Platform Admin or Hospital Admin via a
-  reviewed list. No automatic conversion (OD-07)
-- [ ] [DATABASE] Expand → dual-read → enforce → contract, with down-migrations
-- [ ] [DATABASE] Gate seed (two hospitals with ≥2 locations and ≥1 clinic each, …)
-- [ ] [TESTING] Replace the ADR-010 scope-out assertion; `db:check` and `db:deploy` on clean
-  PostgreSQL 16
-- [ ] [DATABASE] Fix or retire `database/schema.sql`
+**Stage 2 — migration** (DATABASE_CHECKLIST.md G)
+- [x] [DATABASE] New forward-only migration 20261122170000_phase21_data_model; previous migrations untouched. Nullable scope columns preserve unknown legacy ownership, identifiers, soft-deleted rows and history.
+- [x] [DATABASE] Composite tenant/patient FKs, active partial uniques, indexes, checks and triggers for source provenance, termination revocation, file ownership and slot booking.
+- [ ] [BLOCKED] Ownership backfill/default hospital assignment requires verified row-level mappings and separate approval; none is inferred.
+- [ ] [DATABASE] Deliberate existing-admin mapping via reviewed list; no automatic conversion (OD-07).
+- [ ] [DATABASE] Expand-only migrations; destructive contract/down migrations are outside Phase 21.
+- [ ] [DATABASE] Hospital and clinic seed workflow waits for backend provisioning integration.
+
+ClinicWorkingDay remains the historical platform-wide weekday schedule. ClinicOperatingHour gives each Clinic its own weekday rows without changing the old primary key. Room.name retains unique names for legacy unassigned rooms while permitting same names in different hospitals.
+
+PatientInsurance stores actual policies under global Patient identity. HospitalInsuranceCoverage is hospital-owned accepted-plan metadata. No existing insurance data is copied or rewritten.
+
+HospitalDepartment.catalogueDepartmentId is optional shared catalogue metadata. The hospitalDepartmentId added to scoped rows names the local department; existing Department foreign keys and IDs remain unchanged.
+
+HospitalRoleAssignment is structural data, not an authorization engine. Employment/affiliation provenance supports targeted revocation but does not implement runtime session/cache revocation.
 
 ## Blocking conditions
 
-Phase 20.
+Fresh PostgreSQL 16 CI validation of this migration. Verified status of the earlier hospital_core migration in every persistent environment remains a deployment prerequisite.
 
 ## Security requirements
 
@@ -81,6 +85,20 @@ Phase 20.
 
 22, 22A, 23, 24, 26
 
+## Current implementation
+
+- Added HospitalDepartment, DoctorEmployment, HospitalStaffAffiliation, HospitalRoleAssignment, HospitalMedicalRecord, HospitalMedicalRecordCondition, PublishedSlot, HospitalInsuranceCoverage and ClinicOperatingHour. Existing Hospital, HospitalLocation and Clinic are the PR #5 foundation.
+- Added same-hospital department links for scoped appointments, encounters, lab orders, prescriptions, rooms and resources while preserving legacy Department IDs and relationships.
+- Existing patient/clinical identifiers and patient FKs are preserved. Eight patient clinical tables and related encounter, appointment, lab, prescription, messaging, notification and AI conversation tables gain nullable hospital/HMR anchors with composite patient/hospital FKs. PatientEmergencyContact and PatientChronicCondition are unchanged; the new HMR condition association is additive.
+- File hospital ownership remains nullable. New scoped patient documents and attachments require same-hospital files; legacy files remain unassigned.
+- Published-slot capacity is protected by a partial unique index; cancelled, rescheduled, completed and no-show appointments release capacity.
+- The new transaction-wrapped migration follows 20261122160000_facility_foundation. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment.
+- Local validation: Prisma schema validation, Prisma Client generation, TypeScript typecheck, ESLint and git diff --check pass. Source-only Vitest run: 94 test files passed; five Redis-dependent files failed (6 tests) or skipped (17 tests) because no local Redis service is available. PostgreSQL migration/drift/integration tests await disposable CI. No database was accessed.
+- Persistent application status for 20261122150000_hospital_core and 20261122160000_facility_foundation remains unknown; see docs/multi-hospital/MIGRATION_AND_COMPATIBILITY.md. Fresh-history CI cannot establish persistent-environment state.
+- OQ-02 identity proofing, cross-hospital grants, Break-Glass, AI C2 retention, provenance and RLS remain deferred. This phase does not yet enable multi-hospital backend access.
+
 ## Source / evidence
 
 `docs/multi-hospital/AUDIT_FINDINGS.md`; `backend/prisma/schema/*.prisma`.
+
+Ownership immutability: new tenant/HMR keys may be assigned to currently unowned legacy rows after verified mapping, but cannot be changed in place after assignment.

@@ -178,6 +178,13 @@ model User {
   @@index([deletedAt])
   @@index([status])
   @@index([roleId])
+  hospitalRoleAssignments HospitalRoleAssignment[]
+  hospitalRoleAssignmentsGranted HospitalRoleAssignment[] @relation("HospitalRoleAssignmentGrantedBy")
+  recordedHospitalConditions HospitalMedicalRecordCondition[]
+
+  clinicHoursCreated ClinicOperatingHour[] @relation("ClinicOperatingHourCreatedBy")
+  clinicHoursUpdated ClinicOperatingHour[] @relation("ClinicOperatingHourUpdatedBy")
+
   @@map("users")
 }
 

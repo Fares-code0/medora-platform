@@ -14,11 +14,24 @@ model Hospital {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
 
+  files File[]
   locations HospitalLocation[]
   clinics   Clinic[]
 
   @@index([status], map: "hospitals_status_idx")
   @@index([deletedAt], map: "hospitals_deleted_at_idx")
+  departments HospitalDepartment[]
+  doctorEmployments DoctorEmployment[]
+  staffAffiliations HospitalStaffAffiliation[]
+  roleAssignments HospitalRoleAssignment[]
+  medicalRecords HospitalMedicalRecord[]
+  publishedSlots PublishedSlot[]
+  insuranceCoverage HospitalInsuranceCoverage[]
+  auditEvents AuditEvent[]
+  domainEvents DomainEvent[]
+  rooms Room[]
+  resources Resource[]
+
   @@map("hospitals")
 }
 
@@ -65,6 +78,7 @@ model Clinic {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
 
   hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  operatingHours ClinicOperatingHour[]
 
   @@unique([hospitalId, name], map: "clinics_hospital_id_name_key")
   @@index([hospitalId, status], map: "clinics_hospital_id_status_idx")

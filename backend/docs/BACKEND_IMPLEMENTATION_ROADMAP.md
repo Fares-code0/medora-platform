@@ -11,7 +11,7 @@
 > (decisions: [`OWNER_DECISIONS.md`](../../docs/multi-hospital/OWNER_DECISIONS.md); accepted **ADR-042** (registered 2026-11-22);
 > backend work: [`BACKEND_CHECKLIST.md`](../../docs/multi-hospital/BACKEND_CHECKLIST.md) and
 > [`API_CONTRACT_CHANGES.md`](../../docs/multi-hospital/API_CONTRACT_CHANGES.md); phases 20–31 and 22A in
-> [`docs/work-phases/`](../../docs/work-phases/README.md)). **Nothing in it is implemented.**
+> [`docs/work-phases/`](../../docs/work-phases/README.md)). **Foundation status (2026-11-22):** PR #5 is merged into Database and provides Hospital, HospitalLocation and Clinic foundations. Phase 21 additive schema and migration implementation is in progress on a separate feature branch; Prisma validation, client generation, typecheck and lint pass locally, while PostgreSQL 16 migration/drift/integration checks await disposable CI. It is not merged or production-enabled. The hospital_core/facility_foundation status in persistent environments remains **unknown** pending authorized operator verification (see docs/multi-hospital/MIGRATION_AND_COMPATIBILITY.md). Runtime tenant authorization, legacy ownership mapping, patient claiming, cross-hospital access, Break-Glass, AI C2 retention and RLS remain deferred.
 > Completed milestones below stay as historical records. Where a single-clinic assumption
 > below disagrees with the plan, the plan wins. Where the milestones meet it:
 >

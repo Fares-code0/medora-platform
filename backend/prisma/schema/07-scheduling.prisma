@@ -39,6 +39,13 @@ model PatientDoctorAssignment {
   /// ever asks.
   @@index([doctorId, patientId])
   @@index([patientId])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_doctor_assignments_hospital_scope_idx")
+  doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+
   @@map("patient_doctor_assignments")
 }
 
@@ -129,6 +136,20 @@ model Appointment {
   @@index([status, startsAt])
   @@index([departmentId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
+  publishedSlotId String? @map("published_slot_id") @db.Uuid
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+  publishedSlot PublishedSlot? @relation(fields: [publishedSlotId, hospitalId, doctorEmploymentId], references: [id, hospitalId, doctorEmploymentId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "appointments_hospital_scope_idx")
+  @@unique([publishedSlotId], where: raw("published_slot_id IS NOT NULL AND status NOT IN ('cancelled', 'rescheduled', 'completed', 'no-show')"), map: "appointments_one_active_booking_per_slot")
+  @@index([hospitalId, doctorEmploymentId], map: "appointments_hospital_employment_idx")
+  @@index([publishedSlotId], map: "appointments_published_slot_idx")
+
   @@map("appointments")
 }
 

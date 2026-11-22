@@ -156,6 +156,10 @@ model AuditEvent {
   @@index([sessionId])
   @@index([ipAddress])
   @@index([summary(ops: raw("gin_trgm_ops"))], type: Gin, map: "audit_events_summary_trgm_idx")
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  @@index([hospitalId, occurredAt(sort: Desc)], map: "audit_events_hospital_occurred_idx")
+
   @@map("audit_events")
 }
 
@@ -204,6 +208,10 @@ model DomainEvent {
   /// FOR UPDATE SKIP LOCKED so two instances never build the same
   /// notification twice.
   @@index([status, createdAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  @@index([hospitalId, createdAt], map: "domain_events_hospital_created_idx")
+
   @@map("domain_events")
 }
 

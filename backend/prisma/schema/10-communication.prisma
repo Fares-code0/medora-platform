@@ -40,6 +40,11 @@ model Conversation {
   @@index([lastActivityAt(sort: Desc)])
   @@index([patientId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "conversations_hospital_scope_idx")
+
   @@map("conversations")
 }
 
@@ -263,6 +268,11 @@ model Notification {
 
   /// DB §8 — the feed, newest first.
   @@index([recipientId, createdAt(sort: Desc)])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "notifications_hospital_scope_idx")
+
   @@map("notifications")
 }
 
@@ -334,6 +344,11 @@ model AiConversation {
   @@index([ownerId, updatedAt(sort: Desc)])
   @@index([patientId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
+  @@index([hospitalId, hospitalMedicalRecordId], map: "ai_conversations_hospital_scope_idx")
+
   @@map("ai_conversations")
 }
 
