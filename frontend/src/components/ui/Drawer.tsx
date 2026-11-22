@@ -5,7 +5,7 @@ import { AnimatePresence, m } from 'framer-motion';
 import { X } from 'lucide-react';
 
 import { useIsRtl, useT } from '@/i18n';
-import { EASE_EMPHASIZED, motionTokens } from '@/styles/motion';
+import { EASE_EMPHASIZED, EASE_OUT, motionTokens } from '@/styles/motion';
 import { cn } from '@/utils/cn';
 
 import { useModalDialog } from './internal/useModalDialog';
@@ -22,10 +22,12 @@ import { useModalDialog } from './internal/useModalDialog';
  *   600ms (`--duration-panel`).
  * - `floating` stands off the viewport by 12px (16px from sm) on the end,
  *   top and bottom, with every corner rounded, on a translucent blurred
- *   surface drawn from the theme's own overlay colour. It slides and fades
- *   over 700ms (`--duration-expand`). For a panel that configures the page
- *   behind it — the dashboard's Customize — so the page reads as still
- *   there.
+ *   surface drawn from the theme's own overlay colour. It does not slide: it
+ *   fades in place over 150ms (`--duration-base`), opacity only, so it
+ *   answers the click at once instead of being dragged in from the edge
+ *   (the 700ms slide it used to play read as a delay). For a panel that
+ *   configures the page behind it — the dashboard's Customize — so the
+ *   page reads as still there.
  *
  * Both play their exit before the dialog closes (`useModalDialog`), so
  * closing is as smooth as opening.
@@ -62,17 +64,14 @@ export function Drawer({
   const titleId = useId();
   const { dialogRef, closing, onExitComplete } = useModalDialog(open, onClose);
   const floating = variant === 'floating';
-  const duration = floating ? motionTokens.duration.expand : motionTokens.duration.panel;
-  // `x` is a physical transform, which `dir` does not mirror: the panel
-  // enters from whichever side the end edge is on.
-  const offstage = floating
-    ? rtl
-      ? 'calc(-100% - 24px)'
-      : 'calc(100% + 24px)'
-    : rtl
-      ? '-100%'
-      : '100%';
-  const transition = { duration, ease: EASE_EMPHASIZED };
+  const duration = floating ? motionTokens.duration.base : motionTokens.duration.panel;
+  // `x` is a physical transform, which `dir` does not mirror: the edge panel
+  // enters from whichever side the end edge is on. The floating panel has
+  // no travel at all — opacity only.
+  const offstage = rtl ? '-100%' : '100%';
+  const hidden = floating ? { opacity: 0 } : { x: offstage, opacity: 1 };
+  const shown = floating ? { opacity: 1 } : { x: 0, opacity: 1 };
+  const transition = { duration, ease: floating ? EASE_OUT : EASE_EMPHASIZED };
 
   return (
     <dialog
@@ -98,9 +97,9 @@ export function Drawer({
         {open ? (
           <m.div
             key="drawer-panel"
-            initial={{ x: offstage, opacity: floating ? 0 : 1 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: offstage, opacity: floating ? 0 : 1 }}
+            initial={hidden}
+            animate={shown}
+            exit={hidden}
             transition={transition}
             data-drawer-variant={variant}
             className={cn(

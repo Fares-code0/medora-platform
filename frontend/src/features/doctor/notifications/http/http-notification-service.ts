@@ -2,6 +2,7 @@ import { apiClient } from '@/api/client';
 import {
   asRecord,
   fetchAllPages,
+  LARGE_LIST_MAX_PAGES,
   malformedResponse,
   notConnected,
   readBoolean,
@@ -132,6 +133,7 @@ function listByStatus(status: 'active' | 'archived') {
   return fetchAllPages(
     (page, pageSize) => apiClient.get('/notifications', { status, page, pageSize }),
     'notifications',
+    LARGE_LIST_MAX_PAGES,
   );
 }
 

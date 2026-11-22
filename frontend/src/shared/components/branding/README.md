@@ -10,7 +10,7 @@ vectorised outlines, so there is no separate symbol to keep in sync.
 | --- | --- |
 | `medoraLogoPaths.ts` | Logo geometry, vectorised from the approved artwork. Outlines for `M`, `e`, the `d·o` ligature, `r`, `a`, plus the three centrelines the entrance traces. **Generated data — don't hand-edit.** |
 | `Logo.tsx` | The static logo for normal use (nav, auth, splash, error pages). Paints with `currentColor`. |
-| `MedoraAiLogo.tsx` + `assets/medora-ai-logo.png` | **Medora AI**, the assistant's identity (heart, ECG trace, circuit traces) — the supplied artwork with its background removed. Full colour, shaped as a `LucideIcon` so it fills any `icon` / `leadingIcon` slot. Use it for every assistant entry point instead of a generic sparkles icon. |
+| `MedoraAiLogo.tsx` + `assets/medora-ai-logo.webp` | **Medora AI**, the assistant's identity (heart, ECG trace, circuit traces) — the supplied artwork with its background removed. Full colour, shaped as a `LucideIcon` so it fills any `icon` / `leadingIcon` slot. Use it for every assistant entry point instead of a generic sparkles icon. |
 | `MedoraIntro.tsx` | The entrance overlay. |
 | `MedoraIntro.css` | The whole timeline as CSS variables. |
 | `intro-session.ts` | `shouldPlayMedoraIntro()`, `markMedoraIntroPlayed()`, `prefersReducedMotion()` and `MEDORA_INTRO_TIMING`. |

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SEED_CONVERSATIONS } from './seed';
+import {
+  clearConversationsSession,
+  removeLegacyConversationsStorage,
+  setConversationsOwner,
+} from './session-boundary';
 import { localId, readStoredConversations, writeStoredConversations } from './store';
 
 /**
@@ -12,10 +17,13 @@ import { localId, readStoredConversations, writeStoredConversations } from './st
  * edit here would mean the behaviour moved with the file.
  */
 
-const STORAGE_KEY = 'medora.messaging.v1';
+const LEGACY_KEY = 'medora.messaging.v1';
+const STORAGE_KEY = 'medora.messaging.v1.user-a';
 
 beforeEach(() => {
   window.localStorage.clear();
+  clearConversationsSession();
+  setConversationsOwner('user-a');
 });
 
 describe('readStoredConversations', () => {
@@ -55,6 +63,66 @@ describe('readStoredConversations', () => {
   it('falls back to the seed on unparseable JSON', () => {
     window.localStorage.setItem(STORAGE_KEY, 'not json at all');
 
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+  });
+});
+
+describe('per-user isolation', () => {
+  function edited(unreadCount: number) {
+    const [first] = SEED_CONVERSATIONS;
+    if (first === undefined) throw new Error('SEED_CONVERSATIONS is empty');
+    return [{ ...first, unreadCount }];
+  }
+
+  it('keeps A and B apart in both directions', () => {
+    writeStoredConversations(edited(11));
+
+    setConversationsOwner('user-b');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    writeStoredConversations(edited(22));
+
+    setConversationsOwner('user-a');
+    expect(readStoredConversations()).toEqual(edited(11));
+    setConversationsOwner('user-b');
+    expect(readStoredConversations()).toEqual(edited(22));
+  });
+
+  it('clearConversationsSession removes the owner data and resets the owner', () => {
+    writeStoredConversations(edited(11));
+    expect(window.localStorage.getItem(STORAGE_KEY)).not.toBeNull();
+
+    clearConversationsSession();
+
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    // Owner reset: a write now persists nothing.
+    writeStoredConversations(edited(5));
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it('never reads or writes the legacy global key, and removes it', () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(edited(77)));
+
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    writeStoredConversations(edited(3));
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBe(JSON.stringify(edited(77)));
+
+    removeLegacyConversationsStorage();
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+
+    window.localStorage.setItem(LEGACY_KEY, 'x');
+    clearConversationsSession();
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it('persists nothing when there is no owner', () => {
+    setConversationsOwner(null);
+
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    writeStoredConversations(edited(9));
+
+    expect(window.localStorage.length).toBe(0);
+    // In-memory only, and dropped as soon as an owner is set.
+    setConversationsOwner('user-a');
     expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
   });
 });

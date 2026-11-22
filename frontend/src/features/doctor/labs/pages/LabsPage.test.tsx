@@ -483,3 +483,25 @@ describe('MED-SEC-014 — the worklist shows the served scope and nothing wider'
     }
   }, CASE_TIMEOUT);
 });
+
+describe('LabsPage — New order', () => {
+  it('opens the existing order page from the page header', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/doctor/labs']}>
+        <AppProviders>
+          <Routes>
+            <Route path="/doctor/labs" element={<LabsPage />} />
+            {/* Declared before :labId, as in the app router. */}
+            <Route path="/doctor/labs/new" element={<h1>Order lab work</h1>} />
+            <Route path="/doctor/labs/:labId" element={<h1>Lab detail</h1>} />
+          </Routes>
+        </AppProviders>
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'New order' }));
+
+    expect(await screen.findByRole('heading', { name: 'Order lab work' })).toBeInTheDocument();
+  }, CASE_TIMEOUT);
+});

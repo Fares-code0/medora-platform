@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 
 import { m } from 'framer-motion';
@@ -43,6 +43,24 @@ export function Tabs({
   const enabled = items.filter((item) => !item.disabled);
   const active = items.find((item) => item.value === value);
 
+  // Keep the selected tab inside the scrollport on narrow screens. Scrolls
+  // only the tablist (inline axis), never the page.
+  useEffect(() => {
+    const node = tabRefs.current.get(value);
+    const list = node?.parentElement;
+    if (!node || !list || list.scrollWidth <= list.clientWidth) return;
+    // Rect deltas, not offsetLeft: correct whatever the offset parent is, and
+    // in RTL too (a positive scrollLeft delta always moves the view rightward).
+    const listRect = list.getBoundingClientRect();
+    const tabRect = node.getBoundingClientRect();
+    const margin = 8;
+    if (tabRect.left < listRect.left) {
+      list.scrollLeft -= listRect.left - tabRect.left + margin;
+    } else if (tabRect.right > listRect.right) {
+      list.scrollLeft += tabRect.right - listRect.right + margin;
+    }
+  }, [value]);
+
   const activate = (tabValue: string) => {
     onValueChange(tabValue);
     tabRefs.current.get(tabValue)?.focus();
@@ -78,9 +96,14 @@ export function Tabs({
         aria-label={ariaLabel}
         onKeyDown={onKeyDown}
         className={cn(
-          'flex max-w-full overflow-x-auto',
+          // Horizontal-only scroll: overflow-x:auto alone computes overflow-y:auto too.
+          'flex max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain [-webkit-overflow-scrolling:touch]',
           variant === 'line'
-            ? 'gap-4 border-b border-border'
+            ? // The baseline is an inset shadow, not border-bottom: it then sits
+              // inside the scrollport, so the bottom-0 underline overlays it
+              // exactly as the old -bottom-px one overlaid the border — without
+              // spilling out and creating vertical overflow.
+              'gap-4 shadow-[inset_0_-1px_0_var(--color-border)]'
             : 'w-fit gap-1 rounded-surface bg-surface-sunken p-0.5',
         )}
       >
@@ -104,7 +127,8 @@ export function Tabs({
               disabled={item.disabled}
               onClick={() => onValueChange(item.value)}
               className={cn(
-                'relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap text-body-sm font-medium',
+                // The tablist clips vertically, so the focus ring is drawn inset.
+                'relative inline-flex shrink-0 focus-visible:shadow-[inset_0_0_0_2px_var(--color-focus-ring)] items-center gap-2 whitespace-nowrap text-body-sm font-medium',
                 'transition-colors duration-fast ease-out disabled:cursor-not-allowed disabled:text-text-disabled',
                 variant === 'line'
                   ? cn(
@@ -136,7 +160,7 @@ export function Tabs({
                 <m.span
                   layoutId={`${baseId}-underline`}
                   aria-hidden="true"
-                  className="absolute inset-x-0 -bottom-px h-0.5 rounded-pill bg-tab-indicator"
+                  className="absolute inset-x-0 bottom-0 h-0.5 rounded-pill bg-tab-indicator"
                   transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
                 />
               ) : null}

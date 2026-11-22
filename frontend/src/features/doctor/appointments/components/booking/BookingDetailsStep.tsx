@@ -69,7 +69,7 @@ function ReviewGroup({
           Edit
         </Button>
       </div>
-      <dl className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">{children}</dl>
+      <dl className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-2 sm:grid-cols-[repeat(2,minmax(0,1fr))]">{children}</dl>
     </div>
   );
 }
@@ -98,7 +98,7 @@ export function BookingDetailsStep({
 }: BookingDetailsStepProps) {
   return (
     <Stack gap={6}>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-[repeat(2,minmax(0,1fr))]">
         <Select
           label="Visit type"
           required

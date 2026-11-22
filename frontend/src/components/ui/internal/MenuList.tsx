@@ -178,8 +178,12 @@ export function MenuList({ entries, onClose, 'aria-label': ariaLabel, className 
       role="menu"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
+      // The scrolling surface: a floating wrapper (Dropdown, ContextMenu) sets
+      // the max-height, and the list scrolls inside its own rounded border
+      // rather than the wrapper growing a scrollbar outside it.
+      data-floating-scroller=""
       className={cn(
-        'min-w-[180px] rounded-surface border border-border bg-surface-overlay p-1 shadow-popover',
+        'max-h-[inherit] min-w-[180px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-surface border border-border bg-surface-overlay p-1 shadow-popover',
         className,
       )}
     >

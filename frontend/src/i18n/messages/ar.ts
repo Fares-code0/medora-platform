@@ -188,6 +188,7 @@ export const ar: Messages = {
   // Navigation — doctor
   'nav.overview': 'نظرة عامة',
   'nav.patients': 'المرضى',
+  'nav.patientsNew': 'إضافة مريض',
   'nav.appointments': 'المواعيد',
   'nav.appointmentsNew': 'إضافة موعد',
   'nav.medicalRecords': 'السجلات الطبية',
@@ -196,6 +197,7 @@ export const ar: Messages = {
   'nav.section.clinical': 'العمل السريري',
   'nav.myClinic': 'عيادتي',
   'nav.labs': 'المختبر',
+  'nav.labsNew': 'طلب جديد',
   'nav.pharmacy': 'الصيدلية',
   'nav.pharmacyAll': 'الوصفات',
   'nav.pharmacyNew': 'وصفة جديدة',

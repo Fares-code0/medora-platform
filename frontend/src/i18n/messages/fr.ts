@@ -200,6 +200,7 @@ export const fr: Messages = {
   // Navigation — doctor
   'nav.overview': 'Vue d’ensemble',
   'nav.patients': 'Patients',
+  'nav.patientsNew': 'Ajouter un patient',
   'nav.appointments': 'Rendez-vous',
   'nav.appointmentsNew': 'Ajouter un rendez-vous',
   'nav.medicalRecords': 'Dossiers médicaux',
@@ -208,6 +209,7 @@ export const fr: Messages = {
   'nav.section.clinical': 'Clinique',
   'nav.myClinic': 'Mon cabinet',
   'nav.labs': 'Laboratoire',
+  'nav.labsNew': 'Nouvelle demande',
   'nav.pharmacy': 'Pharmacie',
   'nav.pharmacyAll': 'Ordonnances',
   'nav.pharmacyNew': 'Nouvelle ordonnance',

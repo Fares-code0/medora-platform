@@ -2,6 +2,7 @@ import { apiClient } from '@/api/client';
 import {
   asRecord,
   fetchAllPages,
+  LARGE_LIST_MAX_PAGES,
   readArray,
   readBoolean,
   readData,
@@ -139,6 +140,7 @@ export const httpAppointmentService: AppointmentService = {
     const items = await fetchAllPages(
       (page, pageSize) => apiClient.get('/appointments', { page, pageSize, sort: 'startsAt:asc' }),
       'appointments',
+      LARGE_LIST_MAX_PAGES,
     );
     return items.map(toAppointment);
   },

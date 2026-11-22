@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveApiBaseUrl, resolveEnableMocks } from './env';
+import { parseEnv, resolveApiBaseUrl, resolveEnableMocks } from './env';
 
 /**
  * The production mock guard.
@@ -120,5 +120,75 @@ describe('resolveApiBaseUrl — development and staging', () => {
     expect(resolveApiBaseUrl('development', 'http://192.168.1.4:3000/api/v1')).toBe(
       'http://192.168.1.4:3000/api/v1',
     );
+  });
+});
+
+/**
+ * `parseEnv` replaced a zod schema (so zod stays out of the entry chunk).
+ * These pin the same three rules the schema stated.
+ */
+describe('parseEnv', () => {
+  it('applies the defaults only when a variable is absent', () => {
+    expect(parseEnv({})).toEqual({
+      success: true,
+      data: {
+        VITE_API_BASE_URL: 'http://localhost:3000/api/v1',
+        VITE_APP_ENV: 'development',
+        VITE_ENABLE_MOCKS: undefined,
+      },
+    });
+  });
+
+  it('accepts a complete, valid configuration as given', () => {
+    expect(
+      parseEnv({
+        VITE_API_BASE_URL: 'https://api.example.com/api/v1',
+        VITE_APP_ENV: 'production',
+        VITE_ENABLE_MOCKS: 'false',
+      }),
+    ).toEqual({
+      success: true,
+      data: {
+        VITE_API_BASE_URL: 'https://api.example.com/api/v1',
+        VITE_APP_ENV: 'production',
+        VITE_ENABLE_MOCKS: 'false',
+      },
+    });
+  });
+
+  it('rejects a base URL that is not a URL, and an empty one rather than defaulting it', () => {
+    for (const value of ['not a url', '/api/v1', '']) {
+      const result = parseEnv({ VITE_API_BASE_URL: value });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.fieldErrors)).toEqual(['VITE_API_BASE_URL']);
+    }
+  });
+
+  it('rejects an unknown or empty app environment', () => {
+    for (const value of ['prod', 'Production', '']) {
+      const result = parseEnv({ VITE_APP_ENV: value });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.fieldErrors)).toEqual(['VITE_APP_ENV']);
+    }
+  });
+
+  it('rejects a mock flag that is not exactly true or false', () => {
+    for (const value of ['1', 'TRUE', 'yes', '']) {
+      const result = parseEnv({ VITE_ENABLE_MOCKS: value });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(Object.keys(result.fieldErrors)).toEqual(['VITE_ENABLE_MOCKS']);
+    }
+  });
+
+  it('reports every failing field at once', () => {
+    const result = parseEnv({ VITE_API_BASE_URL: 'x', VITE_APP_ENV: 'x', VITE_ENABLE_MOCKS: 'x' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(Object.keys(result.fieldErrors).sort()).toEqual([
+        'VITE_API_BASE_URL',
+        'VITE_APP_ENV',
+        'VITE_ENABLE_MOCKS',
+      ]);
+    }
   });
 });

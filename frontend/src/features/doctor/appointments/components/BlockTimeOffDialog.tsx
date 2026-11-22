@@ -211,7 +211,7 @@ export function BlockTimeOffDialog({ open, onClose }: { open: boolean; onClose: 
             {created.impacted.map((appointment) => (
               <li
                 key={appointment.id}
-                className="flex items-center justify-between gap-3 px-3 py-2 text-body-sm"
+                className="flex flex-col gap-1 px-3 py-2 text-body-sm sm:flex-row sm:items-center sm:justify-between sm:gap-3"
               >
                 <span className="text-text-primary">
                   {names.get(appointment.patientId) ?? appointment.patientId}
@@ -285,7 +285,7 @@ export function BlockTimeOffDialog({ open, onClose }: { open: boolean; onClose: 
           onChange={(value) => setKind(value as TimeOffKind)}
           options={KIND_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
         />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-[repeat(2,minmax(0,1fr))]">
           <Input
             type="datetime-local"
             label="From"

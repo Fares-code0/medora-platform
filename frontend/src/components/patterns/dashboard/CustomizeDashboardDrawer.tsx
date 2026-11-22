@@ -122,8 +122,9 @@ export function CustomizeDashboardDrawer<TId extends string, TGroup extends stri
       open={open}
       onClose={onClose}
       title="Customize dashboard"
-      // Floats clear of the viewport edges on a glass surface, and moves
-      // over 700ms: it configures the page behind it, which stays in view.
+      // Floats clear of the viewport edges on a glass surface and fades in
+      // place (150ms, no slide): it configures the page behind it, which
+      // stays in view.
       variant="floating"
       footer={
         <>

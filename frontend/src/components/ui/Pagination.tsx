@@ -64,7 +64,9 @@ export function Pagination({
       <p className="text-body-sm text-text-secondary tabular-nums">
         Showing {rangeStart}–{rangeEnd} of {totalItems}
       </p>
-      <div className="flex items-center gap-2">
+      {/* Wraps on a 320px phone, where the rows-per-page group and the
+          page controls together are wider than the row. */}
+      <div className="flex max-w-full flex-wrap items-center gap-2">
         {onPageSizeChange ? (
           /*
            * The visible words and the control's accessible name are the same

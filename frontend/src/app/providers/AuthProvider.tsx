@@ -18,6 +18,11 @@ import {
   clearAiSessionData,
   removeLegacyAiStorage,
 } from '@/features/doctor/ai/model/session-storage';
+import {
+  clearConversationsSession,
+  removeLegacyConversationsStorage,
+  setConversationsOwner,
+} from '@/features/shared-domain/conversations/session-boundary';
 import { clearUserPreferences } from '@/services/preferences';
 import { AuthError } from '@/types/auth';
 import type {
@@ -125,6 +130,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // cached lists are another session's patient data, never this one's.
       queryClient.clear();
       clearAiSessionData();
+      // Mock messaging is per user: the previous holder's copy goes, and the
+      // store is pointed at this session's user.
+      clearConversationsSession();
+      setConversationsOwner(session.user.id);
       authService.persist(session, rememberMe);
       pendingRef.current = null;
       rememberRef.current = rememberMe;
@@ -141,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
     // The assistant's conversations are PHI held in memory too (S1).
     clearAiSessionData();
+    clearConversationsSession();
     pendingRef.current = null;
     setUser(null);
     setStatus('unauthenticated');
@@ -154,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Pre-S1 builds kept assistant chats under global keys no logout
     // cleared; whatever a browser still holds there goes on first load.
     removeLegacyAiStorage();
+    removeLegacyConversationsStorage();
     let cancelled = false;
 
     void authService
@@ -161,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((session) => {
         if (cancelled) return;
         if (session) {
+          setConversationsOwner(session.user.id);
           setUser(session.user);
           setStatus('authenticated');
         } else {
@@ -265,6 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // reads what this drops; unlocking refetches what the next page needs.
     queryClient.clear();
     clearAiSessionData();
+    clearConversationsSession();
     setStatus((prev) => (prev === 'authenticated' ? 'locked' : prev));
   }, [queryClient]);
 
@@ -277,7 +290,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // session comes back only from the `/auth/login` fallback against an
       // API without the verify route.
       if (session) finalize(session, rememberRef.current);
-      else setStatus('authenticated');
+      else {
+        setConversationsOwner(user.id);
+        setStatus('authenticated');
+      }
     },
     [user, finalize],
   );

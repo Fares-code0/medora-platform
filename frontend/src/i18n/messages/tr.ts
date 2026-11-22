@@ -192,6 +192,7 @@ export const tr: Messages = {
   // Navigation — doctor
   'nav.overview': 'Genel bakış',
   'nav.patients': 'Hastalar',
+  'nav.patientsNew': 'Hasta ekle',
   'nav.appointments': 'Randevular',
   'nav.appointmentsNew': 'Randevu ekle',
   'nav.medicalRecords': 'Tıbbi kayıtlar',
@@ -200,6 +201,7 @@ export const tr: Messages = {
   'nav.section.clinical': 'Klinik',
   'nav.myClinic': 'Kliniğim',
   'nav.labs': 'Laboratuvar',
+  'nav.labsNew': 'Yeni istem',
   'nav.pharmacy': 'Eczane',
   'nav.pharmacyAll': 'Reçeteler',
   'nav.pharmacyNew': 'Yeni reçete',

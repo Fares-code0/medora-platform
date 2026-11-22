@@ -187,6 +187,7 @@ export const fa: Messages = {
   // Navigation — doctor
   'nav.overview': 'نمای کلی',
   'nav.patients': 'بیماران',
+  'nav.patientsNew': 'افزودن بیمار',
   'nav.appointments': 'نوبت‌ها',
   'nav.appointmentsNew': 'افزودن نوبت',
   'nav.medicalRecords': 'پرونده‌های پزشکی',
@@ -195,6 +196,7 @@ export const fa: Messages = {
   'nav.section.clinical': 'بالینی',
   'nav.myClinic': 'درمانگاه من',
   'nav.labs': 'آزمایشگاه',
+  'nav.labsNew': 'سفارش جدید',
   'nav.pharmacy': 'داروخانه',
   'nav.pharmacyAll': 'نسخه‌ها',
   'nav.pharmacyNew': 'نسخه جدید',

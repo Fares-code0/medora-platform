@@ -75,7 +75,7 @@ export function PatientRowActions({ patient }: { patient: Patient }) {
   return (
     // Row click opens the profile; action clicks must not bubble into it.
     <div
-      className="flex items-center justify-end gap-1"
+      className="flex flex-wrap items-center justify-end gap-1"
       onClick={(event) => event.stopPropagation()}
     >
       <Tooltip content="Send message">

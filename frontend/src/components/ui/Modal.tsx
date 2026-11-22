@@ -13,7 +13,7 @@ import { useModalDialog } from './internal/useModalDialog';
  * Modal (Dialog) — DS §8.14.
  * Built on native <dialog>: focus trap, Esc handling, inert background,
  * and focus return to the trigger are platform-provided. Sizes sm/md/lg;
- * header (h3 title + close) · scrollable body (max 70vh) · footer with
+ * header (h3 title + close) · scrollable body (fills the dvh-capped panel) · footer with
  * right-aligned actions. Non-dismissible mode is for confirmations that
  * require an explicit choice. Panel enters with fade + scale 0.96→1.
  */
@@ -77,7 +77,10 @@ export function Modal({
         // dialog element itself only when clicking the backdrop area).
         if (dismissible && event.target === dialogRef.current) onClose();
       }}
-      className={cn('w-full bg-transparent p-0 backdrop:bg-scrim', SIZES[size])}
+      className={cn(
+        'm-auto w-[calc(100%-1rem)] bg-transparent p-0 backdrop:bg-scrim sm:w-full',
+        SIZES[size],
+      )}
     >
       <AnimatePresence onExitComplete={onExitComplete}>
         {open ? (
@@ -88,9 +91,9 @@ export function Modal({
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.98 }}
             transition={{ duration, ease: EASE_EMPHASIZED }}
-            className="rounded-surface bg-surface-overlay shadow-modal"
+            className="flex max-h-[calc(100vh-1rem)] max-h-[calc(100dvh-1rem)] flex-col rounded-surface bg-surface-overlay shadow-modal sm:max-h-[calc(100vh-4rem)] sm:max-h-[calc(100dvh-4rem)]"
           >
-            <div className="flex items-start justify-between gap-4 p-6">
+            <div className="flex shrink-0 items-start justify-between gap-4 p-4 sm:p-6">
               <div className="min-w-0">
                 <h2 id={titleId} className="text-h4 font-semibold text-text-primary">
                   {title}
@@ -112,9 +115,9 @@ export function Modal({
                 </button>
               ) : null}
             </div>
-            <div className="max-h-[70vh] overflow-y-auto px-6 pb-6">{children}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-6 sm:pb-6">{children}</div>
             {footer ? (
-              <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
+              <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-border px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-end sm:px-6 sm:py-4 [&>*]:w-full sm:[&>*]:w-auto">
                 {footer}
               </div>
             ) : null}

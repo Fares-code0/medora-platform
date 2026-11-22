@@ -40,7 +40,13 @@ export function Dropdown({ trigger, entries, align = 'end', menuLabel, className
 
   const close = useCallback(() => setOpen(false), []);
   // The menu is portaled (internal/floating.ts): clicks inside it are not outside.
-  const floating = useFloating<HTMLDivElement>(open, wrapperRef, { align, cap: 400 });
+  // It follows the trigger as the page scrolls, and closes once the trigger
+  // has scrolled fully out of view rather than floating over unrelated rows.
+  const floating = useFloating<HTMLDivElement>(open, wrapperRef, {
+    align,
+    cap: 400,
+    onAnchorHidden: close,
+  });
   useOutsideClick([wrapperRef, floating.floatingRef], close, open);
 
   const closeAndRefocus = useCallback(() => {
@@ -77,7 +83,9 @@ export function Dropdown({ trigger, entries, align = 'end', menuLabel, className
                     transition: { duration: motionTokens.duration.slow, ease: EASE_IN },
                   }}
                   transition={{ duration: motionTokens.duration.menu, ease: EASE_EMPHASIZED }}
-                  className="z-dropdown overflow-y-auto"
+                  // No overflow here: the max-height is inherited by MenuList,
+                  // which scrolls inside its own rounded surface.
+                  className="z-dropdown flex flex-col"
                 >
                   <MenuList entries={entries} onClose={closeAndRefocus} aria-label={menuLabel} />
                 </m.div>
