@@ -105,11 +105,10 @@ edits it:
 git grep -h '^## ADR-' origin/main -- docs/DECISIONS.md | sort -u
 ```
 
-The register's highest entry is **ADR-044**. ADR-040 to ADR-043 are not in the
-register but are cited across `docs/` (ADR-042 is a draft at
-`docs/multi-hospital/ADR-042-DRAFT.md`), so treat them as taken. The register itself
-names the next unallocated number (`docs/DECISIONS.md`, near the top; ADR-045
-as of 2026-11-21). ADR-031 and ADR-033 are *proposed*, not accepted.
+The register contains ADR-042 and ADR-044; ADR-045 is also registered on current origin/main. ADR-040 and ADR-041 are accepted and their full text remains
+in backend/docs/PENDING_ADRS.md; ADR-043 is reserved for a possible Multi-Hospital split. The next
+unallocated number is ADR-046 (numbering sweep verified 2026-11-22). Before allocating it, sweep
+the current register and all available PENDING_ADRS.md files. ADR-031 and ADR-033 are *proposed*, not accepted.
 
 ## Quality gates
 

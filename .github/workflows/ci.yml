@@ -199,7 +199,7 @@ jobs:
           - 5432:5432
         # Without this the first migration races the server's startup.
         options: >-
-          --health-cmd "pg_isready -U medora"
+          --health-cmd "pg_isready -U medora -d medora_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -271,6 +271,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Focused ADR-010 scope test
+        run: npm run test -- test/schema-adr010.e2e-spec.ts
 
       - name: Test
         run: npm run test

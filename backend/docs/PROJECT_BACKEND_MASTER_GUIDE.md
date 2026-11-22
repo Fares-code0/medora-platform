@@ -107,7 +107,7 @@ Frontend: 19 phases complete, production-grade quality gates green (`tsc` 0 erro
 
 ## 2.3 Known assumptions
 
-- Single clinic / single tenant today (multi-clinic hinted for later). ⚠ *Superseded as a direction (2026-10-07):* the owner decided a multi-**hospital** platform with **Hospital** as the isolation boundary; Clinic and Location are entities inside a hospital, never boundaries. Plan: `docs/multi-hospital/` (draft ADR-042, Proposed).
+- Single clinic / single tenant today (multi-clinic hinted for later). ⚠ *Superseded as a direction (2026-10-07):* the owner decided a multi-**hospital** platform with **Hospital** as the isolation boundary; Clinic and Location are entities inside a hospital, never boundaries. Plan: `docs/multi-hospital/` (accepted ADR-042, registered in docs/DECISIONS.md).
 - English UI (auth surface also Arabic); localization slice exists in platform settings.
 - Patients do not authenticate in the current scope.
 - Demo credentials (`Medora123!`, OTP `123456`) are mock-only and must never seed any real environment.

@@ -43,7 +43,7 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     'report_exports', //             group 15 — here
   ];
 
-  /** ADR-010's eight OUT groups. Absence is the assertion. */
+  /** ADR-010's remaining OUT groups. ADR-042 supersedes group 16 for clinics. */
   const OUT_TABLES = [
     'countries', //         group 3  — no contract endpoint
     'cities', //            group 3
@@ -56,7 +56,6 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     'immunizations', //     group 11 — already a HistoryEventKind
     'consents', //          group 12 — consent timestamps + files
     'saved_views', //       group 13 — documented contract gap
-    'clinics', //           group 16 — ADR-018 §1, single clinic
     'facilities', //        group 16
     'message_templates', // group 17 — no contract endpoint
     'snippets', //          group 17
@@ -99,10 +98,13 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     });
 
     it('has none of the tables ADR-010 marked OUT', async () => {
-      // "Out" means not in v1, never rejected forever — each carries the
-      // trigger that would bring it back. What this asserts is that their
-      // absence is intentional rather than forgotten.
+      // ADR-042 supersedes group 16 for clinics. The other deferred tables
+      // remain absent until their documented product triggers are met.
       expect(await tablesPresent(OUT_TABLES)).toEqual([]);
+    });
+
+    it('includes the Hospital-owned Clinic brought into scope by ADR-042', async () => {
+      expect(await tablesPresent(['clinics'])).toEqual(['clinics']);
     });
 
     it('does not create saved_views, where the roadmap and the ADR disagree', async () => {

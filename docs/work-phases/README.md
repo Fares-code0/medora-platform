@@ -196,7 +196,7 @@ FE-10 sub-phases, from commits recorded in `docs/FE-10-INTEGRATION-STATUS.md`:
 
 | Phase | Title | Primary Area | Status | Owner decisions | Depends On |
 |---|---|---|---|---|---|
-| [20](PHASE-20-MULTI-HOSPITAL-ARCHITECTURE-DECISION.md) | Multi-Hospital Architecture Decision (ADR-042) | Architecture | IN PROGRESS (decisions final, ADR-042 drafted as Proposed) | DR-01…13 | — |
+| [20](PHASE-20-MULTI-HOSPITAL-ARCHITECTURE-DECISION.md) | Multi-Hospital Architecture Decision (ADR-042) | Architecture | IN PROGRESS (ADR-042 accepted and registered 2026-11-22; remaining review sign-offs open) | DR-01…13 | — |
 | [21](PHASE-21-MULTI-HOSPITAL-DATA-MODEL-AND-MIGRATION.md) | Data Model & Migration | Database + Backend | NOT STARTED | DR-01…04, 06, 07, 10, 11 · OD-06, 09, 12 | 20 |
 | [22](PHASE-22-HOSPITAL-CONTEXT-AND-AUTHORIZATION.md) | Hospital Context, Session & Authorization | Backend + Security | NOT STARTED | DR-01, 02, 04, 05, 07, 08 · OD-07, 12 | 20, 21 |
 | [22A](PHASE-22A-CROSS-HOSPITAL-ACCESS-WORKFLOW.md) | Cross-Hospital Access: Grants, Break-Glass, Documentation & Consultations | Backend + Security + Frontend | NOT STARTED | DR-06, 07 · OD-01…05, 07, 12, 13 · OQ-01 | 21, 22 |
