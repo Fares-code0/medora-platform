@@ -137,6 +137,8 @@ export class ApiClient {
   private onSessionLost: SessionLostHandler | null = null;
   private readonly responseObservers = new Set<ResponseObserver>();
   private refreshInFlight: Promise<string | null> | null = null;
+  /** The refresh whose refusal was already reported as a session loss. */
+  private sessionLostReportedFor: Promise<string | null> | null = null;
 
   constructor(private readonly baseUrl: string) {}
 
@@ -245,6 +247,10 @@ export class ApiClient {
     options: RequestOptions,
     isReplay = false,
   ): Promise<T> {
+    // Already cancelled: an `abort` event that fired before the listener
+    // below exists would never reach it, and the request would go out.
+    if (options.signal?.aborted) throw normalizeCancellationError();
+
     const url = this.buildUrl(path, options.params);
     const controller = new AbortController();
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -301,12 +307,18 @@ export class ApiClient {
         // A refresh that could not reach the server rejects here with its
         // transport error, which propagates to the caller and skips the
         // session-loss notification below (see `RefreshHandler`).
-        const token = await this.refreshOnce();
+        const refresh = this.refreshOnce();
+        const token = await refresh;
         if (token !== null) {
           return this.request<T>(method, path, options, true);
         }
-        // One notification, however many requests raced the refresh.
-        this.onSessionLost?.();
+        // One notification, however many requests raced the refresh: every
+        // waiter holds the same promise, and only the first to land here
+        // reports it.
+        if (this.sessionLostReportedFor !== refresh) {
+          this.sessionLostReportedFor = refresh;
+          this.onSessionLost?.();
+        }
       }
       throw error;
     }
@@ -340,9 +352,9 @@ export class ApiClient {
    * refresh that could not reach the server fails every waiter with the
    * same transport error rather than one of them ending the session.
    */
-  private async refreshOnce(): Promise<string | null> {
+  private refreshOnce(): Promise<string | null> {
     const handler = this.onRefresh;
-    if (!handler) return null;
+    if (!handler) return Promise.resolve(null);
     this.refreshInFlight ??= handler()
       .catch((error: unknown) => {
         // A contract failure is an answer that was not the API's — a

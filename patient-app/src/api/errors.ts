@@ -26,6 +26,21 @@ function toThrowable(error: ApiError): ApiError & Error {
   return Object.assign(new Error(`API error: ${error.kind}`), error);
 }
 
+/**
+ * `Retry-After` in either form RFC 9110 §10.2.3 allows: delay-seconds
+ * (`120`) or an HTTP-date (`Wed, 21 Oct 2026 07:28:00 GMT`), the date read
+ * as seconds from now. Null when absent or unreadable; the caller falls
+ * back to its default.
+ */
+function parseRetryAfter(header: string | null): number | null {
+  if (header === null || header.trim() === '') return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return seconds;
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return null;
+  return Math.ceil((at - Date.now()) / 1000);
+}
+
 export async function normalizeHttpError(response: Response): Promise<ApiError & Error> {
   let body: ErrorBody = {};
   try {
@@ -57,12 +72,11 @@ export async function normalizeHttpError(response: Response): Promise<ApiError &
         detail: body.detail ?? 'This was changed somewhere else. Reload and try again.',
       });
     case 429: {
-      const header = response.headers.get('Retry-After');
-      const retryAfter = Number(header ?? '30');
+      const retryAfter = parseRetryAfter(response.headers.get('Retry-After'));
       return toThrowable({
         ...code,
         kind: 'rate_limited',
-        retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 30,
+        retryAfterSeconds: retryAfter !== null && retryAfter > 0 ? retryAfter : 30,
       });
     }
     default:

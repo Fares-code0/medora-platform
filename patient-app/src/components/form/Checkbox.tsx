@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { pressableA11y } from '@/accessibility/a11y';
+import { useAnnounceOnChange } from '@/accessibility/useAnnounceOnChange';
 import { useTheme } from '@/theme';
 
 import { Icon } from '../Icon';
@@ -27,6 +28,7 @@ export interface CheckboxProps {
 
 export function Checkbox({ label, checked, onChange, error, testID }: CheckboxProps) {
   const theme = useTheme();
+  useAnnounceOnChange(error);
 
   return (
     <View style={{ rowGap: theme.space[1] }}>

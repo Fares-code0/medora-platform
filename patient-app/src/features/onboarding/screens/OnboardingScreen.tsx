@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
+  I18nManager,
+  Platform,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -12,6 +14,7 @@ import {
 } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
+import { useReducedMotion } from '@/accessibility/useReducedMotion';
 import { Button, Icon, Screen, Text } from '@/components';
 import { useT } from '@/i18n';
 import type { AuthStackParamList } from '@/navigation/routes';
@@ -21,6 +24,44 @@ import { markOnboardingSeen } from '../seen';
 import { ONBOARDING_SLIDES } from '../slides';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Onboarding'>;
+
+/**
+ * Page index <-> horizontal scroll offset, for LTR and RTL.
+ *
+ * Slides are laid out in LOGICAL order, so in RTL slide 0 sits at the right
+ * edge. How a horizontal `ScrollView` numbers that is not the same on both
+ * platforms:
+ * - **iOS** — React Native mirrors the scroll view for RTL and reports
+ *   `contentOffset.x` from the logical START edge, so it grows with the page
+ *   index exactly as in LTR: `x = page * width`.
+ * - **Android** — the native view keeps physical coordinates: the origin is
+ *   the LEFT edge while the first page is at the right, so the offset of page
+ *   `i` is `(last - i) * width`.
+ * Treating both as LTR made Next scroll to the wrong slide, the dots follow the
+ * wrong index, and the last slide read as the first. Both mappings are pure
+ * so they are tested; the Android one needs a device to confirm.
+ */
+export function pageToOffset(
+  page: number,
+  width: number,
+  lastIndex: number,
+  rtl: boolean,
+  os: string,
+): number {
+  return (rtl && os === 'android' ? lastIndex - page : page) * width;
+}
+
+export function offsetToPage(
+  offset: number,
+  width: number,
+  lastIndex: number,
+  rtl: boolean,
+  os: string,
+): number {
+  const raw = Math.round(offset / Math.max(width, 1));
+  const page = rtl && os === 'android' ? lastIndex - raw : raw;
+  return Math.min(Math.max(page, 0), lastIndex);
+}
 
 /**
  * The onboarding carousel — checklist E-02.
@@ -55,6 +96,7 @@ export function OnboardingScreen({ navigation }: Props) {
   const theme = useTheme();
   const t = useT();
   const { width } = useWindowDimensions();
+  const reducedMotion = useReducedMotion();
   const [index, setIndex] = useState(0);
   const scroller = useRef<ScrollViewInstance | null>(null);
 
@@ -68,11 +110,20 @@ export function OnboardingScreen({ navigation }: Props) {
 
   const goTo = (next: number) => {
     setIndex(next);
-    scroller.current?.scrollTo({ x: next * width, animated: true });
+    scroller.current?.scrollTo({
+      x: pageToOffset(next, width, lastIndex, I18nManager.isRTL, Platform.OS),
+      animated: !reducedMotion,
+    });
   };
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const page = Math.round(event.nativeEvent.contentOffset.x / Math.max(width, 1));
+    const page = offsetToPage(
+      event.nativeEvent.contentOffset.x,
+      width,
+      lastIndex,
+      I18nManager.isRTL,
+      Platform.OS,
+    );
     if (page !== index) setIndex(page);
   };
 
@@ -111,12 +162,15 @@ export function OnboardingScreen({ navigation }: Props) {
         style={styles.grow}
       >
         {ONBOARDING_SLIDES.map((slide) => (
-          <View
+          // A vertical scroll per slide: at 320x568 or a large font the copy
+          // is taller than the pager, and a fixed centred View clips it.
+          <ScrollView
             key={slide.id}
             testID={`onboarding-slide-${slide.id}`}
-            style={[
+            style={{ width }}
+            contentContainerStyle={[
               styles.slide,
-              { width, paddingHorizontal: theme.screenGutter, rowGap: theme.space[4] },
+              { paddingHorizontal: theme.screenGutter, rowGap: theme.space[4] },
             ]}
           >
             <Icon name={slide.icon} size={56} color="primary" />
@@ -126,7 +180,7 @@ export function OnboardingScreen({ navigation }: Props) {
             <Text variant="body" color="textSecondary" align="center">
               {t(slide.bodyKey)}
             </Text>
-          </View>
+          </ScrollView>
         ))}
       </ScrollView>
 
@@ -179,6 +233,6 @@ const styles = StyleSheet.create({
   dots: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
   footer: { justifyContent: 'flex-end' },
   grow: { flex: 1 },
-  slide: { alignItems: 'center', flex: 1, justifyContent: 'center' },
+  slide: { alignItems: 'center', flexGrow: 1, justifyContent: 'center' },
   topRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -11,7 +11,7 @@ import { UpgradeGate } from '@/features/app-version/UpgradeGate';
 import { BiometricLockGate } from '@/features/auth/components/BiometricLockGate';
 import { SessionProvider, useSession } from '@/features/auth/SessionProvider';
 import { LocaleProvider } from '@/i18n';
-import { linking } from '@/navigation/linking';
+import { linkCoordinator } from '@/navigation/link-resume';
 import { RootNavigator } from '@/navigation/RootNavigator';
 import { NetworkProvider } from '@/network/NetworkProvider';
 import { PhiPrivacyShield } from '@/privacy/PhiPrivacyShield';
@@ -79,10 +79,33 @@ import { PreferenceGate } from './PreferenceGate';
  *   lives inside `ThemedNavigation` for that reason: the thing it must
  *   cover is the navigator's own output.
  */
+/**
+ * Owns the OS url events and reports the session to the link coordinator.
+ * It sits above `BiometricLockGate` because the container (and its own
+ * listener) is unmounted while the lock is up; a link that arrives then
+ * must still be held. Renders nothing.
+ */
+function LinkCapture() {
+  const { state, locked } = useSession();
+  useEffect(() => {
+    linkCoordinator.setSession({ status: state.status, locked });
+  }, [state.status, locked]);
+  useEffect(() => linkCoordinator.attach(), []);
+  return null;
+}
+
 function ThemedNavigation() {
   const theme = useTheme();
   const { state } = useSession();
   const navigation = useNavigationContainerRef();
+
+  // Replay a link that arrived before the session could show it. Tried on
+  // every status change and on the unlock remount, because the navigator
+  // for the new status mounts in the same commit.
+  const resumePending = useCallback(() => {
+    if (state.status === 'authenticated' && navigation.isReady()) linkCoordinator.flush();
+  }, [navigation, state.status]);
+  useEffect(resumePending, [resumePending]);
 
   // Screen views (W-05). The navigator is the only place that knows what
   // is on screen, and one listener here is the alternative to a `track`
@@ -95,14 +118,21 @@ function ThemedNavigation() {
   const reportScreen = useCallback(() => {
     const name = navigation.getCurrentRoute()?.name;
     if (name !== undefined) trackScreenView(name);
-  }, [navigation]);
+    // Also the container's readiness hook: after the unlock remount the
+    // effect above runs before the container is ready (it awaits the async
+    // getInitialURL), so a link held while locked is replayed here instead.
+    // `flush` is a no-op with nothing pending and clears the slot when it
+    // replays, so the state change it causes cannot replay twice.
+    resumePending();
+  }, [navigation, resumePending]);
+
 
   return (
     <PhiPrivacyShield protecting={state.status === 'authenticated'}>
       <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
       <NavigationContainer
         ref={navigation}
-        linking={linking}
+        linking={linkCoordinator.linking}
         onReady={reportScreen}
         onStateChange={reportScreen}
       >
@@ -126,6 +156,7 @@ export function App() {
               <QueryClientProvider client={queryClient}>
                 <NetworkProvider>
                   <SessionProvider>
+                    <LinkCapture />
                     <UpgradeGate>
                       <BiometricLockGate>
                         <ToastProvider>

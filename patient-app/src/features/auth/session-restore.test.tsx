@@ -1,7 +1,7 @@
 import NetInfo from '@react-native-community/netinfo';
 import { createNavigationContainerRef, NavigationContainer } from '@react-navigation/native';
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { AppState, Text } from 'react-native';
 import type * as ReactNative from 'react-native';
 
 import { apiClient } from '@/api/client';
@@ -762,6 +762,23 @@ function captureNetInfo() {
   };
 }
 
+/** `AppState` transitions a test emits by hand; `remove()` really removes. */
+function captureAppState() {
+  const listeners: ((state: ReactNative.AppStateStatus) => void)[] = [];
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
+    listeners.push(listener);
+    return {
+      remove: () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      },
+    };
+  });
+  return (state: ReactNative.AppStateStatus) => {
+    for (const listener of [...listeners]) listener(state);
+  };
+}
+
 /** The real gate: provider, network, `RootNavigator`, and the session. */
 async function renderGate(authService: AuthService, storage: TokenStorage) {
   const setOnline = captureNetInfo();
@@ -855,6 +872,48 @@ describe('the unconfirmed screen', () => {
 
     act(() => view.setOnline(true));
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+  });
+
+  it('retries by itself when the app returns to the foreground, once per return', async () => {
+    const emit = captureAppState();
+    const refresh = jest.fn(() => Promise.reject(normalizeNetworkError()));
+    const view = await renderGate(authServiceStub({ refresh }), await storageWith('refresh-1'));
+    await waitFor(() => expect(view.getByTestId('session-unconfirmed-screen')).toBeTruthy());
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      emit('background');
+      emit('active');
+    });
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+
+    // `active` again with no departure in between is not a return.
+    await act(async () => {
+      emit('active');
+    });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds a foreground retry while Emergency is open', async () => {
+    const emit = captureAppState();
+    const refresh = jest
+      .fn<Promise<SignInResult>, [string]>()
+      .mockRejectedValueOnce(normalizeNetworkError())
+      .mockResolvedValueOnce(SIGNED_IN);
+    const view = await renderGate(authServiceStub({ refresh }), await storageWith('refresh-1'));
+    await waitFor(() => expect(view.getByTestId('session-unconfirmed-screen')).toBeTruthy());
+    await openEmergency(view);
+
+    await act(async () => {
+      emit('background');
+      emit('active');
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('emergency-screen')).toBeTruthy();
+
+    await leaveEmergency(view);
+    await waitFor(() => expect(view.getByTestId('app-tabs')).toBeTruthy());
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a reconnect that arrives while a tapped retry is still waiting', async () => {

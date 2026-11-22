@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react';
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import { AsyncBoundary, Badge, Button, Icon, Input, Screen, Text } from '@/components';
+import { useKeyboardAvoidance } from '@/components/layout/screen-content';
 import { useT, type MessageKey, useDateFormat } from '@/i18n';
 import type { MessagesStackParamList, RootStackParamList } from '@/navigation/routes';
 import { useNetworkStatus } from '@/network/NetworkProvider';
@@ -199,12 +200,10 @@ export function ThreadScreen({ route }: Props) {
     },
   });
 
+  const keyboardAvoidance = useKeyboardAvoidance();
+
   return (
-    <KeyboardAvoidingView
-      style={styles.fill}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={90}
-    >
+    <KeyboardAvoidingView style={styles.fill} {...keyboardAvoidance}>
       <Screen testID="thread-screen" padded>
         {/*
           The heading is outside the boundary — `A11Y_AUDIT` F-7.

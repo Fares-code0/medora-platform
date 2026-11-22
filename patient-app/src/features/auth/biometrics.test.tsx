@@ -3,6 +3,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { AppState, Text, type AppStateStatus } from 'react-native';
 
 import { apiClient } from '@/api/client';
+import { normalizeNetworkError } from '@/api/errors';
 import { PREFERENCE_KEYS, preferenceStore } from '@/storage/preference-store';
 import { createInMemorySecureStore } from '@/storage/secure-store';
 import { renderWithProviders } from '@/test/render';
@@ -132,6 +133,24 @@ describe('the Expo adapter', () => {
     await expect(expoBiometricGate.authenticate('x')).resolves.toBe('cancelled');
 
     sdk.authenticateAsync.mockResolvedValueOnce({ success: false, error: 'authentication_failed' });
+    await expect(expoBiometricGate.authenticate('x')).resolves.toBe('failed');
+  });
+
+  // A retry can never succeed on these, so the lock screen must drop its
+  // retry button and point at the password path instead.
+  it.each(['not_enrolled', 'not_available', 'passcode_not_set'] as const)(
+    'reports %s as unavailable, not as a failed attempt',
+    async (error) => {
+      sdk.authenticateAsync.mockResolvedValueOnce({ success: false, error });
+      await expect(expoBiometricGate.authenticate('x')).resolves.toBe('unavailable');
+    },
+  );
+
+  it('keeps a lockout as a failed attempt, and never unlocks on anything but success', async () => {
+    sdk.authenticateAsync.mockResolvedValueOnce({ success: false, error: 'lockout' });
+    await expect(expoBiometricGate.authenticate('x')).resolves.toBe('failed');
+
+    sdk.authenticateAsync.mockResolvedValueOnce({ success: false, error: 'unknown' });
     await expect(expoBiometricGate.authenticate('x')).resolves.toBe('failed');
   });
 
@@ -376,6 +395,83 @@ describe('the lock screen, over a real backgrounding', () => {
     await waitFor(() => expect(view.getByText(/Sign in with your password/)).toBeTruthy());
     expect(view.queryByTestId('biometric-unlock')).toBeNull();
     expect(view.getByTestId('biometric-use-password')).toBeTruthy();
+  });
+
+  /**
+   * The bypass: the absence ends while the session is still `unconfirmed`
+   * (no signal at launch), so there is nothing to lock yet — and the
+   * restore that lands afterwards used to open the app unprompted.
+   */
+  async function unconfirmedThenAway(
+    gate: BiometricGate,
+    options: { readonly enabled?: boolean; readonly awayMs: number },
+  ) {
+    const emit = captureAppState();
+    const storage = createTokenStorage(createInMemorySecureStore());
+    await storage.writeRefreshToken('refresh-1');
+    const refresh = jest
+      .fn<Promise<SignInResult>, [string]>()
+      .mockRejectedValueOnce(normalizeNetworkError())
+      .mockResolvedValue(SIGNED_IN);
+    let session: ReturnType<typeof useSession> | null = null;
+    function Capture() {
+      session = useSession();
+      return null;
+    }
+
+    const view = renderWithProviders(
+      <SessionProvider
+        authService={{ refresh, logout: jest.fn() } as unknown as AuthService}
+        tokenStorage={storage}
+        lockPolicy={POLICY}
+        isBiometricUnlockEnabled={() => options.enabled ?? true}
+      >
+        <Capture />
+        <StatusProbe />
+        <BiometricLockGate gate={gate}>
+          <Text testID="navigator">records</Text>
+        </BiometricLockGate>
+      </SessionProvider>,
+    );
+    await waitFor(() =>
+      expect(view.getByTestId('session-status').props.children).toBe('unconfirmed'),
+    );
+
+    const advance = freezeClock();
+    await act(async () => {
+      emit('background');
+      advance(options.awayMs);
+      emit('active');
+    });
+    await act(async () => {
+      await (session as unknown as ReturnType<typeof useSession>).retryRestore();
+    });
+    // No `waitFor` past this point: the clock is frozen.
+    expect(view.getByTestId('session-status').props.children).toBe('authenticated');
+    return view;
+  }
+
+  it('raises the lock when a restore lands after a long absence spent unconfirmed', async () => {
+    const view = await unconfirmedThenAway(
+      stubGate({ authenticate: () => new Promise(() => {}) }),
+      { awayMs: 6 * 60_000 },
+    );
+
+    expect(view.getByTestId('biometric-lock-screen')).toBeTruthy();
+    expect(view.queryByTestId('navigator')).toBeNull();
+  });
+
+  it('does not raise it after a short absence spent unconfirmed', async () => {
+    const view = await unconfirmedThenAway(stubGate(), { awayMs: 60_000 });
+
+    expect(view.queryByTestId('biometric-lock-screen')).toBeNull();
+    expect(view.getByTestId('navigator')).toBeTruthy();
+  });
+
+  it('does not raise it for a patient who never opted in', async () => {
+    const view = await unconfirmedThenAway(stubGate(), { enabled: false, awayMs: 6 * 60_000 });
+
+    expect(view.queryByTestId('biometric-lock-screen')).toBeNull();
   });
 
   it('ends the session when the patient chooses the password path', async () => {

@@ -1,12 +1,23 @@
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { headingA11y, pressableA11y } from '@/accessibility/a11y';
+import { useReducedMotion } from '@/accessibility/useReducedMotion';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { Icon } from '../Icon';
 import { Text } from '../Text';
+
+import { useKeyboardVisible } from './screen-content';
 
 /**
  * A bottom sheet, built on RN's `Modal`.
@@ -25,8 +36,22 @@ import { Text } from '../Text';
  * a text field (the cancel and reschedule reasons). A `Modal` is its own
  * window, so the screen's keyboard handling does not reach it: on iOS the
  * keyboard rose over the field and the Confirm button beneath it. Padding
- * lifts the bottom-anchored sheet clear. Android resizes the modal window
- * for the keyboard itself, so it gets no extra behaviour.
+ * lifts the bottom-anchored sheet clear.
+ *
+ * Android gets `padding` too. Under edge-to-edge (enforced from Android 15,
+ * and on for this app's Expo 58 / RN 0.88 build) the window is no longer
+ * resized for the keyboard, so "Android resizes the modal itself" was only
+ * ever true of the legacy mode; `KeyboardAvoidingView` reads the keyboard
+ * frame from RN's events on both platforms. `padding` over `height`
+ * because the sheet is bottom-anchored and `height` needs a remembered
+ * initial frame it cannot get inside a transparent Modal.
+ *
+ * The sheet is capped at the window height minus the top inset, with the
+ * header outside a `ScrollView` that holds the body: at 320x568 or a 1.6x
+ * font the content scrolls, and the title and Close stay reachable. The
+ * bottom safe-area padding is dropped while the keyboard is up, because the
+ * keyboard then owns that edge. The slide animation is dropped under
+ * reduce-motion.
  */
 export interface BottomSheetProps {
   readonly visible: boolean;
@@ -40,19 +65,19 @@ export function BottomSheet({ visible, onClose, title, children, testID }: Botto
   const theme = useTheme();
   const t = useT();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const keyboardVisible = useKeyboardVisible();
+  const reducedMotion = useReducedMotion();
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={reducedMotion ? 'none' : 'slide'}
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
-        style={styles.fill}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={styles.fill} behavior="padding">
         <View style={[styles.fill, { backgroundColor: theme.colors.scrim }]}>
           {/* The scrim is a dismiss target for a pointer, and hidden from
             assistive tech — a screen reader user dismisses with the
@@ -71,13 +96,14 @@ export function BottomSheet({ visible, onClose, title, children, testID }: Botto
               styles.sheet,
               theme.elevation.modal,
               {
+                maxHeight: Math.max(windowHeight - insets.top, 0),
                 backgroundColor: theme.colors.surfaceOverlay,
                 borderColor: theme.colors.border,
                 borderTopLeftRadius: theme.radius.surface * 2,
                 borderTopRightRadius: theme.radius.surface * 2,
                 paddingHorizontal: theme.screenGutter,
                 paddingTop: theme.space[4],
-                paddingBottom: insets.bottom + theme.space[4],
+                paddingBottom: (keyboardVisible ? 0 : insets.bottom) + theme.space[4],
                 rowGap: theme.space[4],
               },
             ]}
@@ -94,7 +120,14 @@ export function BottomSheet({ visible, onClose, title, children, testID }: Botto
                 <Icon name="x" size={22} color="textSecondary" />
               </Pressable>
             </View>
-            {children}
+            <ScrollView
+              testID={testID === undefined ? undefined : `${testID}-body`}
+              style={styles.body}
+              contentContainerStyle={{ rowGap: theme.space[4] }}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -103,8 +136,9 @@ export function BottomSheet({ visible, onClose, title, children, testID }: Botto
 }
 
 const styles = StyleSheet.create({
+  body: { flexGrow: 0, flexShrink: 1 },
   fill: { flex: 1 },
   grow: { flex: 1 },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  sheet: { borderTopWidth: 1 },
+  sheet: { borderTopWidth: 1, flexShrink: 1 },
 });

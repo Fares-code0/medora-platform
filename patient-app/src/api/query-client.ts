@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { onlineManager, QueryClient } from '@tanstack/react-query';
 
 import { isApiError } from '@/types/api';
 
@@ -60,6 +60,10 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
 
   switch (error.kind) {
     case 'network':
+      // Offline, a retry cannot succeed and only delays the offline error
+      // state by the back-off. `refetchOnReconnect` re-asks when the
+      // signal comes back.
+      return onlineManager.isOnline();
     case 'timeout':
       return true;
     case 'server':

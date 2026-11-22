@@ -4,7 +4,7 @@ import { en } from '@/i18n/messages';
 import { PREFERENCE_KEYS, preferenceStore } from '@/storage/preference-store';
 import { renderWithProviders } from '@/test/render';
 
-import { OnboardingScreen } from './screens/OnboardingScreen';
+import { OnboardingScreen, offsetToPage, pageToOffset } from './screens/OnboardingScreen';
 import { forgetOnboarding, hasSeenOnboarding, markOnboardingSeen } from './seen';
 import { ONBOARDING_SLIDES } from './slides';
 
@@ -324,5 +324,34 @@ describe('the seen flag', () => {
     // Whether a patient read three slides says nothing about their
     // health; when they read them, and how far they got, starts to.
     expect(preferenceStore.get(PREFERENCE_KEYS.onboardingSeen)).toBe('true');
+  });
+});
+
+describe('the pager in RTL', () => {
+  it('is the identity mapping in LTR on both platforms', () => {
+    for (const os of ['ios', 'android']) {
+      expect(pageToOffset(2, 400, 2, false, os)).toBe(800);
+      expect(offsetToPage(800, 400, 2, false, os)).toBe(2);
+    }
+  });
+
+  it('counts from the logical start on iOS RTL', () => {
+    expect(pageToOffset(1, 400, 2, true, 'ios')).toBe(400);
+    expect(offsetToPage(400, 400, 2, true, 'ios')).toBe(1);
+  });
+
+  it('counts from the physical left on Android RTL, so page 0 is the far offset', () => {
+    expect(pageToOffset(0, 400, 2, true, 'android')).toBe(800);
+    expect(pageToOffset(2, 400, 2, true, 'android')).toBe(0);
+    for (const page of [0, 1, 2]) {
+      expect(
+        offsetToPage(pageToOffset(page, 400, 2, true, 'android'), 400, 2, true, 'android'),
+      ).toBe(page);
+    }
+  });
+
+  it('clamps an overscroll to a real page', () => {
+    expect(offsetToPage(-50, 400, 2, false, 'ios')).toBe(0);
+    expect(offsetToPage(5000, 400, 2, false, 'ios')).toBe(2);
   });
 });

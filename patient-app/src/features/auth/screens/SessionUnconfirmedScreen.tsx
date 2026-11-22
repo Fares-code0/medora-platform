@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { View } from 'react-native';
+import { AppState, View, type AppStateStatus } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import { Button, ConfirmSheet, Icon, Screen, Text } from '@/components';
@@ -30,6 +30,9 @@ type Props = NativeStackScreenProps<SessionCheckStackParamList, 'SessionCheck'>;
  *   opened the app in a lift should not have to notice the signal return.
  *   Only on a real offline → online transition, never on mount, so this
  *   screen never hammers a server that answered with a 5xx.
+ * - **An automatic retry when the app returns to the foreground**, on the
+ *   same terms: once per transition into `active`, held while Emergency
+ *   is open.
  * - **Sign out of this phone** — behind a confirmation (R-06) that says
  *   what it does: with no access token, the server cannot be told
  *   (`/auth/logout` revokes the session an access token names), so the
@@ -140,6 +143,23 @@ export function SessionUnconfirmedScreen({ navigation }: Props) {
     if (focused.current) void retry();
     else reconnectWhileAway.current = true;
   }, [isOnline, isUnknown, retry]);
+
+  // Retry once on each return to the foreground, the way a reconnect does:
+  // a patient who left the app while it could not reach Medora should not
+  // come back to the same screen and have to tap. Only on a transition
+  // into `active`, so it cannot loop, and the single-flight guard above and
+  // in the provider absorbs one that races a tap or a reconnect.
+  const appState = useRef<string | null>(AppState.currentState ?? null);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
+      const returned = appState.current !== 'active' && next === 'active';
+      appState.current = next;
+      if (!returned) return;
+      if (focused.current) void retry();
+      else reconnectWhileAway.current = true;
+    });
+    return () => subscription.remove();
+  }, [retry]);
 
   const offline = !isUnknown && !isOnline;
 
