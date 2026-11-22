@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import { envelope, json, stubApi } from '@/test/api-stub';
 
 import { VerificationSubmitError } from '../model/settings-service';
@@ -144,6 +145,25 @@ describe('submitting a verification document', () => {
       kind: 'medical_license',
       expiresOn: '2028-06-30',
     });
+  });
+
+  it('gives the upload the longer multipart timeout (D2)', async () => {
+    stubApi({
+      'POST /files': () => json(envelope(FILE_VIEW), 201),
+      'POST /me/verification-documents': () => json(envelope(VIEW), 201),
+    });
+    const post = vi.spyOn(apiClient, 'post');
+
+    await httpSettingsService.submitVerificationDocument(USER, {
+      file: pdf(),
+      kind: 'medical_license',
+      expiresOn: '2028-06-30',
+    });
+
+    expect(post).toHaveBeenCalledWith('/files', expect.any(FormData), {
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+    post.mockRestore();
   });
 
   it('sends no expiresOn when the document states none', async () => {

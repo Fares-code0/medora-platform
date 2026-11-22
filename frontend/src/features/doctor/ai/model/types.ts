@@ -10,7 +10,7 @@ import {
 /**
  * AI assistant domain model — feature-local types mirroring the future
  * assistant DTOs (conversations, messages, settings). Everything is
- * frontend-only: conversations persist in localStorage through the mock
+ * frontend-only: conversations live in memory (never storage) through the mock
  * service, and the "model" is a deterministic canned-response generator.
  * The shapes are what a real assistant API would return, so the swap is
  * a data-layer change only.

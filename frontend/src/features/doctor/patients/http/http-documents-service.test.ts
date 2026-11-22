@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import { envelope, json, stubApi } from '@/test/api-stub';
 
 import { DOCUMENT_STORAGE_UNAVAILABLE } from '../model/patient-documents-service';
@@ -231,6 +232,21 @@ describe('uploading a document', () => {
       reason: 'application/zip is not accepted for patient_document',
     });
     expect(requests).toHaveLength(1);
+  });
+
+  it('gives the upload the longer multipart timeout (D2)', async () => {
+    stubApi({
+      'POST /files': () => json(envelope(FILE_VIEW), 201),
+      [LINK]: () => json(envelope(DOCUMENT_VIEW), 201),
+    });
+    const post = vi.spyOn(apiClient, 'post');
+
+    await httpDocumentsService.upload({ patientId: PATIENT, file: pdf(), category: 'consent' });
+
+    expect(post).toHaveBeenCalledWith('/files', expect.any(FormData), {
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+    post.mockRestore();
   });
 
   it('reads 503 on the upload as no document service', async () => {

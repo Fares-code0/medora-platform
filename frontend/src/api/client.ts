@@ -29,9 +29,42 @@ export interface RequestOptions {
    * ignores the header, so the request behaves exactly as without it.
    */
   readonly idempotencyKey?: string;
+  /**
+   * Overrides the default 30 s timeout for this one request, in ms. Meant for
+   * a request that is slow by nature — a multipart upload — not to paper over
+   * a slow endpoint. A timeout ends the request exactly as before: aborted,
+   * then reported as a network error.
+   */
+  readonly timeoutMs?: number;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * The timeout for a multipart upload (`PUT /me/profile/photo`, `POST /files`;
+ * the server accepts up to 10 MB). 30 s suits JSON but not a 10 MB body on a
+ * slow uplink: at 1 Mbit/s the body alone takes ~84 s, so the default aborted
+ * an upload that was still progressing. 120 s covers that case with headroom
+ * and still ends a request that has truly stalled.
+ */
+export const UPLOAD_TIMEOUT_MS = 120_000;
+
+interface TransportOptions {
+  params?: Record<string, unknown>;
+  body?: unknown;
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  timeoutMs?: number;
+}
+
+/** The caller's options, minus the keys it left unset (exactOptionalPropertyTypes). */
+function transportOptions(options: RequestOptions): TransportOptions {
+  return {
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+  };
+}
 
 /**
  * The 401 codes that mean "the access token is missing, expired or
@@ -96,43 +129,37 @@ export class ApiClient {
   get<T>(path: string, params?: Record<string, unknown>, options: RequestOptions = {}): Promise<T> {
     return this.request<T>('GET', path, {
       ...(params === undefined ? {} : { params }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...transportOptions(options),
     });
   }
 
   post<T>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
-    return this.request<T>('POST', path, {
-      body,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
-    });
+    return this.request<T>('POST', path, { body, ...transportOptions(options) });
   }
 
-  put<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('PUT', path, { body });
+  put<T>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    return this.request<T>('PUT', path, { body, ...transportOptions(options) });
   }
 
-  patch<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('PATCH', path, { body });
+  patch<T>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    return this.request<T>('PATCH', path, { body, ...transportOptions(options) });
   }
 
   /**
    * A body on `DELETE` is unusual but deliberate where the API uses it: a
    * removal that must carry its reason (BR-DEC-003) keeps its verb.
    */
-  delete<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('DELETE', path, body === undefined ? {} : { body });
+  delete<T>(path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
+    return this.request<T>('DELETE', path, {
+      ...(body === undefined ? {} : { body }),
+      ...transportOptions(options),
+    });
   }
 
   private async request<T>(
     method: string,
     path: string,
-    options: {
-      params?: Record<string, unknown>;
-      body?: unknown;
-      signal?: AbortSignal;
-      idempotencyKey?: string;
-    },
+    options: TransportOptions,
     isRetry = false,
   ): Promise<T> {
     const url = new URL(path.replace(/^\//, ''), `${this.baseUrl.replace(/\/?$/, '/')}`);
@@ -149,7 +176,7 @@ export class ApiClient {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const { signal } = options;
     const cancel = (): void => controller.abort();
     signal?.addEventListener('abort', cancel);

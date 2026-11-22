@@ -64,6 +64,43 @@ export function resolveEnableMocks(appEnv: AppEnv, raw: 'true' | 'false' | undef
   return requested;
 }
 
+/** Hosts a production build may reach over plain http: only this machine. */
+const LOOPBACK_HOSTS: readonly string[] = ['localhost', '127.0.0.1'];
+
+/**
+ * Resolves the API base URL, and refuses a production build that would send
+ * credentials and PHI over plain http (S2). The schema only checks that the
+ * value is a URL, so `VITE_APP_ENV=production` with `http://api.example.com`
+ * used to boot and talk to the API in clear text — bearer token, refresh
+ * cookie and patient data included.
+ *
+ * - **Production → `https:` only**, except a loopback host (`localhost`,
+ *   `127.0.0.1`): a production bundle served and tested on one machine, and
+ *   the schema default, are not a network hop.
+ * - **Anywhere else → accepted as given.** Development and staging (the
+ *   Vercel demo runs `staging` with mocks on and never calls the API) keep
+ *   whatever URL they are pointed at.
+ *
+ * Pure and exported for the same reason as `resolveEnableMocks`.
+ */
+export function resolveApiBaseUrl(appEnv: AppEnv, raw: string): string {
+  if (appEnv !== 'production') return raw;
+
+  const url = new URL(raw);
+  if (url.protocol === 'https:') return raw;
+  if (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname)) return raw;
+
+  throw new Error(
+    'Invalid environment configuration: VITE_API_BASE_URL must use https:// ' +
+      'with VITE_APP_ENV=production (got ' +
+      url.protocol +
+      '//' +
+      url.host +
+      '). Plain http would send the access token, the refresh cookie and ' +
+      'patient data in clear text. Only localhost and 127.0.0.1 are exempt.',
+  );
+}
+
 const parsed = envSchema.safeParse(import.meta.env);
 
 if (!parsed.success) {
@@ -73,7 +110,7 @@ if (!parsed.success) {
 }
 
 export const env = {
-  apiBaseUrl: parsed.data.VITE_API_BASE_URL,
+  apiBaseUrl: resolveApiBaseUrl(parsed.data.VITE_APP_ENV, parsed.data.VITE_API_BASE_URL),
   appEnv: parsed.data.VITE_APP_ENV,
   // A production build compiles the mock backend out (RM M40.4,
   // scripts/mock-boundary.ts): the constant is `true` there, so this is

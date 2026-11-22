@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client';
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import {
   asRecord,
   malformedResponse,
@@ -289,7 +289,10 @@ async function uploadVerificationFile(file: File): Promise<string> {
   try {
     const what = 'uploaded file';
     return readString(
-      asRecord(readData(await apiClient.post('/files', form), what), what),
+      asRecord(
+        readData(await apiClient.post('/files', form, { timeoutMs: UPLOAD_TIMEOUT_MS }), what),
+        what,
+      ),
       'id',
       what,
     );

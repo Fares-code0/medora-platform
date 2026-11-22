@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client';
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import { asRecord, readData, readNumber, readString } from '@/api/http';
 import { isApiError, type ApiError } from '@/types/api';
 
@@ -140,7 +140,10 @@ async function storeFile(file: File): Promise<string | UploadOutcome> {
   try {
     const what = 'uploaded file';
     return readString(
-      asRecord(readData(await apiClient.post('/files', form), what), what),
+      asRecord(
+        readData(await apiClient.post('/files', form, { timeoutMs: UPLOAD_TIMEOUT_MS }), what),
+        what,
+      ),
       'id',
       what,
     );

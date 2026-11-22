@@ -22,6 +22,9 @@ import { UNSCOPED, type ClinicScope } from '@/features/shared-domain/clinic-scop
  * boundary: the multi-hospital model replaces it with the server's active
  * hospital (CLIENTS_CHECKLIST WEB-1, WEB-5). See the boundary note in
  * `shared-domain/clinic-scope`.
+ *
+ * Only `admin` is unscoped. Every other non-doctor role (reception,
+ * laboratory, pharmacy) gets `null`, the same fail-closed answer (D3).
  */
 export function useClinicScope(): ClinicScope | null {
   const { user } = useAuth();
@@ -30,7 +33,12 @@ export function useClinicScope(): ClinicScope | null {
     // Signed out is "nothing", never "everything".
     if (user === null) return null;
     // An admin has no clinic and spans them all; a doctor is pinned to theirs.
-    if (user.role !== 'doctor') return UNSCOPED;
+    if (user.role === 'admin') return UNSCOPED;
+    // Reception, laboratory and pharmacy are not administrators: "not a
+    // doctor" used to hand them the admin's every-clinic scope (D3). None of
+    // them reaches the board today (it mounts under `RequireRole role="doctor"`),
+    // so they fail closed exactly as a doctor with no clinic does.
+    if (user.role !== 'doctor') return null;
     if (user.clinicId === undefined || user.clinicId === '') return null;
     return {
       clinicId: user.clinicId,

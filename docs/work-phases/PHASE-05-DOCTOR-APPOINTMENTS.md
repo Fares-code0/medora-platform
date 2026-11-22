@@ -61,7 +61,7 @@ superseded by server-provided `availableActions`.
 
 - [x] [FRONTEND] List + calendar views, drawer, dialogs
 - [x] [FRONTEND] Live booking and transitions (FE-10.3)
-- [ ] [FRONTEND] Propose-slots UI — Phase 29
+- [x] [FRONTEND] Propose-slots UI — Phase 29 · *verified 2026-11-22: `ProposeSlotsDialog` in `AppointmentsPage`, over `POST /appointments/:id/propose-slots`*
 - [ ] [FRONTEND] Hospital, clinic and location labels; slot publishing — Phase 25
 - [ ] [BACKEND] [DATABASE] Published slots; appointments carry hospital — Phase 24
 

@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/api/client';
 import { sessionPolicy } from '@/configs/session';
 import { authService } from '@/features/auth/service';
+import { LEGACY_AI_STORAGE_KEYS } from '@/features/doctor/ai/model/session-storage';
+import { readConversations, readSettings, writeSettings } from '@/features/doctor/ai/model/store';
+import { DEFAULT_AI_SETTINGS } from '@/features/doctor/ai/model/types';
+import { aiService } from '@/features/doctor/ai/service';
 import { isAuthError } from '@/types/auth';
 
 import { AuthProvider, useAuth } from './AuthProvider';
@@ -528,5 +532,151 @@ describe('AuthProvider — an account switched in another tab', () => {
 
     expect(view.result.current.status).toBe('authenticated');
     expect(client.getQueryData(CACHED)).toBeUndefined();
+  });
+});
+
+/**
+ * S1 — the assistant's conversations are PHI. A patient-context chat carries
+ * the directory patient's name (context, title, greeting), and it used to
+ * persist under a global `medora.ai.*` key that no logout cleared, so the
+ * next account on the browser read it. Conversations are now in memory
+ * only, and end on every path that clears the query cache.
+ */
+describe('AuthProvider — the AI assistant’s session data (S1)', () => {
+  const PATIENT_NAME = 'Omar Saleh';
+  const PATIENT_CONTEXT = {
+    mode: 'patient',
+    patientId: 'PT-1001',
+    patientName: PATIENT_NAME,
+    refId: null,
+  } as const;
+
+  function createPatientChat() {
+    return aiService.createConversation({
+      context: PATIENT_CONTEXT,
+      title: `Current patient · ${PATIENT_NAME}`,
+      seedGreeting: true,
+    });
+  }
+
+  function storageText(): string {
+    const entries: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i) ?? '';
+      entries.push(`${key}=${window.localStorage.getItem(key) ?? ''}`);
+    }
+    for (let i = 0; i < window.sessionStorage.length; i += 1) {
+      const key = window.sessionStorage.key(i) ?? '';
+      entries.push(`${key}=${window.sessionStorage.getItem(key) ?? ''}`);
+    }
+    return entries.join('\n');
+  }
+
+  function holdsChat(id: string): boolean {
+    return readConversations().some((conversation) => conversation.id === id);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('hands user B none of user A’s patient chat after A logs out', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD, { rememberMe: true }));
+    const doctorId = result.current.user?.id ?? '';
+    const chat = createPatientChat();
+    writeSettings({ ...DEFAULT_AI_SETTINGS, temperature: 0.9 }, doctorId);
+    expect(holdsChat(chat.id)).toBe(true);
+
+    await settle(() => result.current.logout());
+    await settle(() => result.current.login('admin@medora.health', PASSWORD));
+
+    expect(result.current.user?.role).toBe('admin');
+    expect(holdsChat(chat.id)).toBe(false);
+    expect(JSON.stringify(readConversations())).not.toContain(PATIENT_NAME);
+    // B reads its own (default) settings; A's, which hold no PHI, are kept
+    // for A in A's namespace (F2), as a composed dashboard is.
+    expect(readSettings(result.current.user?.id ?? null)).toStrictEqual(DEFAULT_AI_SETTINGS);
+    expect(readSettings(doctorId).temperature).toBe(0.9);
+    expect(storageText()).not.toContain(PATIENT_NAME);
+  });
+
+  it('never writes a patient name, or a medora.ai.* key, to browser storage', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD, { rememberMe: true }));
+    const doctorId = result.current.user?.id ?? '';
+
+    createPatientChat();
+    writeSettings(DEFAULT_AI_SETTINGS, doctorId);
+
+    expect(storageText()).not.toContain(PATIENT_NAME);
+    expect(storageText()).not.toContain('PT-1001');
+    expect(storageText()).not.toMatch(/^medora\.ai\./m);
+    for (const key of LEGACY_AI_STORAGE_KEYS) {
+      expect(window.localStorage.getItem(key)).toBeNull();
+    }
+  });
+
+  it('drops the chats when the session locks', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const chat = createPatientChat();
+
+    act(() => {
+      result.current.lock();
+    });
+
+    expect(result.current.status).toBe('locked');
+    expect(holdsChat(chat.id)).toBe(false);
+  });
+
+  it('drops the chats on a sign-in that no session end preceded', async () => {
+    // `finalize` clears on its own: a sign-in over a live tab (or the unlock
+    // fallback that comes back with a fresh session) never passes through
+    // `endSession`, and must still start from no chats.
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const chat = createPatientChat();
+    expect(holdsChat(chat.id)).toBe(true);
+
+    await settle(() => result.current.login('admin@medora.health', PASSWORD));
+
+    expect(result.current.user?.role).toBe('admin');
+    expect(holdsChat(chat.id)).toBe(false);
+  });
+
+  it('drops the chats when the server refuses a refresh', async () => {
+    let handler: (() => Promise<string | null>) | null = null;
+    const register = apiClient.setUnauthorizedHandler.bind(apiClient);
+    vi.spyOn(apiClient, 'setUnauthorizedHandler').mockImplementation((next) => {
+      if (next) handler = next;
+      register(next);
+    });
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const chat = createPatientChat();
+    if (handler === null) throw new Error('no unauthorized handler registered');
+    const refresh = handler as () => Promise<string | null>;
+
+    vi.spyOn(authService, 'restore').mockResolvedValue(null);
+    await settle(() => refresh());
+
+    expect(result.current.status).toBe('unauthenticated');
+    expect(holdsChat(chat.id)).toBe(false);
+  });
+
+  it('removes the legacy global keys on first load', async () => {
+    window.localStorage.setItem(
+      'medora.ai.conversations.v1',
+      JSON.stringify([{ id: 'c1', title: `Current patient · ${PATIENT_NAME}`, messages: [] }]),
+    );
+    window.localStorage.setItem('medora.ai.settings.v1', JSON.stringify(DEFAULT_AI_SETTINGS));
+
+    await signedOut();
+
+    for (const key of LEGACY_AI_STORAGE_KEYS) {
+      expect(window.localStorage.getItem(key)).toBeNull();
+    }
+    expect(storageText()).not.toContain(PATIENT_NAME);
   });
 });
