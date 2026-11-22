@@ -157,6 +157,8 @@ export const en = {
 
   // ── Accessibility labels that are not visible text ─────────────────
   'a11y.loading': 'Loading, please wait',
+  'a11y.password.show': 'Show password',
+  'a11y.password.hide': 'Hide password',
   // Announced when a "Show more" brings a page in. Nothing moves focus
   // and nothing new is read, so without this a screen-reader user gets
   // silence where a sighted user gets twenty more rows (S-07).

@@ -163,7 +163,15 @@ export function Button({
             ) : icon === undefined ? null : (
               <Icon name={icon} size={18} color={labelColor} />
             )}
-            <Text variant="button" color={labelColor} numberOfLines={1}>
+            <Text
+              variant="button"
+              color={labelColor}
+              // The emergency label wraps and scales further rather than
+              // truncating: "Call Emerg…" must never be what a patient reads.
+              critical={tone === 'emergency'}
+              {...(tone === 'emergency' ? {} : { numberOfLines: 1 })}
+              style={tone === 'emergency' ? styles.wrap : undefined}
+            >
               {label}
             </Text>
           </View>
@@ -181,10 +189,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   content: {
+    flexShrink: 1,
     alignItems: 'center',
     columnGap: 8,
     flexDirection: 'row',
     justifyContent: 'center',
   },
   fullWidth: { alignSelf: 'stretch' },
+  wrap: { flexShrink: 1, textAlign: 'center' },
 });

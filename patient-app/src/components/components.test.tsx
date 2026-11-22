@@ -143,6 +143,18 @@ describe('Input', () => {
     expect(getByLabelText('Show password')).toBeTruthy();
   });
 
+  it('labels the password toggle in Arabic as well as English', () => {
+    const view = renderWithProviders(<Input label="x" value="x" onChangeText={jest.fn()} secure />, {
+      locale: 'ar',
+    });
+    const toggle = view.getByLabelText(ar['a11y.password.show']);
+    expect(toggle.props.accessibilityLabel).toBe('إظهار كلمة المرور');
+    expect(view.queryByLabelText('Show password')).toBeNull();
+    fireEvent.press(toggle);
+    expect(view.getByLabelText(ar['a11y.password.hide'])).toBeTruthy();
+    expect(en['a11y.password.show']).toBe('Show password');
+  });
+
   it('hides the password until the patient asks, and says which state it is in', () => {
     // Both halves matter. `secureTextEntry` is what keeps a password off
     // a shoulder-surfer's screen and off the OS keyboard's suggestion

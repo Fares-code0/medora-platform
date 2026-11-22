@@ -19,7 +19,7 @@ project with three clients cannot afford a fourth set of conventions.
 | Server state | **TanStack Query 5** (`^5.62.0`) | Same major and minor range as `frontend/`. The key-factory pattern ports directly |
 | Forms | **React Hook Form + Zod**, `@hookform/resolvers` | Same as `frontend/`. Schemas mirror the backend DTOs field for field |
 | Styling | **StyleSheet + a typed theme through context** | NativeWind adds a Babel/Metro transform for a shorthand and does not make the token set more faithful |
-| Secure storage | **`expo-secure-store`** | Refresh token only |
+| Secure storage | **`expo-secure-store`** | Refresh token, and the non-identifying session guard beside it (D-15, T-11) |
 | Durable preferences | **`@react-native-async-storage/async-storage`** | Theme, locale and the onboarding flag, and nothing else (E-02, P-07). Ships inside Expo Go, so no development build; the port in `storage/ports.ts` is unchanged |
 | HTTP | **`fetch` + a hand-written client** | A port of `frontend/src/api/client.ts`. Axios buys nothing this already does |
 | Icons | **`@expo/vector-icons` (Feather)**, with `expo-font`/`expo-asset` for its glyph font | Closest available sibling to the web app's lucide-react |
@@ -395,9 +395,12 @@ threshold that reasoning stops holding.
 **The session ends rather than hiding behind a lock screen.** A lock screen has
 to remember who is locked out of it, and `features/auth/storage.ts` refuses that
 in as many words — *a convenience field on a lock screen is a patient identifier
-on a lost phone*. Ending the session needs no such record, cannot be walked past
-by force-quitting the app (the refresh token is gone), and reuses the
-expired-session path D-12 already builds. The login screen distinguishes it from
+on a lost phone*. Ending the session needs no such record, and reuses the
+expired-session path D-12 already builds. It cannot be walked past by
+force-quitting the app only because the absence is also written to the
+non-identifying session guard (`features/auth/session-guard.ts`): a process
+killed in the background never runs the foreground handler, so the cold start
+applies the same decision before the stored token is presented. The login screen distinguishes it from
 an expired session in so many words, because a form that appears with no
 explanation reads as a crash. Biometric app-unlock (D-15) is a layer on top of
 this, not a substitute.
@@ -423,7 +426,9 @@ keychain, and the toggle's own copy says so.
 |---|---|
 | **Opt-in, off by default** | A patient who never opens Security is never locked out of anything |
 | It raises only on the `sweep-phi` return | On `reauthenticate` the session has already ended, so a lock would ask for a fingerprint to reach a password field. On `none` the patient glanced at a notification, and locking there is what makes people switch the feature off |
-| Nothing about the lock is **persisted** | A stored lock has to remember *who* is locked out of it, and `features/auth/storage.ts` refuses that field in as many words |
+| Only a non-identifying **session guard** is persisted | A stored lock that remembered *who* is locked out of it is what `features/auth/storage.ts` refuses. The guard (`session-guard.ts`) holds whether a lock was up or owed, when the app last left the foreground and the opt-in at that moment — no identifier — in the keychain beside the refresh token, removed with it. Without it, a force-quit while locked, or a kill in the background, restored the session unprompted |
+| A cold start applies the same T-11 / D-15 decision | Before the stored token is presented: past the re-auth threshold the session ends; a lock that was up or owed comes back up; an unreadable guard signs out without deleting anything |
+| **Approved owner decision (2026-11-22):** past the re-auth threshold, a cold start asks **every** patient for the password, opted in to biometrics or not | The owner weighed the frequency — with the default `EXPO_PUBLIC_REAUTH_MINUTES=15`, most cold starts after a quarter of an hour away (OS memory reclaim, reboots, force-quits) end at the sign-in form — and kept it. It is T-11's long-absence rule, which a warm return already applied to everyone, now also holding when the process did not survive the absence. Not to be relaxed, or made opt-in only, without a new owner decision |
 | The lock screen **names nobody** | A screen that greets the patient by name is a patient identifier readable by whoever is holding the phone — the person it exists to stop |
 | It **replaces** the navigator rather than covering it | An overlay leaves the records screen mounted, and the OS photographs what is mounted on the way to the task switcher. The T-09 reasoning, applied again |
 | `disableDeviceFallback: true` | The OS passcode unlocks a phone that is already unlocked. Offering it would let exactly the wrong person through |

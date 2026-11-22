@@ -257,14 +257,20 @@ describe('no secrets in configuration, continued', () => {
 });
 
 describe('token storage (T-02)', () => {
-  it('stores the refresh token and nothing else', async () => {
+  it('stores the refresh token and the session guard, nothing else', async () => {
     const secure = createInMemorySecureStore();
     const storage = createTokenStorage(secure);
 
     await storage.writeRefreshToken('refresh-abc');
     expect(await storage.readRefreshToken()).toBe('refresh-abc');
     // There is no API on TokenStorage that could accept an access token.
-    expect(Object.keys(storage).sort()).toEqual(['clear', 'readRefreshToken', 'writeRefreshToken']);
+    expect(Object.keys(storage).sort()).toEqual([
+      'clear',
+      'readRefreshToken',
+      'readSessionGuard',
+      'writeRefreshToken',
+      'writeSessionGuard',
+    ]);
   });
 
   it('leaves nothing behind after clear (T-08)', async () => {
@@ -272,8 +278,29 @@ describe('token storage (T-02)', () => {
     const storage = createTokenStorage(secure);
 
     await storage.writeRefreshToken('refresh-abc');
+    await storage.writeSessionGuard({ v: 1, s: 'fg', lock: true });
     await storage.clear();
     expect(await storage.readRefreshToken()).toBeNull();
+    expect(await storage.readSessionGuard()).toEqual({ kind: 'missing' });
+  });
+
+  it('leaves a tombstone beside a token it could not remove, and still throws', async () => {
+    const secure = createInMemorySecureStore();
+    const storage = createTokenStorage({
+      ...secure,
+      removeItem: (key) =>
+        key === 'medora.refresh-token'
+          ? Promise.reject(new Error('keychain unavailable'))
+          : secure.removeItem(key),
+    });
+
+    await storage.writeRefreshToken('refresh-abc');
+    await expect(storage.clear()).rejects.toThrow('keychain unavailable');
+    expect(await storage.readRefreshToken()).toBe('refresh-abc');
+    expect(await storage.readSessionGuard()).toEqual({
+      kind: 'record',
+      record: { v: 1, s: 'ended' },
+    });
   });
 });
 

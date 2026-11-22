@@ -12,6 +12,7 @@ import {
 
 import { pressableA11y } from '@/accessibility/a11y';
 import { useAnnounceOnChange } from '@/accessibility/useAnnounceOnChange';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { Icon } from './Icon';
@@ -83,6 +84,7 @@ export function Input({
   ...rest
 }: InputProps) {
   const theme = useTheme();
+  const t = useT();
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
   useAnnounceOnChange(error);
@@ -153,8 +155,7 @@ export function Input({
             onPress={() => setRevealed((current) => !current)}
             hitSlop={12}
             {...pressableA11y({
-              // TODO(i18n): no catalogue keys exist for these two labels yet.
-              label: revealed ? 'Hide password' : 'Show password',
+              label: revealed ? t('a11y.password.hide') : t('a11y.password.show'),
               disabled,
               selected: revealed,
             })}

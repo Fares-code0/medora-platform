@@ -7,7 +7,7 @@
  * | Tier            | Content                                   | Port              |
  * |-----------------|-------------------------------------------|-------------------|
  * | Bundled         | Emergency guidance, disclaimers, first aid | (the app bundle)  |
- * | Secure          | Refresh token — nothing else              | `SecureStore`     |
+ * | Secure          | Refresh token + its session guard         | `SecureStore`     |
  * | Non-sensitive   | Theme, locale, onboarding flags, non-PHI  | `PreferenceStore` |
  * | Memory only     | Access token, and ALL PHI                 | (never a store)   |
  *
@@ -28,7 +28,11 @@
  * path nobody has written yet as well as the ones that exist.
  */
 
-/** Platform keychain / keystore. The refresh token, and nothing else. */
+/**
+ * Platform keychain / keystore. The refresh token, and the non-identifying
+ * session guard that lives and dies with it (`features/auth/session-guard.ts`);
+ * nothing else.
+ */
 export interface SecureStore {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;

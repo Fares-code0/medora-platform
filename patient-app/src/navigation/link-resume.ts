@@ -1,6 +1,8 @@
 import { getStateFromPath, type LinkingOptions } from '@react-navigation/native';
 import { Linking } from 'react-native';
 
+import type { SessionState } from '@/features/auth/model/types';
+
 import { isSafeLinkPath } from './link-guard';
 import { linking as baseLinking } from './linking';
 import type { RootStackParamList } from './routes';
@@ -31,6 +33,20 @@ import type { RootStackParamList } from './routes';
  *   for other schemes are passed through exactly as before.
  * - Unsafe or unmatched links are ignored; they are never stored.
  * - The cold-start URL is read once; a remounted container gets nothing.
+ *
+ * ── Whose link it is ─────────────────────────────────────────────────
+ * A held link is bound to one account (the session's `subjectId`), so a
+ * link tapped on a shared phone never opens in somebody else's session:
+ * - Held while a session is up (locked, or the container not mounted):
+ *   bound to that subject at once. Replayed only to the same subject.
+ * - Held while nobody is signed in (signed out, booting, unconfirmed):
+ *   bound to the first subject whose session follows — the restore or the
+ *   sign-in — and dropped instead if that subject differs from the last
+ *   one this process saw signed in (an account switch).
+ * - Any session end (logout, session loss, background re-authentication,
+ *   a stored session the server refused) drops it, as does a different
+ *   subject becoming authenticated.
+ * The last subject is kept in memory only, like the link itself.
  */
 
 export const PENDING_LINK_TTL_MS = 10 * 60 * 1000;
@@ -56,14 +72,38 @@ type UrlListener = (url: string) => void;
 
 export interface LinkSource {
   getInitialURL: () => Promise<string | null | undefined>;
-  addEventListener: (type: 'url', handler: (event: { url: string }) => void) => {
+  addEventListener: (
+    type: 'url',
+    handler: (event: { url: string }) => void,
+  ) => {
     remove: () => void;
   };
 }
 
-export interface SessionSnapshot {
-  readonly status: 'booting' | 'unauthenticated' | 'unconfirmed' | 'authenticated';
-  readonly locked: boolean;
+/**
+ * What the coordinator needs to know about the session. `subjectId` is
+ * required when authenticated, so a held link can never be released to a
+ * session whose identity was not reported. `ended` is true when the
+ * session reached `unauthenticated` because something ended one (logout,
+ * session loss, a refused restore) rather than because none existed.
+ */
+export type SessionSnapshot =
+  | { readonly status: 'authenticated'; readonly locked: boolean; readonly subjectId: string }
+  | {
+      readonly status: 'booting' | 'unauthenticated' | 'unconfirmed';
+      readonly locked: boolean;
+      readonly ended?: boolean;
+    };
+
+/** The snapshot for a `SessionState`; `App.tsx` and the tests share it. */
+export function sessionSnapshot(state: SessionState, locked: boolean): SessionSnapshot {
+  if (state.status === 'authenticated') {
+    return { status: 'authenticated', locked, subjectId: state.identity.subjectId };
+  }
+  if (state.status === 'unauthenticated') {
+    return { status: 'unauthenticated', locked, ended: state.reason !== undefined };
+  }
+  return { status: state.status, locked };
 }
 
 export interface LinkCoordinator {
@@ -86,17 +126,25 @@ export function createLinkCoordinator(
 
   let session: SessionSnapshot = { status: 'booting', locked: false };
   let listener: UrlListener | null = null;
-  let pending: { url: string; at: number } | null = null;
+  /** `subject` null: held while nobody was signed in, not yet claimed. */
+  let pending: { url: string; at: number; subject: string | null } | null = null;
+  /** The last subject seen authenticated in this process. Memory only. */
+  let lastSubject: string | null = null;
   let initialConsumed = false;
 
   const canShow = () => session.status === 'authenticated' && !session.locked;
   const fresh = () => pending !== null && now() - pending.at <= PENDING_LINK_TTL_MS;
+  const currentSubject = () => (session.status === 'authenticated' ? session.subjectId : null);
+
+  function hold(url: string): void {
+    pending = { url, at: now(), subject: currentSubject() };
+  }
 
   function handleWarm(url: string): void {
     const kind = classifyLink(url);
     if (kind === 'invalid') return;
     if (kind === 'protected' && !(canShow() && listener !== null)) {
-      pending = { url, at: now() };
+      hold(url);
       return;
     }
     // Signed-out-valid and foreign links behave as they always did: the
@@ -113,7 +161,7 @@ export function createLinkCoordinator(
       const kind = classifyLink(url);
       if (kind === 'invalid') return undefined;
       if (kind === 'protected' && !canShow()) {
-        pending = { url: url as string, at: now() };
+        hold(url as string);
         return undefined;
       }
       return url;
@@ -134,10 +182,28 @@ export function createLinkCoordinator(
     },
     setSession(next) {
       const ended =
-        (session.status === 'authenticated' || session.status === 'unconfirmed') &&
-        next.status === 'unauthenticated';
+        next.status === 'unauthenticated' &&
+        (next.ended === true ||
+          session.status === 'authenticated' ||
+          session.status === 'unconfirmed');
       session = next;
-      if (ended) pending = null;
+      if (ended) {
+        pending = null;
+        return;
+      }
+      if (next.status !== 'authenticated') return;
+      const subject = next.subjectId;
+      if (pending !== null) {
+        if (pending.subject === null) {
+          // First session after a link held signed out: it is this
+          // subject's, unless the phone was last signed in to another one.
+          if (lastSubject !== null && lastSubject !== subject) pending = null;
+          else pending = { ...pending, subject };
+        } else if (pending.subject !== subject) {
+          pending = null;
+        }
+      }
+      lastSubject = subject;
     },
     flush() {
       if (pending === null) return false;
@@ -146,6 +212,11 @@ export function createLinkCoordinator(
         return false;
       }
       if (!canShow() || listener === null) return false;
+      if (pending.subject !== currentSubject()) {
+        // Unreachable through `setSession`; refuse rather than misdeliver.
+        pending = null;
+        return false;
+      }
       const { url } = pending;
       pending = null;
       listener(url);

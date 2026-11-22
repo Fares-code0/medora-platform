@@ -106,6 +106,8 @@ export const ar: Messages = {
   'action.back': 'رجوع',
 
   'a11y.loading': 'جارٍ التحميل، يرجى الانتظار',
+  'a11y.password.show': 'إظهار كلمة المرور',
+  'a11y.password.hide': 'إخفاء كلمة المرور',
   'a11y.pageLoaded': 'تم التحميل. يتم عرض {shown} من {total}.',
 
   'language.title': 'اللغة',

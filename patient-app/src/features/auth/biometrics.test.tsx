@@ -35,8 +35,9 @@ import { createTokenStorage } from './storage';
  *    control that ends the session and returns to Login, because a
  *    patient with a cut finger must never be one broken sensor away
  *    from an uninstall.
- * 3. It gates the **app**, not the token — so nothing about the lock is
- *    persisted, and the lock screen names nobody.
+ * 3. It gates the **app**, not the token — so the lock is persisted only
+ *    as a non-identifying guard beside the token, and the lock screen
+ *    names nobody.
  */
 
 /** A gate a test drives, in place of a sensor Jest cannot have. */
@@ -74,8 +75,9 @@ describe('the opt-in', () => {
 
   it('stores a boolean and nothing else', () => {
     setBiometricUnlockEnabled(true);
-    // The lock itself is never persisted: a stored lock would have to
+    // The lock itself is never a preference: a stored lock must not
     // remember who is locked out of it, and `storage.ts` refuses that.
+    // What survives the process is the keychain's non-identifying guard.
     expect(preferenceStore.get(PREFERENCE_KEYS.biometricUnlock)).toBe('true');
     expect(preferenceStore.keys()).not.toContain('medora.biometric-locked');
   });

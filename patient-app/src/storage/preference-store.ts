@@ -48,8 +48,10 @@ export const PREFERENCE_KEYS = {
   onboardingSeen: 'medora.onboarding-seen',
   /**
    * Biometric app-unlock (D-15). A boolean, and nothing more: the lock
-   * itself is never persisted, because a stored lock would have to
-   * remember who is locked out of it. See `features/auth/biometrics.ts`.
+   * itself is not kept here. Only a non-identifying session guard is, in
+   * the keychain beside the refresh token (`features/auth/session-guard.ts`),
+   * because a stored lock must not remember who is locked out of it. See
+   * `features/auth/biometrics.ts`.
    */
   biometricUnlock: 'medora.biometric-unlock',
 } as const;

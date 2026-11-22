@@ -104,6 +104,8 @@ async function refusingStorageWith(token: string): Promise<TokenStorage> {
   return {
     readRefreshToken: () => inner.readRefreshToken(),
     writeRefreshToken: () => Promise.reject(new Error('keychain unavailable')),
+    readSessionGuard: () => inner.readSessionGuard(),
+    writeSessionGuard: (record) => inner.writeSessionGuard(record),
     clear: () => inner.clear(),
   };
 }
@@ -307,6 +309,8 @@ describe('a keychain that refuses the new session (M2)', () => {
         writes += 1;
         return writes === 1 ? inner.writeRefreshToken(token) : Promise.reject(new Error('no'));
       },
+      readSessionGuard: () => inner.readSessionGuard(),
+      writeSessionGuard: (record) => inner.writeSessionGuard(record),
       clear: () => inner.clear(),
     };
     const view = await renderProvider(authServiceStub({ refresh }), storage);
@@ -691,6 +695,8 @@ describe('sign-out against work still in flight (M5)', () => {
     const storage: TokenStorage = {
       readRefreshToken: () => inner.readRefreshToken(),
       writeRefreshToken: (token) => inner.writeRefreshToken(token),
+      readSessionGuard: () => inner.readSessionGuard(),
+      writeSessionGuard: (record) => inner.writeSessionGuard(record),
       clear: async () => {
         if (holdClear) await clearing.promise;
         await inner.clear();
@@ -1069,6 +1075,8 @@ function throwingStorage(overrides: Partial<TokenStorage>): TokenStorage {
   return {
     readRefreshToken: () => inner.readRefreshToken(),
     writeRefreshToken: (token) => inner.writeRefreshToken(token),
+    readSessionGuard: () => inner.readSessionGuard(),
+    writeSessionGuard: (record) => inner.writeSessionGuard(record),
     clear: () => inner.clear(),
     ...overrides,
   };
