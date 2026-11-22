@@ -138,6 +138,29 @@ describe('the severities reserve critical for what an investigator opens first',
     expect(classify('auth.refresh_reuse_detected').severity).toBe('critical');
   });
 
+  it('files a grace-window refresh retry as authentication/info, not as a replay', () => {
+    // ADR-045: the retired token re-presented inside the 30-second window
+    // is a lost response or a second tab. Critical here would bury the
+    // real replays under every flaky network.
+    const grace = classify('auth.refresh_grace_replay_accepted');
+
+    expect(grace.category).toBe('authentication');
+    expect(grace.severity).toBe('info');
+    expect(grace.summary).toBe('Auth refresh grace replay accepted');
+    expect(grace.unclassified).toBe(false);
+  });
+
+  it('files a replay against an already-revoked session as authentication/warning, not critical', () => {
+    // ADR-045: one critical row per revocation. A retired token tried
+    // again after the family already ended — by logout, reset, an
+    // administrator or a concurrent replay — is recorded, one level down.
+    const replay = classify('auth.refresh_replay_on_revoked_session');
+
+    expect(replay.category).toBe('authentication');
+    expect(replay.severity).toBe('warning');
+    expect(replay.unclassified).toBe(false);
+  });
+
   it('marks a permission matrix rewrite critical', () => {
     expect(classify('roles.matrix_update').severity).toBe('critical');
   });

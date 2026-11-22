@@ -170,8 +170,14 @@ export class EnvelopeService {
    * `SharedArrayBuffer` and therefore does not satisfy it. Copying into
    * a fresh view is one allocation and keeps the boundary honest,
    * instead of an assertion that would hide the difference.
+   *
+   * `aad` is optional caller context (ADR-045): bound as GCM additional
+   * data, never stored, and required verbatim to open the envelope again.
+   * Omitted, the bytes are exactly what this method wrote before the
+   * parameter existed — every existing caller and stored envelope is
+   * unchanged. In the keyed layout it is bound after the header.
    */
-  encrypt(plaintext: string): Uint8Array<ArrayBuffer> {
+  encrypt(plaintext: string, aad?: string): Uint8Array<ArrayBuffer> {
     const keyed = this.writeFormat === 'keyed';
     const header = keyed
       ? Buffer.concat([Buffer.of(KEYED_VERSION), this.current.id])
@@ -179,7 +185,8 @@ export class EnvelopeService {
     const iv = randomBytes(IV_BYTES);
 
     const cipher = createCipheriv('aes-256-gcm', this.current.key, iv);
-    if (keyed) cipher.setAAD(header);
+    const bound = additionalData(keyed ? header : null, aad);
+    if (bound !== null) cipher.setAAD(bound);
     const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     const envelope = Buffer.concat([header, iv, cipher.getAuthTag(), ciphertext]);
 
@@ -195,14 +202,17 @@ export class EnvelopeService {
    * no usable second factor" rather than swallowing it: silently
    * continuing would let a corrupted secret disable 2FA without anyone
    * noticing.
+   *
+   * `aad` must be what `encrypt` was given; any other value — including
+   * omitting it — fails authentication like a tampered payload.
    */
-  decrypt(payload: Uint8Array): string {
-    return this.open(payload).plaintext;
+  decrypt(payload: Uint8Array, aad?: string): string {
+    return this.open(payload, aad).plaintext;
   }
 
   /** Which key and layout opened the envelope. Throws as `decrypt` does. */
-  inspect(payload: Uint8Array): EnvelopeInspection {
-    const { keyIndex, format } = this.open(payload);
+  inspect(payload: Uint8Array, aad?: string): EnvelopeInspection {
+    const { keyIndex, format } = this.open(payload, aad);
     return { current: this.conforms(keyIndex, format), keyIndex, format };
   }
 
@@ -210,19 +220,23 @@ export class EnvelopeService {
    * The same plaintext sealed under the current key in the configured
    * write format, or `null` when the envelope already is. Throws as
    * `decrypt` does: a payload that cannot be opened cannot be re-sealed,
-   * and must not be overwritten either.
+   * and must not be overwritten either. The re-sealed envelope is bound
+   * to the same `aad` it was opened with.
    */
-  reseal(payload: Uint8Array): Uint8Array<ArrayBuffer> | null {
-    const opened = this.open(payload);
+  reseal(payload: Uint8Array, aad?: string): Uint8Array<ArrayBuffer> | null {
+    const opened = this.open(payload, aad);
     if (this.conforms(opened.keyIndex, opened.format)) return null;
-    return this.encrypt(opened.plaintext);
+    return this.encrypt(opened.plaintext, aad);
   }
 
   private conforms(keyIndex: number, format: EnvelopeFormat): boolean {
     return keyIndex === 0 && format === this.writeFormat;
   }
 
-  private open(payload: Uint8Array): {
+  private open(
+    payload: Uint8Array,
+    aad?: string,
+  ): {
     plaintext: string;
     keyIndex: number;
     format: EnvelopeFormat;
@@ -251,13 +265,17 @@ export class EnvelopeService {
       const keyIndex = this.ring.findIndex((entry) => entry.id.equals(id));
       const entry = this.ring[keyIndex];
       if (entry !== undefined) {
-        const plaintext = tryOpen(entry.key, buffer.subarray(KEYED_HEADER_BYTES), header);
+        const plaintext = tryOpen(
+          entry.key,
+          buffer.subarray(KEYED_HEADER_BYTES),
+          additionalData(header, aad),
+        );
         if (plaintext !== null) return { plaintext, keyIndex, format: 'keyed' };
       }
     }
 
     for (const [keyIndex, entry] of this.ring.entries()) {
-      const plaintext = tryOpen(entry.key, buffer, null);
+      const plaintext = tryOpen(entry.key, buffer, additionalData(null, aad));
       if (plaintext !== null) return { plaintext, keyIndex, format: 'legacy' };
     }
 
@@ -265,6 +283,18 @@ export class EnvelopeService {
       'No configured encryption key opens this payload: it was edited, truncated, or sealed under a key in neither DATA_ENCRYPTION_KEY nor DATA_ENCRYPTION_KEY_PREVIOUS',
     );
   }
+}
+
+/**
+ * The GCM additional data: the keyed header (a fixed 9 bytes, so the
+ * concatenation is unambiguous) followed by the caller's context — or
+ * `null` when there is neither, which is the layout every envelope sealed
+ * before caller context existed used.
+ */
+function additionalData(header: Buffer | null, aad: string | undefined): Buffer | null {
+  if (aad === undefined) return header;
+  const context = Buffer.from(aad, 'utf8');
+  return header === null ? context : Buffer.concat([header, context]);
 }
 
 /** `iv ‖ authTag ‖ ciphertext` under one key, or `null` if GCM refuses it. */

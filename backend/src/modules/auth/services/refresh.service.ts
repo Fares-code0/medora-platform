@@ -9,7 +9,7 @@ import { IdentityRepository } from '../repositories/identity.repository';
 import { AccessTokenService } from './access-token.service';
 import type { AuthenticatedPayload, RequestContext } from './login.service';
 import { PermissionService } from './permission.service';
-import { SessionService } from './session.service';
+import { type RefreshOutcome, SessionService } from './session.service';
 
 /**
  * `POST /auth/refresh` and `POST /auth/logout` (RM M6.3, API §1.5–1.6).
@@ -29,6 +29,21 @@ import { SessionService } from './session.service';
  * By the time a replay is seen, two parties hold tokens for one session
  * and there is no way to tell which is the user. Ending the session
  * costs the real user one sign-in and costs the attacker everything.
+ *
+ * ## The grace window (ADR-045)
+ *
+ * A retired token is not always a stolen one. A rotation whose response
+ * was lost, two tabs sharing one cookie, and concurrent refreshes all
+ * re-present the token a rotation retired a moment ago, and treating
+ * those as theft signed users out for nothing. For
+ * `REFRESH_GRACE_WINDOW_SECONDS` after a rotation, the retired token is
+ * therefore answered with **the same successor** the rotation issued —
+ * no second rotation, no sliding — plus a fresh access token, and an
+ * `info` audit row. After the window, or when any of
+ * `decideRefresh`'s checks fails, the family is revoked exactly as above.
+ * The decision is made inside one transaction holding the session row
+ * locked (`SessionService.refresh`), so a re-delivered successor is
+ * always the session's current token.
  *
  * ## Why the whole `SessionUser` comes back
  *
@@ -53,18 +68,63 @@ export class RefreshService {
     presentedToken: string,
     context: RequestContext = {},
   ): Promise<{ payload: AuthenticatedPayload; refreshToken: string; ttlSeconds: number }> {
-    const live = await this.sessions.findLive(presentedToken);
+    // One transaction over one locked row decides and commits everything
+    // (ADR-045 §Concurrency). What follows runs only after that commit, so
+    // an audit row or a log line never describes a decision that rolled
+    // back, and each request produces at most one of them.
+    const outcome = await this.sessions.refresh(presentedToken);
 
-    if (live === null) {
-      await this.handlePossibleReplay(presentedToken, context);
-      throw expiredSession();
+    switch (outcome.kind) {
+      // Unknown, two generations old, or the current token of an ended
+      // session — and, identically on the wire, every other refusal below.
+      case 'refused':
+        throw expiredSession();
+
+      // One critical row per revocation: only the request whose transaction
+      // revoked the session reports reuse. A replay that finds the family
+      // already ended — by a logout, a reset, an administrator, or a
+      // concurrent replay — is still recorded, as a warning. Same 401.
+      case 'reuse':
+        if (outcome.revokedNow) await this.reportReplay(outcome, context);
+        else await this.reportReplayOnRevoked(outcome, context);
+        throw expiredSession();
+
+      case 'rotated':
+        return this.issue(outcome, outcome.refreshToken, outcome.ttlSeconds);
+
+      case 'grace': {
+        // Not rotated again and `expires_at` not slid: the retry receives
+        // exactly the token the rotation issued, which is still the
+        // session's current one, so every caller converges on one token.
+        const result = await this.issue(outcome, outcome.refreshToken, outcome.ttlSeconds);
+
+        // `info`, not `warning`: this is the expected shape of a lost
+        // response, a second tab or a concurrent refresh. It is audited so
+        // that a window being used much more often than retries explain is
+        // visible. System actor for the reason `reportReplay` gives.
+        await this.audit.record({
+          action: 'auth.refresh_grace_replay_accepted',
+          actor: {
+            userId: null,
+            role: null,
+            ...(context.ipAddress === undefined ? {} : { ipAddress: context.ipAddress }),
+          },
+          entityType: 'session',
+          entityId: outcome.sessionId,
+          metadata: { userId: outcome.userId },
+        });
+
+        return result;
+      }
     }
+  }
 
-    const rotated = await this.sessions.rotate(live, presentedToken);
-    // Lost a race with a concurrent refresh. Not a replay — the token was
-    // live a moment ago — so the family stands and the client retries.
-    if (rotated === null) throw expiredSession();
-
+  /** The access token and session user for a refresh that succeeded. */
+  private async issue(
+    live: { readonly sessionId: string; readonly userId: string },
+    refreshToken: string,
+    ttlSeconds: number,
+  ): Promise<{ payload: AuthenticatedPayload; refreshToken: string; ttlSeconds: number }> {
     const user = await this.identity.findById(live.userId);
     // The account was deleted, suspended, locked or deactivated between
     // the sign-in and now. Soft delete hides the row from `findById`;
@@ -80,7 +140,7 @@ export class RefreshService {
     // exactly the case it was pulled in. The session is revoked as well
     // as refused, so the family cannot be retried.
     if (user === null || user.status !== UserStatus.ACTIVE) {
-      await this.sessions.revoke(live.id);
+      await this.sessions.revoke(live.sessionId);
       throw expiredSession();
     }
 
@@ -90,7 +150,7 @@ export class RefreshService {
       publicId: user.publicId,
       role: user.role.code,
       permissions,
-      sessionId: live.id,
+      sessionId: live.sessionId,
     };
 
     const { accessToken, expiresIn } = await this.accessTokens.issue(principal);
@@ -107,8 +167,8 @@ export class RefreshService {
         accessToken,
         expiresIn,
       },
-      refreshToken: rotated.refreshToken,
-      ttlSeconds: rotated.ttlSeconds,
+      refreshToken,
+      ttlSeconds,
     };
   }
 
@@ -129,24 +189,30 @@ export class RefreshService {
   }
 
   /**
-   * A token that matches no live session may still be a replay.
+   * A superseded token that failed ADR-045's grace checks: a replay.
    *
    * Logged at error level and audited with a system actor: nobody is
    * authenticated at this point, and attributing the event to the
    * account whose session it was would read as though that user did it.
    * `shared/audit`'s contract calls a null actor "the system itself",
    * which is what noticed this.
+   *
+   * The revocation itself was committed by `SessionService.refresh`, in
+   * the transaction that decided this was reuse; this only reports it,
+   * after that commit, once per request. On the dispatcher (which never
+   * throws, and writes on its own connection) rather than inside the
+   * transaction: an audit outage must not stop the revocation, and a
+   * process that dies between commit and this line loses the row, not the
+   * revocation — the safe way round.
    */
-  private async handlePossibleReplay(
-    presentedToken: string,
+  private async reportReplay(
+    replayed: Extract<RefreshOutcome, { kind: 'reuse' }>,
     context: RequestContext,
   ): Promise<void> {
-    const replayed = await this.sessions.findByPreviousToken(presentedToken);
-    if (replayed === null) return;
-
-    await this.sessions.revoke(replayed.id);
-
-    this.logger.error({ sessionId: replayed.id }, 'Refresh token reuse detected; session revoked');
+    this.logger.error(
+      { sessionId: replayed.sessionId },
+      'Refresh token reuse detected; session revoked',
+    );
 
     await this.audit.record({
       action: 'auth.refresh_reuse_detected',
@@ -156,10 +222,41 @@ export class RefreshService {
         ...(context.ipAddress === undefined ? {} : { ipAddress: context.ipAddress }),
       },
       entityType: 'session',
-      entityId: replayed.id,
+      entityId: replayed.sessionId,
       // The subject id is metadata rather than the actor: it says whose
       // session was ended, not who ended it.
       metadata: { userId: replayed.userId, reason: 'refresh_token_reuse' },
+    });
+  }
+
+  /**
+   * A retired token presented against a session that was already revoked
+   * (ADR-045, review M1). Nothing is revoked here — the family had ended
+   * before this request: by a logout, a password reset, an administrator,
+   * a sign-out everywhere, or a concurrent replay that already raised the
+   * critical `auth.refresh_reuse_detected`. Recorded at `warning`, with the
+   * same system actor and no token, because a stolen retired token tried
+   * after the victim signed out is still worth finding.
+   */
+  private async reportReplayOnRevoked(
+    replayed: Extract<RefreshOutcome, { kind: 'reuse' }>,
+    context: RequestContext,
+  ): Promise<void> {
+    this.logger.warn(
+      { sessionId: replayed.sessionId },
+      'Retired refresh token presented against an already-revoked session',
+    );
+
+    await this.audit.record({
+      action: 'auth.refresh_replay_on_revoked_session',
+      actor: {
+        userId: null,
+        role: null,
+        ...(context.ipAddress === undefined ? {} : { ipAddress: context.ipAddress }),
+      },
+      entityType: 'session',
+      entityId: replayed.sessionId,
+      metadata: { userId: replayed.userId, reason: 'refresh_token_replay_on_revoked_session' },
     });
   }
 }

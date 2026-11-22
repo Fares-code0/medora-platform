@@ -12,6 +12,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  endGraceWindow,
   errorBody,
   markVerified,
   registrationBody,
@@ -289,8 +290,11 @@ describe('PRE-01 — refresh and revocation', () => {
     const attackerAccess = dataOf<{ accessToken: string }>(attacker).accessToken;
     await expectAccepted(attackerAccess);
 
-    // The real client replays the rotated token: reuse revokes the family
-    // (ADR-026), and the attacker's access token goes with it.
+    // The real client replays the rotated token — after ADR-045's 30-second
+    // grace window, inside which it would be answered as a retry: reuse
+    // revokes the family (ADR-026), and the attacker's access token goes
+    // with it.
+    await endGraceWindow(harness.prisma, email);
     await request(harness.server)
       .post(REFRESH)
       .set('Cookie', `medora_rt=${refreshToken}`)

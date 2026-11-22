@@ -269,6 +269,24 @@ model Session {
   /// sharing a previous hash is not a state that should be reachable,
   /// and Postgres allows any number of NULLs under a unique index.
   previousTokenHash String? @unique @map("previous_token_hash")
+  /// When the current `refresh_token_hash` was issued by a rotation
+  /// (ADR-045). Null until the session is first refreshed, and cleared
+  /// with `successor_token_ct` on revocation. It starts the 30-second
+  /// grace window in which presenting `previous_token_hash`'s token
+  /// re-delivers the successor instead of being treated as reuse.
+  rotatedAt         DateTime? @map("rotated_at") @db.Timestamptz(3)
+  /// The successor refresh token, envelope-encrypted (ADR-045).
+  ///
+  /// The one bounded exception to "the database never holds the value
+  /// that grants access" (`SecretService`): a rotation whose response is
+  /// lost, or two tabs refreshing at once, must be able to receive the
+  /// token the rotation already issued, or the retry is mistaken for
+  /// theft. The plaintext binds the session id and the previous hash, so
+  /// ciphertext moved to another row fails closed. Only honoured inside
+  /// `REFRESH_GRACE_WINDOW_SECONDS` of `rotated_at`; overwritten by the
+  /// next rotation and nulled on revocation. `bytea` for the reason
+  /// `user_credentials.totp_secret_enc` is.
+  successorTokenCt  Bytes?    @map("successor_token_ct")
   /// Chooses the TTL: 30 days vs 12 hours (API §1.2, ADR-007).
   rememberMe       Boolean  @default(false) @map("remember_me")
   expiresAt        DateTime @map("expires_at") @db.Timestamptz(3)

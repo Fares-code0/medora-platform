@@ -6,6 +6,7 @@ import { IntegrationId } from '../../generated/prisma/enums';
 import { type AuditEvent, TransactionalAuditWriter } from '../audit';
 import { PrismaService } from '../database';
 
+import { sessionRefreshSuccessorAad } from './envelope-context';
 import { EnvelopeService, type EnvelopeFormat } from './envelope.service';
 import {
   type HeldLock,
@@ -256,6 +257,12 @@ interface EnvelopePage {
 interface EnvelopeColumn {
   readonly table: string;
   readonly column: string;
+  /**
+   * Per-row GCM context, for a column whose envelopes are bound to their
+   * row (ADR-045: `sessions.successor_token_ct`). Absent for every column
+   * sealed without one. Re-sealing binds the same context again.
+   */
+  readonly aad?: (id: string) => string;
   page(after: string | null, take: number): Promise<EnvelopePage>;
   /** The value now in the row, or `null` if the row is gone or the value cleared. */
   read(id: string): Promise<Uint8Array<ArrayBuffer> | null>;
@@ -595,7 +602,7 @@ export class EnvelopeReencryptionService {
 
         let replacement: Uint8Array<ArrayBuffer> | null;
         try {
-          replacement = this.envelope.reseal(row.value);
+          replacement = this.envelope.reseal(row.value, column.aad?.(row.id));
         } catch {
           tally.unreadable++;
           note(tally.unreadableIds, row.id);
@@ -658,7 +665,7 @@ export class EnvelopeReencryptionService {
 
       let next: Uint8Array<ArrayBuffer> | null;
       try {
-        next = this.envelope.reseal(now);
+        next = this.envelope.reseal(now, column.aad?.(id));
       } catch {
         tally.unreadable++;
         note(tally.unreadableIds, id);
@@ -703,7 +710,7 @@ export class EnvelopeReencryptionService {
       (row) => {
         scanned++;
         try {
-          if (this.envelope.inspect(row.value).current) {
+          if (this.envelope.inspect(row.value, column.aad?.(row.id)).current) {
             conforming++;
           } else {
             nonConforming++;
@@ -841,6 +848,48 @@ export class EnvelopeReencryptionService {
           held.guardedSwap({
             table: 'platform_integrations',
             column: 'config_enc',
+            keys: [{ column: 'id', value: id, compareAs: 'uuid' }],
+            from,
+            to,
+          }),
+      },
+      {
+        // ADR-045's refresh successor. Short-lived — honoured for 30 s
+        // after a rotation, overwritten by the next one, nulled on
+        // revocation — so a rotation rarely finds many. Covered anyway:
+        // a successor left on an idle session is the session's live
+        // token, and retiring the old key without re-sealing it would
+        // turn that session's next grace retry into a revocation. A
+        // rotation racing this walk loses nothing: the compare-and-set
+        // sees the new ciphertext and leaves it.
+        table: 'sessions',
+        column: 'successor_token_ct',
+        // Bound to its row (ADR-045 §AAD): re-sealed with the same context.
+        aad: sessionRefreshSuccessorAad,
+        page: async (after, take) => {
+          const rows = await db.session.findMany({
+            where: {
+              successorTokenCt: { not: null },
+              ...(after === null ? {} : { id: { gt: after } }),
+            },
+            orderBy: { id: 'asc' },
+            take,
+            select: { id: true, successorTokenCt: true },
+          });
+          return {
+            rows: rows.flatMap((row) =>
+              row.successorTokenCt === null ? [] : [{ id: row.id, value: row.successorTokenCt }],
+            ),
+            next: rows.at(-1)?.id ?? null,
+          };
+        },
+        read: async (id) =>
+          (await db.session.findUnique({ where: { id }, select: { successorTokenCt: true } }))
+            ?.successorTokenCt ?? null,
+        swap: (held, id, from, to) =>
+          held.guardedSwap({
+            table: 'sessions',
+            column: 'successor_token_ct',
             keys: [{ column: 'id', value: id, compareAs: 'uuid' }],
             from,
             to,

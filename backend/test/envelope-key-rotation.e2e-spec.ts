@@ -12,9 +12,19 @@ import { AppModule } from '../src/app.module';
 import { runReencryptCommand } from '../src/cli/reencrypt-envelopes.command';
 import { ConfigService, type Env } from '../src/config';
 import { resetEnvForTesting } from '../src/config/env';
+import { SecretService } from '../src/modules/auth/services/secret.service';
+import {
+  openSuccessor,
+  sealSuccessor,
+  SessionService,
+} from '../src/modules/auth/services/session.service';
 import { TwoFactorService } from '../src/modules/auth/services/two-factor.service';
 import { PrismaService } from '../src/shared/database';
-import { EnvelopeReencryptionService, EnvelopeService } from '../src/shared/crypto';
+import {
+  EnvelopeReencryptionService,
+  EnvelopeService,
+  sessionRefreshSuccessorAad,
+} from '../src/shared/crypto';
 
 /**
  * Rotating `DATA_ENCRYPTION_KEY` end to end (M37; PRODUCTION_SETUP §2).
@@ -444,5 +454,56 @@ describe('DATA_ENCRYPTION_KEY rotation', () => {
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('Nothing was done');
     expect(await snapshot()).toBe(before);
+  });
+  /**
+   * ADR-045: `sessions.successor_token_ct` is sealed with a per-row AAD
+   * (`sessionRefreshSuccessorAad`). The run re-seals it with that same
+   * AAD, so an in-window retry still opens it under the new key alone —
+   * the old key can be retired without turning that retry into a reuse.
+   * Last in the file: it adds a row the totals asserted above exclude.
+   */
+  it('re-seals a refresh successor with its per-row AAD, so a grace retry survives retirement', async () => {
+    const secrets = new SecretService();
+    const first = secrets.randomToken();
+    const second = secrets.randomToken();
+    const session = await prisma.session.create({
+      data: {
+        userId: users.u1,
+        refreshTokenHash: secrets.hash(second),
+        previousTokenHash: secrets.hash(first),
+        expiresAt: new Date(Date.now() + 3_600_000),
+      },
+    });
+    const sealed = sealSuccessor(oldKey, {
+      v: 1,
+      sid: session.id,
+      prev: secrets.hash(first),
+      token: second,
+    });
+    await prisma.$executeRaw`
+      UPDATE sessions SET successor_token_ct = ${sealed}, rotated_at = clock_timestamp()
+       WHERE id = ${session.id}::uuid`;
+
+    const result = await reencryptCli('--confirm');
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(
+      'sessions.successor_token_ct: 1 scanned · 0 already current · 1 re-sealed',
+    );
+    expect(result.stdout).toContain(
+      'sessions.successor_token_ct: 1 scanned · 1 conforming · 0 not conforming · 0 unreadable',
+    );
+
+    const row = await prisma.session.findUniqueOrThrow({ where: { id: session.id } });
+    const resealed = row.successorTokenCt ?? new Uint8Array();
+    expect(newKeyOnly.inspect(resealed, sessionRefreshSuccessorAad(session.id)).current).toBe(true);
+    // Bound to its row: it does not open without the AAD, even under the right key.
+    expect(() => newKeyOnly.decrypt(resealed)).toThrow();
+    expect(openSuccessor(newKeyOnly, resealed, session.id)?.token).toBe(second);
+
+    // And the running application answers the retry with it.
+    const outcome = await app.get(SessionService).refresh(first);
+    expect(outcome.kind).toBe('grace');
+    expect(outcome.kind === 'grace' ? outcome.refreshToken : '').toBe(second);
   });
 });

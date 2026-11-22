@@ -330,3 +330,49 @@ describe('EnvelopeService — the write-format phase (review finding F2)', () =>
     );
   });
 });
+
+/**
+ * Optional caller AAD (ADR-045). Omitted, nothing changes: the same bytes
+ * open, and an envelope written before the parameter existed opens.
+ * Given, it is required verbatim to open, re-seal or inspect.
+ */
+describe('caller-supplied additional data', () => {
+  it.each<EnvelopeFormat>(['legacy', 'keyed'])(
+    'round-trips under the same AAD and refuses any other, or none (%s)',
+    (format) => {
+      const envelope = envelopeWith(KEY, [], format);
+      const sealed = envelope.encrypt('payload', 'context:a');
+
+      expect(envelope.decrypt(sealed, 'context:a')).toBe('payload');
+      expect(() => envelope.decrypt(sealed, 'context:b')).toThrow(EnvelopeDecryptError);
+      expect(() => envelope.decrypt(sealed)).toThrow(EnvelopeDecryptError);
+      expect(() => envelope.inspect(sealed)).toThrow(EnvelopeDecryptError);
+    },
+  );
+
+  it('leaves AAD-less envelopes exactly as they were: an unbound seal opens with no AAD only', () => {
+    const envelope = envelopeWith(KEY, [], 'keyed');
+    const sealed = envelope.encrypt('payload');
+
+    expect(envelope.decrypt(sealed)).toBe('payload');
+    expect(() => envelope.decrypt(sealed, 'context:a')).toThrow(EnvelopeDecryptError);
+    // A pre-keyring legacy envelope, too.
+    expect(envelope.decrypt(legacySeal(KEY, 'old'))).toBe('old');
+  });
+
+  it('opens under a previous key with the AAD, and re-seals under the current key keeping it', () => {
+    const before = envelopeWith(KEY, [], 'keyed');
+    const sealed = before.encrypt('payload', 'context:a');
+    const during = envelopeWith(OTHER_KEY, [KEY], 'keyed');
+
+    expect(during.decrypt(sealed, 'context:a')).toBe('payload');
+    expect(during.inspect(sealed, 'context:a').current).toBe(false);
+    const resealed = during.reseal(sealed, 'context:a');
+    expect(resealed).not.toBeNull();
+
+    const after = envelopeWith(OTHER_KEY, [], 'keyed');
+    expect(after.decrypt(resealed ?? new Uint8Array(), 'context:a')).toBe('payload');
+    expect(after.inspect(resealed ?? new Uint8Array(), 'context:a').current).toBe(true);
+    expect(() => after.decrypt(resealed ?? new Uint8Array())).toThrow(EnvelopeDecryptError);
+  });
+});

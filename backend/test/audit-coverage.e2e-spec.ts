@@ -10,6 +10,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  endGraceWindow,
   markVerified,
   registrationBody,
   testEmail,
@@ -236,6 +237,11 @@ describe('every flagged action master guide §6.4-5 names has a call site', () =
     ['session revocation', 'session.revoke'],
     ['device trusted', 'device.trust'],
     ['refresh token replay', 'auth.refresh_reuse_detected'],
+    ['refresh grace-window retry (ADR-045)', 'auth.refresh_grace_replay_accepted'],
+    [
+      'refresh replay on an already-revoked session (ADR-045)',
+      'auth.refresh_replay_on_revoked_session',
+    ],
     ['file download', 'file.download'],
     ['identity reveal (M7.3)', 'patient_identity.reveal'],
   ])('%s → %s', (_label, action) => {
@@ -409,8 +415,10 @@ describe('the flagged flows write their row, in the right category', () => {
       .send({ email, password: PASSWORD, rememberMe: true });
     const cookie = (first.headers['set-cookie'] as string[] | undefined) ?? [];
 
-    // Rotate once, then present the spent token again.
+    // Rotate once, then — past ADR-045's 30-second grace window, inside
+    // which it would be a retry — present the spent token again.
     await request(harness.server).post('/api/v1/auth/refresh').set('Cookie', cookie).send({});
+    await endGraceWindow(harness.prisma, email);
     await request(harness.server).post('/api/v1/auth/refresh').set('Cookie', cookie).send({});
 
     const row = await rowFor('auth.refresh_reuse_detected');

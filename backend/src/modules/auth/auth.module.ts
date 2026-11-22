@@ -18,6 +18,8 @@ import { AccessTokenService } from './services/access-token.service';
 import { AccountSecurityService } from './services/account-security.service';
 import { AdminBootstrapService } from './services/admin-bootstrap.service';
 import { AdminInvitationService } from './services/admin-invitation.service';
+import { AuthJobs } from './services/auth.jobs';
+import { SuccessorRetentionService } from './services/successor-retention.service';
 import { AuthMailService } from './services/auth-mail.service';
 import { CredentialLockoutService } from './services/credential-lockout.service';
 import { EmailVerificationService } from './services/email-verification.service';
@@ -81,6 +83,8 @@ import { VerificationTokenService } from './services/verification-token.service'
     PermissionService,
     AccessTokenService,
     SessionService,
+    AuthJobs,
+    SuccessorRetentionService,
     SessionUserService,
     AccountSecurityService,
     LoginEventService,
