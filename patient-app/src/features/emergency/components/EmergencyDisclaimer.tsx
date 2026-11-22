@@ -37,7 +37,7 @@ export function EmergencyDisclaimer() {
       ]}
     >
       <Icon name="alert" size={22} color="error" />
-      <Text variant="bodySm" color="error" style={styles.grow}>
+      <Text critical variant="bodySm" color="error" style={styles.grow}>
         {EMERGENCY_DISCLAIMER}
       </Text>
     </View>

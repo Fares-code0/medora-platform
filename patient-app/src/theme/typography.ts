@@ -27,6 +27,38 @@ import { PixelRatio, Platform, type TextStyle } from 'react-native';
 
 const MAX_FONT_SCALE = 1.6;
 
+/**
+ * The higher ceiling for **critical** text only — emergency guidance and
+ * numbers a patient must be able to read (`<Text critical>`). Everywhere
+ * else the 1.6 ceiling stays, because those layouts are bounded (tab bars,
+ * chips, headers, cards that were measured at <=1.6). Critical text lives
+ * in wrapping, scrollable flow with no fixed height, so it can keep growing.
+ * Beyond this the OS can still go further (Android 2.0, iOS ~3.1); the
+ * remainder is a documented limitation (docs/A11Y_AUDIT.md S-03).
+ */
+export const MAX_CRITICAL_FONT_SCALE = 2;
+
+/** The OS font scale clamped to the critical ceiling. */
+export function criticalFontScale(): number {
+  return Math.min(PixelRatio.getFontScale(), MAX_CRITICAL_FONT_SCALE);
+}
+
+/**
+ * Re-scales a pre-scaled (1.6-capped) style up to the critical ceiling.
+ * A no-op while the OS scale is at or below 1.6.
+ */
+export function criticalTextStyle(style: TextStyle): TextStyle {
+  const ratio = criticalFontScale() / fontScale();
+  if (ratio <= 1) return style;
+  return {
+    ...style,
+    ...(typeof style.fontSize === 'number' ? { fontSize: Math.round(style.fontSize * ratio) } : {}),
+    ...(typeof style.lineHeight === 'number'
+      ? { lineHeight: Math.round(style.lineHeight * ratio) }
+      : {}),
+  };
+}
+
 /** The OS font scale, clamped. Read once per style-sheet build. */
 export function fontScale(): number {
   return Math.min(PixelRatio.getFontScale(), MAX_FONT_SCALE);

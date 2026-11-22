@@ -78,7 +78,7 @@ export function EmergencyCallButton({
       />
 
       {whenToUse === undefined ? null : (
-        <Text variant="caption" color="textTertiary">
+        <Text critical variant="caption" color="textTertiary">
           {whenToUse}
         </Text>
       )}
@@ -98,10 +98,10 @@ export function EmergencyCallButton({
             },
           ]}
         >
-          <Text variant="bodySm" color="warning">
+          <Text critical variant="bodySm" color="warning">
             This device cannot place calls. Dial this number from another phone:
           </Text>
-          <Text variant="metric" color="textPrimary" selectable>
+          <Text critical variant="metric" color="textPrimary" selectable>
             {number}
           </Text>
         </View>

@@ -56,8 +56,8 @@ export function EmergencyContacts() {
       <View style={{ rowGap: theme.space[3] }}>
         {contacts.data.map((contact) => (
           <Card key={contact.id} testID={`emergency-contact-${contact.id}`}>
-            <Text variant="bodyStrong">{contact.name}</Text>
-            <Text variant="bodySm" color="textTertiary">
+            <Text critical variant="bodyStrong">{contact.name}</Text>
+            <Text critical variant="bodySm" color="textTertiary">
               {contact.relationship === null
                 ? contact.primary
                   ? 'First to call'

@@ -11,7 +11,7 @@ import { UpgradeGate } from '@/features/app-version/UpgradeGate';
 import { BiometricLockGate } from '@/features/auth/components/BiometricLockGate';
 import { SessionProvider, useSession } from '@/features/auth/SessionProvider';
 import { LocaleProvider } from '@/i18n';
-import { linkCoordinator } from '@/navigation/link-resume';
+import { linkCoordinator, sessionSnapshot } from '@/navigation/link-resume';
 import { RootNavigator } from '@/navigation/RootNavigator';
 import { NetworkProvider } from '@/network/NetworkProvider';
 import { PhiPrivacyShield } from '@/privacy/PhiPrivacyShield';
@@ -87,9 +87,10 @@ import { PreferenceGate } from './PreferenceGate';
  */
 function LinkCapture() {
   const { state, locked } = useSession();
+  // The identity binds a held link to one account (see `link-resume.ts`).
   useEffect(() => {
-    linkCoordinator.setSession({ status: state.status, locked });
-  }, [state.status, locked]);
+    linkCoordinator.setSession(sessionSnapshot(state, locked));
+  }, [state, locked]);
   useEffect(() => linkCoordinator.attach(), []);
   return null;
 }

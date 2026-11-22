@@ -47,7 +47,7 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
       </View>
 
       <Screen testID="emergency-screen">
-        <Text variant="h1" {...headingA11y('Emergency help')}>
+        <Text critical variant="h1" {...headingA11y('Emergency help')}>
           Emergency help
         </Text>
 
@@ -71,11 +71,11 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
           <Card tone="warning" testID="emergency-numbers-unconfigured">
             <View style={[styles.row, { columnGap: theme.space[2] }]}>
               <Icon name="phone" size={20} color="warning" />
-              <Text variant="h3" color="warning" style={styles.grow}>
+              <Text critical variant="h3" color="warning" style={styles.grow}>
                 Call your local emergency number
               </Text>
             </View>
-            <Text variant="bodySm" color="textSecondary">
+            <Text critical variant="bodySm" color="textSecondary">
               This copy of Medora has not been given emergency numbers for your region, so it will
               not show one. Use the emergency number for the country you are in — it is usually on
               the back of your phone&apos;s SIM card, and every mobile phone can dial it even when
@@ -96,11 +96,11 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
                 >
                   <View style={[styles.row, { columnGap: theme.space[2] }]}>
                     <Icon name="alertCircle" size={16} color="error" />
-                    <Text variant="bodyStrong" style={styles.grow}>
+                    <Text critical variant="bodyStrong" style={styles.grow}>
                       {flag.title}
                     </Text>
                   </View>
-                  <Text variant="bodySm" color="textTertiary">
+                  <Text critical variant="bodySm" color="textTertiary">
                     {flag.detail}
                   </Text>
                 </View>
@@ -124,8 +124,8 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
         {configuration.clinic === null ? null : (
           <Section title="Your clinic" subtitle="For urgent problems that are not emergencies">
             <Card>
-              <Text variant="bodyStrong">{configuration.clinic.name}</Text>
-              <Text variant="bodySm" color="textTertiary">
+              <Text critical variant="bodyStrong">{configuration.clinic.name}</Text>
+              <Text critical variant="bodySm" color="textTertiary">
                 {configuration.clinic.addressLine}
               </Text>
               <View style={{ rowGap: theme.space[2] }}>
@@ -151,24 +151,24 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
 
         <Section title="When to call, and when to book">
           <Card tone="sunken">
-            <Text variant="label" color="error">
+            <Text critical variant="label" color="error">
               Call the emergency number
             </Text>
-            <Text variant="bodySm" color="textSecondary">
+            <Text critical variant="bodySm" color="textSecondary">
               {WHEN_TO_CALL_VS_BOOK.callNow}
             </Text>
             <Divider />
-            <Text variant="label" color="warning">
+            <Text critical variant="label" color="warning">
               Call the clinic
             </Text>
-            <Text variant="bodySm" color="textSecondary">
+            <Text critical variant="bodySm" color="textSecondary">
               {WHEN_TO_CALL_VS_BOOK.callClinic}
             </Text>
             <Divider />
-            <Text variant="label" color="primary">
+            <Text critical variant="label" color="primary">
               Book an appointment
             </Text>
-            <Text variant="bodySm" color="textSecondary">
+            <Text critical variant="bodySm" color="textSecondary">
               {WHEN_TO_CALL_VS_BOOK.bookAppointment}
             </Text>
             {onBook === undefined ? null : (
@@ -180,14 +180,14 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
               />
             )}
             <Divider />
-            <Text variant="bodySm" color="textTertiary">
+            <Text critical variant="bodySm" color="textTertiary">
               {WHEN_TO_CALL_VS_BOOK.neverMessage}
             </Text>
           </Card>
         </Section>
 
         {/* Provenance, so nobody has to guess where a number came from. */}
-        <Text variant="caption" color="textDisabled" align="center">
+        <Text critical variant="caption" color="textDisabled" align="center">
           {configuration.source === 'unconfigured'
             ? 'No emergency numbers are configured for this deployment.'
             : 'Emergency numbers are supplied by your clinic.'}

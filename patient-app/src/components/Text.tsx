@@ -2,7 +2,7 @@ import { Text as RNText, type TextProps as RNTextProps, type TextStyle } from 'r
 
 import { useTheme } from '@/theme';
 import type { ColorToken } from '@/theme/tokens';
-import type { TypographyRole } from '@/theme/typography';
+import { criticalTextStyle, type TypographyRole } from '@/theme/typography';
 
 /**
  * The only text primitive.
@@ -24,6 +24,13 @@ export interface TextProps extends Omit<RNTextProps, 'style'> {
   readonly variant?: TypographyRole;
   readonly color?: ColorToken;
   readonly align?: TextStyle['textAlign'];
+  /**
+   * Clinical or emergency text that must stay readable at the largest OS
+   * sizes: scales to 2.0x instead of the 1.6x ceiling. Only use it where
+   * the text wraps in flowing, unbounded layout (no fixed height, no
+   * `numberOfLines`).
+   */
+  readonly critical?: boolean;
   readonly style?: TextStyle | readonly TextStyle[];
 }
 
@@ -31,6 +38,7 @@ export function Text({
   variant = 'body',
   color = 'textPrimary',
   align,
+  critical = false,
   style,
   ...rest
 }: TextProps) {
@@ -40,7 +48,7 @@ export function Text({
       allowFontScaling={false}
       {...rest}
       style={[
-        theme.typography[variant],
+        critical ? criticalTextStyle(theme.typography[variant]) : theme.typography[variant],
         { color: theme.colors[color] },
         align === undefined ? null : { textAlign: align },
         style,
