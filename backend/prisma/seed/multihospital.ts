@@ -1,4 +1,5 @@
 import type { HospitalStaffAffiliation, PrismaClient } from '../../src/generated/prisma/client';
+import { DEMO_ACCOUNTS } from './demo-accounts';
 /**
  * Require the named disposable CI database before this development-only seed
  * can connect. A development label by itself is not evidence that a database
@@ -272,36 +273,81 @@ export async function seedMultiHospital(prisma: PrismaClient): Promise<Record<st
   const staffSeeds = [
     {
       email: 'reception@medora.health',
-      roleCode: 'reception',
       hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
     },
     {
       email: 'lab@medora.health',
-      roleCode: 'laboratory',
       hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
     },
     {
       email: 'pharmacy@medora.health',
-      roleCode: 'pharmacy',
       hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
     },
     {
       email: 'nurse@medora.health',
-      roleCode: 'nurse',
       hospitalDepartments: [northstarCardiology, harborviewCardiology],
     },
   ];
   let affiliationCount = 0;
 
   for (const seed of staffSeeds) {
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { email: seed.email },
-      include: { staffMember: true },
+    const account = DEMO_ACCOUNTS.find((candidate) => candidate.email === seed.email);
+    if (account === undefined || account.profile.kind !== 'staff') {
+      throw new Error(`Missing fictional staff account definition for ${seed.email}`);
+    }
+    const role = await prisma.role.findUniqueOrThrow({ where: { code: account.roleCode } });
+    const staffRole = account.profile.staffRole;
+    // This guarded disposable-development seed creates account/profile
+    // fixtures without passwords or credentials. The general seed keeps
+    // credential provisioning disabled unless APP_ENV is explicitly
+    // development; CI intentionally seeds clinical data with it unset.
+    const user = await prisma.user.upsert({
+      where: { email: account.email },
+      create: {
+        publicId: account.publicId,
+        firstName: account.firstName,
+        lastName: account.lastName,
+        displayName: account.displayName,
+        email: account.email,
+        phone: '+20 100 000 0000',
+        roleId: role.id,
+        emailVerifiedAt: new Date(),
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+      },
+      update: {},
     });
-    const staffMember = user.staffMember[0];
-    if (staffMember === undefined)
-      throw new Error(`Missing seeded staff profile for ${seed.email}`);
-    const role = await prisma.role.findUniqueOrThrow({ where: { code: seed.roleCode } });
+    if (user.deletedAt !== null || user.status !== 'ACTIVE') {
+      throw new Error(`Staff fixture account ${seed.email} is not active`);
+    }
+    const existingStaff = await prisma.staffMember.findUnique({
+      where: { email: account.email },
+    });
+    if (existingStaff !== null && existingStaff.deletedAt !== null) {
+      throw new Error(`Staff profile ${seed.email} is soft-deleted`);
+    }
+    const staffMember =
+      existingStaff ??
+      (await prisma.staffMember.create({
+        data: {
+          userId: user.id,
+          name: account.displayName,
+          role: staffRole,
+          title: account.profile.title,
+          departmentId: internalMedicine.id,
+          phone: '+20 100 000 0000',
+          email: account.email,
+          workingHours: 'Sun–Thu 09:00–17:00',
+        },
+      }));
+    if (existingStaff?.userId === null) {
+      await prisma.staffMember.update({
+        where: { id: existingStaff.id },
+        data: { userId: user.id },
+      });
+    } else if (existingStaff !== null && existingStaff.userId !== user.id) {
+      throw new Error(`Staff profile ${seed.email} is linked to a different user`);
+    }
 
     for (const department of seed.hospitalDepartments) {
       const hospitalId = department.hospitalId;

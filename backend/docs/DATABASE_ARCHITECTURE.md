@@ -59,7 +59,7 @@ npm run db:seed
 APP_ENV=development MEDORA_DISPOSABLE_DB=true npm run db:seed:multihospital
 ```
 
-The guarded seed was not run locally because no disposable PostgreSQL 16 database was available. CI runs it twice against its disposable PostgreSQL 16 service. The runner validates the loopback host and database name before connecting; it never infers that another database is disposable. Never run it against production or a persistent/shared database.
+The guarded seed was not run locally because no disposable PostgreSQL 16 database was available. CI runs it twice against its disposable PostgreSQL 16 service. It creates the four fictional staff accounts and profiles needed by the hospital affiliations without creating passwords or credentials; the ordinary seed keeps credential provisioning disabled unless `APP_ENV` is explicitly `development`. The runner validates the loopback host and database name before connecting; it never infers that another database is disposable. Never run it against production or a persistent/shared database.
 
 ## Deferred implementation
 
