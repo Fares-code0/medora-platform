@@ -39,8 +39,9 @@ import request from 'supertest';
  *
  * ## Why nothing here asserts a bare global `claimed` count
  *
- * `run()` claims **every** pending delivery in the table, by design — it
- * is the process-wide worker, not this suite's. Under a parallel full run
+ * `run()` claims pending deliveries from the whole table, oldest first and
+ * at most one batch per call, by design — it is the process-wide worker,
+ * not this suite's. Under a parallel full run
  * another spec's fan-out has rows in that table too, so `claimed === 5`
  * measures the rest of the suite rather than this code, and it fails the
  * moment a new topic is added anywhere. This is the same correction
@@ -60,6 +61,8 @@ let workerLock: DeliveryWorkerLock | undefined;
 
 const REGISTER = '/api/v1/auth/register';
 const CHANNELS = ['EMAIL', 'SMS', 'PUSH', 'DESKTOP', 'IN_APP'] as const;
+/** Older than anything another spec can enqueue; see `seedNotificationWithDeliveries`. */
+const SEEDED_DELIVERY_CREATED_AT = new Date('2000-01-01T00:00:00.000Z');
 
 let userId = '';
 let userEmail = '';
@@ -80,11 +83,19 @@ async function seedNotificationWithDeliveries(
     select: { id: true },
   });
 
+  // Backdated so this suite's rows head the queue. `run()` claims at most
+  // one batch (50), oldest `created_at` first, so under a parallel full
+  // run another spec's backlog could fill the batch ahead of rows stamped
+  // `now()`: two of these five claimed, three left `pending`. A fixed
+  // past timestamp keeps "my five are in the first batch" true however
+  // much the rest of the suite has queued, without changing what is
+  // asserted.
   await harness.prisma.db.notificationDelivery.createMany({
     data: CHANNELS.map((channel) => ({
       notificationId: notification.id,
       channel,
       status: statuses[channel] ?? 'pending',
+      createdAt: SEEDED_DELIVERY_CREATED_AT,
     })),
   });
 
