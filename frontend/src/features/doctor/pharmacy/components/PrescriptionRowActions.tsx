@@ -114,7 +114,7 @@ export function PrescriptionRowActions({
 
   return (
     <div
-      className="flex items-center justify-end gap-1"
+      className="flex flex-wrap items-center justify-end gap-1"
       onClick={(event) => event.stopPropagation()}
     >
       <Tooltip content="View prescription">

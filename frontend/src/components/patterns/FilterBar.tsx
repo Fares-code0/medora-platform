@@ -39,7 +39,9 @@ export function FilterBar({
       {search !== undefined || actions !== undefined ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           {search !== undefined ? <div className="w-full max-w-[360px]">{search}</div> : <span />}
-          {actions !== undefined ? <div className="flex items-center gap-2">{actions}</div> : null}
+          {actions !== undefined ? (
+            <div className="flex max-w-full flex-wrap items-center gap-2">{actions}</div>
+          ) : null}
         </div>
       ) : null}
       {filters.length > 0 ? (

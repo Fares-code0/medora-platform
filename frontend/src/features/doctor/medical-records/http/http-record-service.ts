@@ -2,6 +2,7 @@ import { apiClient } from '@/api/client';
 import {
   asRecord,
   fetchAllPages,
+  LARGE_LIST_MAX_PAGES,
   malformedResponse,
   readArray,
   readBoolean,
@@ -313,6 +314,7 @@ export const httpRecordService: RecordService = {
           ...(filter?.patientId === undefined ? {} : { patientId: filter.patientId }),
         }),
       'medical records',
+      LARGE_LIST_MAX_PAGES,
     );
     return items.map(toRecordSummary);
   },

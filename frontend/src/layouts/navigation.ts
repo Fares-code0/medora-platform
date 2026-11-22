@@ -120,7 +120,22 @@ export const doctorNavigation: NavigationConfig = {
     {
       items: [
         { id: 'overview', labelKey: 'nav.overview', icon: LayoutDashboard, path: routes.doctor.overview },
-        { id: 'patients', labelKey: 'nav.patients', icon: Users, path: routes.doctor.patients },
+        {
+          id: 'patients',
+          labelKey: 'nav.patients',
+          icon: Users,
+          path: routes.doctor.patients,
+          children: [
+            { id: 'patients-all', labelKey: 'nav.patients', path: routes.doctor.patients },
+            {
+              // The existing registration page (POST /patients) — the same
+              // destination as the Patients page's "Add patient" button.
+              id: 'patients-new',
+              labelKey: 'nav.patientsNew',
+              path: routes.doctor.newPatient,
+            },
+          ],
+        },
         {
           id: 'appointments',
           labelKey: 'nav.appointments',
@@ -173,7 +188,23 @@ export const doctorNavigation: NavigationConfig = {
       labelKey: 'nav.section.clinical',
       items: [
         { id: 'my-clinic', labelKey: 'nav.myClinic', icon: Stethoscope, path: routes.doctor.myClinic },
-        { id: 'labs', labelKey: 'nav.labs', icon: FlaskConical, path: routes.doctor.labs },
+        {
+          id: 'labs',
+          labelKey: 'nav.labs',
+          icon: FlaskConical,
+          path: routes.doctor.labs,
+          children: [
+            { id: 'labs-all', labelKey: 'nav.labs', path: routes.doctor.labs },
+            {
+              // The existing order page (POST /lab-orders) — the same
+              // destination as the Labs page's "New order" button and the
+              // dashboard's "Order lab" quick action.
+              id: 'labs-new',
+              labelKey: 'nav.labsNew',
+              path: routes.doctor.newLabOrder(),
+            },
+          ],
+        },
         {
           id: 'pharmacy',
           labelKey: 'nav.pharmacy',

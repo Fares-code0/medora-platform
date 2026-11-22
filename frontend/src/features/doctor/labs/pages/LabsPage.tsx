@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { CheckCheck, Download, FlaskConical, RefreshCw, SearchX, SlidersHorizontal } from 'lucide-react';
+import {
+  CheckCheck,
+  Download,
+  FlaskConical,
+  Plus,
+  RefreshCw,
+  SearchX,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import { useToast } from '@/app/providers';
@@ -247,12 +255,19 @@ export function LabsPage() {
             />
           }
           actions={
-            <ExportButton
-              getDataset={() => labsDataset(sorted)}
-              onExported={(format) =>
-                toast({ variant: 'success', title: `Labs exported (${format.toUpperCase()})` })
-              }
-            />
+            <>
+              <ExportButton
+                getDataset={() => labsDataset(sorted)}
+                onExported={(format) =>
+                  toast({ variant: 'success', title: `Labs exported (${format.toUpperCase()})` })
+                }
+              />
+              {/* The existing order page (POST /lab-orders) — the same
+                  destination as the sidebar's Labs › New Order. */}
+              <Button leadingIcon={Plus} onClick={() => navigate(routes.doctor.newLabOrder())}>
+                New order
+              </Button>
+            </>
           }
         />
 

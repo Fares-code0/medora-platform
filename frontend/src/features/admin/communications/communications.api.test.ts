@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { clearConversationsSession, setConversationsOwner } from '@/features/shared-domain/conversations/session-boundary';
+
 import { logsApi } from '../logs/api/logs.api';
 
 import { communicationsApi } from './communications.api';
 
 beforeEach(() => {
   window.localStorage.clear();
+  clearConversationsSession();
 });
 
 describe('the service surface', () => {
@@ -170,7 +173,8 @@ describe('resolveFlag', () => {
 
 describe('the shared conversation store', () => {
   it('is never written by this service', async () => {
-    const key = 'medora.messaging.v1';
+    setConversationsOwner('admin-1');
+    const key = 'medora.messaging.v1.admin-1';
     await communicationsApi.list();
     const snapshot = window.localStorage.getItem(key);
 
@@ -189,5 +193,7 @@ describe('the shared conversation store', () => {
     });
 
     expect(window.localStorage.getItem(key)).toBe(snapshot);
+    // And the legacy global key is never touched.
+    expect(window.localStorage.getItem('medora.messaging.v1')).toBeNull();
   });
 });

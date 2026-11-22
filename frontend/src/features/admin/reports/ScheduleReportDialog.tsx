@@ -110,7 +110,7 @@ export function ScheduleReportDialog({
           required
         />
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-[repeat(2,minmax(0,1fr))]">
           <Select
             label="Report"
             value={selectedReport}

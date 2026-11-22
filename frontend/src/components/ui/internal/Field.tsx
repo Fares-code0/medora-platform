@@ -49,7 +49,7 @@ export function FieldWrapper({
   children,
 }: FieldWrapperProps) {
   return (
-    <div className={cn('flex w-full flex-col', className)}>
+    <div className={cn('flex w-full min-w-0 flex-col', className)}>
       {label ? (
         <label
           htmlFor={inputId}

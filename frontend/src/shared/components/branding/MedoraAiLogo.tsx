@@ -4,7 +4,7 @@ import type { LucideIcon, LucideProps } from 'lucide-react';
 
 import { cn } from '@/utils/cn';
 
-import medoraAiLogoUrl from './assets/medora-ai-logo.png';
+import medoraAiLogoUrl from './assets/medora-ai-logo.webp';
 
 /**
  * Medora AI — the assistant's visual identity: a red medical heart crossed by
@@ -16,7 +16,9 @@ import medoraAiLogoUrl from './assets/medora-ai-logo.png';
  * to clean alpha, and the result was cropped square around the artwork and
  * resampled to 256×256 — sharp up to 85px at 3× density, far above any size
  * it is shown at. It keeps its own colours in both themes: red, orange and
- * grey all hold against the light and the dark surfaces.
+ * grey all hold against the light and the dark surfaces. Served as WebP
+ * (quality 0.92, alpha kept, same 256×256): 16 KB instead of the 36 KB PNG,
+ * visually identical at every size it is shown at.
  *
  * Shaped like a lucide icon (`LucideIcon`: forwardRef to an `<svg>`, same
  * props) so it drops into every `icon` / `leadingIcon` slot the generic

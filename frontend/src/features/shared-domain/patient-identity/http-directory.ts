@@ -2,6 +2,7 @@ import { apiClient } from '@/api/client';
 import {
   asRecord,
   fetchAllPages,
+  LARGE_LIST_MAX_PAGES,
   readArray,
   readBoolean,
   readData,
@@ -111,6 +112,7 @@ export const httpPatientDirectory: PatientDirectoryService = {
           ...(condition === null ? {} : { condition }),
         }),
       'patients',
+      LARGE_LIST_MAX_PAGES,
     );
     return items.map((item) => toPatient(item));
   },

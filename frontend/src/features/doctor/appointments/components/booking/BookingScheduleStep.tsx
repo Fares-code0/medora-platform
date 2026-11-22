@@ -120,7 +120,7 @@ export function BookingScheduleStep({
 
       {availability.isPending ? (
         <div
-          className="grid gap-6 lg:grid-cols-2"
+          className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[repeat(2,minmax(0,1fr))]"
           aria-busy="true"
           aria-label="Loading your working hours"
         >

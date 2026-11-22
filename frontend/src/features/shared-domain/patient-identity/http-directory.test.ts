@@ -190,3 +190,47 @@ describe('httpPatientDirectory.createPatient', () => {
     });
   });
 });
+
+describe('httpPatientDirectory.listPatients — a caseload past 2,000 rows', () => {
+  it('reads every page of a 2,500-patient caseload instead of failing at 20 pages', async () => {
+    const totalPages = 25;
+    const { requests } = stubApi({
+      'GET /patients': (request) => {
+        const page = Number(request.query.get('page'));
+        return envelope({
+          items: Array.from({ length: 100 }, (_, index) =>
+            patientView({ id: `PT-${String(page * 1000 + index)}` }),
+          ),
+          page,
+          pageSize: 100,
+          totalItems: totalPages * 100,
+          totalPages,
+        });
+      },
+    });
+
+    const patients = await httpPatientDirectory.listPatients();
+
+    expect(patients).toHaveLength(2_500);
+    expect(requests).toHaveLength(totalPages);
+    expect(requests.every((request) => request.query.get('pageSize') === '100')).toBe(true);
+  });
+
+  it('fails after one request, never truncating, when the caseload is past the ceiling', async () => {
+    const { requests } = stubApi({
+      'GET /patients': () =>
+        envelope({
+          items: [patientView()],
+          page: 1,
+          pageSize: 100,
+          totalItems: 5_001,
+          totalPages: 51,
+        }),
+    });
+
+    await expect(httpPatientDirectory.listPatients()).rejects.toMatchObject({
+      code: 'malformed_response',
+    });
+    expect(requests).toHaveLength(1);
+  });
+});

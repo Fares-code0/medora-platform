@@ -2,6 +2,7 @@ import { apiClient } from '@/api/client';
 import {
   asRecord,
   fetchAllPages,
+  LARGE_LIST_MAX_PAGES,
   malformedResponse,
   readArray,
   readBoolean,
@@ -494,6 +495,7 @@ export const httpPrescriptionService: PrescriptionService = {
       (page, pageSize) =>
         apiClient.get('/prescriptions', { page, pageSize, sort: 'createdAt:desc' }),
       'prescriptions',
+      LARGE_LIST_MAX_PAGES,
     );
     return items.map(toPrescriptionSummary);
   },

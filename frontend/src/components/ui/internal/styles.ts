@@ -149,7 +149,9 @@ export function fieldInputClasses(options: {
     multiline = false,
   } = options;
   return cn(
-    'w-full rounded-surface border bg-surface text-body text-text-primary',
+    'w-full min-w-0 max-w-full rounded-surface border bg-surface text-body text-text-primary',
+    // iOS date/time inputs have an intrinsic min width and a centred value.
+    '[&::-webkit-date-and-time-value]:text-start',
     /*
      * The placeholder has its own colour role, --color-text-placeholder.
      *

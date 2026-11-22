@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   fetchAllPages,
   isNotConnected,
+  LARGE_LIST_MAX_PAGES,
+  MAX_PAGE_SIZE,
   notConnected,
   readData,
   readDay,
@@ -95,8 +97,36 @@ describe('fetchAllPages', () => {
 
     await expect(fetchAllPages(fetchPage, 'patients', 3)).rejects.toMatchObject({
       code: 'malformed_response',
+      ref: 'patients: more than 3 pages',
     });
-    expect(fetchPage).toHaveBeenCalledTimes(3);
+    // The first page already says the collection is past the ceiling, so
+    // nothing more is downloaded only to be discarded.
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails, never truncates, when the collection grows past the ceiling mid-walk', async () => {
+    const fetchPage = vi.fn((n: number) => Promise.resolve(page(['x'], n, n === 1 ? 3 : 4)));
+
+    await expect(fetchAllPages(fetchPage, 'patients', 3)).rejects.toMatchObject({
+      code: 'malformed_response',
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads a collection of exactly the ceiling in full', async () => {
+    const fetchPage = vi.fn((n: number) => Promise.resolve(page([`p${String(n)}`], n, 3)));
+
+    await expect(fetchAllPages(fetchPage, 'patients', 3)).resolves.toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('reads past the default 2,000-row ceiling under LARGE_LIST_MAX_PAGES', async () => {
+    const total = 25;
+    const fetchPage = vi.fn((n: number) => Promise.resolve(page([n], n, total)));
+
+    const items = await fetchAllPages(fetchPage, 'patients', LARGE_LIST_MAX_PAGES);
+
+    expect(items).toHaveLength(total);
+    expect(LARGE_LIST_MAX_PAGES * MAX_PAGE_SIZE).toBe(5_000);
   });
 });
 

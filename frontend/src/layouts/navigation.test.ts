@@ -192,3 +192,51 @@ describe('Queue and Waiting Room ownership', () => {
     expect(paths.some((path) => /queue|waiting-room/.test(path))).toBe(false);
   });
 });
+
+describe('doctorNavigation Patients group', () => {
+  const items = doctorNavigation.sections.flatMap((section) => section.items);
+  const patients = items.find((item) => item.id === 'patients');
+
+  it('keeps its own path and nests the list and the existing registration page', () => {
+    expect(patients?.path).toBe('/doctor/patients');
+    expect(patients?.children?.map((child) => [child.id, child.labelKey, child.path])).toEqual([
+      ['patients-all', 'nav.patients', '/doctor/patients'],
+      ['patients-new', 'nav.patientsNew', '/doctor/patients/new'],
+    ]);
+  });
+
+  it('adds no permission gate the Patients page itself does not have', () => {
+    expect(patients?.requiredPermission).toBeUndefined();
+    expect(patients?.children?.every((child) => child.requiredPermission === undefined)).toBe(true);
+  });
+
+  it('labels Add Patient in every locale', async () => {
+    const catalogues = await loadAllCatalogues();
+    for (const code of LOCALE_CODES) {
+      expect(catalogues[code]['nav.patientsNew']).toEqual(expect.any(String));
+      expect(catalogues[code]['nav.patientsNew'].length).toBeGreaterThan(0);
+    }
+    expect(catalogues.en['nav.patientsNew']).toBe('Add Patient');
+  });
+});
+
+describe('doctorNavigation Labs group', () => {
+  const items = doctorNavigation.sections.flatMap((section) => section.items);
+  const labs = items.find((item) => item.id === 'labs');
+
+  it('keeps its own path and nests the list and the existing order page', () => {
+    expect(labs?.path).toBe('/doctor/labs');
+    expect(labs?.children?.map((child) => [child.id, child.labelKey, child.path])).toEqual([
+      ['labs-all', 'nav.labs', '/doctor/labs'],
+      ['labs-new', 'nav.labsNew', '/doctor/labs/new'],
+    ]);
+  });
+
+  it('labels New Order in every locale', async () => {
+    const catalogues = await loadAllCatalogues();
+    for (const code of LOCALE_CODES) {
+      expect(catalogues[code]['nav.labsNew'].length).toBeGreaterThan(0);
+    }
+    expect(catalogues.en['nav.labsNew']).toBe('New Order');
+  });
+});

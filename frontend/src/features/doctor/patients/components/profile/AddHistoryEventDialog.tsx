@@ -138,7 +138,7 @@ export function AddHistoryEventDialog({
         }}
       >
         <Stack gap={4}>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-[repeat(2,minmax(0,1fr))]">
             <Select
               label="Kind"
               required

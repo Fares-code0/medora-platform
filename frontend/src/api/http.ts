@@ -95,15 +95,29 @@ export function readPage(body: unknown, what: string): Paginated<unknown> {
 export const MAX_PAGE_SIZE = 100;
 
 /**
+ * The `fetchAllPages` ceiling for a doctor's own flat list (one request per
+ * page, no per-row follow-up): 50 × `MAX_PAGE_SIZE` = 5,000 rows. Raised
+ * from the default 20 because a caseload or appointment book past 2,000
+ * rows took the whole screen down. Lists that fan out a request per row
+ * (the lab worklist) keep the default.
+ */
+export const LARGE_LIST_MAX_PAGES = 50;
+
+/**
  * Every item of a paginated collection, fetched page by page.
  *
  * Used where a screen was built over the whole collection — filtering,
  * sorting and paging on the client — and the collection is bounded by the
  * caller's scope (a doctor's own patients, their own appointments). The
  * `maxPages` ceiling turns an unexpectedly huge answer into an error the
- * screen can show instead of an unbounded download; moving those screens
- * to server-side paging is the follow-up if a real caseload ever reaches
- * it.
+ * screen can show instead of an unbounded download — never a silently
+ * truncated list. Moving those screens to server-side paging is the
+ * follow-up; it is blocked where a screen filters, sorts or counts on a
+ * field the endpoint cannot filter, sort or count by.
+ *
+ * The ceiling is checked against the first page's `totalPages`, so a
+ * collection past it fails after one request rather than after
+ * downloading `maxPages` pages it is going to discard.
  */
 export async function fetchAllPages(
   fetchPage: (page: number, pageSize: number) => Promise<unknown>,
@@ -113,6 +127,7 @@ export async function fetchAllPages(
   const items: unknown[] = [];
   for (let page = 1; page <= maxPages; page += 1) {
     const result = readPage(await fetchPage(page, MAX_PAGE_SIZE), what);
+    if (result.totalPages > maxPages) break;
     items.push(...result.items);
     if (result.page >= result.totalPages || result.items.length === 0) return items;
   }

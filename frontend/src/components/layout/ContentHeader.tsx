@@ -69,7 +69,10 @@ export function ContentHeader({
             {caption ? <p className="mt-0.5 text-body-sm text-text-secondary">{caption}</p> : null}
           </div>
         </div>
-        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+        {actions ? (
+          // Wraps instead of overflowing when the actions outgrow a phone row.
+          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
+        ) : null}
       </div>
     </header>
   );

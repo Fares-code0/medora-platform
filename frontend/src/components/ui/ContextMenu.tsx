@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { createPortal } from 'react-dom';
@@ -6,12 +6,21 @@ import { createPortal } from 'react-dom';
 import { useOutsideClick } from '@/hooks/useOutsideClick';
 import { cn } from '@/utils/cn';
 
+import {
+  applyGeometry,
+  computeFloating,
+  measureContentHeight,
+  readViewport,
+} from './internal/floating';
 import { MenuList, type MenuEntry } from './internal/MenuList';
 
 /**
  * ContextMenu — right-click menu sharing the DS §8.13 menu pattern.
- * Opens at the pointer position (clamped to the viewport) in a portal;
- * focus moves into the menu and returns to the previously focused element
+ * Opens at the pointer position in a portal, measured and clamped to the
+ * visible viewport on both axes (flipping above the pointer when there is no
+ * room below), with a viewport-relative max-height so a long menu scrolls
+ * inside its own surface. Any page scroll or viewport resize closes it.
+ * Focus moves into the menu and returns to the previously focused element
  * on close. Item semantics and keyboard behavior come from MenuList.
  */
 export interface ContextMenuProps {
@@ -22,8 +31,13 @@ export interface ContextMenuProps {
   className?: string;
 }
 
-const MENU_ESTIMATED_WIDTH = 200;
-const MENU_ESTIMATED_HEIGHT = 240;
+const MENU_CAP = 400;
+
+interface OpenState {
+  readonly x: number;
+  readonly y: number;
+  readonly rtl: boolean;
+}
 
 export function ContextMenu({
   entries,
@@ -32,7 +46,8 @@ export function ContextMenu({
   menuLabel,
   className,
 }: ContextMenuProps) {
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [position, setPosition] = useState<OpenState | null>(null);
+  const [placed, setPlaced] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
 
@@ -43,11 +58,47 @@ export function ContextMenu({
 
   useOutsideClick([menuRef], close, position !== null);
 
+  // Measure the real menu, then place it — before paint.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!position || !menu) {
+      setPlaced(false);
+      return;
+    }
+    menu.style.top = '0px';
+    menu.style.left = '0px';
+    applyGeometry(
+      menu,
+      computeFloating({
+        anchor: { top: position.y, bottom: position.y, left: position.x, right: position.x, width: 0 },
+        viewport: readViewport(),
+        contentHeight: measureContentHeight(menu),
+        contentWidth: menu.offsetWidth,
+        cap: MENU_CAP,
+        align: 'start',
+        matchWidth: false,
+        rtl: position.rtl,
+      }),
+    );
+    setPlaced(true);
+  }, [position]);
+
   useEffect(() => {
     if (!position) return;
-    const onScroll = () => close();
+    const onScroll = (event: Event) => {
+      // Scrolling the menu's own list keeps it open.
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return;
+      close();
+    };
+    const vv = window.visualViewport;
     window.addEventListener('scroll', onScroll, true);
-    return () => window.removeEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
+    vv?.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', close);
+      vv?.removeEventListener('resize', close);
+    };
   }, [position, close]);
 
   return (
@@ -58,9 +109,11 @@ export function ContextMenu({
         event.preventDefault();
         previousFocus.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const target = event.target instanceof Element ? event.target : event.currentTarget;
         setPosition({
-          x: Math.min(event.clientX, window.innerWidth - MENU_ESTIMATED_WIDTH),
-          y: Math.min(event.clientY, window.innerHeight - MENU_ESTIMATED_HEIGHT),
+          x: event.clientX,
+          y: event.clientY,
+          rtl: getComputedStyle(target).direction === 'rtl',
         });
       }}
     >
@@ -69,8 +122,10 @@ export function ContextMenu({
         ? createPortal(
             <div
               ref={menuRef}
-              className="fixed z-dropdown animate-menu-in"
-              style={{ left: position.x, top: position.y }}
+              className="fixed z-dropdown flex flex-col animate-menu-in"
+              // First frame is measured unseen; opacity, not visibility, so
+              // MenuList can still take focus.
+              style={placed ? undefined : { opacity: 0, pointerEvents: 'none' }}
             >
               <MenuList entries={entries} onClose={close} aria-label={menuLabel} />
             </div>,

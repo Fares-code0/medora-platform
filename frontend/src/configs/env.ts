@@ -1,33 +1,95 @@
-import { z } from 'zod';
-
 /**
  * Runtime environment contract — FRONTEND_ARCHITECTURE.md §2 (configs/).
- * Zod-validated at boot: a misconfigured deployment fails fast with a
- * readable error instead of failing mysteriously at first API call.
- * Only variables prefixed VITE_ are exposed to the client — never secrets.
+ * Validated at boot: a misconfigured deployment fails fast with a readable
+ * error instead of failing mysteriously at first API call. Only variables
+ * prefixed VITE_ are exposed to the client — never secrets.
+ *
+ * Checked by hand rather than with a zod schema on purpose: this module is
+ * on the boot path of every page, so importing zod here put the whole
+ * library in the entry chunk that every visit downloads and parses before
+ * first paint. Forms still use zod — in their own lazy route chunks. The
+ * rules are the same three the schema stated, and `parseEnv` is exported so
+ * every one of them is tested (`env.test.ts`).
+ *
+ * - `VITE_API_BASE_URL` — a string `new URL()` accepts; default
+ *   `http://localhost:3000/api/v1`. Must include the API's `/api/v1` prefix
+ *   (backend ADR-011). Not cosmetic: the refresh cookie is scoped
+ *   `Path=/api/v1/auth`, so a base URL of `/api` means the browser never
+ *   attaches it — silent refresh then fails for every user, with no error
+ *   anywhere to say why.
+ * - `VITE_APP_ENV` — `development` | `staging` | `production`; default
+ *   `development`.
+ * - `VITE_ENABLE_MOCKS` — `true` | `false`, deliberately with **no
+ *   default** — see `resolveEnableMocks`. This field used to default to
+ *   `'true'`, which made "the variable is missing" and "the operator asked
+ *   for the seeded mock backend" the same state. A production build whose
+ *   `VITE_ENABLE_MOCKS` never made it into the deploy environment therefore
+ *   served mock auth — anyone could sign in as `doctor@medora.health` — and
+ *   looked completely healthy while doing it. Absent must mean off, so
+ *   absent is representable.
+ *
+ * As with the schema, a default applies only when the variable is absent
+ * (`undefined`): an empty or wrong value is an error, never a default.
  */
-const envSchema = z.object({
-  /**
-   * Must include the API's `/api/v1` prefix (backend ADR-011). Not
-   * cosmetic: the refresh cookie is scoped `Path=/api/v1/auth`, so a base
-   * URL of `/api` means the browser never attaches it — silent refresh
-   * then fails for every user, with no error anywhere to say why.
-   */
-  VITE_API_BASE_URL: z.string().url().default('http://localhost:3000/api/v1'),
-  VITE_APP_ENV: z.enum(['development', 'staging', 'production']).default('development'),
-  /**
-   * Deliberately **no default** — see `resolveEnableMocks`. This field used
-   * to `.default('true')`, which made "the variable is missing" and "the
-   * operator asked for the seeded mock backend" the same state. A
-   * production build whose `VITE_ENABLE_MOCKS` never made it into the
-   * deploy environment therefore served mock auth — anyone could sign in as
-   * `doctor@medora.health` — and looked completely healthy while doing it.
-   * Absent must mean off, so absent is now representable.
-   */
-  VITE_ENABLE_MOCKS: z.enum(['true', 'false']).optional(),
-});
+const APP_ENVS = ['development', 'staging', 'production'] as const;
+const MOCK_FLAGS = ['true', 'false'] as const;
+const DEFAULT_API_BASE_URL = 'http://localhost:3000/api/v1';
 
-export type AppEnv = z.infer<typeof envSchema>['VITE_APP_ENV'];
+export type AppEnv = (typeof APP_ENVS)[number];
+
+export interface ParsedEnv {
+  VITE_API_BASE_URL: string;
+  VITE_APP_ENV: AppEnv;
+  VITE_ENABLE_MOCKS: (typeof MOCK_FLAGS)[number] | undefined;
+}
+
+function isUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isOneOf<T extends string>(options: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (options as readonly string[]).includes(value);
+}
+
+/**
+ * Validates the raw `import.meta.env` record. Returns the parsed values, or
+ * the failing fields with one message each (the shape `flatten().fieldErrors`
+ * had, so the boot error reads as it did).
+ */
+export function parseEnv(
+  raw: Record<string, unknown>,
+): { success: true; data: ParsedEnv } | { success: false; fieldErrors: Record<string, string[]> } {
+  const fieldErrors: Record<string, string[]> = {};
+
+  const apiBaseUrl = raw['VITE_API_BASE_URL'] ?? DEFAULT_API_BASE_URL;
+  if (typeof apiBaseUrl !== 'string') fieldErrors['VITE_API_BASE_URL'] = ['Expected string'];
+  else if (!isUrl(apiBaseUrl)) fieldErrors['VITE_API_BASE_URL'] = ['Invalid url'];
+
+  const appEnv = raw['VITE_APP_ENV'] ?? 'development';
+  if (!isOneOf(APP_ENVS, appEnv)) {
+    fieldErrors['VITE_APP_ENV'] = [`Expected ${APP_ENVS.map((v) => `'${v}'`).join(' | ')}`];
+  }
+
+  const enableMocks = raw['VITE_ENABLE_MOCKS'];
+  if (enableMocks !== undefined && !isOneOf(MOCK_FLAGS, enableMocks)) {
+    fieldErrors['VITE_ENABLE_MOCKS'] = [`Expected ${MOCK_FLAGS.map((v) => `'${v}'`).join(' | ')}`];
+  }
+
+  if (Object.keys(fieldErrors).length > 0) return { success: false, fieldErrors };
+  return {
+    success: true,
+    data: {
+      VITE_API_BASE_URL: apiBaseUrl as string,
+      VITE_APP_ENV: appEnv as AppEnv,
+      VITE_ENABLE_MOCKS: enableMocks as ParsedEnv['VITE_ENABLE_MOCKS'],
+    },
+  };
+}
 
 /**
  * Resolves the mock-backend flag, and refuses the one combination that is
@@ -101,11 +163,11 @@ export function resolveApiBaseUrl(appEnv: AppEnv, raw: string): string {
   );
 }
 
-const parsed = envSchema.safeParse(import.meta.env);
+const parsed = parseEnv(import.meta.env);
 
 if (!parsed.success) {
   throw new Error(
-    `Invalid environment configuration:\n${JSON.stringify(parsed.error.flatten().fieldErrors, null, 2)}`,
+    `Invalid environment configuration:\n${JSON.stringify(parsed.fieldErrors, null, 2)}`,
   );
 }
 

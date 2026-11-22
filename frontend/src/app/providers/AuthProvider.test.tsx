@@ -11,6 +11,10 @@ import { LEGACY_AI_STORAGE_KEYS } from '@/features/doctor/ai/model/session-stora
 import { readConversations, readSettings, writeSettings } from '@/features/doctor/ai/model/store';
 import { DEFAULT_AI_SETTINGS } from '@/features/doctor/ai/model/types';
 import { aiService } from '@/features/doctor/ai/service';
+import {
+  readStoredConversations,
+  writeStoredConversations,
+} from '@/features/shared-domain/conversations/store';
 import { isAuthError } from '@/types/auth';
 
 import { AuthProvider, useAuth } from './AuthProvider';
@@ -678,5 +682,56 @@ describe('AuthProvider — the AI assistant’s session data (S1)', () => {
       expect(window.localStorage.getItem(key)).toBeNull();
     }
     expect(storageText()).not.toContain(PATIENT_NAME);
+  });
+});
+
+describe('AuthProvider — mock messaging is per user', () => {
+  const LEGACY_KEY = 'medora.messaging.v1';
+  const marker = (n: number) => {
+    const [first] = readStoredConversations();
+    if (first === undefined) throw new Error('seed is empty');
+    return [{ ...first, unreadCount: n }];
+  };
+
+  it('removes the legacy global key at boot', async () => {
+    window.localStorage.setItem(LEGACY_KEY, '[]');
+    await signedOut();
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it('hides A’s conversations from B, and logout clears A and resets the owner', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD, { rememberMe: true }));
+    const doctorId = result.current.user?.id ?? '';
+    writeStoredConversations(marker(42));
+    const doctorKey = `${LEGACY_KEY}.${doctorId}`;
+    expect(window.localStorage.getItem(doctorKey)).not.toBeNull();
+
+    await settle(() => result.current.logout());
+
+    expect(window.localStorage.getItem(doctorKey)).toBeNull();
+    // Owner reset: nothing persists while signed out.
+    writeStoredConversations(marker(7));
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBeNull();
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      expect(window.localStorage.key(i) ?? '').not.toMatch(/^medora.messaging/);
+    }
+
+    await settle(() => result.current.login('admin@medora.health', PASSWORD));
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(7);
+  });
+
+  it('clears the data when the session locks', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const doctorId = result.current.user?.id ?? '';
+    writeStoredConversations(marker(42));
+
+    act(() => {
+      result.current.lock();
+    });
+
+    expect(window.localStorage.getItem(`${LEGACY_KEY}.${doctorId}`)).toBeNull();
   });
 });

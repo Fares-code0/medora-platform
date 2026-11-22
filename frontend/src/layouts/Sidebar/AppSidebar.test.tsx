@@ -265,20 +265,26 @@ describe('AppSidebar Pharmacy group', () => {
   describe('on the collapsed rail', () => {
     const flyout = () => screen.queryByRole('group', { name: 'Pharmacy' });
 
-    it('marks each group with a chevron — Appointments, Medical Records and Pharmacy, and no plain item', () => {
+    it('marks each group with a chevron — Patients, Appointments, Medical Records, Labs and Pharmacy, and no plain item', () => {
       renderAs('doctor', 'Amelia Chen', doctorNavigation, true, '/doctor/overview');
       const chevrons = screen.getAllByTestId('sidebar-group-chevron');
-      expect(chevrons).toHaveLength(3);
+      expect(chevrons).toHaveLength(5);
+      const patients = screen.getByRole('button', { name: 'Patients' });
       const appointments = screen.getByRole('button', { name: 'Appointments' });
       const records = screen.getByRole('button', { name: 'Medical Records' });
+      const labs = screen.getByRole('button', { name: 'Labs' });
       expect(chevrons.filter((chevron) => parent().contains(chevron))).toHaveLength(1);
+      expect(chevrons.filter((chevron) => patients.contains(chevron))).toHaveLength(1);
       expect(chevrons.filter((chevron) => appointments.contains(chevron))).toHaveLength(1);
       expect(chevrons.filter((chevron) => records.contains(chevron))).toHaveLength(1);
+      expect(chevrons.filter((chevron) => labs.contains(chevron))).toHaveLength(1);
       for (const chevron of chevrons) expect(chevron).toHaveAttribute('aria-hidden', 'true');
       // The chevron is decoration: the accessible name is unchanged.
       expect(parent()).toHaveAccessibleName('Pharmacy');
+      expect(patients).toHaveAccessibleName('Patients');
       expect(appointments).toHaveAccessibleName('Appointments');
       expect(records).toHaveAccessibleName('Medical Records');
+      expect(labs).toHaveAccessibleName('Labs');
     });
 
     it('lists Prescriptions in the flyout, never the old “All Prescriptions”', () => {
@@ -712,9 +718,11 @@ describe('AppSidebar collapsed rail — no hover labels', () => {
 
   it('keeps every icon’s accessible name', () => {
     renderAs('doctor', 'Amelia Chen', doctorNavigation, true, '/doctor/overview');
-    for (const name of ['Overview', 'Patients', 'Labs', 'Messages', 'Settings', 'Help']) {
+    for (const name of ['Overview', 'Messages', 'Settings', 'Help']) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument();
     }
+    expect(screen.getByRole('button', { name: 'Patients' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Labs' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Appointments' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pharmacy' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Medical Records' })).toBeInTheDocument();
@@ -723,9 +731,12 @@ describe('AppSidebar collapsed rail — no hover labels', () => {
 
   it('leaves the expanded sidebar’s visible labels as they were', () => {
     renderAs('doctor', 'Amelia Chen', doctorNavigation, false, '/doctor/overview');
-    for (const label of ['Overview', 'Patients', 'Pharmacy', 'Messages', 'Settings']) {
+    for (const label of ['Overview', 'Pharmacy', 'Messages', 'Settings']) {
       expect(screen.getByText(label)).toBeVisible();
     }
+    // Patients is a group now, and its first child repeats the label (as
+    // Appointments' does): the group's own visible label is the one to check.
+    expect(screen.getByRole('button', { name: 'Patients' })).toBeVisible();
   });
 });
 

@@ -67,3 +67,24 @@ describe('isItemActive', () => {
     expect(isItemActive('/admin/staffing', '/admin/staff', adminPaths)).toBe(false);
   });
 });
+
+describe('isItemActive — Patients and Labs groups', () => {
+  const patientPaths = ['/doctor/patients', '/doctor/patients/new'];
+  const labPaths = ['/doctor/labs', '/doctor/labs/new'];
+
+  it('marks Add Patient, not the list, on the registration page', () => {
+    expect(isItemActive('/doctor/patients/new', '/doctor/patients/new', patientPaths)).toBe(true);
+    expect(isItemActive('/doctor/patients/new', '/doctor/patients', patientPaths)).toBe(false);
+  });
+
+  it('keeps the list active on a patient profile', () => {
+    expect(isItemActive('/doctor/patients/PT-1', '/doctor/patients', patientPaths)).toBe(true);
+    expect(isItemActive('/doctor/patients/PT-1', '/doctor/patients/new', patientPaths)).toBe(false);
+  });
+
+  it('marks New Order on the order page and the list on a result', () => {
+    expect(isItemActive('/doctor/labs/new', '/doctor/labs/new', labPaths)).toBe(true);
+    expect(isItemActive('/doctor/labs/new', '/doctor/labs', labPaths)).toBe(false);
+    expect(isItemActive('/doctor/labs/LR-1', '/doctor/labs', labPaths)).toBe(true);
+  });
+});

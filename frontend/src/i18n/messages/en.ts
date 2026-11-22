@@ -198,6 +198,7 @@ export const en = {
   /* ── Navigation — doctor ────────────────────────────────────── */
   'nav.overview': 'Overview',
   'nav.patients': 'Patients',
+  'nav.patientsNew': 'Add Patient',
   'nav.appointments': 'Appointments',
   'nav.appointmentsNew': 'Add Appointment',
   'nav.medicalRecords': 'Medical Records',
@@ -206,6 +207,7 @@ export const en = {
   'nav.section.clinical': 'Clinical',
   'nav.myClinic': 'My clinic',
   'nav.labs': 'Labs',
+  'nav.labsNew': 'New Order',
   'nav.pharmacy': 'Pharmacy',
   'nav.pharmacyAll': 'Prescriptions',
   'nav.pharmacyNew': 'New Prescription',
