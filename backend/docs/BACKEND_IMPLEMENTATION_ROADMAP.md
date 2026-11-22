@@ -13,7 +13,7 @@
 > [`API_CONTRACT_CHANGES.md`](../../docs/multi-hospital/API_CONTRACT_CHANGES.md); phases 20–31 and 22A in
 > [`docs/work-phases/`](../../docs/work-phases/README.md)).
 >
-> **Implementation status on the PR #5 feature branch (not yet merged):** the additive foundation
+> **Implementation status after PR #5 merged into Database:** the additive foundation
 > adds `Hospital`, `HospitalLocation` and `Clinic`, their initial PostgreSQL migrations, Clinic and
 > timezone constraint tests, and ADR-042 scope coverage. It does not assign existing records to a
 > hospital or implement staff employment, medical-record ownership, tenant context, hospital-scoped
