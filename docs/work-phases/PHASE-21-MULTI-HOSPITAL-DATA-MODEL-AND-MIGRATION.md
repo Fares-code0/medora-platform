@@ -44,8 +44,8 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 
 **Stage 1 — model** (`DATABASE_CHECKLIST.md` A–F)
 - [x] [DATABASE] Initial additive `Hospital`, `Clinic` (separate entity), and `HospitalLocation`
-  models and migrations are present on PR #5's unmerged feature branch. They do not provide clinical
-  ownership or tenant authorization.
+  models and migrations from PR #5 are merged into the `Database` branch. They do not provide
+  clinical ownership or tenant authorization.
 - [ ] [DATABASE] Complete the target model: staff affiliations, HospitalMedicalRecord, clinical
   ownership, composite tenant foreign keys, grants, booking, insurance, settings, and AI data classes.
 - [ ] [DATABASE] `DoctorEmployment` (one active, history; department/clinic on the employment);
@@ -78,7 +78,9 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 ## Blocking conditions
 
 Complete remaining Phase 20 review sign-offs and verify migration history/state for every target
-environment before any persistent deployment. The PR #5 branch does not establish that status.
+environment before any persistent deployment. PR #5's merge does not establish whether its migration
+has been applied to any persistent environment; that status remains unknown pending authorized
+operator verification.
 
 ## Security requirements
 
