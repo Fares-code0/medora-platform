@@ -46,7 +46,7 @@ model PatientDoctorAssignment {
   doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
   doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict, map: "patient_doctor_assignments_doctor_employment_fkey")
 
-  @@unique([patientId], where: raw("role = 'primary' AND revoked_at IS NULL"), map: "patient_doctor_assignments_one_live_primary")
+  @@unique([patientId], where: raw("\"role\" = 'primary' AND \"revoked_at\" IS NULL"), map: "patient_doctor_assignments_one_live_primary")
   @@unique([patientId, doctorId], where: raw("revoked_at IS NULL"), map: "patient_doctor_assignments_one_live_per_pair")
   @@index([doctorId, patientId], where: raw("revoked_at IS NULL"), map: "patient_doctor_assignments_live_idx")
   @@map("patient_doctor_assignments")

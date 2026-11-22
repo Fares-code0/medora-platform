@@ -287,7 +287,7 @@ model RecordIssueReport {
 
   @@index([status, createdAt])
   @@index([recordId])
-  @@index([createdAt], where: raw("status <> 'resolved'"), map: "record_issue_reports_open_idx")
+  @@index([createdAt], where: raw("\"status\" <> 'resolved'"), map: "record_issue_reports_open_idx")
   @@map("record_issue_reports")
 }
 
