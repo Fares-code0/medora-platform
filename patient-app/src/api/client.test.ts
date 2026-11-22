@@ -2,6 +2,7 @@ import { ResponseContractError } from '@/schemas/envelope';
 import { isApiError, isTokenExpiryError } from '@/types/api';
 
 import { ApiClient } from './client';
+import { normalizeHttpError, normalizeNetworkError, normalizeTimeoutError } from './errors';
 import { createQueryClient, shouldRetry } from './query-client';
 import { EndpointNotImplementedError, selectImplementation, unavailableService } from './seam';
 
@@ -39,6 +40,20 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
 }
 
 const BASE = 'http://localhost:3000/api/v1';
+
+/**
+ * The backend's own answers, copied from source rather than invented (audit
+ * H1). `AppException.unauthorized()` serialises flat through
+ * `AllExceptionsFilter` as `{ message, code }`:
+ *
+ * - the access-token guard, for an expired, forged or ended access token
+ *   (`access-token.guard.ts`);
+ * - `POST /auth/refresh`, for a dead refresh session (`refresh.service.ts`,
+ *   "Session expired") — the same code, which is why that one request
+ *   carries `skipRefresh`.
+ */
+const GUARD_401 = { message: 'Unauthorized', code: 'unauthorized' } as const;
+const REFRESH_REFUSED_401 = { message: 'Session expired', code: 'unauthorized' } as const;
 
 describe('the response observer (W-06)', () => {
   it('sees the headers of a successful response', async () => {
@@ -161,6 +176,17 @@ describe('ApiClient error normalisation', () => {
     });
   });
 
+  // `null` is valid JSON and not an object. Reading `.code` off it threw a
+  // raw TypeError that no error state recognises — and, from the refresh
+  // route, one that `refreshOnce` read as a lost session.
+  it.each([
+    [502, 'server'],
+    [401, 'auth'],
+  ])('maps HTTP %i with a JSON null body to kind %s', async (status, kind) => {
+    stubFetch([json(status, null)]);
+    await expect(new ApiClient(BASE).get('thing')).rejects.toMatchObject({ kind });
+  });
+
   it('reads Retry-After on a 429', async () => {
     stubFetch([json(429, {}, { 'Retry-After': '90' })]);
     await expect(new ApiClient(BASE).get('thing')).rejects.toMatchObject({
@@ -250,11 +276,63 @@ describe('401 handling', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it('refreshes once and replays on 401 token_expired', async () => {
+  // `two-factor.service.ts` refuses an expired re-enrolment with
+  // `401 token_invalid`. Refreshing on it used to replay the confirmation.
+  it('does NOT refresh or replay on the 2FA re-enrolment 401 token_invalid', async () => {
     const { calls } = stubFetch([
-      json(401, { code: 'token_expired' }),
-      json(200, { data: { ok: true } }),
+      json(401, { message: 'Enrollment is not valid', code: 'token_invalid' }),
     ]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    client.setRefreshHandler(refresh);
+
+    await expect(client.post('me/2fa/reenroll/confirm', { code: '123456' })).rejects.toMatchObject({
+      kind: 'auth',
+      code: 'token_invalid',
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  // A refresh refused with the same code the guard uses must not answer
+  // its own refusal by refreshing: that request would wait on itself.
+  it('never refreshes on the 401 of a request marked skipRefresh', async () => {
+    const { calls } = stubFetch([json(401, REFRESH_REFUSED_401)]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    const onLost = jest.fn();
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    await expect(
+      client.post('auth/refresh', { refreshToken: 'r' }, { skipRefresh: true }),
+    ).rejects.toMatchObject({ kind: 'auth', code: 'unauthorized' });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  // The test above posts to `auth/refresh`, which the path guard catches
+  // on its own; this one proves `skipRefresh` is honoured by itself.
+  it('honours skipRefresh on a path that is not the refresh route', async () => {
+    const { calls } = stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    const onLost = jest.fn();
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/profile', { skipRefresh: true })).rejects.toMatchObject({
+      kind: 'auth',
+      code: 'unauthorized',
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('refreshes once and replays on the access-token guard 401', async () => {
+    const { calls } = stubFetch([json(401, GUARD_401), json(200, { data: { ok: true } })]);
     const client = new ApiClient(BASE);
     const refresh = jest.fn(() => Promise.resolve('new-token'));
     client.setRefreshHandler(refresh);
@@ -269,9 +347,7 @@ describe('401 handling', () => {
     global.fetch = jest.fn(() => {
       call += 1;
       // The first two requests 401; everything after the refresh succeeds.
-      return Promise.resolve(
-        call <= 2 ? json(401, { code: 'token_expired' }) : json(200, { data: { ok: true } }),
-      );
+      return Promise.resolve(call <= 2 ? json(401, GUARD_401) : json(200, { data: { ok: true } }));
     });
 
     const client = new ApiClient(BASE);
@@ -296,7 +372,7 @@ describe('401 handling', () => {
   });
 
   it('notifies session loss exactly once when the refresh fails', async () => {
-    stubFetch([json(401, { code: 'token_expired' })]);
+    stubFetch([json(401, GUARD_401)]);
     const client = new ApiClient(BASE);
     const onLost = jest.fn();
     client.setRefreshHandler(() => Promise.resolve(null));
@@ -351,13 +427,80 @@ describe('401 handling', () => {
   });
 
   it('does not loop: a replayed request that 401s again is not refreshed twice', async () => {
-    stubFetch([json(401, { code: 'token_expired' })]);
+    stubFetch([json(401, GUARD_401)]);
     const client = new ApiClient(BASE);
     const refresh = jest.fn(() => Promise.resolve('new-token'));
     client.setRefreshHandler(refresh);
 
     await expect(client.get('thing')).rejects.toMatchObject({ kind: 'auth' });
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  // A refresh that could not reach the server is not a rejected token. It
+  // used to be treated as one, signing a patient out for losing signal.
+  it('surfaces an unreachable refresh as its transport error and keeps the session', async () => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    client.setRefreshHandler(() => Promise.reject(normalizeNetworkError()));
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/appointments')).rejects.toMatchObject({ kind: 'network' });
+    expect(onLost).not.toHaveBeenCalled();
+  });
+
+  it('fails every request waiting on one unreachable refresh, with one refresh', async () => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    let rejectRefresh: (reason: unknown) => void = () => undefined;
+    const refresh = jest.fn(
+      () =>
+        new Promise<string | null>((_resolve, reject) => {
+          rejectRefresh = reject;
+        }),
+    );
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    // Both outcomes are collected before the refresh settles, so neither
+    // rejection is ever unobserved.
+    const settled = Promise.allSettled([client.get('a'), client.get('b')]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectRefresh(normalizeTimeoutError());
+
+    const [first, second] = await settled;
+    expect(first).toMatchObject({ status: 'rejected', reason: { kind: 'timeout' } });
+    expect(second).toMatchObject({ status: 'rejected', reason: { kind: 'timeout' } });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(onLost).not.toHaveBeenCalled();
+  });
+
+  it('treats a captive portal answering the refresh as unreachable, not as a lost session', async () => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    client.setRefreshHandler(() =>
+      Promise.reject(new ResponseContractError('auth/refresh', ['(body): not JSON'])),
+    );
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/appointments')).rejects.toBeInstanceOf(ResponseContractError);
+    expect(onLost).not.toHaveBeenCalled();
+  });
+
+  // A handler that throws something that is not an ApiError is a defect,
+  // not a transport failure. Ending the session is the safe reading: the
+  // alternative is a session that 401s on every call, forever.
+  it('treats a handler that throws a non-ApiError as a lost session', async () => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    client.setRefreshHandler(() => Promise.reject(new Error('handler bug')));
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/appointments')).rejects.toMatchObject({ kind: 'auth' });
+    expect(onLost).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -366,9 +509,26 @@ describe('isTokenExpiryError', () => {
     expect(isTokenExpiryError({ kind: 'auth' })).toBe(true);
   });
 
-  it('does not treat a credentials failure as a token failure', () => {
-    expect(isTokenExpiryError({ kind: 'auth', code: 'invalid_credentials' })).toBe(false);
+  it("reads the backend's own code for a dead access token as a token failure (H1)", () => {
+    expect(isTokenExpiryError({ kind: 'auth', code: 'unauthorized' })).toBe(true);
   });
+
+  // Every other 401 code the backend sends is about what the patient
+  // typed, and refreshing on it would replay the rejected request.
+  it.each(['invalid_credentials', 'otp_invalid', 'token_invalid'])(
+    'does not treat %s as a token failure',
+    (code) => {
+      expect(isTokenExpiryError({ kind: 'auth', code })).toBe(false);
+    },
+  );
+
+  // Codes the backend never sends are not a reason to refresh either.
+  it.each(['token_expired', 'unauthenticated', 'session_expired'])(
+    'does not refresh on %s, which the backend never sends',
+    (code) => {
+      expect(isTokenExpiryError({ kind: 'auth', code })).toBe(false);
+    },
+  );
 
   it('does not treat a non-auth error as a token failure', () => {
     expect(isTokenExpiryError({ kind: 'forbidden' })).toBe(false);
@@ -396,6 +556,29 @@ describe('retry policy', () => {
     expect(shouldRetry(0, new EndpointNotImplementedError('BE-05', 'capability.booking'))).toBe(
       false,
     );
+  });
+
+  it('never retries a 501 not_implemented, which the server says will not change (A2)', () => {
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 501, code: 'not_implemented' })).toBe(
+      false,
+    );
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 501 })).toBe(false);
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', code: 'not_implemented' })).toBe(false);
+    // Every other 5xx is still worth a second attempt.
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 503 })).toBe(true);
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 500, code: 'internal_error' })).toBe(
+      true,
+    );
+  });
+
+  it('reads a real 501 response as not worth retrying', async () => {
+    const error = await normalizeHttpError(
+      new Response(JSON.stringify({ message: 'Not built', code: 'not_implemented' }), {
+        status: 501,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    expect(shouldRetry(0, error)).toBe(false);
   });
 
   it('gives up after two attempts', () => {
@@ -502,14 +685,14 @@ describe('a 401 before anything has wired a refresh (D-03)', () => {
     // `onRefresh` is set by `SessionProvider`. A request that races the
     // provider's mount — or one made after logout tore it down — must
     // fail as an auth error, not as "handler is not a function".
-    stubFetch([json(401, { message: 'Unauthorized', code: 'token_expired' })]);
+    stubFetch([json(401, GUARD_401)]);
     const client = new ApiClient(BASE);
 
     await expect(client.get('/me/profile')).rejects.toMatchObject({ kind: 'auth' });
   });
 
   it('does not retry the request when there is nothing to refresh with', async () => {
-    const { calls } = stubFetch([json(401, { message: 'Unauthorized', code: 'token_expired' })]);
+    const { calls } = stubFetch([json(401, GUARD_401)]);
     const client = new ApiClient(BASE);
 
     await expect(client.get('/me/profile')).rejects.toBeDefined();

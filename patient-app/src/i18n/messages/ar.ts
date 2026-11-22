@@ -85,10 +85,9 @@ export const ar: Messages = {
     'البريد الإلكتروني وكلمة المرور غير متطابقين. تحقق منهما وحاول مرة أخرى.',
   'auth.error.emailUnverified':
     'أكّد بريدك الإلكتروني قبل تسجيل الدخول. تحقق من بريدك بحثًا عن الرابط.',
-  'auth.error.accountLocked':
-    'تم قفل هذا الحساب بعد محاولات كثيرة. حاول لاحقًا أو أعد تعيين كلمة المرور.',
+  'auth.error.accountInactive':
+    'هذا الحساب غير مفعّل، لذا لا يمكنه تسجيل الدخول الآن. تواصل مع الدعم للمساعدة.',
   'auth.error.otpInvalid': 'هذا الرمز غير صحيح. تحقق منه مقابل أحدث رمز في تطبيق المصادقة.',
-  'auth.error.otpExpired': 'انتهت صلاحية هذا الرمز. اطلب رمزًا جديدًا.',
   'auth.error.tokenInvalid': 'لم يعد هذا الرابط صالحًا. اطلب رابطًا جديدًا.',
   'auth.error.emailTaken': 'يوجد حساب بالفعل بهذا البريد الإلكتروني.',
   'auth.error.weakPassword': 'اختر كلمة مرور أقوى.',
@@ -434,6 +433,9 @@ export const ar: Messages = {
   // ── Profile (P-01, P-08) ──────────────────────────────────────────
   'profile.linked': 'مرتبط بسجلك الطبي',
   'profile.notLinked': 'غير مرتبط بسجل طبي',
+  'profile.unlinked.title': 'حسابك غير مرتبط بسجل طبي بعد',
+  'profile.unlinked.body':
+    'تظهر هنا المواعيد والسجلات من عيادتك بعد ربط حسابك بسجلك. حتى ذلك الحين لا يوجد ما يُعرض، وهذا ليس خطأ.',
   'profile.section.health': 'صحتك',
   'profile.section.account': 'الحساب',
   'profile.healthRecords': 'السجلات الصحية',
@@ -811,7 +813,21 @@ export const ar: Messages = {
   'profile.edit.keptBy': 'محفوظ لدى {owner}',
   'app.booting': 'جارٍ فتح ميدورا',
 
+  'session.unconfirmed.title': 'تعذّر التأكد من تسجيل دخولك',
+  'session.unconfirmed.body':
+    'تعذّر الوصول إلى ميدورا. ما زلت مسجّل الدخول على هذا الهاتف، ولم يُحذف أي شيء.',
+  'session.unconfirmed.offline': 'هذا الهاتف غير متصل بالإنترنت. سنحاول مرة أخرى عند عودة الاتصال.',
+  'session.unconfirmed.online':
+    'قد يكون الاتصال بطيئًا أو قد تكون ميدورا مشغولة. حاول مرة أخرى بعد قليل.',
+  'session.unconfirmed.still': 'لا يزال الوصول إلى ميدورا متعذّرًا. حاول مرة أخرى بعد قليل.',
+  'session.unconfirmed.retry': 'حاول مرة أخرى',
+  'session.unconfirmed.signOut': 'تسجيل الخروج من هذا الهاتف',
+  'session.unconfirmed.signOut.confirmTitle': 'تسجيل الخروج من هذا الهاتف؟',
+  'session.unconfirmed.signOut.confirmDetail':
+    'تعذّر الوصول إلى ميدورا، لذلك سيُسجَّل الخروج من هذا الهاتف فقط. سينتهي تسجيل دخولك لدى ميدورا من تلقاء نفسه عند انتهاء صلاحيته. ستحتاج إلى كلمة المرور لتسجيل الدخول مرة أخرى. تبقى المساعدة الطارئة متاحة.',
+
   'nav.title.signIn': 'تسجيل الدخول',
+  'nav.title.sessionCheck': 'التحقق من تسجيل دخولك',
   'nav.title.verify': 'تحقّق',
   'nav.title.createAccount': 'إنشاء حساب',
   'nav.title.confirmEmail': 'تأكيد البريد',

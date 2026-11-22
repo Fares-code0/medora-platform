@@ -13,6 +13,7 @@ import { useTheme } from '@/theme';
 import { AppTabs } from './AppTabs';
 import { AuthStack } from './AuthStack';
 import type { RootStackParamList } from './routes';
+import { SessionCheckStack } from './SessionCheckStack';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -47,6 +48,9 @@ function EmergencyModal({ navigation }: NativeStackScreenProps<RootStackParamLis
  *   keychain read and the refresh take, and a patient who is signed in
  *   sees a sign-in form (checklist D-05).
  * - **unauthenticated** — `AuthStack`, which contains Emergency.
+ * - **unconfirmed** — `SessionCheckStack`: a stored sign-in the server
+ *   could not be reached to confirm. No tabs (there is no session), no
+ *   sign-in form (the patient was not signed out). Contains Emergency.
  * - **authenticated** — `AppTabs`, plus Emergency and Booking as modals.
  *
  * `Emergency` is registered in BOTH stacks on purpose. It is not a
@@ -72,6 +76,12 @@ export function RootNavigator() {
 
   if (state.status === 'unauthenticated') {
     return <AuthStack />;
+  }
+
+  // Before the fall-through below, which is the signed-in app: a state
+  // that reached it by omission would show the tabs with no session.
+  if (state.status === 'unconfirmed') {
+    return <SessionCheckStack />;
   }
 
   return (

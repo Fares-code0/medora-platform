@@ -132,9 +132,13 @@ export const authEndpoints = {
    * The mobile refresh path. The token travels in the body because
    * `X-Client-Type: mobile` (set unconditionally by `ApiClient`) makes
    * the backend answer in kind.
+   *
+   * `skipRefresh`: a refused refresh is `401 unauthorized`, the same code
+   * the access-token guard uses, and this request must not answer its own
+   * refusal by refreshing (`ApiClient` `RequestOptions.skipRefresh`).
    */
   async refresh(body: { refreshToken: string }) {
-    const raw = await apiClient.post<unknown>('auth/refresh', body);
+    const raw = await apiClient.post<unknown>('auth/refresh', body, { skipRefresh: true });
     return parseResponse('POST /auth/refresh', sessionSchema, raw);
   },
 

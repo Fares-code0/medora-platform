@@ -12,8 +12,8 @@ project with three clients cannot afford a fourth set of conventions.
 
 | Concern | Choice | Why not the alternative |
 |---|---|---|
-| Framework | **React Native 0.76 + Expo SDK 52** | Expo ships `expo-secure-store` (the keychain), OTA updates and EAS as first-party. Bare RN means assembling community modules and two native toolchains |
-| React | **18.3.1** | The exact version `frontend/` pins |
+| Framework | **React Native 0.88 + Expo SDK 58** (`react-native@0.88.1`, `expo@~58.0.23`) | Expo ships `expo-secure-store` (the keychain), OTA updates and EAS as first-party. Bare RN means assembling community modules and two native toolchains |
+| React | **19.3.0** | Pinned exactly; the version `react-native@0.88.1` declares as its peer. `frontend/` is still on React 18 (`^18.3.1`), so the two trees no longer share a React major |
 | Language | **TypeScript `strict`**, plus `noUncheckedIndexedAccess` | Matches both existing trees |
 | Navigation | **React Navigation 7** (native-stack + bottom-tabs) | Expo Router was rejected: file-system routing makes the auth gate implicit, and this app's gate is the most important thing in it |
 | Server state | **TanStack Query 5** (`^5.62.0`) | Same major and minor range as `frontend/`. The key-factory pattern ports directly |

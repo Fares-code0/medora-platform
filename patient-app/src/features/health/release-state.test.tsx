@@ -1,9 +1,13 @@
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
+import { AccessibilityInfo, RefreshControl } from 'react-native';
 
+import { en } from '@/i18n/messages';
 import { renderWithProviders } from '@/test/render';
+import type { ApiError } from '@/types/api';
 import { RELEASE_STATES, type ReleaseState } from '@/types/vocabularies';
 
 import { ReleaseNotice } from './components/ReleaseNotice';
+import { labKeys } from './hooks';
 import type { LabOrder, LabOrderDetail } from './model/types';
 import { LabResultsScreen } from './screens/LabResultsScreen';
 import { healthService } from './service';
@@ -327,10 +331,7 @@ describe('the summary says how much is behind it', () => {
 
   it('says nothing at zero, because an order still at the laboratory has none', async () => {
     // "0 results" reads as a failure. `processing` is a stage, not one.
-    const view = await renderLabs(
-      [ORDER({ status: 'processing', resultCount: 0 })],
-      DETAIL(),
-    );
+    const view = await renderLabs([ORDER({ status: 'processing', resultCount: 0 })], DETAIL());
 
     await view.findByText('Lipid panel');
     // Matched against the separator rather than the bare word: the screen
@@ -338,5 +339,119 @@ describe('the summary says how much is behind it', () => {
     // /results/ asserts nothing about this line.
     expect(view.queryByText(/· \d+ results/)).toBeNull();
     expect(view.queryByText(/0 results/)).toBeNull();
+  });
+});
+
+describe('pull to refresh', () => {
+  it('refetches the lab orders when the screen is pulled down', async () => {
+    const view = await renderLabs([ORDER()], DETAIL());
+    await view.findByTestId('lab-summary-LAB-1');
+    const spy = jest.spyOn(healthService, 'listLabOrders');
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(spy.mock.calls.length).toBe(before + 1));
+  });
+
+  it('keeps the lab orders on screen when a refresh fails, and says so without blocking', async () => {
+    const view = await renderLabs([ORDER()], DETAIL());
+    await view.findByTestId('lab-summary-LAB-1');
+    const network: ApiError = { kind: 'network' };
+    const spy = jest.spyOn(healthService, 'listLabOrders').mockRejectedValue(network);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('Lipid panel')).toBeTruthy();
+    expect(view.queryByTestId('lab-orders-error')).toBeNull();
+    expect(view.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    expect(spy.mock.calls.length).toBe(before + 1);
+  });
+});
+
+describe('pull to refresh with expanded orders', () => {
+  const TWO = [ORDER(), ORDER({ id: 'LAB-2', panelName: 'Thyroid panel' })];
+
+  async function twoExpanded() {
+    const view = await renderLabs(TWO, DETAIL());
+    fireEvent.press(await view.findByTestId('lab-summary-LAB-1'));
+    fireEvent.press(await view.findByTestId('lab-summary-LAB-2'));
+    await view.findByTestId('lab-order-card-LAB-1');
+    await view.findByTestId('lab-order-card-LAB-2');
+    return view;
+  }
+
+  it('refetches the expanded details, and only those', async () => {
+    const view = await renderLabs([...TWO, ORDER({ id: 'LAB-3' })], DETAIL());
+    fireEvent.press(await view.findByTestId('lab-summary-LAB-1'));
+    await view.findByTestId('lab-order-card-LAB-1');
+    const get = jest.spyOn(healthService, 'getLabOrder');
+    get.mockClear();
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    expect(get).toHaveBeenCalledWith('LAB-1');
+  });
+
+  it('reports one failed refresh once when the list and two open cards fail together', async () => {
+    const view = await twoExpanded();
+    const network: ApiError = { kind: 'network' };
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    announce.mockClear();
+    jest.spyOn(healthService, 'listLabOrders').mockRejectedValue(network);
+    jest.spyOn(healthService, 'getLabOrder').mockRejectedValue(network);
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await view.findByText(en['state.error.network.title']);
+    // The toast host is a single slot, so the visible text cannot show a
+    // duplicate; the screen-reader announcement is what would repeat.
+    await act(async () => undefined);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('lab-order-card-LAB-1')).toBeTruthy();
+    expect(view.getByTestId('lab-order-card-LAB-2')).toBeTruthy();
+  });
+
+  it('does not announce the covered failure late when the list recovers before the cards', async () => {
+    const view = await twoExpanded();
+    const network: ApiError = { kind: 'network' };
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    const list = jest.spyOn(healthService, 'listLabOrders').mockRejectedValue(network);
+    const detail = jest.spyOn(healthService, 'getLabOrder').mockRejectedValue(network);
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await view.findByText(en['state.error.network.title']);
+    await act(async () => undefined);
+    announce.mockClear();
+
+    // Only the list refetches, and succeeds; both cards still hold the
+    // failure the list's toast already reported.
+    list.mockResolvedValue(TWO);
+    await act(async () => {
+      await view.queryClient.refetchQueries({ queryKey: labKeys.lists() });
+    });
+    await act(async () => undefined);
+    expect(announce).not.toHaveBeenCalled();
+    expect(view.getByTestId('lab-order-card-LAB-1')).toBeTruthy();
+
+    // A NEW card failure, after the list recovered, is still reported.
+    detail.mockRejectedValue({ kind: 'timeout' } satisfies ApiError);
+    await act(async () => {
+      await view.queryClient.refetchQueries({ queryKey: labKeys.detail('LAB-1'), exact: true });
+    });
+    await waitFor(() => expect(announce).toHaveBeenCalledTimes(1));
   });
 });

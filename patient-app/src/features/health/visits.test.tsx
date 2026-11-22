@@ -1,8 +1,11 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { act, fireEvent } from '@testing-library/react-native';
+import { act, fireEvent, waitFor } from '@testing-library/react-native';
+import { RefreshControl } from 'react-native';
 
+import { en } from '@/i18n/messages';
 import type { ProfileStackParamList } from '@/navigation/routes';
 import { renderWithProviders } from '@/test/render';
+import type { ApiError } from '@/types/api';
 
 import type { VisitSummary } from './model/types';
 import { HealthRecordsScreen } from './screens/HealthRecordsScreen';
@@ -186,5 +189,69 @@ describe('the way in', () => {
     fireEvent.press(await view.findByTestId('health-to-visits'));
 
     expect(navigation.navigate).toHaveBeenCalledWith('Visits');
+  });
+});
+
+describe('pull to refresh', () => {
+  it('refetches the visit list when the screen is pulled down', async () => {
+    const view = await renderList([visit({ id: 'V-1' })]);
+    const spy = jest.spyOn(healthService, 'listVisits');
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    await waitFor(() => expect(spy.mock.calls.length).toBe(before + 1));
+  });
+
+  it('shows the refreshed records after a successful refresh, with one request', async () => {
+    const view = await renderList([visit({ id: 'V-1', title: 'Before refresh' })]);
+    const spy = jest
+      .spyOn(healthService, 'listVisits')
+      .mockResolvedValue([visit({ id: 'V-1', title: 'After refresh' })]);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText('After refresh')).toBeTruthy();
+    await act(async () => undefined);
+    expect(spy.mock.calls.length).toBe(before + 1);
+  });
+
+  it('keeps the visits on screen when a refresh fails, and says so without blocking', async () => {
+    const view = await renderList([visit({ id: 'V-1', title: 'Cached visit' })]);
+    const network: ApiError = { kind: 'network' };
+    const spy = jest.spyOn(healthService, 'listVisits').mockRejectedValue(network);
+    const before = spy.mock.calls.length;
+
+    await act(async () => {
+      view.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+
+    expect(await view.findByText(en['state.error.network.title'])).toBeTruthy();
+    expect(view.getByText('Cached visit')).toBeTruthy();
+    expect(view.queryByTestId('visits-list-error')).toBeNull();
+    // The spinner stops; nothing is re-requested behind the patient's back.
+    expect(view.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+    expect(spy.mock.calls.length).toBe(before + 1);
+  });
+
+  it('still shows the full error, with Retry, when the first load fails', async () => {
+    const network: ApiError = { kind: 'network' };
+    installed.push(jest.spyOn(healthService, 'listVisits').mockRejectedValue(network));
+    const view = renderWithProviders(
+      <VisitsScreen
+        {...({
+          navigation: { navigate: jest.fn() },
+          route: { key: 'v-1', name: 'Visits', params: undefined },
+        } as unknown as NativeStackScreenProps<ProfileStackParamList, 'Visits'>)}
+      />,
+    );
+
+    expect(await view.findByTestId('visits-list-error')).toBeTruthy();
+    expect(view.getByTestId('visits-list-error-retry')).toBeTruthy();
   });
 });

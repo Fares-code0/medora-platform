@@ -1,8 +1,13 @@
 import type { ReactNode } from 'react';
 
-import { NavigationContainer } from '@react-navigation/native';
+import {
+  createNavigationContainerRef,
+  NavigationContainer,
+  type NavigationContainerRefWithCurrent,
+} from '@react-navigation/native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Linking } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ToastProvider } from '@/components';
@@ -17,6 +22,7 @@ import { ThemeProvider } from '@/theme';
 
 import { linking } from './linking';
 import { RootNavigator } from './RootNavigator';
+import type { RootStackParamList } from './routes';
 
 /**
  * Navigation tests.
@@ -73,7 +79,13 @@ function stubAuthService(overrides: Partial<AuthService> = {}): AuthService {
   };
 }
 
-function renderApp(options: { authService?: AuthService; storedRefreshToken?: string } = {}) {
+function renderApp(
+  options: {
+    authService?: AuthService;
+    storedRefreshToken?: string;
+    navigationRef?: NavigationContainerRefWithCurrent<RootStackParamList>;
+  } = {},
+) {
   const secureStore = createInMemorySecureStore();
   const tokenStorage = createTokenStorage(secureStore);
   const authService = options.authService ?? stubAuthService();
@@ -113,7 +125,7 @@ function renderApp(options: { authService?: AuthService; storedRefreshToken?: st
   return seed.then(() =>
     render(
       <Tree>
-        <NavigationContainer linking={linking}>
+        <NavigationContainer linking={linking} ref={options.navigationRef}>
           <RootNavigator />
         </NavigationContainer>
       </Tree>,
@@ -263,7 +275,9 @@ describe('the authentication gate', () => {
 
   it('falls back to the auth stack when the stored token is rejected', async () => {
     const authService = stubAuthService({
-      refresh: jest.fn(() => Promise.reject(Object.assign(new Error('x'), { kind: 'auth' }))),
+      refresh: jest.fn(() =>
+        Promise.reject(Object.assign(new Error('x'), { kind: 'auth', code: 'unauthorized' })),
+      ),
     });
     await renderApp({ authService, storedRefreshToken: 'stale' });
 
@@ -310,5 +324,85 @@ describe('the deep-link table', () => {
     for (const parameter of parameters) {
       expect(parameter).toMatch(/Id$/);
     }
+  });
+});
+
+describe('signed out, there is no discovery or booking (PA-1, DR-09)', () => {
+  beforeEach(markOnboardingSeen);
+
+  // DR-09: discovery requires sign-in. Signed out, the stack holds the
+  // sign-in, registration and recovery screens, and Emergency — nothing
+  // that browses doctors, clinics or slots, and nothing that books.
+  const DISCOVERY_OR_BOOKING = [
+    'Tabs',
+    'Booking',
+    'DiscoverTab',
+    'DiscoverRoot',
+    'DoctorProfile',
+    'Clinic',
+    'Department',
+  ];
+
+  it('declares none of those routes in the signed-out stack', async () => {
+    const navigationRef = createNavigationContainerRef<RootStackParamList>();
+    await renderApp({ navigationRef });
+    await waitFor(() => expect(screen.getByTestId('welcome-screen')).toBeTruthy());
+
+    const routeNames: readonly string[] = navigationRef.getRootState()?.routeNames ?? [];
+    expect(routeNames).toEqual(
+      expect.arrayContaining(['Welcome', 'Login', 'Register', 'ResetPassword', 'Emergency']),
+    );
+    for (const name of DISCOVERY_OR_BOOKING) {
+      expect(routeNames).not.toContain(name);
+    }
+  });
+
+  it.each([
+    ['medora://doctors'],
+    ['medora://doctors/doc-1'],
+    ['medora://book'],
+    ['medora://clinic'],
+  ])('does not open %s while signed out', async (url) => {
+    jest.spyOn(Linking, 'getInitialURL').mockResolvedValueOnce(url);
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('welcome-screen')).toBeTruthy());
+    expect(screen.queryByTestId('discover-search')).toBeNull();
+    expect(screen.queryByTestId('booking-flow')).toBeNull();
+  });
+});
+
+describe('the reset-password link (J-2)', () => {
+  beforeEach(markOnboardingSeen);
+  afterEach(() => jest.restoreAllMocks());
+
+  it('opens the reset form with the token filled in, and submits nothing', async () => {
+    jest
+      .spyOn(Linking, 'getInitialURL')
+      .mockResolvedValueOnce('medora://reset-password?token=RESET-abc_123');
+    const authService = stubAuthService();
+    await renderApp({ authService });
+
+    await waitFor(() => expect(screen.getByTestId('reset-password-screen')).toBeTruthy());
+    expect(screen.getByTestId('reset-token').props.value).toBe('RESET-abc_123');
+    expect(authService.resetPassword).not.toHaveBeenCalled();
+  });
+
+  it('is ignored while signed in: the patient stays where they were', async () => {
+    jest
+      .spyOn(Linking, 'getInitialURL')
+      .mockResolvedValueOnce('medora://reset-password?token=RESET-abc');
+    const authService = stubAuthService();
+    await renderApp({ authService, storedRefreshToken: 'refresh-1' });
+
+    await waitFor(() => expect(screen.getByTestId('home-screen')).toBeTruthy());
+    expect(screen.queryByTestId('reset-password-screen')).toBeNull();
+    expect(authService.resetPassword).not.toHaveBeenCalled();
+  });
+
+  it('declares no verify-email link: no screen here consumes that token', () => {
+    const screens = linking.config?.screens as Record<string, unknown>;
+    expect(screens.ResetPassword).toBe('reset-password');
+    expect(JSON.stringify(linking.config)).not.toContain('verify-email');
   });
 });

@@ -41,8 +41,8 @@ type Props = NativeStackScreenProps<DiscoverStackParamList, 'DoctorProfile'>;
  * calendar. `AvailabilityPreview` (G-09) adds the next few times when the
  * server offers them — it renders them, it never computes them, and it
  * renders nothing at all when the read fails, which is every production
- * build while `GET /public/doctors/{id}/slots` (BE-06) is blocked on
- * ADR-033. Guessing at availability client-side is what audit §6 forbids.
+ * build while `GET /patient/doctors/:id/slots` (doctor-published slots,
+ * DR-10; it superseded `/public/*` and BE-06) is not built. Guessing at availability client-side is what audit §6 forbids.
  *
  * Opening this screen records the visit for the Discover screen's recency
  * list (G-10). That list is memory-only and dies with the session — see

@@ -6,6 +6,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import { Button, Chip, PagedList, Text } from '@/components';
+import { useUnlinkedEmptyState } from '@/features/profile/useRecordLink';
 import { useT } from '@/i18n';
 import type { AppointmentsStackParamList, RootStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
@@ -55,6 +56,9 @@ export function AppointmentsScreen({ navigation }: Props) {
   const rootNavigation = useNavigation<NavigationProp<RootStackParamList>>();
   const [scope, setScope] = useState<Scope>('upcoming');
   const appointments = useAppointments(scope);
+  // F-09: with no clinical record both segments are empty by construction;
+  // say why instead of "Nothing booked" (`useRecordLink.ts`).
+  const unlinked = useUnlinkedEmptyState();
 
   return (
     <PagedList
@@ -83,7 +87,8 @@ export function AppointmentsScreen({ navigation }: Props) {
         endLabel: t('appointments.end', { total: appointments.data?.totalItems ?? 0 }),
       }}
       empty={
-        scope === 'upcoming'
+        unlinked ??
+        (scope === 'upcoming'
           ? {
               icon: 'calendar',
               title: t('appointments.empty.upcoming.title'),
@@ -97,7 +102,7 @@ export function AppointmentsScreen({ navigation }: Props) {
               icon: 'clock',
               title: t('appointments.empty.past.title'),
               body: t('appointments.empty.past.body'),
-            }
+            })
       }
       header={
         <>

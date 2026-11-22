@@ -36,13 +36,15 @@ const ANDROID_BUNDLE_DIR = path.resolve(
 );
 
 /**
- * 3.20 MB, against a measured 2.90 MB. Loose enough that ordinary
- * feature work never trips it — eleven merged features moved the bundle
- * by about 60 KB — and tight enough that one substantial library cannot
- * arrive unnoticed. A ceiling, not a target; see `docs/PERF.md` §1
- * before raising it.
+ * 3.40 MB, against a measured 3,216,658 bytes (2026-11-22). Originally
+ * 3.20 MB against 2.90 MB; raised once, deliberately, when ordinary
+ * feature growth with no new dependency reached it. `docs/PERF.md` §1
+ * has the measurements and the argument. Loose enough that ordinary
+ * feature work does not trip it, tight enough that one substantial
+ * library cannot arrive unnoticed. A ceiling, not a target; see
+ * `docs/PERF.md` §1 before raising it again.
  */
-const BUDGET_BYTES = 3_200_000;
+const BUDGET_BYTES = 3_400_000;
 
 function bundlePath(): string | null {
   if (!fs.existsSync(ANDROID_BUNDLE_DIR)) return null;

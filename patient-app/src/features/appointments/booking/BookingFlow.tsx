@@ -40,10 +40,12 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Booking'>;
  * ── The two constraints that shaped this file ────────────────────────
  *
  * 1. **No client-side slot generation.** The times on the Time step come
- *    from `useSlots`, which is `GET /public/doctors/{id}/slots` (BE-06)
- *    server-side. Availability minus time-off minus booked minus buffer,
- *    in the clinic's timezone, is business logic — this screen renders
- *    what it is given and computes nothing (checklist I-04).
+ *    from `useSlots`, which will read `GET /patient/doctors/:id/slots`
+ *    (`docs/multi-hospital/API_CONTRACT_CHANGES.md` §6) — doctor-published
+ *    slots only (DR-10), signed in (DR-09); the old `/public/*` route and
+ *    BE-06's computed availability are superseded and not built. Which
+ *    slots exist is the server's decision — this screen renders what it
+ *    is given and computes nothing (checklist I-04).
  *
  * 2. **A 409 must not cost the patient their input.** Somebody else can
  *    take the slot between the Time step and Confirm. When that happens

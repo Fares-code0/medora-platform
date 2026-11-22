@@ -38,6 +38,7 @@ interface ExpoConfig {
     readonly ios?: { bundleIdentifier?: string };
     readonly android?: {
       package?: string;
+      allowBackup?: boolean;
       adaptiveIcon?: { foregroundImage?: string; backgroundColor?: string };
     };
   };
@@ -139,6 +140,15 @@ describe('branding is consistent across the two platforms', () => {
     expect(app.expo.name).toBe('Medora');
     expect(app.expo.ios?.bundleIdentifier).toBe('com.medora.patient');
     expect(app.expo.android?.package).toBe('com.medora.patient');
+  });
+
+  it('opts out of Android Auto Backup, so no keychain ciphertext is restored', () => {
+    // SecureStore's values are encrypted under a Keystore key that never
+    // leaves the device. A backup restored onto a new phone brings the
+    // ciphertext without the key: the entry cannot be decrypted, and the
+    // restore would start from a keychain that throws (S3). Stated
+    // explicitly because Android's default is `true`.
+    expect(app.expo.android?.allowBackup).toBe(false);
   });
 
   it('contains the splash rather than cropping it', () => {

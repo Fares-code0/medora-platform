@@ -49,7 +49,17 @@ import {
  * be issued twice.
  */
 
-/** Resolves to a fresh access token, or null when the session is over. */
+/**
+ * Resolves to a fresh access token, or null when the session is over.
+ *
+ * **Rejecting with an `ApiError` or a `ResponseContractError` means
+ * neither**: the refresh got no usable answer (no signal, a timeout, a
+ * 5xx, a captive portal's page), so nothing is known about the session.
+ * The waiting requests fail with that error — a screen shows "can't
+ * reach Medora" with Retry — and session loss is NOT notified.
+ * Any other rejection is a defect in the handler and is treated as null,
+ * so a broken handler cannot leave a session that 401s on every call.
+ */
 type RefreshHandler = () => Promise<string | null>;
 
 /** Called once when a refresh fails: the session is gone. */
@@ -90,6 +100,14 @@ export interface RequestOptions {
    */
   readonly idempotencyKey?: string;
   readonly timeoutMs?: number;
+  /**
+   * Never refresh on this request's own 401. Set by `POST /auth/refresh`
+   * alone: it refuses a dead session with the same `unauthorized` code the
+   * access-token guard uses, and a refresh that answered its own 401 by
+   * refreshing would wait on itself for ever. `isRefreshPath` below is the
+   * second, path-based guard for the same case; either one is enough.
+   */
+  readonly skipRefresh?: boolean;
 }
 
 /**
@@ -269,15 +287,20 @@ export class ApiClient {
 
       // Never in answer to the refresh call itself: its 401 means the
       // refresh token is spent, and `refreshOnce` would hand that request
-      // its own in-flight promise to wait on.
+      // its own in-flight promise to wait on. Two guards for it: the
+      // caller's explicit `skipRefresh`, and the path itself.
       const refreshable =
         !isReplay &&
+        options.skipRefresh !== true &&
         !isRefreshPath(path) &&
         this.onRefresh !== null &&
         isApiError(error) &&
         isTokenExpiryError(error);
 
       if (refreshable) {
+        // A refresh that could not reach the server rejects here with its
+        // transport error, which propagates to the caller and skips the
+        // session-loss notification below (see `RefreshHandler`).
         const token = await this.refreshOnce();
         if (token !== null) {
           return this.request<T>(method, path, options, true);
@@ -312,12 +335,21 @@ export class ApiClient {
     }
   }
 
-  /** Concurrent 401s share one refresh promise. */
+  /**
+   * Concurrent 401s share one refresh promise — its outcome too, so a
+   * refresh that could not reach the server fails every waiter with the
+   * same transport error rather than one of them ending the session.
+   */
   private async refreshOnce(): Promise<string | null> {
     const handler = this.onRefresh;
     if (!handler) return null;
     this.refreshInFlight ??= handler()
-      .catch(() => null)
+      .catch((error: unknown) => {
+        // A contract failure is an answer that was not the API's — a
+        // captive portal's 200 HTML page — so it is "unreachable" too.
+        if (isApiError(error) || error instanceof ResponseContractError) throw error;
+        return null;
+      })
       .finally(() => {
         this.refreshInFlight = null;
       });

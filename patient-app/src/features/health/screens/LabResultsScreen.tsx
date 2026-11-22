@@ -1,15 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
+import { isStaleDataSafeError } from '@/api/errors';
 import { AsyncBoundary, Badge, Button, Card, Divider, Screen, Section, Text } from '@/components';
 import { useT, type MessageKey, useDateFormat } from '@/i18n';
 import { useTheme } from '@/theme';
 import type { LabResultFlag, LabStatus } from '@/types/vocabularies';
 
 import { ReleaseNotice } from '../components/ReleaseNotice';
-import { useLabOrder, useLabOrders } from '../hooks';
+import { labKeys, useLabOrder, useLabOrders } from '../hooks';
 
 /**
  * Lab results.
@@ -92,17 +94,37 @@ const STATUS_LABEL: Record<LabStatus, MessageKey> = {
 function LabOrderCard({
   orderId,
   onCollapse,
+  listFailed,
 }: {
   orderId: string;
   onCollapse: () => void;
+  /** The list's own refresh failed; it is already telling the patient. */
+  listFailed: boolean;
 }) {
   const theme = useTheme();
   const { formatLongDate } = useDateFormat();
   const t = useT();
   const order = useLabOrder(orderId);
+  // A pull-to-refresh refetches the list and every expanded card together,
+  // so one outage fails all of them. The list's boundary says so once; a
+  // card whose refresh failed with the list keeps its data silently rather
+  // than adding a toast apiece.
+  //
+  // `covered` remembers WHICH failure the list's toast spoke for. When the
+  // list recovers first, the card is still holding that same error object,
+  // and without this it would leave silence and announce a stale failure
+  // late. A new failure is a new error object, so it is still reported.
+  const staleSafe = order.isError && order.data !== undefined && isStaleDataSafeError(order.error);
+  const [covered, setCovered] = useState<unknown>(null);
+  const coveredByList = staleSafe && listFailed;
+  useEffect(() => {
+    if (coveredByList) setCovered(order.error);
+  }, [coveredByList, order.error]);
+  const silent = staleSafe && (listFailed || order.error === covered);
+  const boundaryQuery = silent ? { ...order, isError: false } : order;
 
   return (
-    <AsyncBoundary query={order} testID={`lab-order-${orderId}`}>
+    <AsyncBoundary query={boundaryQuery} testID={`lab-order-${orderId}`} keepDataOnRefreshError>
       {(data) => (
         <Card testID={`lab-order-card-${orderId}`}>
           <View style={[styles.row, { columnGap: theme.space[2] }]}>
@@ -182,16 +204,25 @@ export function LabResultsScreen() {
   const t = useT();
   const orders = useLabOrders();
   const [expanded, setExpanded] = useState<readonly string[]>([]);
+  const queryClient = useQueryClient();
+
+  // The list and only the details already open: exact keys, no broad
+  // invalidation, nothing for collapsed cards. Without this a refreshed
+  // list (say, an order now released) sat above stale expanded details.
+  const refresh = () => {
+    void orders.refetch();
+    for (const id of expanded) {
+      void queryClient.refetchQueries({ queryKey: labKeys.detail(id), exact: true });
+    }
+  };
 
   const toggle = (orderId: string) =>
     setExpanded((current) =>
-      current.includes(orderId)
-        ? current.filter((id) => id !== orderId)
-        : [...current, orderId],
+      current.includes(orderId) ? current.filter((id) => id !== orderId) : [...current, orderId],
     );
 
   return (
-    <Screen testID="lab-results-screen">
+    <Screen testID="lab-results-screen" onRefresh={refresh} refreshing={orders.isRefetching}>
       <Text variant="h1" {...headingA11y(t('health.labs.title'))}>
         {t('health.labs.title')}
       </Text>
@@ -206,6 +237,7 @@ export function LabResultsScreen() {
         <AsyncBoundary
           testID="lab-orders"
           query={orders}
+          keepDataOnRefreshError
           isEmpty={(data) => data.length === 0}
           empty={{
             icon: 'lab',
@@ -221,6 +253,7 @@ export function LabResultsScreen() {
                     key={order.id}
                     orderId={order.id}
                     onCollapse={() => toggle(order.id)}
+                    listFailed={orders.isError}
                   />
                 ) : (
                   <Card

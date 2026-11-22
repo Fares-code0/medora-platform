@@ -18,10 +18,12 @@ const PREVIEW_LIMIT = 3;
  *
  * ── It renders slots; it never computes them ─────────────────────────
  *
- * The times come from `useSlots`, i.e. `GET /public/doctors/{id}/slots`
- * (BE-06), server-side. Availability minus time-off minus booked minus
- * buffer, in the clinic's timezone, is business logic, and there is no
- * slot generator in this tree (audit §6, checklist I-04).
+ * The times come from `useSlots`, which will read
+ * `GET /patient/doctors/:id/slots` — doctor-published slots only, signed
+ * in (DR-10, DR-09; `docs/multi-hospital/API_CONTRACT_CHANGES.md` §6).
+ * The `/public/*` route and BE-06's computed availability it replaces are
+ * superseded. Which times are offered is the server's decision, and there
+ * is no slot generator in this tree (audit §6, checklist I-04).
  *
  * Two client-side rules are applied to the server's answer, and neither
  * is arithmetic about availability:
@@ -41,8 +43,8 @@ const PREVIEW_LIMIT = 3;
  * | **Empty** | "No open times in the next 7 days" — a real answer, and the Book button stays, because asking is still allowed |
  * | **Failed** | Nothing. The profile is the screen; its availability is an addition |
  *
- * The failed case is every production build today (BE-06 is blocked on
- * ADR-033), which is why the Book button above this section is not
+ * The failed case is every production build today (the slots route is
+ * not built — DR-10), which is why the Book button above this section is not
  * inside it: a patient can always ask, whether or not this client can
  * see a calendar.
  */

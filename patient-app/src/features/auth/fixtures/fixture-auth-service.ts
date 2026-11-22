@@ -99,7 +99,10 @@ export const fixtureAuthService: AuthService = {
   async refresh(refreshToken) {
     const email = refreshToken.replace('fixture-refresh-', '');
     const account = findAccount(email);
-    if (account === undefined) fail({ kind: 'auth', code: 'token_invalid' });
+    // The backend's one refusal for a dead refresh token:
+    // `401 unauthorized` (`refresh.service.ts` `expiredSession`), which is
+    // what `refresh-outcome.ts` reads as the session being over.
+    if (account === undefined) fail({ kind: 'auth', code: 'unauthorized' });
     return sessionFor(account);
   },
 

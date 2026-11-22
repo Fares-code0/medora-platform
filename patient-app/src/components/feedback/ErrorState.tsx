@@ -220,6 +220,20 @@ export function ErrorState({ error, onRetry, testID }: ErrorStateProps) {
 /** Exported for the test that asserts every kind maps to distinct copy. */
 export const __presentForTest = present;
 
+/**
+ * The title that names a failure, for a caller that reports it somewhere
+ * other than this full-screen state (a toast). Same mapping, so the copy
+ * cannot drift.
+ *
+ * It does not say whether the failure is safe to keep stale content
+ * over: Retry eligibility is a different question (a 429 has no Retry
+ * button but leaves cached records valid). That rule is
+ * `isStaleDataSafeError` in `api/errors.ts`.
+ */
+export function summarizeError(error: unknown): { readonly titleKey: MessageKey } {
+  return { titleKey: present(error).titleKey };
+}
+
 const styles = StyleSheet.create({
   container: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
 });

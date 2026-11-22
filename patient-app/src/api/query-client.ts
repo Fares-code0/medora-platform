@@ -25,6 +25,9 @@ import { EndpointNotImplementedError } from './seam';
  * - `cancelled` — the patient navigated away.
  * - `EndpointNotImplementedError` — the endpoint will not appear between
  *   two attempts.
+ * - `501` / `not_implemented` — the server's own way of saying the same
+ *   thing (`reports/services/analytics.service.ts`). It arrives as
+ *   `kind: 'server'`, which is otherwise retried, so it is named here.
  *
  * ── Offline, and why `networkMode` is pinned ─────────────────────────
  * `NetworkProvider` tells `onlineManager` what NetInfo reports, so
@@ -58,8 +61,9 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
   switch (error.kind) {
     case 'network':
     case 'timeout':
-    case 'server':
       return true;
+    case 'server':
+      return error.code !== 'not_implemented' && error.status !== 501;
     case 'validation':
     case 'auth':
     case 'forbidden':

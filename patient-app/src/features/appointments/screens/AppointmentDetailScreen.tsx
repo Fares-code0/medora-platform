@@ -61,12 +61,21 @@ export function AppointmentDetailScreen({ route }: Props) {
       : formatLongDate(appointment.data.startsAt, appointment.data.clinicTimezone);
 
   return (
-    <Screen testID="appointment-detail-screen">
+    <Screen
+      testID="appointment-detail-screen"
+      onRefresh={() => void appointment.refetch()}
+      refreshing={appointment.isRefetching}
+    >
       <Text variant="h1" {...headingA11y(heading)}>
         {heading}
       </Text>
 
-      <AsyncBoundary query={appointment} testID="appointment-detail" loading={<SkeletonCard />}>
+      <AsyncBoundary
+        query={appointment}
+        testID="appointment-detail"
+        loading={<SkeletonCard />}
+        keepDataOnRefreshError
+      >
         {(data) => {
           const doctorName =
             data.doctor.title === null

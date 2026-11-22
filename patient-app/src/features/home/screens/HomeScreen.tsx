@@ -18,6 +18,7 @@ import type { IconName } from '@/components/Icon';
 import { AiCapabilityCard } from '@/features/ai/components/AiCapabilityCard';
 import { useAppointments } from '@/features/appointments/hooks';
 import { useIdentity } from '@/features/auth/SessionProvider';
+import { useUnlinkedEmptyState } from '@/features/profile/useRecordLink';
 import { useT, type MessageKey, useDateFormat } from '@/i18n';
 import type { RootStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
@@ -77,6 +78,9 @@ export function HomeScreen() {
   const navigation = useNavigation<NavigationProp<RootStackParamList>>();
   const identity = useIdentity();
   const upcoming = useAppointments('upcoming');
+  // F-09: an account with no clinical record gets an explanation, not
+  // "Nothing booked" — `useRecordLink.ts` carries why.
+  const unlinked = useUnlinkedEmptyState();
 
   // Two keys rather than a name defaulting to "there": the English
   // sentence needs a word in the slot and the Arabic one does not, and a
@@ -173,15 +177,17 @@ export function HomeScreen() {
           query={upcoming}
           loading={<SkeletonCard />}
           isEmpty={(data) => data.items.length === 0}
-          empty={{
-            icon: 'calendar',
-            title: t('home.empty.title'),
-            body: t('home.empty.body'),
-            action: {
-              label: t('home.empty.action'),
-              onPress: () => navigation.navigate('Booking', {}),
-            },
-          }}
+          empty={
+            unlinked ?? {
+              icon: 'calendar',
+              title: t('home.empty.title'),
+              body: t('home.empty.body'),
+              action: {
+                label: t('home.empty.action'),
+                onPress: () => navigation.navigate('Booking', {}),
+              },
+            }
+          }
         >
           {(data) => {
             // Home wants the first upcoming appointment and nothing

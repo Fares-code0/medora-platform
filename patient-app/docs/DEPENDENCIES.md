@@ -103,7 +103,11 @@ blocked on a backend; it is blocked on that decision.
 ## 4. The audit, measured
 
 Run `npm audit` in `patient-app/`. Re-measured **2026-11-01**, on the tree the
-Expo SDK 57 upgrade left behind (`expo@~57.0.30`, `react-native@0.86.3`):
+Expo SDK 57 upgrade left behind (`expo@~57.0.30`, `react-native@0.86.3`).
+**The tree has moved since:** `package.json` now pins `expo@~58.0.23`,
+`react-native@0.88.1` and `react@19.3.0` (SDK 58), and the counts below were
+**not** re-measured on it — they describe SDK 57, and the SDK-upgrade row in §5
+has fired again:
 
 | Severity  | 2026-09-12 | 2026-11-01 |
 | --------- | ---------- | ---------- |

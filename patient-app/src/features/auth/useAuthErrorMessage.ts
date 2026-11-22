@@ -28,6 +28,17 @@ import { isApiError } from '@/types/api';
  * password and an unknown address identically, with identical timing, and
  * a client that renders "no account with that email" would hand back the
  * distinction the server went to trouble to hide.
+ *
+ * ── Only codes the backend sends (A1) ────────────────────────────────
+ * Every `case` below is a code in `AUTH_ERROR_CODES` or
+ * `COMMON_ERROR_CODES` (`backend/src/common/errors/error-codes.ts`), and
+ * `auth-error-parity.test.ts` fails on one that is not. `account_locked`,
+ * `otp_expired` and `token_expired` were mapped here and never sent:
+ * lockout is `429 rate_limited` (with `Retry-After`, handled by `kind`),
+ * an expired step-up challenge is `401 otp_invalid` (the OTP screen names
+ * expiry from its own clock), and an expired reset or verification link
+ * is `token_invalid`. A branch for a code that never arrives is copy no
+ * patient can read and a test that proves nothing, so they were removed.
  */
 /** A catalogue entry, with whatever it needs interpolated into it. */
 export interface AuthErrorMessage {
@@ -55,14 +66,14 @@ export function authErrorKey(error: unknown): AuthErrorMessage {
       return { key: 'auth.error.invalidCredentials' };
     case 'email_unverified':
       return { key: 'auth.error.emailUnverified' };
-    case 'account_locked':
-      return { key: 'auth.error.accountLocked' };
+    case 'account_inactive':
+      // 403 from `login.service.ts`: the password was right and the
+      // account is not ACTIVE. Without this it read as `forbidden` —
+      // "cannot sign in to the patient app" — which names the wrong cause.
+      return { key: 'auth.error.accountInactive' };
     case 'otp_invalid':
       return { key: 'auth.error.otpInvalid' };
-    case 'otp_expired':
-      return { key: 'auth.error.otpExpired' };
     case 'token_invalid':
-    case 'token_expired':
       return { key: 'auth.error.tokenInvalid' };
     case 'email_taken':
       return { key: 'auth.error.emailTaken' };

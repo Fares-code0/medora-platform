@@ -171,6 +171,7 @@ const EXPECTED: Readonly<Record<string, string>> = {
     'emergency affordance (N-07, W-10)',
   'navigation/AuthStack.tsx → Emergency': 'emergency affordance (N-07, W-10)',
   'navigation/RootNavigator.tsx → Emergency': 'emergency affordance (N-07, W-10)',
+  'navigation/SessionCheckStack.tsx → Emergency': 'emergency affordance (N-07, W-10)',
   // A name is not translated.
   'navigation/AppTabs.tsx → Medora': 'the product name',
   // The crash screen renders with no context; see the note above.

@@ -24,10 +24,11 @@ names the dependency — it does not invent a plausible path.
 | `LoginScreen` | `authService.login` | `POST /auth/login` | auth | `users`, `sessions`, `login_events` | ✅ **LIVE** — for a patient principal too, since ADR-030. The refresh token arrives **in the body** under `X-Client-Type: mobile` (ADR-034) |
 | `OtpScreen` | `authService.verifyOtp` · `resendOtp` | `POST /auth/otp/verify` · `/resend` | auth | `otp_codes` | ✅ **LIVE** |
 | — (cold start) | `authService.refresh` | `POST /auth/refresh` (`X-Client-Type: mobile`) | auth | `sessions` | ✅ **LIVE**, body-token path built and e2e-tested |
+| `SessionUnconfirmedScreen` | `retryRestore` → `authService.refresh` | `POST /auth/refresh` (`X-Client-Type: mobile`) | auth | `sessions` | ✅ frontend only, over the same live route. Shown when a stored refresh token could not be **exchanged because the server did not answer** (no signal, timeout, 5xx, a middlebox's 403). Only a 401 — the one refusal `/auth/refresh` sends — ends the session (`refresh-outcome.ts`); the token is kept and retried, by hand or on reconnect, never while Emergency is open. *Sign out of this phone* is local only: `POST /auth/logout` revokes the session an access token names, and this state has none, so the server is not asked and the confirmation says so |
 | `RegisterScreen` | `authService.register` | `POST /auth/register` | auth | `users`, `user_credentials` | ✅ **LIVE** — ADR-030 added the `patient` role and **ADR-035** made the body a discriminated union whose patient branch carries nothing clinical. Creates an account linked to no record (ADR-030 §4) |
 | `VerifyEmailScreen` | `resendVerification` | `POST /auth/verification/resend` | auth | `verification_tokens` | ✅ **LIVE** |
 | `ForgotPasswordScreen` | `forgotPassword` | `POST /auth/forgot-password` | auth | `verification_tokens` | ✅ **LIVE** |
-| `ResetPasswordScreen` | `resetPassword` | `POST /auth/reset-password` | auth | `verification_tokens` | ✅ **LIVE** |
+| `ResetPasswordScreen` | `resetPassword` | `POST /auth/reset-password` | auth | `verification_tokens` | ✅ **LIVE** — the token may be pasted bare or as the whole emailed link; `medora://reset-password?token=…` prefills it, signed out only. The emailed https link does not open the app (no universal links; D-17) |
 | Profile → sign out | `authService.logout` | `POST /auth/logout` | auth | `sessions` | ✅ **LIVE** |
 | — (session restore) | — | `GET /auth/session` | auth | `users` | ✅ **built (M8)** — and **still not called by this app**, now for a stronger reason than its absence: `SessionUserService.current()` returns `{id, name, email, role, permissions}` with a non-`ACTIVE` check, and `RefreshService.refresh()` returns the same five fields under `user` with the same check, at exactly the moment restore would call it. A round trip W-08 budgets, for no field this client does not already hold — and two of them (`role`, `permissions`) are ones T-07 keeps off `AuthenticatedIdentity`. D-13, `ARCHITECTURE.md` §4.2 |
 | Account claim | — | — | — | `patients.user_id` | 🔴 **RA-030.1** — the column exists (ADR-030 Option A); the **flow** does not. Deferred inside ADR-030 with auto-linking on email ruled out. ⚠ Not ADR-031, which is Results Release Policy |
@@ -43,8 +44,8 @@ names the dependency — it does not invent a plausible path.
 | Red-flag list | bundled | — | ✅ |
 | `EmergencyCallButton` (two-step dial) | — | — | ✅ |
 | "When to call vs book" | bundled | — | ✅ |
-| Operator emergency numbers | `emergencyService.getConfiguration` | `GET /public/emergency-contacts` | 🔴 **BE-11** — ships unconfigured and says so. **Never guessed** |
-| Clinic phone / directions on Emergency | same | `GET /public/clinic` | 🔴 **BE-11** |
+| Operator emergency numbers | `emergencyService.getConfiguration` | none — BE-11's `GET /public/emergency-contacts` was withdrawn with every `/public/*` route (DR-09) and no replacement is defined; it must answer signed out | 🔴 **BE-11 / owner** — ships unconfigured and says so. **Never guessed** |
+| Clinic phone / directions on Emergency | same | `GET /patient/hospitals/:id` (proposed, `docs/multi-hospital/API_CONTRACT_CHANGES.md` §5; supersedes `GET /public/clinic`, DR-09) | 🔴 **BE-11** — not built |
 | Patient's emergency contacts | `healthService.listEmergencyContacts` | `GET /me/health/*` | 🟡 **BE-09** — built over the fixture (N-08). Signed out it renders nothing and **makes no request**; a failure renders nothing either, so the bundled guidance is never displaced |
 | First-aid instruction | — | — | 🔴 **N-07** — needs a named clinical owner (W-10). Deliberately absent |
 | Nearby emergency hospitals | — | — | ➖ Future — needs real location data (API-P07). *Was* AD-3, reversed 2026-10-06. Still ➖ under the 2026-10-07 Multi-Hospital decisions: OD-10 covers distance in signed-in discovery, not this emergency feature (N-10) |
@@ -62,6 +63,7 @@ names the dependency — it does not invent a plausible path.
 | Recent activity (`RecentActivity`) | `activityService.listRecentActivity` | — (no route serves this feed) | — | — | 🟡 **M8 landed; `GET /me/activity` is a different feed** — it is the account-security log (`profile · password · login · settings · security · integration · privacy`), not the clinical one this section renders, so the endpoint and module columns no longer name it. The section is built over the fixture behind the seam and the production adapter refuses by name. It renders **nothing at all** on a refusal rather than an error card: `RecentActivity`'s docblock argues why an absence beats a wrong answer on the app's front screen |
 | Tab-bar unread badges | `notificationService.unreadCount` | `GET /notifications/badge-counts` | notifications (M19) | `notifications` | ✅ **LIVE** — O-02 landed at PR #127; the badge and its foreground poll are built on the live count |
 | Announcements (`Announcements`) | `clinicService.listAnnouncements` | — | communication (M20) | `announcements` | 🟡 **BE-11** — see the Clinic section; silent on a failure *and* on an empty list, for two different reasons |
+| Unlinked-account explanation (F-09, Home and Appointments) | `useRecordLink` → `profileService.get` | `GET /me/profile` (`patient: null`) | patients (ADR-030) | `users`, `patients` | ✅ **LIVE** — the same query Profile makes; replaces the empty state only. No link or claim action (RA-030.1) |
 | `HomeScreen` | — | — | — | — | ✅ the screen itself; every section it renders is a row above |
 | AI assistant FAB | — | — | ai (M16) | — | 🔴 **AD-4 — no entry point exists** |
 
@@ -77,7 +79,7 @@ names the dependency — it does not invent a plausible path.
 | Specialty chips | `listSpecialties` | `GET /patient/specialties` | doctors (M9) | `specialties` | ✅ **LIVE** |
 | Department filter | `listDepartments` | `GET /patient/departments` | administration (M23) | `departments` | 🟡 **BE-11 / M23** — the route is contract §3.4 P3.4, NOT BUILT. Filtering by `departmentId` works and `DepartmentFilter` is built over it (G-07); with no list to choose from the control renders nothing, so search keeps working unfiltered |
 | Verified-only default | — | server-side in `patient-doctor.service.ts` | doctors (M9) | `doctors.verification_status` | ✅ **LIVE, server-side. Not a client filter** — the client is tested never to send one |
-| Slot preview on the profile | `appointmentService.listSlots` | `GET /public/doctors/{id}/slots` | appointments (M11) | `doctor_availability`, `doctor_time_off` | 🟡 **BE-06 — server-computed.** `AvailabilityPreview` is built over it (G-09): it renders the first few future slots and nothing else, hands a tapped time to the booking flow as a request that flow re-checks, and renders nothing at all while the read refuses |
+| Slot preview on the profile | `appointmentService.listSlots` | `GET /patient/doctors/:id/slots` (proposed, `API_CONTRACT_CHANGES.md` §6 — doctor-published only, DR-10; supersedes `GET /public/doctors/{id}/slots`) | appointments (M11) | `doctor_availability`, `doctor_time_off` | 🟡 **BE-06 — server-computed.** `AvailabilityPreview` is built over it (G-09): it renders the first few future slots and nothing else, hands a tapped time to the booking flow as a request that flow re-checks, and renders nothing at all while the read refuses |
 
 ---
 
@@ -85,10 +87,10 @@ names the dependency — it does not invent a plausible path.
 
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
-| `ClinicScreen` | `clinicService.getProfile` | `GET /public/clinic` | platform-settings (M24) | `platform_settings` → `organization` | 🟡 **BE-11** |
-| Opening hours | `getOpeningHours` | `GET /public/clinic/hours` | administration (M23) | `clinic_working_days`, `holidays` | 🟡 **BE-11** |
+| `ClinicScreen` | `clinicService.getProfile` | `GET /patient/hospitals/:id` (proposed, `API_CONTRACT_CHANGES.md` §5; supersedes `GET /public/clinic`, DR-09) | platform-settings (M24) | `platform_settings` → `organization` | 🟡 **BE-11** |
+| Opening hours | `getOpeningHours` | `GET /patient/hospitals/:id` locations (proposed, §5; supersedes `GET /public/clinic/hours`) | administration (M23) | `clinic_working_days`, `holidays` | 🟡 **BE-11** |
 | Announcements on Home | `listAnnouncements` | — | communication (M20) | `announcements` | 🟡 **BE-11** — no route is specified for the public projection, so none is named here. The projection itself is: no `author_id` (A-05), no `archived`/`deleted_at`, no `expires_at` (the server filters; this client never computes against a clock) |
-| Departments list | `doctorService.listDepartments` | `GET /public/departments` | administration (M23) | `departments` | 🟡 **BE-11** |
+| Departments list | `doctorService.listDepartments` | `GET /patient/hospitals/:id` departments (proposed, §5; supersedes `GET /public/departments`) | administration (M23) | `departments` | 🟡 **BE-11** |
 | `DepartmentScreen` | `doctorService.search({ departmentId })` | `GET /patient/doctors?departmentId=` | doctors (M12) | `doctors`, `departments` | ✅ **LIVE** — BE-04's projection serves the list itself (H-05). The row above is why the screen is still 🟨 on the checklist: the way IN is the department list, which is not |
 | `tel:` + maps hand-off | `features/emergency/dial.ts` | — | — | — | ✅ frontend only |
 | Multi-hospital search, distance | — | `GET /patient/discovery/search`, `GET /patient/hospitals` (proposed, `docs/multi-hospital/API_CONTRACT_CHANGES.md` §5; supersedes the public `GET /public/organizations`, API-P01) | — | — | ⬜ **H-06, H-07, H-08, Q-05** — signed-in hospital search and comparison, **including distance**, are in scope (DR-09, OD-10, 2026-10-07 Multi-Hospital FINAL). Never signed out |
@@ -112,7 +114,7 @@ names the dependency — it does not invent a plausible path.
 | `AppointmentCard` | — | — | — | `appointment_status` | ✅ **LIVE** — all 8 statuses render; the wire value is checked against `APPOINTMENT_STATUSES` at the seam |
 | `AppointmentDetailScreen` | `getById` | `GET /me/appointments/{appointmentId}` | appointments (M11) | `appointments`, `appointment_events` | ✅ **LIVE** — 404 for unknown, not-yours and unlinked alike |
 | `BookingFlow` (5 steps) | `listSlots` + `book` | `GET …/slots` · `POST /me/appointments` | appointments (M11) | `appointments` | 🔴 **ADR-033 / RA-033.1** — a decision, not an unbuilt endpoint |
-| Slot step | `listSlots` | `GET /public/doctors/{id}/slots` | appointments (M11) | availability − time-off − booked − buffer | 🔴 **RA-033.1 — no client-side generation.** The slot maths is derivable from ADR-005; the booking policy is not |
+| Slot step | `listSlots` | `GET /patient/doctors/:id/slots` (proposed, §6, DR-10; supersedes `GET /public/doctors/{id}/slots`) | appointments (M11) | availability − time-off − booked − buffer | 🔴 **RA-033.1 — no client-side generation.** The slot maths is derivable from ADR-005; the booking policy is not |
 | Cancel sheet | `cancel(id, reason)` | `POST /me/appointments/{id}/cancel` | appointments (M11) | `appointments.cancelled_reason` | 🔴 **ADR-033 Q1** — may a patient cancel, from which statuses, up to when? |
 | Reschedule sheet | `requestReschedule` | `POST …/reschedule` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q2** — request-shaped or direct? |
 | Proposal response | `acceptProposal` | `POST …/confirm` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q3** — plus the doctor-side `propose-slots` (M11.4), unbuilt |

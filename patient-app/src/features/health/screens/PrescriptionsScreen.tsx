@@ -46,7 +46,11 @@ export function PrescriptionsScreen() {
   const prescriptions = usePrescriptions();
 
   return (
-    <Screen testID="prescriptions-screen">
+    <Screen
+      testID="prescriptions-screen"
+      onRefresh={() => void prescriptions.refetch()}
+      refreshing={prescriptions.isRefetching}
+    >
       <Text variant="h1" {...headingA11y(t('health.prescriptions.title'))}>
         {t('health.prescriptions.title')}
       </Text>
@@ -60,6 +64,7 @@ export function PrescriptionsScreen() {
       <AsyncBoundary
         testID="prescriptions-list"
         query={prescriptions}
+        keepDataOnRefreshError
         isEmpty={(data) => data.length === 0}
         empty={{
           icon: 'pill',

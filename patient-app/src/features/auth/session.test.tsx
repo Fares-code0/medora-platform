@@ -156,7 +156,9 @@ describe('cold start', () => {
 
   it('clears the keychain when the stored token is rejected', async () => {
     const authService = stubAuthService({
-      refresh: jest.fn(() => Promise.reject(Object.assign(new Error('x'), { kind: 'auth' }))),
+      refresh: jest.fn(() =>
+        Promise.reject(Object.assign(new Error('x'), { kind: 'auth', code: 'unauthorized' })),
+      ),
     });
     const harness = await renderSession({ authService, storedRefreshToken: 'stale' });
 
@@ -168,7 +170,9 @@ describe('cold start', () => {
 
   it('says the session expired rather than bouncing silently (D-12)', async () => {
     const authService = stubAuthService({
-      refresh: jest.fn(() => Promise.reject(Object.assign(new Error('x'), { kind: 'auth' }))),
+      refresh: jest.fn(() =>
+        Promise.reject(Object.assign(new Error('x'), { kind: 'auth', code: 'unauthorized' })),
+      ),
     });
     const harness = await renderSession({ authService, storedRefreshToken: 'stale' });
 

@@ -50,7 +50,11 @@ export function DocumentsScreen() {
   const documents = useDocuments();
 
   return (
-    <Screen testID="documents-screen">
+    <Screen
+      testID="documents-screen"
+      onRefresh={() => void documents.refetch()}
+      refreshing={documents.isRefetching}
+    >
       <Text variant="h1" {...headingA11y(t('health.documents.title'))}>
         {t('health.documents.title')}
       </Text>
@@ -58,6 +62,7 @@ export function DocumentsScreen() {
       <AsyncBoundary
         testID="documents-list"
         query={documents}
+        keepDataOnRefreshError
         isEmpty={(data) => data.length === 0}
         empty={{
           icon: 'folder',

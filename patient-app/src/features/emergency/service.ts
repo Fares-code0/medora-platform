@@ -10,13 +10,17 @@ import { UNCONFIGURED_EMERGENCY, type EmergencyService } from './model/types';
  *
  * - The **fixture** adapter returns nothing because inventing a number for
  *   a development build is how an invented number reaches a store build.
- * - The **http** adapter returns nothing because
- *   `GET /public/emergency-contacts` does not exist (audit BE-11). It is
- *   the one service in this tree that does NOT use `unavailableService`,
+ * - The **http** adapter returns nothing because no emergency-contacts
+ *   route exists. Audit BE-11 proposed `GET /public/emergency-contacts`;
+ *   DR-09 withdrew every `/public/*` route, and no replacement contract
+ *   is defined yet — one that must answer signed out, since Emergency
+ *   is reachable signed out. The numbers themselves are owner-blocked.
+ *   This adapter is the one service in this tree that does NOT use
+ *   `unavailableService`,
  *   because Emergency must never surface an error — an unconfigured
  *   screen is a working screen, a failed screen is not.
  *
- * When BE-11 lands, the http adapter calls it, validates the response,
+ * When such a route lands, the http adapter calls it, validates the response,
  * and falls back to `UNCONFIGURED_EMERGENCY` on any failure. That
  * fallback is not defensive programming; it is the contract.
  */

@@ -15,6 +15,7 @@ import { useTheme } from '@/theme';
 
 import { FormBanner } from '../components/FormBanner';
 import { PasswordRules } from '../components/PasswordRules';
+import { extractEmailedToken } from '../emailed-token';
 import { resetPasswordFormSchema, type ResetPasswordForm } from '../schemas';
 import { authService } from '../service';
 import { useAuthError } from '../useAuthErrorMessage';
@@ -24,10 +25,18 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'ResetPassword'>;
 /**
  * Set a new password.
  *
- * The token arrives as a deep-link parameter when the patient taps the
- * link in the email, and can also be pasted — a mail client that opens
- * links in its own browser is common enough that a paste path is not
- * optional.
+ * The token is usually **pasted**. The reset email links to
+ * `${APP_PUBLIC_URL}/reset-password?token=…` — the web app, over https
+ * (`backend/src/modules/auth/services/auth-mail.service.ts`) — and with
+ * no universal link / App Link configured for that host, tapping it
+ * opens a browser, not this screen. So the field takes the bare token or
+ * the whole link, and `extractEmailedToken` finds the token in either.
+ *
+ * A `medora://reset-password?token=…` link does prefill the field
+ * (`linking.ts`, signed out only), but nothing sends one today: a mobile
+ * link base for emailed links is a backend/infrastructure blocker
+ * (checklist D-17). The prefill is never submitted on the patient's
+ * behalf — they still choose the password and press the button.
  *
  * The rule meter is `PasswordRules`, shared with the signed-in change
  * form so one policy has one presentation.
@@ -51,7 +60,10 @@ export function ResetPasswordScreen({ navigation, route }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      await authService.resetPassword({ token: values.token.trim(), password: values.password });
+      await authService.resetPassword({
+        token: extractEmailedToken(values.token),
+        password: values.password,
+      });
       setDone(true);
     } catch (caught) {
       setError(authError(caught));

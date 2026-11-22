@@ -8,6 +8,7 @@ import { appointmentService } from '@/features/appointments/service';
 import type { AuthService, SignInResult } from '@/features/auth/model/types';
 import { SessionProvider } from '@/features/auth/SessionProvider';
 import { createTokenStorage } from '@/features/auth/storage';
+import { profileService } from '@/features/profile/service';
 import { en } from '@/i18n/messages';
 import { createInMemorySecureStore } from '@/storage/secure-store';
 import { renderWithProviders } from '@/test/render';
@@ -463,5 +464,58 @@ describe('the assistant entry point is honest about itself (F-05, audit R-5)', (
     const { findByText } = await renderHome();
 
     expect(await findByText(/does not give medical advice/i)).toBeTruthy();
+  });
+});
+
+describe('an account with no clinical record (F-09)', () => {
+  /** `GET /me/profile` answering `patient: null`, or a linked account. */
+  function profileSays(linkedToClinicalRecord: boolean | Error) {
+    const spy = jest.spyOn(profileService, 'get');
+    installed.push(spy);
+    if (linkedToClinicalRecord instanceof Error) spy.mockRejectedValue(linkedToClinicalRecord);
+    else
+      spy.mockResolvedValue({
+        displayName: 'Amina Yusuf',
+        photoUrl: null,
+        fields: [],
+        linkedToClinicalRecord,
+      });
+  }
+
+  it('explains why there is nothing here instead of saying "Nothing booked"', async () => {
+    profileSays(false);
+    const view = await renderHome({ appointments: [] });
+
+    expect(await view.findByText(en['profile.unlinked.title'])).toBeTruthy();
+    expect(view.getByText(en['profile.unlinked.body'])).toBeTruthy();
+    expect(view.queryByText(en['home.empty.title'])).toBeNull();
+  });
+
+  it('offers no way to link or claim a record, because that flow is undecided', async () => {
+    profileSays(false);
+    const view = await renderHome({ appointments: [] });
+
+    await view.findByText(en['profile.unlinked.title']);
+    expect(view.queryByText(en['home.empty.action'])).toBeNull();
+    expect(view.queryByText(/claim|link (your|my) record/i)).toBeNull();
+    // The rest of Home is untouched.
+    expect(view.getByTestId('home-emergency-card')).toBeTruthy();
+    expect(view.getByTestId('home-action-book')).toBeTruthy();
+  });
+
+  it('keeps the ordinary empty state for a linked account', async () => {
+    profileSays(true);
+    const view = await renderHome({ appointments: [] });
+
+    expect(await view.findByText(en['home.empty.title'])).toBeTruthy();
+    expect(view.queryByText(en['profile.unlinked.title'])).toBeNull();
+  });
+
+  it('does not claim "not linked" when the profile could not be read', async () => {
+    profileSays(new Error('offline'));
+    const view = await renderHome({ appointments: [] });
+
+    expect(await view.findByText(en['home.empty.title'])).toBeTruthy();
+    expect(view.queryByText(en['profile.unlinked.title'])).toBeNull();
   });
 });

@@ -1,6 +1,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
 
+import { profileService } from '@/features/profile/service';
+import { en } from '@/i18n/messages';
 import type { AppointmentsStackParamList } from '@/navigation/routes';
 import { renderWithProviders } from '@/test/render';
 import { APPOINTMENT_STATUSES } from '@/types/vocabularies';
@@ -440,5 +442,48 @@ describe('a history longer than one page (I-01)', () => {
     // the server for page 2 of a list the patient has not seen page 1 of
     // would skip the newest half of their history.
     await waitFor(() => expect(list).toHaveBeenCalledWith('past', 1));
+  });
+});
+
+describe('an account with no clinical record (F-09)', () => {
+  function profileSays(linkedToClinicalRecord: boolean) {
+    const spy = jest.spyOn(profileService, 'get').mockResolvedValue({
+      displayName: 'Sara Ahmed',
+      photoUrl: null,
+      fields: [],
+      linkedToClinicalRecord,
+    });
+    installed.push(spy);
+  }
+
+  it('explains the empty list on both segments, with no link or claim action', async () => {
+    profileSays(false);
+    const view = await renderAppointments(() => Promise.resolve([]));
+
+    expect(await view.findByText(en['profile.unlinked.title'])).toBeTruthy();
+    expect(view.queryByText(en['appointments.empty.upcoming.title'])).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('appointments-scope-past'));
+    });
+    expect(await view.findByText(en['profile.unlinked.title'])).toBeTruthy();
+    expect(view.queryByText(en['appointments.empty.past.title'])).toBeNull();
+    expect(view.queryByText(/claim|link (your|my) record/i)).toBeNull();
+  });
+
+  it('still lists appointments when there are some, whatever the profile says', async () => {
+    profileSays(false);
+    const view = await renderAppointments(() => Promise.resolve([appointment({ id: 'APT-9' })]));
+
+    expect(await view.findByTestId('appointment-card-APT-9')).toBeTruthy();
+    expect(view.queryByText(en['profile.unlinked.title'])).toBeNull();
+  });
+
+  it('keeps the ordinary empty state for a linked account', async () => {
+    profileSays(true);
+    const view = await renderAppointments(() => Promise.resolve([]));
+
+    expect(await view.findByText(en['appointments.empty.upcoming.title'])).toBeTruthy();
+    expect(view.queryByText(en['profile.unlinked.title'])).toBeNull();
   });
 });

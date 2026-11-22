@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { extractEmailedToken } from './emailed-token';
+
 /**
  * Form schemas.
  *
@@ -128,7 +130,11 @@ export type ForgotPasswordForm = z.infer<typeof forgotPasswordFormSchema>;
 
 export const resetPasswordFormSchema = z
   .object({
-    token: z.string().min(1, 'Paste the code from your email'),
+    // The whole emailed link is accepted as well as the bare token; what
+    // is validated is the token it carries (`emailed-token.ts`).
+    token: z
+      .string()
+      .refine((value) => extractEmailedToken(value).length > 0, 'Paste the code from your email'),
     password: strongPassword,
     confirmPassword: z.string().min(1, 'Re-enter your password'),
   })

@@ -162,7 +162,9 @@ describe('after a session the server rejected (D-12)', () => {
     await storage.writeRefreshToken('stale');
     const authService = authServiceStub({
       refresh: jest.fn(() =>
-        Promise.reject(Object.assign(new Error('API error: auth'), { kind: 'auth' })),
+        Promise.reject(
+          Object.assign(new Error('API error: auth'), { kind: 'auth', code: 'unauthorized' }),
+        ),
       ),
     });
 
