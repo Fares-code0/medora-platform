@@ -2,7 +2,7 @@ import { ResponseContractError } from '@/schemas/envelope';
 import { isApiError, isTokenExpiryError } from '@/types/api';
 
 import { ApiClient } from './client';
-import { normalizeNetworkError, normalizeTimeoutError } from './errors';
+import { normalizeHttpError, normalizeNetworkError, normalizeTimeoutError } from './errors';
 import { createQueryClient, shouldRetry } from './query-client';
 import { EndpointNotImplementedError, selectImplementation, unavailableService } from './seam';
 
@@ -312,6 +312,25 @@ describe('401 handling', () => {
     expect(calls).toHaveLength(1);
   });
 
+  // The test above posts to `auth/refresh`, which the path guard catches
+  // on its own; this one proves `skipRefresh` is honoured by itself.
+  it('honours skipRefresh on a path that is not the refresh route', async () => {
+    const { calls } = stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    const onLost = jest.fn();
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/profile', { skipRefresh: true })).rejects.toMatchObject({
+      kind: 'auth',
+      code: 'unauthorized',
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
   it('refreshes once and replays on the access-token guard 401', async () => {
     const { calls } = stubFetch([json(401, GUARD_401), json(200, { data: { ok: true } })]);
     const client = new ApiClient(BASE);
@@ -537,6 +556,29 @@ describe('retry policy', () => {
     expect(shouldRetry(0, new EndpointNotImplementedError('BE-05', 'capability.booking'))).toBe(
       false,
     );
+  });
+
+  it('never retries a 501 not_implemented, which the server says will not change (A2)', () => {
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 501, code: 'not_implemented' })).toBe(
+      false,
+    );
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 501 })).toBe(false);
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', code: 'not_implemented' })).toBe(false);
+    // Every other 5xx is still worth a second attempt.
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 503 })).toBe(true);
+    expect(shouldRetry(0, { kind: 'server', ref: 'X', status: 500, code: 'internal_error' })).toBe(
+      true,
+    );
+  });
+
+  it('reads a real 501 response as not worth retrying', async () => {
+    const error = await normalizeHttpError(
+      new Response(JSON.stringify({ message: 'Not built', code: 'not_implemented' }), {
+        status: 501,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    expect(shouldRetry(0, error)).toBe(false);
   });
 
   it('gives up after two attempts', () => {

@@ -6,6 +6,7 @@ import type * as ReactNative from 'react-native';
 
 import { apiClient } from '@/api/client';
 import { normalizeHttpError, normalizeNetworkError, normalizeTimeoutError } from '@/api/errors';
+import { PHI_QUERY_DOMAINS } from '@/api/query-keys';
 import { RootNavigator } from '@/navigation/RootNavigator';
 import { NetworkProvider } from '@/network/NetworkProvider';
 import { ResponseContractError } from '@/schemas/envelope';
@@ -996,5 +997,158 @@ describe('Emergency is never closed by a retry (M4)', () => {
     await leaveEmergency(view);
     await waitFor(() => expect(view.status()).toBe('unauthenticated'));
     expect(view.queryByTestId('session-unconfirmed-screen')).toBeNull();
+  });
+});
+
+/**
+ * A keychain that throws (S1). SecureStore surfaces a Keystore that lost
+ * its key, or an entry it cannot decrypt, as a rejected promise; neither
+ * may leave the patient on the boot screen, or a session on the screen.
+ */
+function throwingStorage(overrides: Partial<TokenStorage>): TokenStorage {
+  const inner = createTokenStorage(createInMemorySecureStore());
+  return {
+    readRefreshToken: () => inner.readRefreshToken(),
+    writeRefreshToken: (token) => inner.writeRefreshToken(token),
+    clear: () => inner.clear(),
+    ...overrides,
+  };
+}
+
+describe('a keychain that throws (S1)', () => {
+  it('lands signed out, not booting, when the read throws on a cold start', async () => {
+    const refresh = jest.fn(() => Promise.resolve(SIGNED_IN));
+    const storage = throwingStorage({
+      readRefreshToken: () => Promise.reject(new Error('keystore key invalidated')),
+    });
+    const view = await renderProvider(authServiceStub({ refresh }), storage);
+
+    await waitFor(() => expect(view.status()).toBe('unauthenticated:'));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(apiClient.hasAccessToken()).toBe(false);
+  });
+
+  it('lands signed out when the read throws on a retry', async () => {
+    let reads = 0;
+    const storage = throwingStorage({
+      readRefreshToken: () => {
+        reads += 1;
+        return reads === 1
+          ? Promise.resolve('refresh-1')
+          : Promise.reject(new Error('keystore key invalidated'));
+      },
+    });
+    const refresh = jest.fn(() => Promise.reject(normalizeNetworkError()));
+    const view = await renderProvider(authServiceStub({ refresh }), storage);
+    await waitFor(() => expect(view.status()).toBe('unconfirmed'));
+
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = await view.session().retryRestore();
+    });
+
+    expect(outcome).toBe('settled');
+    expect(view.status()).toBe('unauthenticated:');
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('still sweeps PHI and signs out when the keychain delete throws on logout', async () => {
+    const lines: string[] = [];
+    addLogSink((entry) => lines.push(JSON.stringify(entry)));
+    const inner = await storageWith('refresh-secret-value');
+    const storage = throwingStorage({
+      readRefreshToken: () => inner.readRefreshToken(),
+      clear: () => Promise.reject(new Error('keychain unavailable')),
+    });
+    const view = await renderProvider(authServiceStub(), storage);
+    await waitFor(() => expect(view.status()).toBe('authenticated'));
+    view.queryClient.setQueryData(['profile', 'me'], { fullName: 'Sara Ahmed' });
+
+    await act(async () => {
+      await within(view.session().logout());
+    });
+
+    expect(view.status()).toBe('unauthenticated:signed-out');
+    expect(apiClient.hasAccessToken()).toBe(false);
+    expect(view.queryClient.getQueryCache().getAll()).toHaveLength(0);
+    const joined = lines.join('\n');
+    expect(joined).toContain('could not be cleared');
+    expect(joined).not.toContain('refresh-secret-value');
+    expect(joined).not.toContain('refresh-2');
+  });
+});
+
+describe('the PHI sweep at the end of a session (PA-10)', () => {
+  it.each([
+    ['signing out', 'unauthenticated:signed-out'],
+    ['losing the session', 'unauthenticated:session-expired'],
+  ])('leaves no patient data in the query cache after %s', async (label, expected) => {
+    const refusal = await refused();
+    const refresh = jest
+      .fn<Promise<SignInResult>, [string]>()
+      .mockResolvedValueOnce(SIGNED_IN)
+      .mockRejectedValue(refusal);
+    const view = await renderProvider(authServiceStub({ refresh }), await storageWith('r-1'));
+    await waitFor(() => expect(view.status()).toBe('authenticated'));
+    for (const domain of PHI_QUERY_DOMAINS) {
+      view.queryClient.setQueryData([domain, 'list', {}], [{ patient: 'Sara Ahmed' }]);
+      view.queryClient.setQueryData([domain, 'detail', 'id-1'], { patient: 'Sara Ahmed' });
+    }
+    // A domain nobody listed: the trailing `clear()` is what covers it.
+    view.queryClient.setQueryData(['unlisted-domain'], { patient: 'Sara Ahmed' });
+    expect(view.queryClient.getQueryCache().getAll().length).toBeGreaterThan(0);
+
+    await act(async () => {
+      if (label === 'signing out') {
+        await view.session().logout();
+        return;
+      }
+      // The guard answers 401 and the refresh is refused: the transport
+      // ends the session.
+      jest.spyOn(global, 'fetch').mockResolvedValue(response(401, GUARD_401));
+      await apiClient.get('me/appointments').catch(() => undefined);
+    });
+
+    await waitFor(() => expect(view.status()).toBe(expected));
+    expect(view.queryClient.getQueryCache().getAll()).toHaveLength(0);
+    for (const domain of PHI_QUERY_DOMAINS) {
+      expect(view.queryClient.getQueryData([domain, 'list', {}])).toBeUndefined();
+      expect(view.queryClient.getQueryData([domain, 'detail', 'id-1'])).toBeUndefined();
+    }
+  });
+});
+
+describe('a keychain that throws mid-session (S1)', () => {
+  it('keeps the session and the entry when the read throws during a refresh', async () => {
+    const lines: string[] = [];
+    addLogSink((entry) => lines.push(JSON.stringify(entry)));
+    let reads = 0;
+    const clear = jest.fn(() => Promise.resolve());
+    const storage = throwingStorage({
+      readRefreshToken: () => {
+        reads += 1;
+        return reads === 1
+          ? Promise.resolve('refresh-secret-value')
+          : Promise.reject(new Error('keystore busy'));
+      },
+      clear,
+    });
+    const refresh = jest.fn(() => Promise.resolve(SIGNED_IN));
+    const view = await renderProvider(authServiceStub({ refresh }), storage);
+    await waitFor(() => expect(view.status()).toBe('authenticated'));
+    jest.spyOn(global, 'fetch').mockResolvedValue(response(401, GUARD_401));
+
+    await act(async () => {
+      await expect(within(apiClient.get('me/appointments'))).rejects.toMatchObject({
+        kind: 'cancelled',
+      });
+    });
+
+    expect(view.status()).toBe('authenticated');
+    expect(clear).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    const joined = lines.join('\n');
+    expect(joined).toContain('mid-session refresh');
+    expect(joined).not.toContain('refresh-secret-value');
   });
 });

@@ -150,6 +150,50 @@ describe('choosing a new password (D-10)', () => {
     expect(reset).toHaveBeenCalledWith({ token: 'RESET-abc', password: VALID_PASSWORD });
   });
 
+  // S4: the reset email carries a link, `${APP_PUBLIC_URL}/reset-password
+  // ?token=…` (backend `auth-mail.service.ts`), and a patient whose mail
+  // client opened a browser pastes what they have — often the whole link.
+  it.each([
+    ['the whole emailed link', 'https://app.medora.example/reset-password?token=RESET-abc_123'],
+    [
+      'the link with whitespace around it',
+      '  https://app.medora.example/reset-password?token=RESET-abc_123\n',
+    ],
+    [
+      'a link with other parameters',
+      'https://app.medora.example/reset-password?utm=mail&token=RESET-abc_123#top',
+    ],
+    ['the query fragment alone', 'token=RESET-abc_123'],
+    ['a percent-encoded token', 'https://app.medora.example/reset-password?token=RESET-abc%5F123'],
+  ])('sends only the token when the patient pastes %s', async (_label, pasted) => {
+    const reset = stub('resetPassword').mockResolvedValue(undefined);
+    const view = renderReset();
+
+    fillReset(view, { token: pasted, password: VALID_PASSWORD, confirm: VALID_PASSWORD });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('reset-submit'));
+    });
+
+    expect(reset).toHaveBeenCalledWith({ token: 'RESET-abc_123', password: VALID_PASSWORD });
+  });
+
+  it('does not send a pasted link that carries no token', async () => {
+    const reset = stub('resetPassword');
+    const view = renderReset();
+
+    fillReset(view, {
+      token: 'https://app.medora.example/reset-password',
+      password: VALID_PASSWORD,
+      confirm: VALID_PASSWORD,
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('reset-submit'));
+    });
+
+    expect(reset).not.toHaveBeenCalled();
+    expect(view.getByText('Paste the code from your email')).toBeTruthy();
+  });
+
   it('never sends the confirmation field', async () => {
     const reset = stub('resetPassword').mockResolvedValue(undefined);
     const view = renderReset({ token: 'RESET-abc' });
@@ -177,7 +221,8 @@ describe('choosing a new password (D-10)', () => {
   });
 
   it('tells a patient with a dead link to request a new one, not to retype', async () => {
-    stub('resetPassword').mockRejectedValue(apiError({ kind: 'auth', code: 'token_expired' }));
+    // The backend sends `token_invalid` for an expired link as well.
+    stub('resetPassword').mockRejectedValue(apiError({ kind: 'auth', code: 'token_invalid' }));
     const view = renderReset({ token: 'RESET-old' });
 
     fillReset(view, { password: VALID_PASSWORD, confirm: VALID_PASSWORD });
@@ -298,10 +343,10 @@ describe('the OTP step-up (D-07)', () => {
     expect(view.queryByText(/OTP-TOKEN/)).toBeNull();
   });
 
-  it('says a wrong code is wrong, and an expired one expired', async () => {
-    const verify = stub('verifyOtp').mockRejectedValue(
-      apiError({ kind: 'auth', code: 'otp_invalid' }),
-    );
+  // An expired challenge is also `401 otp_invalid` from the server; the
+  // screen names expiry from its own clock (see the five-minute block below).
+  it('says a wrong code is wrong', async () => {
+    stub('verifyOtp').mockRejectedValue(apiError({ kind: 'auth', code: 'otp_invalid' }));
     const view = await renderOtp();
 
     fireEvent.changeText(view.getByTestId('otp-code'), '123456');
@@ -310,13 +355,6 @@ describe('the OTP step-up (D-07)', () => {
     });
 
     await waitFor(() => expect(view.getByText(/not right/i)).toBeTruthy());
-
-    verify.mockRejectedValue(apiError({ kind: 'auth', code: 'otp_expired' }));
-    await act(async () => {
-      fireEvent.press(view.getByTestId('otp-submit'));
-    });
-
-    await waitFor(() => expect(view.getByText(/has expired/i)).toBeTruthy());
   });
 
   it('resends, confirms it, and starts a cooldown that is a courtesy, not a control', async () => {

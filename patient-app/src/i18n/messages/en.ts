@@ -133,11 +133,10 @@ export const en = {
     'That email and password do not match. Check them and try again.',
   'auth.error.emailUnverified':
     'Confirm your email address before signing in. Check your inbox for the link.',
-  'auth.error.accountLocked':
-    'This account is locked after too many attempts. Try again later or reset your password.',
+  'auth.error.accountInactive':
+    'This account is not active, so it cannot sign in right now. Contact support for help.',
   'auth.error.otpInvalid':
     'That code is not right. Check it against the newest code in your authenticator app.',
-  'auth.error.otpExpired': 'That code has expired. Ask for a new one.',
   'auth.error.tokenInvalid': 'That link is no longer valid. Request a new one.',
   'auth.error.emailTaken': 'There is already an account with that email address.',
   'auth.error.weakPassword': 'Choose a stronger password.',
@@ -503,6 +502,11 @@ export const en = {
   // ── Profile (P-01, P-08) ──────────────────────────────────────────
   'profile.linked': 'Linked to your clinical record',
   'profile.notLinked': 'Not linked to a clinical record',
+  // F-09: Home and Appointments, for an account with no clinical record.
+  // No call to action — how an account is linked is undecided (RA-030.1).
+  'profile.unlinked.title': 'Your account is not linked to a clinical record yet',
+  'profile.unlinked.body':
+    'Appointments and records from your clinic appear here once your account is linked to your record. Until then there is nothing to show, and that is not an error.',
   'profile.section.health': 'Your health',
   'profile.section.account': 'Account',
   'profile.healthRecords': 'Health records',

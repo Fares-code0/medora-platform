@@ -238,6 +238,24 @@ describe('password recovery', () => {
     ).toBe('Paste the code from your email');
   });
 
+  it('validates the token inside a pasted link, not the link (S4)', () => {
+    const valid = {
+      password: VALID_PASSWORD,
+      confirmPassword: VALID_PASSWORD,
+    };
+    expect(
+      resetPasswordFormSchema.safeParse({
+        ...valid,
+        token: 'https://app.medora.example/reset-password?token=T',
+      }).success,
+    ).toBe(true);
+    for (const token of ['https://app.medora.example/reset-password', 'token=', '   ']) {
+      expect(errorsOf(resetPasswordFormSchema, { ...valid, token })[0]?.message).toBe(
+        'Paste the code from your email',
+      );
+    }
+  });
+
   it('puts a mismatch on the confirm field here too', () => {
     const issues = errorsOf(resetPasswordFormSchema, {
       token: 'T',

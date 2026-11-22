@@ -45,8 +45,10 @@ export const announcementKeys = createKeyFactory('announcements');
  * is a real answer to a new account, and "the clinic has posted nothing"
  * is not an answer to anything.
  *
- * In production today every load fails the same way: `GET /public/clinic`
- * is BE-11 and `unavailableService` refuses by name, so the section is
+ * In production today every load fails the same way: there is no
+ * announcements route (BE-11's `GET /public/clinic` is superseded by the
+ * signed-in `/patient/hospitals/*` contracts, DR-09, not built) and
+ * `unavailableService` refuses by name, so the section is
  * simply not there — which is the truth about the feature.
  */
 export function Announcements() {

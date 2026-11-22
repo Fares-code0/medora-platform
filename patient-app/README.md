@@ -1,6 +1,6 @@
 # Medora — Patient Mobile Application
 
-React Native (Expo SDK 52) · TypeScript strict · Android and iOS, one codebase.
+React Native 0.88 (Expo SDK 58) · React 19.3 · TypeScript strict · Android and iOS, one codebase.
 
 **Status: half the seam has swapped.** The design system, theme, navigation
 shell, transport layer, service seam, screen states, accessibility floor,

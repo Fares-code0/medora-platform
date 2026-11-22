@@ -84,32 +84,42 @@ describe('`code` is read before `kind` (D-02, T-05)', () => {
 
   it('calls an expired reset link an expired link, on the same 401', () => {
     // Same `kind`, different `code`, and the two must not read alike —
-    // one is "try typing it again", the other is "start over".
-    for (const code of ['token_expired', 'token_invalid']) {
-      expect(authErrorMessage(apiError({ kind: 'auth', code }))).toMatch(/no longer valid/i);
-    }
+    // one is "try typing it again", the other is "start over". The
+    // backend sends `token_invalid` for an expired link too.
+    expect(authErrorMessage(apiError({ kind: 'auth', code: 'token_invalid' }))).toMatch(
+      /no longer valid/i,
+    );
   });
 
   it.each([
     ['email_unverified', /confirm your email/i],
-    ['account_locked', /locked/i],
+    ['account_inactive', /not active/i],
     ['otp_invalid', /not right/i],
-    ['otp_expired', /expired/i],
     ['email_taken', /already an account/i],
     ['weak_password', /stronger password/i],
   ])('maps %s to its own sentence', (code, expected) => {
     expect(authErrorMessage(apiError({ kind: 'auth', code }))).toMatch(expected);
   });
 
-  it('distinguishes a wrong code from an expired one, which are different actions', () => {
-    const wrong = authErrorMessage(apiError({ kind: 'auth', code: 'otp_invalid' }));
-    const stale = authErrorMessage(apiError({ kind: 'auth', code: 'otp_expired' }));
+  it('does not call an inactive account a wrong app, on the same 403 kind', () => {
+    // `account_inactive` is a 403, so before A1 it read as `forbidden`:
+    // "cannot sign in to the Medora patient app" — the wrong cause.
+    const inactive = authErrorMessage(apiError({ kind: 'forbidden', code: 'account_inactive' }));
+    const forbidden = authErrorMessage(apiError({ kind: 'forbidden' }));
 
-    expect(wrong).not.toBe(stale);
-    // One says "check it"; the other says "ask for a new one" and nothing else.
-    expect(wrong).toMatch(/check it/i);
-    expect(stale).not.toMatch(/check it/i);
+    expect(inactive).not.toBe(forbidden);
+    expect(inactive).not.toMatch(/patient app/i);
   });
+
+  it.each([['account_locked'], ['otp_expired'], ['token_expired']])(
+    'has no sentence of its own for %s, which the backend never sends',
+    (code) => {
+      // Falls through to `kind`, like any code this client does not map.
+      expect(authErrorKey(apiError({ kind: 'auth', code })).key).toBe(
+        'auth.error.invalidCredentials',
+      );
+    },
+  );
 });
 
 describe('it never confirms whether an account exists (anti-enumeration)', () => {
@@ -129,7 +139,7 @@ describe('it never confirms whether an account exists (anti-enumeration)', () =>
       'user_not_found',
       'invalid_credentials',
       'email_unverified',
-      'account_locked',
+      'account_inactive',
       'unknown_code_from_a_future_backend',
     ];
     const leaks = /no account|does ?n.t exist|not registered|unknown email|never signed up/i;
@@ -226,9 +236,8 @@ describe('it reads the catalogue, in whichever language is on (C-09)', () => {
     const codes = [
       'invalid_credentials',
       'email_unverified',
-      'account_locked',
+      'account_inactive',
       'otp_invalid',
-      'otp_expired',
       'token_invalid',
       'email_taken',
       'weak_password',

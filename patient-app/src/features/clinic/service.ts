@@ -12,9 +12,12 @@ import type {
  * Clinic information.
  *
  * The fixture is a plausible single clinic for development. The HTTP
- * adapter is unavailable: `GET /public/clinic`, `/clinic/hours` and the
- * departments projection are all BE-11, and `platform_settings` is
- * currently reachable only behind `can:settings.manageSystem`.
+ * adapter is unavailable. BE-11's `GET /public/clinic` and `/clinic/hours`
+ * are superseded by the signed-in `GET /patient/hospitals` and
+ * `/patient/hospitals/:id` (DR-09; `docs/multi-hospital/
+ * API_CONTRACT_CHANGES.md` §5), which are not built; `platform_settings`
+ * is reachable only behind `can:settings.manageSystem`. The `'BE-11'`
+ * label below is the dependency name the seam reports, left as it is.
  */
 const PROFILE: ClinicProfile = {
   name: 'Medora Clinic',

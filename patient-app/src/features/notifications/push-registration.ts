@@ -14,10 +14,13 @@
  *    Security. Whether asking for notifications should also create one is
  *    a backend/owner question, not something this client should decide by
  *    calling the route.
- * 2. **A provider — still missing.** The backend binds only
- *    `UnconfiguredPushProvider`, so every push delivery is recorded as
- *    `skipped / no-provider`. No FCM/APNs credentials, no Expo push
- *    project.
+ * 2. **A provider — still missing, and this is the blocker.** The
+ *    backend binds only `UnconfiguredPushProvider`, so every push delivery
+ *    is recorded as `skipped / no-provider`. On this side there is no
+ *    `expo-notifications` (refused by (4) below), no FCM/APNs
+ *    credentials, and no real EAS `projectId` (`app.json` holds a zero
+ *    UUID), so there is no token to send even though the endpoint in (1)
+ *    would accept one.
  * 3. ~~`AD-1` — a patient has no user row.~~ Resolved by ADR-030: a
  *    patient is an account, and `GET /notifications` already serves this
  *    app.

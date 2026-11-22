@@ -309,7 +309,18 @@ export function SessionProvider({
   const exchangeStoredToken = useCallback(
     async (settle: () => Promise<void>): Promise<'no-answer' | 'settled'> => {
       const started = epoch.current;
-      const refreshToken = await tokenStorage.readRefreshToken();
+      let refreshToken: string | null;
+      try {
+        refreshToken = await tokenStorage.readRefreshToken();
+      } catch {
+        // A keychain that throws on read (a Keystore key invalidated, an
+        // entry it cannot decrypt) holds no token this app can use: signed
+        // out, not stuck on the boot screen. The entry is not deleted — a
+        // read that failed once may succeed on the next launch, and a
+        // sign-in overwrites it either way. Never the token in the log.
+        logger.warn('The keychain could not be read while restoring a session');
+        refreshToken = null;
+      }
       if (refreshToken === null) {
         await serialized(async () => {
           if (started === epoch.current) setState({ status: 'unauthenticated' });
@@ -408,7 +419,18 @@ export function SessionProvider({
         throw normalizeCancellationError();
       }
       const started = epoch.current;
-      const refreshToken = await tokenStorage.readRefreshToken();
+      let refreshToken: string | null;
+      try {
+        refreshToken = await tokenStorage.readRefreshToken();
+      } catch {
+        // No answer about the token, as on a cold start: returning null
+        // here would end the session as "expired" and clear an entry the
+        // next read may well return. An `ApiError` is rethrown by
+        // `refreshOnce` without a session loss, so the waiting requests
+        // stop quietly and the session and the entry both stay.
+        logger.warn('The keychain could not be read for a mid-session refresh');
+        throw normalizeCancellationError();
+      }
       if (refreshToken === null) {
         if (started !== epoch.current) throw normalizeCancellationError();
         return null;
