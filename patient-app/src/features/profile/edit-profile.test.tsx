@@ -332,6 +332,14 @@ describe('the keyboard fills and walks the form (S-05)', () => {
     await act(async () => {
       reject(Object.assign(new Error('API error: network'), { kind: 'network' as const }));
     });
+    // Wait for the failed save to settle. `isPending` turns false only
+    // after `onSettled` has released the guard. A single act() flush is
+    // not always enough for that, e.g. under coverage instrumentation in CI.
+    await waitFor(() =>
+      expect(view.getByTestId('edit-profile-save').props.accessibilityState).toEqual(
+        expect.objectContaining({ busy: false }),
+      ),
+    );
 
     view.update.mockResolvedValueOnce(PROFILE([EDITABLE_NAME, EDITABLE_PHONE]));
     await act(async () => {
