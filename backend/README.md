@@ -243,7 +243,7 @@ prisma.patient.findMany()                           // everything — the escape
 |---|---|
 | `npm run db:deploy` | Apply committed migrations. What CI and production run. |
 | `npm run db:migrate` | Create and apply a migration from schema changes. Development only. |
-| `npm run db:check` | Fail if `prisma/schema/` and `migrations/` disagree — **for what it can see**; see below. |
+| `npm run db:check` | Read-only compare the configured database with `prisma/schema/`; run after `db:deploy` on a disposable database. |
 | `npm run db:seed` | Idempotent, non-destructive, refuses `APP_ENV=production`. With `APP_ENV=development` it also provisions the local demo accounts. [`docs/LOCAL_DEMO_ACCOUNTS.md`](docs/LOCAL_DEMO_ACCOUNTS.md) |
 | `npm run demo:totp` | The demo administrator's current TOTP code. Development only. [`docs/LOCAL_DEMO_ACCOUNTS.md`](docs/LOCAL_DEMO_ACCOUNTS.md) |
 | `npm run db:seed:production` | Reference data, catalogues and settings for a live database: no demo data, no account, create-only. [`docs/PRODUCTION_SETUP.md`](docs/PRODUCTION_SETUP.md) |
@@ -280,7 +280,7 @@ Prisma 7's multi-file form, one file per M5 step. `prisma.config.ts` points at `
 
 ⚠ **The generator `output` path resolves relative to the schema file.** Moving from `prisma/schema.prisma` to `prisma/schema/` silently redirected the client to `prisma/src/generated/prisma`, and every model was `undefined` until the path gained a `../`. Worth knowing before adding a file at another depth.
 
-### What the drift check does and does not see
+### What the schema check does and does not see
 
 Measured by probe during M5, not assumed. `prisma migrate diff` compares what the schema language can represent and **skips what it cannot**:
 
@@ -288,14 +288,13 @@ Measured by probe during M5, not assumed. `prisma migrate diff` compares what th
 |---|---|
 | CHECK constraints | tables, columns, types |
 | triggers and functions | ordinary indexes, including unique |
-| **partial** indexes (`WHERE …`) | **BRIN**, GIN and other access methods |
 | expression indexes | defaults — *including a generated column's expression* |
-| table partitioning | |
+| table partitioning | **partial** indexes (`WHERE …`) declared using Prisma's `partialIndexes` preview feature; **BRIN**, GIN and other access methods |
 
-Two consequences follow, and both are load-bearing:
+The CI check runs `db:deploy` against a fresh PostgreSQL 16 `medora_test` database, then compares that actual schema to the Prisma datamodel. The comparison is read-only and cannot prove the state of any persistent environment. Two consequences follow, and both are load-bearing:
 
 1. **Raw SQL is for what Prisma cannot represent, and nothing else.** The `audit_events` BRIN index was first hand-written and `migrate dev` immediately generated a migration dropping it.
-2. **Every CHECK, trigger and partial index is covered by a failing-insert test.** That is not thoroughness — `db:check` cannot see them, so the tests are the only thing holding them.
+2. **Every CHECK constraint and trigger, and every behavior-critical partial index, is covered by a database test.** Prisma's schema comparison cannot establish the behavior of SQL-only constraints or triggers, so the tests hold those contracts.
 
 ### Enum values are the API vocabulary
 

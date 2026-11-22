@@ -70,7 +70,10 @@ for (const model of modelBlocks.values()) {
   const uniqueSetList: string[][] = [];
   const foreign = new Set<string>();
   for (const field of model.fields) {
-    if (field.raw.includes('@id')) primary.add(field.name);
+    if (field.raw.includes('@id')) {
+      primary.add(field.name);
+      uniqueSetList.push([field.name]);
+    }
     if (field.raw.includes('@unique')) {
       unique.add(field.name);
       uniqueSetList.push([field.name]);
@@ -100,12 +103,16 @@ for (const model of modelBlocks.values()) {
     }
   }
   for (const compoundPrimary of model.body.matchAll(/@@id\(\[([^\]]+)\]/g)) {
-    compoundPrimary[1]
-      ?.split(',')
-      .map((part) => part.trim())
-      .forEach((field) => primary.add(field));
+    const fields =
+      compoundPrimary[1]
+        ?.split(',')
+        .map((part) => part.trim())
+        .filter(Boolean) ?? [];
+    fields.forEach((field) => primary.add(field));
+    uniqueSetList.push(fields);
   }
-  for (const compoundUnique of model.body.matchAll(/@@unique\(\[([^\]]+)\]/g)) {
+  for (const compoundUnique of model.body.matchAll(/@@unique\(\[([^\]]+)\]([^\n]*)/g)) {
+    if (/\bwhere\s*:/.test(compoundUnique[2] ?? '')) continue;
     const fields =
       compoundUnique[1]
         ?.split(',')

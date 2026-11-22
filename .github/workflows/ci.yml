@@ -223,9 +223,6 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://medora:medora@localhost:5432/medora_test?schema=public
-      # `migrate dev` and the drift check replay history here. Separate
-      # from the working database so a check can never touch test data.
-      SHADOW_DATABASE_URL: postgresql://medora:medora@localhost:5432/medora_shadow?schema=public
       # The broker the M30.1 driver spec talks to. `test/setup-env.ts`
       # defaults to the same address, so this is the explicit form rather
       # than a new requirement.
@@ -246,26 +243,21 @@ jobs:
       # the generated client exists before anything typechecks.
       - run: npm ci
 
-      - name: Create the shadow database
-        run: PGPASSWORD=medora createdb -h localhost -U medora medora_shadow
-
-      # Fails when `prisma/schema.prisma` and `prisma/migrations/`
-      # disagree — the drift that happens when someone edits the schema
-      # and forgets to generate the migration. Caught here rather than on
-      # whoever deploys next.
-      - name: Migration drift check
-        run: npm run db:check
-
-      - name: Show migration drift SQL
-        if: failure()
-        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema --script
-
       # `migrate deploy`, not `migrate dev`: deploy applies committed
       # migrations and never generates one, which is what production
       # runs. If the migrations only work when Prisma is allowed to
       # rewrite them, they do not work.
       - name: Apply migrations
         run: npm run db:deploy
+
+      # Compare the actual result of replaying committed migrations on this
+      # fresh disposable PostgreSQL 16 database with the Prisma datamodel.
+      - name: Migration drift check
+        run: npm run db:check
+
+      - name: Show migration drift SQL
+        if: failure()
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema --script
 
       - name: Seed
         run: npm run db:seed

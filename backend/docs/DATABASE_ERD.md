@@ -68,7 +68,7 @@ erDiagram
   %% Prisma index: AiConversation @@index([ownerId, updatedAt(sort: Desc)])
   %% Prisma index: AiConversation @@index([patientId])
   %% Prisma index: AiConversation @@index([deletedAt])
-  %% Prisma index: AiConversation @@index([hospitalId, hospitalMedicalRecordId], map: "ai_conversations_hospital_scope_idx")
+  %% Prisma index: AiConversation @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "ai_conversations_hospital_scope_idx")
   AiMessage {
     String id PK
     String conversationId FK
@@ -130,6 +130,7 @@ erDiagram
     DateTime lastUsedAt
     DateTime revokedAt
   }
+  %% Prisma index: ApiKey @@index([prefix], where: raw("revoked_at IS NULL"), map: "api_keys_live_idx")
   Appointment {
     String id PK
     String publicId UK
@@ -169,9 +170,11 @@ erDiagram
   %% Prisma index: Appointment @@index([status, startsAt])
   %% Prisma index: Appointment @@index([departmentId])
   %% Prisma index: Appointment @@index([deletedAt])
-  %% Prisma index: Appointment @@index([hospitalId, hospitalMedicalRecordId], map: "appointments_hospital_scope_idx")
+  %% Prisma index: Appointment @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "appointments_hospital_scope_idx")
   %% Prisma index: Appointment @@index([hospitalId, doctorEmploymentId], map: "appointments_hospital_employment_idx")
   %% Prisma index: Appointment @@index([publishedSlotId], map: "appointments_published_slot_idx")
+  %% Prisma index: Appointment @@index([startsAt], where: raw("status = 'pending'"), map: "appointments_pending_idx")
+  %% Prisma index: Appointment @@index([hospitalId, hospitalDepartmentId], map: "appointments_hospital_department_idx")
   AppointmentEvent {
     String id PK
     String appointmentId FK
@@ -328,7 +331,7 @@ erDiagram
   %% Prisma index: Conversation @@index([lastActivityAt(sort: Desc)])
   %% Prisma index: Conversation @@index([patientId])
   %% Prisma index: Conversation @@index([deletedAt])
-  %% Prisma index: Conversation @@index([hospitalId, hospitalMedicalRecordId], map: "conversations_hospital_scope_idx")
+  %% Prisma index: Conversation @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "conversations_hospital_scope_idx")
   ConversationParticipant {
     String conversationId PK,FK
     String userId PK,FK
@@ -447,6 +450,7 @@ erDiagram
     Boolean isPrimary
     DateTime createdAt
   }
+  %% Prisma constraint: DoctorSpecialty @@unique([doctorId], where: raw("is_primary"), map: "doctor_specialties_one_primary")
   %% Prisma index: DoctorSpecialty @@index([specialtyId])
   DoctorTimeOff {
     String id PK
@@ -798,7 +802,9 @@ erDiagram
   %% Prisma index: LabOrder @@index([status, priority])
   %% Prisma index: LabOrder @@index([orderedBy])
   %% Prisma index: LabOrder @@index([deletedAt])
-  %% Prisma index: LabOrder @@index([hospitalId, hospitalMedicalRecordId], map: "lab_orders_hospital_scope_idx")
+  %% Prisma index: LabOrder @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "lab_orders_hospital_scope_idx")
+  %% Prisma index: LabOrder @@index([requestedAt], where: raw("has_critical_result AND reviewed_at IS NULL"), map: "lab_orders_critical_unreviewed_idx")
+  %% Prisma index: LabOrder @@index([hospitalId, hospitalDepartmentId], map: "lab_orders_hospital_department_idx")
   LabResult {
     String id PK
     String labOrderId FK
@@ -902,7 +908,8 @@ erDiagram
   %% Prisma index: MedicalRecord @@index([status, priority])
   %% Prisma index: MedicalRecord @@index([appointmentId])
   %% Prisma index: MedicalRecord @@index([deletedAt])
-  %% Prisma index: MedicalRecord @@index([hospitalId, hospitalMedicalRecordId], map: "medical_records_hospital_scope_idx")
+  %% Prisma index: MedicalRecord @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "medical_records_hospital_scope_idx")
+  %% Prisma index: MedicalRecord @@index([hospitalId, hospitalDepartmentId], map: "medical_records_hospital_department_idx")
   Medication {
     String id PK
     String name
@@ -1018,7 +1025,8 @@ erDiagram
     String hospitalMedicalRecordId FK
   }
   %% Prisma index: Notification @@index([recipientId, createdAt(sort: Desc)])
-  %% Prisma index: Notification @@index([hospitalId, hospitalMedicalRecordId], map: "notifications_hospital_scope_idx")
+  %% Prisma index: Notification @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "notifications_hospital_scope_idx")
+  %% Prisma index: Notification @@index([recipientId, createdAt(sort: Desc)], where: raw("read_at IS NULL AND NOT archived"), map: "notifications_unread_idx")
   NotificationDelivery {
     String id PK
     String notificationId FK
@@ -1114,6 +1122,7 @@ erDiagram
   }
   %% Prisma index: PatientAccessGrant @@index([patientId])
   %% Prisma index: PatientAccessGrant @@index([granteeUserId])
+  %% Prisma index: PatientAccessGrant @@index([patientId, granteeUserId], where: raw("revoked_at IS NULL"), map: "patient_access_grants_live_idx")
   PatientAllergy {
     String id PK
     String patientId FK
@@ -1134,7 +1143,7 @@ erDiagram
   %% Prisma constraint: PatientAllergy @@unique([patientId, allergen], where: raw("hospital_medical_record_id IS NULL"), map: "patient_allergies_legacy_unique")
   %% Prisma constraint: PatientAllergy @@unique([hospitalMedicalRecordId, allergen], where: raw("hospital_medical_record_id IS NOT NULL"), map: "patient_allergies_hospital_unique")
   %% Prisma index: PatientAllergy @@index([deletedAt])
-  %% Prisma index: PatientAllergy @@index([hospitalId, hospitalMedicalRecordId], map: "patient_allergies_hospital_scope_idx")
+  %% Prisma index: PatientAllergy @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_allergies_hospital_scope_idx")
   PatientChronicCondition {
     String patientId PK,FK
     String conditionId PK,FK
@@ -1160,7 +1169,7 @@ erDiagram
   }
   %% Prisma index: PatientClinicalAlert @@index([patientId])
   %% Prisma index: PatientClinicalAlert @@index([deletedAt])
-  %% Prisma index: PatientClinicalAlert @@index([hospitalId, hospitalMedicalRecordId], map: "patient_clinical_alerts_hospital_scope_idx")
+  %% Prisma index: PatientClinicalAlert @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_clinical_alerts_hospital_scope_idx")
   PatientDoctorAssignment {
     String id PK
     String patientId FK
@@ -1173,9 +1182,12 @@ erDiagram
     String hospitalMedicalRecordId FK
     String doctorEmploymentId FK
   }
+  %% Prisma constraint: PatientDoctorAssignment @@unique([patientId], where: raw("\"role\" = 'primary' AND \"revoked_at\" IS NULL"), map: "patient_doctor_assignments_one_live_primary")
+  %% Prisma constraint: PatientDoctorAssignment @@unique([patientId, doctorId], where: raw("revoked_at IS NULL"), map: "patient_doctor_assignments_one_live_per_pair")
   %% Prisma index: PatientDoctorAssignment @@index([doctorId, patientId])
   %% Prisma index: PatientDoctorAssignment @@index([patientId])
-  %% Prisma index: PatientDoctorAssignment @@index([hospitalId, hospitalMedicalRecordId], map: "patient_doctor_assignments_hospital_scope_idx")
+  %% Prisma index: PatientDoctorAssignment @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_doctor_assignments_hospital_scope_idx")
+  %% Prisma index: PatientDoctorAssignment @@index([doctorId, patientId], where: raw("revoked_at IS NULL"), map: "patient_doctor_assignments_live_idx")
   PatientDocument {
     String id PK
     String patientId FK
@@ -1196,7 +1208,7 @@ erDiagram
   %% Prisma index: PatientDocument @@index([patientId])
   %% Prisma index: PatientDocument @@index([fileId])
   %% Prisma index: PatientDocument @@index([deletedAt])
-  %% Prisma index: PatientDocument @@index([hospitalId, hospitalMedicalRecordId], map: "patient_documents_hospital_scope_idx")
+  %% Prisma index: PatientDocument @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_documents_hospital_scope_idx")
   PatientEmergencyContact {
     String id PK
     String patientId FK
@@ -1211,6 +1223,7 @@ erDiagram
     String createdBy
     String updatedBy
   }
+  %% Prisma constraint: PatientEmergencyContact @@unique([patientId], where: raw("is_primary"), map: "patient_emergency_contacts_one_primary")
   %% Prisma index: PatientEmergencyContact @@index([patientId])
   %% Prisma index: PatientEmergencyContact @@index([deletedAt])
   PatientInsurance {
@@ -1228,6 +1241,7 @@ erDiagram
     String updatedBy
   }
   %% Prisma constraint: PatientInsurance @@unique([patientId, policyNumber])
+  %% Prisma constraint: PatientInsurance @@unique([patientId], where: raw("is_active"), map: "patient_insurance_one_active")
   %% Prisma index: PatientInsurance @@index([providerId])
   %% Prisma index: PatientInsurance @@index([deletedAt])
   PatientMedicalHistory {
@@ -1250,7 +1264,7 @@ erDiagram
   }
   %% Prisma index: PatientMedicalHistory @@index([patientId, occurredOn(sort: Desc)])
   %% Prisma index: PatientMedicalHistory @@index([deletedAt])
-  %% Prisma index: PatientMedicalHistory @@index([hospitalId, hospitalMedicalRecordId], map: "patient_medical_history_hospital_scope_idx")
+  %% Prisma index: PatientMedicalHistory @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_medical_history_hospital_scope_idx")
   PatientMedication {
     String id PK
     String patientId FK
@@ -1273,7 +1287,7 @@ erDiagram
   %% Prisma index: PatientMedication @@index([patientId, status])
   %% Prisma index: PatientMedication @@index([prescriptionId])
   %% Prisma index: PatientMedication @@index([deletedAt])
-  %% Prisma index: PatientMedication @@index([hospitalId, hospitalMedicalRecordId], map: "patient_medications_hospital_scope_idx")
+  %% Prisma index: PatientMedication @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_medications_hospital_scope_idx")
   PatientNote {
     String id PK
     String patientId FK
@@ -1294,7 +1308,7 @@ erDiagram
   }
   %% Prisma index: PatientNote @@index([patientId, authoredAt(sort: Desc)])
   %% Prisma index: PatientNote @@index([deletedAt])
-  %% Prisma index: PatientNote @@index([hospitalId, hospitalMedicalRecordId], map: "patient_notes_hospital_scope_idx")
+  %% Prisma index: PatientNote @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_notes_hospital_scope_idx")
   PatientStudy {
     String id PK
     String patientId FK
@@ -1315,7 +1329,7 @@ erDiagram
   %% Prisma index: PatientStudy @@index([patientId, performedOn(sort: Desc)])
   %% Prisma index: PatientStudy @@index([labOrderId])
   %% Prisma index: PatientStudy @@index([deletedAt])
-  %% Prisma index: PatientStudy @@index([hospitalId, hospitalMedicalRecordId], map: "patient_studies_hospital_scope_idx")
+  %% Prisma index: PatientStudy @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_studies_hospital_scope_idx")
   PatientVitalSign {
     String id PK
     String patientId FK
@@ -1342,7 +1356,7 @@ erDiagram
   %% Prisma index: PatientVitalSign @@index([patientId, recordedAt(sort: Desc)])
   %% Prisma index: PatientVitalSign @@index([recordId])
   %% Prisma index: PatientVitalSign @@index([deletedAt])
-  %% Prisma index: PatientVitalSign @@index([hospitalId, hospitalMedicalRecordId], map: "patient_vital_signs_hospital_scope_idx")
+  %% Prisma index: PatientVitalSign @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_vital_signs_hospital_scope_idx")
   Permission {
     String id PK
     String code UK
@@ -1430,7 +1444,8 @@ erDiagram
   %% Prisma index: Prescription @@index([status, endDate])
   %% Prisma index: Prescription @@index([medicationId])
   %% Prisma index: Prescription @@index([deletedAt])
-  %% Prisma index: Prescription @@index([hospitalId, hospitalMedicalRecordId], map: "prescriptions_hospital_scope_idx")
+  %% Prisma index: Prescription @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "prescriptions_hospital_scope_idx")
+  %% Prisma index: Prescription @@index([hospitalId, hospitalDepartmentId], map: "prescriptions_hospital_department_idx")
   PrescriptionHistoryEntry {
     String id PK
     String prescriptionId FK
@@ -1541,6 +1556,7 @@ erDiagram
     DateTime recordedAt
   }
   %% Prisma constraint: RecordDiagnosis @@unique([recordId, icdCodeId])
+  %% Prisma constraint: RecordDiagnosis @@unique([recordId], where: raw("is_primary"), map: "record_diagnoses_one_primary")
   %% Prisma index: RecordDiagnosis @@index([icdCodeId])
   RecordIssueReport {
     String id PK
@@ -1555,6 +1571,7 @@ erDiagram
   }
   %% Prisma index: RecordIssueReport @@index([status, createdAt])
   %% Prisma index: RecordIssueReport @@index([recordId])
+  %% Prisma index: RecordIssueReport @@index([createdAt], where: raw("\"status\" <> 'resolved'"), map: "record_issue_reports_open_idx")
   RecordMedication {
     String id PK
     String recordId FK
@@ -1758,6 +1775,7 @@ erDiagram
   }
   %% Prisma index: Session @@index([userId])
   %% Prisma index: Session @@index([expiresAt])
+  %% Prisma index: Session @@index([userId], where: raw("revoked_at IS NULL"), map: "sessions_user_id_live_idx")
   Specialty {
     String id PK
     String name UK
@@ -1963,7 +1981,7 @@ erDiagram
   User ||--o{ AiConversation : "owner"
   Patient o|--o{ AiConversation : "patient"
   AiConversation ||--o{ AiMessage : "conversation"
-  User ||--o{ AiUserSetting : "user"
+  User ||--o| AiUserSetting : "user"
   User o|--o{ Announcement : "author"
   User o|--o{ ApiKey : "creator"
   User o|--o{ Appointment : "canceller"
@@ -2002,7 +2020,7 @@ erDiagram
   Doctor ||--o{ DoctorAvailability : "doctor"
   DoctorEmployment o|--o{ DoctorAvailability : "employment"
   HospitalDepartment o|--o{ DoctorEmployment : "department"
-  Doctor ||--o| DoctorEmployment : "doctor"
+  Doctor ||--o{ DoctorEmployment : "doctor"
   Hospital ||--o{ DoctorEmployment : "hospital"
   Doctor ||--o{ DoctorSpecialty : "doctor"
   Specialty ||--o{ DoctorSpecialty : "specialty"
@@ -2054,7 +2072,7 @@ erDiagram
   LabAnalyteSpec o|--o{ LabResult : "spec"
   User o|--o{ LabResult : "verifier"
   User o|--o{ LabSpecimen : "collector"
-  LabOrder ||--o{ LabSpecimen : "order"
+  LabOrder ||--o| LabSpecimen : "order"
   User o|--o{ LabTimelineEvent : "actor_user"
   LabOrder ||--o{ LabTimelineEvent : "order"
   User o|--o{ LoginEvent : "user"
@@ -2065,7 +2083,7 @@ erDiagram
   HospitalDepartment o|--o{ MedicalRecord : "hospital_department"
   HospitalMedicalRecord o|--o{ MedicalRecord : "hospital_medical_record"
   Patient ||--o{ MedicalRecord : "patient"
-  Medication ||--o{ MedicationMonograph : "medication"
+  Medication ||--o| MedicationMonograph : "medication"
   Medication ||--o{ MedicationStrength : "medication"
   User o|--o{ Message : "author"
   Conversation ||--o{ Message : "conversation"
@@ -2082,7 +2100,7 @@ erDiagram
   User ||--o{ Notification : "recipient"
   MedicalRecord o|--o{ Notification : "record"
   Notification ||--o{ NotificationDelivery : "notification"
-  User ||--o{ NotificationPreference : "user"
+  User ||--o| NotificationPreference : "user"
   User ||--o{ OtpCode : "user"
   Doctor o|--o{ Patient : "assigned_doctor"
   User o|--o| Patient : "user"
@@ -2197,13 +2215,13 @@ erDiagram
   User ||--o{ TrustedDevice : "user"
   Role ||--o{ User : "role"
   User ||--o{ UserActivityLog : "user"
-  User ||--o{ UserCredential : "user"
+  User ||--o| UserCredential : "user"
   User ||--o{ UserIntegration : "user"
-  User ||--o{ UserInterfacePreference : "user"
+  User ||--o| UserInterfacePreference : "user"
   User o|--o{ UserPermission : "granted_by_user"
   Permission ||--o{ UserPermission : "permission"
   User ||--o{ UserPermission : "user"
-  User ||--o{ UserSetting : "user"
+  User ||--o| UserSetting : "user"
   User ||--o{ VerificationToken : "user"
   Appointment o|--o{ WaitingRoomEntry : "appointment"
   Patient o|--o{ WaitingRoomEntry : "patient"

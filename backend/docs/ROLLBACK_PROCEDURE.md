@@ -141,13 +141,15 @@ Run from `backend/`, with `DATABASE_URL` (and `SHADOW_DATABASE_URL` for the drif
 
 | Command             | What it checks                                                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run db:check`  | `prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema --exit-code`. Non-zero exit means the migrations and the schema disagree (drift). CI runs it against a shadow database |
+| `npm run db:check`  | `prisma migrate diff --from-config-datasource --to-schema prisma/schema --exit-code`. Read-only comparison of the configured database to the Prisma datamodel; run after applying migrations to a disposable database |
 | `npm run db:status` | `prisma migrate status`: which migrations are applied, and whether any are pending or failed. Run it before and after `db:deploy`                                                                         |
 | `npm run db:deploy` | `prisma migrate deploy`: applies pending migrations to the target database. Used in CI (against a scratch database) and in production (PRODUCTION_SETUP §1)                                               |
 
-For a corrective migration, the order is: `db:check` (no drift) → `db:deploy` against a freshly created
-scratch database → `db:status` (nothing pending or failed) → the backend test suite
-(`npm run test`), which includes the migration-dependent e2e specs.
+For a fresh-history validation, the order is: `db:deploy` against a freshly created disposable database →
+`db:check` (no schema drift) → `db:status` (nothing pending or failed) → the backend test suite
+(`npm run test`), which includes the migration-dependent e2e specs. CI performs this sequence against its
+disposable PostgreSQL 16 service. A clean disposable run does not establish the migration state of any
+persistent environment.
 
 A failed migration (`db:status` shows it failed) must be resolved before any further deploy. Prisma will not
 apply later migrations past a failed one. Resolving a failed migration is a database change: take a backup

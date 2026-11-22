@@ -28,9 +28,9 @@ Tenant context resolution, hospital-scoped repository predicates, authorization 
 
 ## Migration procedure
 
-1. Use only an isolated, disposable PostgreSQL 16 database and a separate disposable shadow database. Do not point either URL at development, staging, production, or any database with retained data.
-2. Confirm `DATABASE_URL` names the disposable test database and `SHADOW_DATABASE_URL` names its disposable shadow. In CI, these are the workflow's `medora_test` and `medora_shadow` databases.
-3. Run `npm run db:check`, then `npm run db:deploy`, then `npm run db:status` from `backend/`.
+1. Use only an isolated, disposable PostgreSQL 16 database. `SHADOW_DATABASE_URL` is additionally needed for `prisma migrate dev`, not for `db:check`. Never point either URL at development, staging, production, or a database with retained data.
+2. Confirm `DATABASE_URL` names the disposable test database. CI uses the fresh `medora_test` database in its PostgreSQL 16 service.
+3. Run `npm run db:deploy`, then `npm run db:check`, then `npm run db:status` from `backend/`. The check compares the resulting live database schema to the Prisma datamodel; it is read-only.
 4. Run the database integration tests with the test guard enabled. Tests fail closed unless the database name is `medora_test` and the server is PostgreSQL 16.
 5. Compare schema, migration SQL, and migration status in the same disposable environment; a fresh-history run does not establish the status of an already-deployed environment.
 
