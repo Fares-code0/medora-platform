@@ -118,13 +118,30 @@ const KEPT_ON_LOGOUT: readonly DashboardSelectionKey[] = [
 ];
 
 /**
+ * Per-user keys a feature owns (outside `PreferenceSchema`) that also outlive
+ * a logout, named by their suffix under `medora.<userId>.`.
+ *
+ * - `ai.settings.v1` — the AI assistant's settings (sampling, length,
+ *   language, favourite prompts). They survived logout before S1 moved them
+ *   into the user's namespace, and they cannot hold PHI: the assistant's
+ *   store reduces them to numbers, booleans, enum members and ids from its
+ *   fixed prompt catalogue on every read and write (`sanitizeAiSettings`).
+ *   The assistant's conversations, which can, are in memory and end with
+ *   the session.
+ */
+const KEPT_FEATURE_KEYS_ON_LOGOUT: readonly string[] = ['ai.settings.v1'];
+
+/**
  * Wipes a user's namespaced preferences on logout (§6.4). Theme survives,
- * and so do the keys in `KEPT_ON_LOGOUT`.
+ * and so do the keys in `KEPT_ON_LOGOUT` and `KEPT_FEATURE_KEYS_ON_LOGOUT`.
  */
 export function clearUserPreferences(userId: string): void {
   try {
     const prefix = `${PREFIX}.${userId}.`;
-    const kept = new Set(KEPT_ON_LOGOUT.map((key) => storageKey(key, userId)));
+    const kept = new Set([
+      ...KEPT_ON_LOGOUT.map((key) => storageKey(key, userId)),
+      ...KEPT_FEATURE_KEYS_ON_LOGOUT.map((suffix) => `${prefix}${suffix}`),
+    ]);
     const doomed: string[] = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);

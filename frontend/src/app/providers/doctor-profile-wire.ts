@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client';
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import {
   asRecord,
   malformedResponse,
@@ -155,5 +155,10 @@ export function toProfilePatch(profile: DoctorProfile) {
 export async function putProfilePhoto(image: Blob): Promise<DoctorProfile> {
   const form = new FormData();
   form.append('photo', image, `photo.${image.type === 'image/png' ? 'png' : 'jpg'}`);
-  return toProfile(readData(await apiClient.put('/me/profile/photo', form), 'profile'));
+  return toProfile(
+    readData(
+      await apiClient.put('/me/profile/photo', form, { timeoutMs: UPLOAD_TIMEOUT_MS }),
+      'profile',
+    ),
+  );
 }

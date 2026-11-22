@@ -55,8 +55,8 @@ analytics" in every build.
 ## Tasks
 
 - [x] [FRONTEND] Analytics dashboard, chart library, saved/scheduled reports, export
-- [ ] [FRONTEND] HTTP adapter for `GET /reports/analytics` — Phase 29
-- [ ] [BACKEND] Saved/scheduled report routes to `main` (from `backend`) — Phase 29
+- [x] [FRONTEND] HTTP adapter for `GET /reports/analytics` — Phase 29 · *verified 2026-11-22: `http-reports-service.ts` `fetchAnalytics`, selected by `reports/service.ts`*
+- [x] [BACKEND] Saved/scheduled report routes to `main` (from `backend`) — Phase 29 · *verified 2026-11-22: `/reports/saved` and `/reports/scheduled` on `main`*
 - [ ] [BACKEND] Analytics scoped to the current hospital — Phase 22
 
 ## Dependencies

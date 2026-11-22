@@ -34,6 +34,14 @@ const srcRoot = resolve(here, '../src');
 const src = (path: string) => readFileSync(resolve(srcRoot, path), 'utf8');
 const parse = (code: string) => parseAst(code);
 
+/**
+ * The whole-tree scan below walks `src/` and transpiles every seam module (~1 s when
+ * run alone). Under a full-suite run it shares the CPU with every other
+ * worker and overran Vitest's 5 s default — a load flake, not a slow check.
+ * 30 s gives it room without hiding a genuine hang; no assertion changes.
+ */
+const WHOLE_TREE_SCAN_TIMEOUT_MS = 30_000;
+
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
@@ -71,37 +79,41 @@ describe('the seam rewrite', () => {
     expect(rewriteSeamCalls(code, parse)).toEqual({ code, count: 0 });
   });
 
-  it('reaches every seam the source contains — generic, inline or plain', () => {
-    const files = sourceFiles(srcRoot).filter((file) => !file.endsWith(join('api', 'seam.ts')));
-    const missed: string[] = [];
-    let total = 0;
+  it(
+    'reaches every seam the source contains — generic, inline or plain',
+    () => {
+      const files = sourceFiles(srcRoot).filter((file) => !file.endsWith(join('api', 'seam.ts')));
+      const missed: string[] = [];
+      let total = 0;
 
-    for (const file of files) {
-      const source = readFileSync(file, 'utf8');
-      if (!source.includes('selectService')) continue;
-      // The production build rewrites compiled JavaScript; test the same kind
-      // of input. (TypeScript's transpiler rather than esbuild, which refuses
-      // the jsdom environment the suite runs in.)
-      const { outputText: code } = ts.transpileModule(source, {
-        fileName: file,
-        compilerOptions: {
-          target: ts.ScriptTarget.ES2022,
-          module: ts.ModuleKind.ESNext,
-          jsx: ts.JsxEmit.ReactJSX,
-        },
-      });
-      const calls = countSeamCalls(code, parse);
-      total += calls;
-      const rewritten = rewriteSeamCalls(code, parse);
-      if (rewritten.count !== calls || countSeamCalls(rewritten.code, parse) !== 0) {
-        missed.push(relative(srcRoot, file));
+      for (const file of files) {
+        const source = readFileSync(file, 'utf8');
+        if (!source.includes('selectService')) continue;
+        // The production build rewrites compiled JavaScript; test the same kind
+        // of input. (TypeScript's transpiler rather than esbuild, which refuses
+        // the jsdom environment the suite runs in.)
+        const { outputText: code } = ts.transpileModule(source, {
+          fileName: file,
+          compilerOptions: {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.ESNext,
+            jsx: ts.JsxEmit.ReactJSX,
+          },
+        });
+        const calls = countSeamCalls(code, parse);
+        total += calls;
+        const rewritten = rewriteSeamCalls(code, parse);
+        if (rewritten.count !== calls || countSeamCalls(rewritten.code, parse) !== 0) {
+          missed.push(relative(srcRoot, file));
+        }
       }
-    }
 
-    expect(missed).toEqual([]);
-    // The production build reports the same figure; a drop means a seam left.
-    expect(total).toBeGreaterThanOrEqual(29);
-  });
+      expect(missed).toEqual([]);
+      // The production build reports the same figure; a drop means a seam left.
+      expect(total).toBeGreaterThanOrEqual(29);
+    },
+    WHOLE_TREE_SCAN_TIMEOUT_MS,
+  );
 });
 
 describe('the classifiers', () => {

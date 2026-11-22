@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiClient } from './client';
+import { ApiClient, UPLOAD_TIMEOUT_MS } from './client';
 
 /**
  * ApiClient contract — FRONTEND_ARCHITECTURE.md §10.1/§10.2.
@@ -313,6 +313,89 @@ describe('ApiClient', () => {
       new ApiClient(BASE).get('/patients', undefined, { signal: controller.signal }),
     ).rejects.toBeDefined();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /** A fetch that never settles on its own — only its abort ends it. */
+  function hangingFetch(): void {
+    fetchMock.mockImplementation(
+      (_url: URL, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+  }
+
+  it.each(['put', 'patch', 'delete'] as const)(
+    'takes the same RequestOptions on %s — signal and Idempotency-Key (D2)',
+    async (verb) => {
+      const client = new ApiClient(BASE);
+      fetchMock.mockImplementation(alwaysJson({ ok: true }));
+
+      await client[verb]('/things/1', { a: 1 }, { idempotencyKey: `intent-${verb}` });
+      expect(headerOf(lastRequest().init, 'Idempotency-Key')).toBe(`intent-${verb}`);
+
+      hangingFetch();
+      const controller = new AbortController();
+      const pending = client[verb]('/things/1', { a: 1 }, { signal: controller.signal });
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    },
+  );
+
+  it('keeps a body-less DELETE body-less when options are given', async () => {
+    fetchMock.mockImplementation(alwaysJson({ ok: true }));
+
+    await new ApiClient(BASE).delete('/things/1', undefined, { idempotencyKey: 'intent-d' });
+
+    expect(lastRequest().init.body).toBeUndefined();
+    expect(headerOf(lastRequest().init, 'Content-Type')).toBeUndefined();
+  });
+
+  describe('timeouts (D2)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('ends a request at the 30 s default, as a network error', async () => {
+      hangingFetch();
+      const pending = new ApiClient(BASE).get('/patients');
+      const outcome = expect(pending).rejects.toMatchObject({ kind: 'network' });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await outcome;
+    });
+
+    it('honours a per-request timeout override', async () => {
+      hangingFetch();
+      let settled = false;
+      const pending = new ApiClient(BASE)
+        .post('/files', new FormData(), { timeoutMs: UPLOAD_TIMEOUT_MS })
+        .finally(() => {
+          settled = true;
+        });
+      const outcome = expect(pending).rejects.toMatchObject({ kind: 'network' });
+
+      // Past the default, the upload is still running …
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toBe(false);
+
+      // … and the longer budget still ends it, with the same error as before.
+      await vi.advanceTimersByTimeAsync(UPLOAD_TIMEOUT_MS - 60_000);
+      await outcome;
+    });
+
+    it('gives multipart uploads a budget a 10 MB body on a slow uplink fits', () => {
+      // ~84 s at 1 Mbit/s for 10 MB alone; the default 30 s cannot carry it.
+      expect(UPLOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(90_000);
+    });
   });
 
   it('shares one refresh across concurrent 401s (single flight)', async () => {

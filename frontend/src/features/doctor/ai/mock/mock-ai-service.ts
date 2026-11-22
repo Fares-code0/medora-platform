@@ -15,7 +15,7 @@ import { type AiConversation, type ChatMessage } from '../model/types';
  * Mock AI service — the one adapter behind `model/ai-service.ts`, and the
  * only implementation until a model service exists (§9 row 4).
  *
- * Async with realistic latency; conversation CRUD persists to localStorage
+ * Async with realistic latency; conversation CRUD goes to the in-memory store (S1)
  * and `generateReply` produces deterministic canned responses with simulated
  * failures (retry succeeds).
  *
@@ -45,7 +45,7 @@ async function listConversations(): Promise<readonly AiConversation[]> {
 /**
  * Synchronous create — conversation creation gates navigation (?c=<id>),
  * so the UI must not depend on async mutation callbacks that React can
- * legitimately drop across remounts. The localStorage store is sync
+ * legitimately drop across remounts. The in-memory store is sync
  * anyway; with a real API this becomes a router action/optimistic id.
  */
 function createConversation(input: CreateConversationInput): AiConversation {

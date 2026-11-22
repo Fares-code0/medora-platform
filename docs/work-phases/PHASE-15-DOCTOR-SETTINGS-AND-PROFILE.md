@@ -65,8 +65,8 @@ added About). In a live build only some sections are server-backed.
 
 - [x] [FRONTEND] 10 + 1 sections, sticky save bar, live appearance
 - [x] [FRONTEND] Live profile/account/security/activity (FE-10.9)
-- [ ] [BACKEND] Privacy-consent, integrations, notification-preference routes — Phase 29
-- [ ] [FRONTEND] Profile photo upload over `PUT /me/profile/photo` — Phase 29
+- [x] [BACKEND] Privacy-consent, integrations, notification-preference routes — Phase 29 · *verified 2026-11-22: `PATCH /me/settings/privacy`, `/me/integrations/:id/{connect,disconnect}`, `/me/notification-preferences` on `main`*
+- [x] [FRONTEND] Profile photo upload over `PUT /me/profile/photo` — Phase 29 · *verified 2026-11-22: `putProfilePhoto` (`doctor-profile-wire.ts`) from the Profile section; the route answers 503 until an object store is configured*
 - [ ] [BACKEND] `employment` on `/me/profile`; `/me/published-slots` — Phases 22, 24
 - [ ] [FRONTEND] Current employment replaces the hospital field — Phase 25
 

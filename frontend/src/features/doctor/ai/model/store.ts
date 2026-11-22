@@ -1,26 +1,54 @@
+import { AI_PROMPTS } from './prompts';
+import { registerAiSessionReset } from './session-storage';
 import {
+  AI_LANGUAGE_META,
+  AI_RESPONSE_LENGTHS,
+  AI_TEMPERATURES,
   DEFAULT_AI_SETTINGS,
   GENERAL_CONTEXT,
   type AiConversation,
+  type AiLanguage,
+  type AiResponseLength,
   type AiSettings,
   type ChatMessage,
 } from './types';
 
 /**
- * Local persistence for the AI assistant — conversations and settings in
- * browser storage (frontend-only; replaced by the assistant endpoints
- * when the API lands). Reads are defensive: any malformed payload falls
- * back to the seed/defaults instead of throwing.
+ * Storage for the AI assistant — conversations and settings (frontend-only;
+ * replaced by the assistant endpoints when the API lands). Reads are
+ * defensive: a malformed settings payload falls back to the defaults
+ * instead of throwing.
  *
- * Storage note: conversations are documents, not UI preferences, so they
- * don't belong in the typed preferences service (§12.5). Like the auth
- * session store, this module accesses `window.localStorage` directly and
- * is the feature's single storage boundary. No PHI: mock ids and mock
- * text only.
+ * Conversations are held IN MEMORY ONLY (S1). A conversation is PHI once it
+ * carries a patient context: the deep-link seed copies the directory
+ * patient's name into `context.patientName`, the title and the greeting,
+ * and the clinician types clinical text into it. They used to persist under
+ * the global `medora.ai.conversations.v1` key, which no logout cleared — so
+ * the next account on the browser read the previous one's patient chats.
+ * They now live in this module and end with the session: the module
+ * registers its reset with `session-storage.ts`, whose `clearAiSessionData`
+ * runs on sign-in, logout, lock and a refused refresh, through the same
+ * `AuthProvider` paths that clear the query cache.
+ *
+ * Settings persist per user under `medora.<userId>.ai.settings.v1` and are
+ * KEPT on logout (`clearUserPreferences`' kept list), like a composed
+ * dashboard. That is only safe because they cannot hold patient data: every
+ * field is a number, a boolean, an enum member or an id from the fixed
+ * `AI_PROMPTS` catalogue, and `sanitizeAiSettings` drops anything else on
+ * both read and write — there is no free text in them to type a name into.
+ * This module is the feature's single `window.localStorage` boundary.
  */
 
-const CONVERSATIONS_KEY = 'medora.ai.conversations.v1';
-const SETTINGS_KEY = 'medora.ai.settings.v1';
+function settingsKey(userId: string): string {
+  return `medora.${userId}.ai.settings.v1`;
+}
+
+/** The session's conversations; `null` until first read (then seeded). */
+let memoryConversations: readonly AiConversation[] | null = null;
+
+registerAiSessionReset(() => {
+  memoryConversations = null;
+});
 
 const HOUR_MS = 3_600_000;
 
@@ -98,58 +126,81 @@ function seedConversations(): readonly AiConversation[] {
 
 /* ── Conversations ──────────────────────────────────────────────── */
 
-function isConversationArray(value: unknown): value is AiConversation[] {
-  return Array.isArray(value) && value.every((c: unknown) => {
-    if (typeof c !== 'object' || c === null) return false;
-    const candidate = c as Record<string, unknown>;
-    return (
-      typeof candidate['id'] === 'string' &&
-      typeof candidate['title'] === 'string' &&
-      Array.isArray(candidate['messages'])
-    );
-  });
-}
-
+/** This session's conversations — seeded on first read, never persisted. */
 export function readConversations(): readonly AiConversation[] {
-  try {
-    const raw = window.localStorage.getItem(CONVERSATIONS_KEY);
-    if (raw === null) {
-      const seeded = seedConversations();
-      writeConversations(seeded);
-      return seeded;
-    }
-    const parsed: unknown = JSON.parse(raw);
-    return isConversationArray(parsed) ? parsed : seedConversations();
-  } catch {
-    return seedConversations();
-  }
+  memoryConversations ??= seedConversations();
+  return memoryConversations;
 }
 
 export function writeConversations(conversations: readonly AiConversation[]): void {
-  try {
-    window.localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
-  } catch {
-    // Storage unavailable/full — the session keeps working in memory.
-  }
+  memoryConversations = conversations;
 }
 
 /* ── Settings ───────────────────────────────────────────────────── */
 
-export function readSettings(): AiSettings {
+const PROMPT_IDS: ReadonlySet<string> = new Set(AI_PROMPTS.map((prompt) => prompt.id));
+
+/**
+ * Settings reduced to the closed shape they may hold: each field is taken
+ * only when it is a valid member of its type, else the default stands; an
+ * unknown key is dropped, and a favourite is kept only if it names a prompt
+ * in the catalogue. So what is stored, and what survives logout, can never
+ * carry free text — a patient's name included.
+ */
+export function sanitizeAiSettings(value: unknown): AiSettings {
+  if (typeof value !== 'object' || value === null) return DEFAULT_AI_SETTINGS;
+  const candidate = value as Record<string, unknown>;
+  const d = DEFAULT_AI_SETTINGS;
+  const temperature = candidate['temperature'];
+  const responseLength = candidate['responseLength'];
+  const language = candidate['language'];
+  const favorites = candidate['favoritePromptIds'];
+  return {
+    temperature:
+      typeof temperature === 'number' && AI_TEMPERATURES.includes(temperature)
+        ? temperature
+        : d.temperature,
+    responseLength:
+      typeof responseLength === 'string' &&
+      (AI_RESPONSE_LENGTHS as readonly string[]).includes(responseLength)
+        ? (responseLength as AiResponseLength)
+        : d.responseLength,
+    language:
+      typeof language === 'string' && Object.keys(AI_LANGUAGE_META).includes(language)
+        ? (language as AiLanguage)
+        : d.language,
+    autoContext:
+      typeof candidate['autoContext'] === 'boolean' ? candidate['autoContext'] : d.autoContext,
+    streaming: typeof candidate['streaming'] === 'boolean' ? candidate['streaming'] : d.streaming,
+    favoritePromptIds: Array.isArray(favorites)
+      ? [
+          ...new Set(
+            favorites.filter(
+              (id: unknown): id is string => typeof id === 'string' && PROMPT_IDS.has(id),
+            ),
+          ),
+        ]
+      : d.favoritePromptIds,
+  };
+}
+
+/** The user's settings; the defaults when signed out or nothing is stored. */
+export function readSettings(userId: string | null): AiSettings {
+  if (userId === null) return DEFAULT_AI_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    const raw = window.localStorage.getItem(settingsKey(userId));
     if (raw === null) return DEFAULT_AI_SETTINGS;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return DEFAULT_AI_SETTINGS;
-    return { ...DEFAULT_AI_SETTINGS, ...(parsed as Partial<AiSettings>) };
+    return sanitizeAiSettings(JSON.parse(raw));
   } catch {
     return DEFAULT_AI_SETTINGS;
   }
 }
 
-export function writeSettings(settings: AiSettings): void {
+export function writeSettings(settings: AiSettings, userId: string | null): void {
+  // No user means no namespace a logout would clear — keep it in memory.
+  if (userId === null) return;
   try {
-    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    window.localStorage.setItem(settingsKey(userId), JSON.stringify(sanitizeAiSettings(settings)));
   } catch {
     // Storage unavailable — settings stay session-local.
   }

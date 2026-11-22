@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient, UPLOAD_TIMEOUT_MS } from '@/api/client';
 import { envelope, json, stubApi } from '@/test/api-stub';
 
 import {
@@ -124,6 +125,18 @@ describe('the profile photo (NEW-13)', () => {
     expect(part).toBeInstanceOf(Blob);
     expect((part as Blob).type).toBe('image/png');
     expect(saved.fullName).toBe('Dr. Amelia Chen');
+  });
+
+  it('gives the photo upload the longer multipart timeout (D2)', async () => {
+    stubApi({ 'PUT /me/profile/photo': () => envelope(VIEW) });
+    const put = vi.spyOn(apiClient, 'put');
+
+    await putProfilePhoto(new Blob(['png'], { type: 'image/png' }));
+
+    expect(put).toHaveBeenCalledWith('/me/profile/photo', expect.any(FormData), {
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+    put.mockRestore();
   });
 
   it("passes the server's refusal through: its 422 on `photo`, and its 503", async () => {

@@ -66,7 +66,7 @@ rewrites. Several original details are superseded (below).
 
 - [x] [FRONTEND] Auth pages, guards, idle lock, locale provider
 - [x] [FRONTEND] [BACKEND] Real auth seam and refresh (A-12)
-- [ ] [BACKEND] Re-authentication endpoint for the lock screen — Phase 22
+- [x] [BACKEND] Re-authentication endpoint for the lock screen — Phase 22 · *verified 2026-11-22: `POST /me/password/verify` on `main`, used by the lock screen (`api/endpoints/auth.ts`)*
 - [ ] [BACKEND] Fix F33 (admin TOTP in seed/dev) — Phase 22
 - [ ] [BACKEND] Hospital-aware session (current hospital from employment) — Phase 22
 - [ ] [FRONTEND] Role guards for doctor, Hospital Admin and Platform Admin (OD-07); **no** hospital switcher — Phases 25, 26

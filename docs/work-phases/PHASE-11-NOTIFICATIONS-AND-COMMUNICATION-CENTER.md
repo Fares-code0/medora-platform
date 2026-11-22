@@ -55,8 +55,8 @@ each notification (realigned 2026-10-07; formerly "organization", API-P19/API-W0
 
 - [x] [FRONTEND] Inbox, drawer/popover, bulk selection, preferences UI
 - [x] [FRONTEND] Shell badge seam and live badges (FE-10.8)
-- [ ] [BACKEND] Notification preference and inbox-action routes — Phase 29
-- [ ] [BACKEND] Messaging API on `main` (M20 from `backend`) — Phase 29
+- [x] [BACKEND] Notification preference and inbox-action routes — Phase 29 · *verified 2026-11-22: `/me/notification-preferences` and `/notifications/:id/{read,unread,archive,favorite,pin}`, `read-all`, `clear-read` on `main`*
+- [x] [BACKEND] Messaging API on `main` (M20 from `backend`) — Phase 29 · *verified 2026-11-22: `backend/src/modules/messaging` on `main`*
 - [ ] [FRONTEND] Wire preferences/actions/communication tab — Phase 29
 - [ ] [BACKEND] `hospital {id, name}` on notifications — Phase 22
 

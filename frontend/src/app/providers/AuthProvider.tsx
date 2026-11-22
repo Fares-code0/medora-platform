@@ -14,6 +14,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/api/client';
 import { sessionPolicy } from '@/configs/session';
 import { authService } from '@/features/auth/service';
+import {
+  clearAiSessionData,
+  removeLegacyAiStorage,
+} from '@/features/doctor/ai/model/session-storage';
 import { clearUserPreferences } from '@/services/preferences';
 import { AuthError } from '@/types/auth';
 import type {
@@ -120,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A sign-in starts from an empty cache, whoever held the tab before: the
       // cached lists are another session's patient data, never this one's.
       queryClient.clear();
+      clearAiSessionData();
       authService.persist(session, rememberMe);
       pendingRef.current = null;
       rememberRef.current = rememberMe;
@@ -134,6 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const endSession = useCallback(() => {
     authService.clear();
     queryClient.clear();
+    // The assistant's conversations are PHI held in memory too (S1).
+    clearAiSessionData();
     pendingRef.current = null;
     setUser(null);
     setStatus('unauthenticated');
@@ -144,6 +151,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // httpOnly cookie on the HTTP one. Either way an absent or expired
   // session lands on login rather than hanging on the splash.
   useEffect(() => {
+    // Pre-S1 builds kept assistant chats under global keys no logout
+    // cleared; whatever a browser still holds there goes on first load.
+    removeLegacyAiStorage();
     let cancelled = false;
 
     void authService
@@ -254,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // The lock screen replaces the routed tree, so nothing mounted still
     // reads what this drops; unlocking refetches what the next page needs.
     queryClient.clear();
+    clearAiSessionData();
     setStatus((prev) => (prev === 'authenticated' ? 'locked' : prev));
   }, [queryClient]);
 

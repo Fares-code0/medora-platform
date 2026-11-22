@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveEnableMocks } from './env';
+import { resolveApiBaseUrl, resolveEnableMocks } from './env';
 
 /**
  * The production mock guard.
@@ -64,5 +64,61 @@ describe('resolveEnableMocks — development and staging', () => {
 
   it('leaves mocks off when explicitly disabled', () => {
     expect(resolveEnableMocks('development', 'false')).toBe(false);
+  });
+});
+
+/**
+ * S2 — the API base URL in a production build. The schema only proves the
+ * value is a URL; a production deploy pointed at `http://` would carry the
+ * bearer token, the refresh cookie and patient data in clear text.
+ */
+describe('resolveApiBaseUrl — production', () => {
+  it('accepts an https URL', () => {
+    expect(resolveApiBaseUrl('production', 'https://api.medora.health/api/v1')).toBe(
+      'https://api.medora.health/api/v1',
+    );
+  });
+
+  it('rejects a plain-http URL to a remote host', () => {
+    expect(() => resolveApiBaseUrl('production', 'http://api.medora.health/api/v1')).toThrow(
+      /VITE_API_BASE_URL must use https:\/\/ with VITE_APP_ENV=production/,
+    );
+  });
+
+  it('rejects plain http to a LAN address too — only loopback is exempt', () => {
+    expect(() => resolveApiBaseUrl('production', 'http://10.0.0.5:3000/api/v1')).toThrow(
+      /must use https/,
+    );
+    expect(() => resolveApiBaseUrl('production', 'http://localhost.evil.com/api/v1')).toThrow(
+      /must use https/,
+    );
+  });
+
+  it('allows plain http to localhost and 127.0.0.1, and the schema default', () => {
+    expect(resolveApiBaseUrl('production', 'http://localhost:3000/api/v1')).toBe(
+      'http://localhost:3000/api/v1',
+    );
+    expect(resolveApiBaseUrl('production', 'http://127.0.0.1:3000/api/v1')).toBe(
+      'http://127.0.0.1:3000/api/v1',
+    );
+  });
+
+  it('rejects a non-http scheme even on loopback', () => {
+    expect(() => resolveApiBaseUrl('production', 'ftp://localhost/api/v1')).toThrow(
+      /must use https/,
+    );
+  });
+});
+
+describe('resolveApiBaseUrl — development and staging', () => {
+  it('accepts plain http outside production, as the demo build needs', () => {
+    // `vercel.json` builds the demo with VITE_APP_ENV=staging and no base URL,
+    // so it runs on the http://localhost default it never calls.
+    expect(resolveApiBaseUrl('staging', 'http://api.staging.local/api/v1')).toBe(
+      'http://api.staging.local/api/v1',
+    );
+    expect(resolveApiBaseUrl('development', 'http://192.168.1.4:3000/api/v1')).toBe(
+      'http://192.168.1.4:3000/api/v1',
+    );
   });
 });

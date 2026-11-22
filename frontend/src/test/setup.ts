@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 
+import { transferableAbortController } from 'node:util';
+
 import { cleanup, configure } from '@testing-library/react';
 import { MotionGlobalConfig } from 'framer-motion';
 import { afterEach, vi } from 'vitest';
@@ -137,3 +139,43 @@ elements.scrollIntoView ??= () => undefined;
  * own `vi.spyOn` still wins.
  */
 HTMLCanvasElement.prototype.getContext = () => null;
+
+/**
+ * Vitest's jsdom environment replaces `AbortController`/`AbortSignal` with
+ * jsdom's, but leaves `Request` as Node's own (undici). A data router builds
+ * every navigation as `new Request(url, { signal })`, so the two meet.
+ *
+ * - **Node 20** (CI) accepts the signal, so this mismatch passed unnoticed.
+ * - **Node 24** (observed 2026-11-13; `engines` allows `>=20`) brand-checks
+ *   it and throws "Expected signal to be an instance of AbortSignal". The
+ *   navigation dies, and the page never leaves where it was
+ *   (`NewMedicalRecordPage.test.tsx`, "a record created without its note…").
+ *
+ * In a browser both classes come from one realm, so this is a property of the
+ * test environment, not of the app. The fix is Node 20's behaviour, made
+ * explicit: a foreign signal is mirrored by a native one that aborts with it,
+ * and a native signal passes through untouched.
+ *
+ * The router reads `request.signal.aborted` to drop an interrupted
+ * navigation, including one waiting on a `lazy` route, so the abort is
+ * forwarded rather than the signal dropped.
+ */
+const NodeRequest = globalThis.Request;
+const NativeAbortSignal = transferableAbortController().signal.constructor;
+
+globalThis.Request = class RequestAcceptingJsdomSignals extends NodeRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    const signal = init?.signal;
+    if (!signal || signal instanceof NativeAbortSignal) {
+      super(input, init);
+      return;
+    }
+    const native = transferableAbortController();
+    if (signal.aborted) {
+      native.abort(signal.reason);
+    } else {
+      signal.addEventListener('abort', () => native.abort(signal.reason), { once: true });
+    }
+    super(input, { ...init, signal: native.signal });
+  }
+};

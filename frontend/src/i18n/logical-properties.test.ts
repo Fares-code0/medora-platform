@@ -42,6 +42,14 @@ const BANNED = [
   /(?<![\w-])rounded-[lr](?:-|(?![\w-]))/,
 ];
 
+/**
+ * The whole-tree scan below reads and walks every file in `src/` (~1 s when
+ * run alone). Under a full-suite run it shares the CPU with every other
+ * worker and overran Vitest's 5 s default — a load flake, not a slow check.
+ * 30 s gives it room without hiding a genuine hang; no assertion changes.
+ */
+const WHOLE_TREE_SCAN_TIMEOUT_MS = 30_000;
+
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = join(dir, entry);
@@ -51,27 +59,31 @@ function sourceFiles(dir: string): string[] {
 }
 
 describe('layout is written in logical properties', () => {
-  it('uses no physical direction utility anywhere in src/', () => {
-    // Vitest's root is `frontend/`; a wrong root throws here rather than
-    // scanning nothing and passing.
-    const offenders: string[] = [];
+  it(
+    'uses no physical direction utility anywhere in src/',
+    () => {
+      // Vitest's root is `frontend/`; a wrong root throws here rather than
+      // scanning nothing and passing.
+      const offenders: string[] = [];
 
-    for (const file of sourceFiles(SRC)) {
-      // This file quotes every banned pattern in its own table.
-      if (file.endsWith('logical-properties.test.ts')) continue;
+      for (const file of sourceFiles(SRC)) {
+        // This file quotes every banned pattern in its own table.
+        if (file.endsWith('logical-properties.test.ts')) continue;
 
-      const lines = readFileSync(file, 'utf8').split('\n');
-      lines.forEach((line, index) => {
-        // An explicit `rtl:`/`ltr:` variant is the sanctioned exception.
-        if (/(?:^|[\s"'`:])(?:rtl|ltr):/.test(line)) return;
-        if (BANNED.some((pattern) => pattern.test(line))) {
-          offenders.push(`${relative(SRC, file).replace(/\\/g, '/')}:${String(index + 1)}`);
-        }
-      });
-    }
+        const lines = readFileSync(file, 'utf8').split('\n');
+        lines.forEach((line, index) => {
+          // An explicit `rtl:`/`ltr:` variant is the sanctioned exception.
+          if (/(?:^|[\s"'`:])(?:rtl|ltr):/.test(line)) return;
+          if (BANNED.some((pattern) => pattern.test(line))) {
+            offenders.push(`${relative(SRC, file).replace(/\\/g, '/')}:${String(index + 1)}`);
+          }
+        });
+      }
 
-    expect(offenders).toEqual([]);
-  });
+      expect(offenders).toEqual([]);
+    },
+    WHOLE_TREE_SCAN_TIMEOUT_MS,
+  );
 
   it('finds files to scan at all', () => {
     // Guards the guard: a broken walker would report zero offenders forever.

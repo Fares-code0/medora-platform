@@ -54,4 +54,16 @@ describe('useClinicScope', () => {
     user = { ...doctor, role: 'admin' };
     expect(renderHook(() => useClinicScope()).result.current).toBe(UNSCOPED);
   });
+
+  it.each(['reception', 'laboratory', 'pharmacy'] as const)(
+    'fails closed for %s — not an administrator, so never every clinic (D3)',
+    (role) => {
+      user = { ...doctor, role };
+      expect(renderHook(() => useClinicScope()).result.current).toBeNull();
+
+      // A clinic on the session does not change that: only a doctor is pinned.
+      user = { ...doctor, role, clinicId: 'clinic-a' };
+      expect(renderHook(() => useClinicScope()).result.current).toBeNull();
+    },
+  );
 });
