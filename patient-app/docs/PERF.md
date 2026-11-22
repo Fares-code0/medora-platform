@@ -23,12 +23,12 @@ nobody can check is a wish; a budget with a number and a check is a gate.
 
 | | |
 |---|---|
-| **Measured** | **3,050,216 bytes (3.05 MB)** — the Android Hermes bytecode bundle, `dist/_expo/static/js/android/*.hbc` |
-| **Budget** | **3.20 MB** |
+| **Measured** | **3,216,658 bytes (3.22 MB)** on 2026-11-22 — the Android Hermes bytecode bundle, `dist/_expo/static/js/android/*.hbc` |
+| **Budget** | **3.40 MB** (3.20 MB until 2026-11-22; see "Raised to 3.40 MB" below) |
 | **Enforced by** | `src/test/bundle-budget.test.ts` |
 | **Method** | `npm run build` (which is `expo export --platform android`), then the test reads the `.hbc` |
 
-### Why 3.20 MB
+### Why 3.20 MB (the original ceiling)
 
 About 10% of headroom over the current bundle. That is deliberately loose enough
 that ordinary feature work never trips it, and tight enough that **one
@@ -111,6 +111,34 @@ than leaving it to be discovered: at 15 KB a day the ceiling is about ten
 working days away, and the honest options when it arrives are to spend the
 headroom deliberately or to raise the ceiling with an argument — not to
 discover it in a red CI run. Whoever spends the next 100 KB should say which.
+
+### Raised to 3.40 MB (2026-11-22)
+
+This is the deliberate raise the paragraphs above asked for, with the
+measurements. Both bundles were built on the same machine with `expo export
+--platform android`:
+
+| Tree | Bundle | Against 3,200,000 |
+|---|---|---|
+| `main` at `db1db742` | **3,193,622 bytes** | 6,378 bytes of headroom (0.2%) |
+| The session-restore and checklist branch | **3,216,658 bytes** (CI measured 3,216,521) | 16,658 bytes over |
+
+The branch costs **23,036 bytes** and adds **no dependency**. It is about ten
+features' worth of code: the session-unconfirmed screen and its stack, the
+refresh-outcome rules, keychain-failure handling, the reset-link parser, the
+unlinked-account state, the auth-error mapping, and their catalogue entries in
+two languages. That is the rate this section has recorded all along (about 60 KB
+for eleven features). `main` had already spent the headroom down to 0.2%, so the
+ceiling was going to be reached by whichever feature landed next.
+
+**The choice is to raise it, not to spend features to stay under it.** The
+guard exists to catch a substantial library arriving unnoticed, and a 22 KB
+increase spread across ten features with no new package is not that. The new
+ceiling, 3,400,000 bytes, leaves **183,342 bytes (5.7%)** above today's figure.
+That is the same margin this section accepted on 2026-09-12 (5.2%). It is tight
+enough that a date library with its locale data, or an i18n runtime, still
+fails the build. The rule above is unchanged: the number should only go down,
+and the next raise needs its own argument here.
 
 ### What the size means
 
