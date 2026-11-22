@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { SEED_CONVERSATIONS } from './seed';
 import {
   clearConversationsSession,
+  lockConversationsSession,
+  unlockConversationsSession,
   removeLegacyConversationsStorage,
   setConversationsOwner,
 } from './session-boundary';
@@ -123,6 +125,94 @@ describe('per-user isolation', () => {
     expect(window.localStorage.length).toBe(0);
     // In-memory only, and dropped as soon as an owner is set.
     setConversationsOwner('user-a');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+  });
+});
+
+describe('lock and unlock', () => {
+  function edited(unreadCount: number) {
+    const [first] = SEED_CONVERSATIONS;
+    if (first === undefined) throw new Error('SEED_CONVERSATIONS is empty');
+    return [{ ...first, unreadCount }];
+  }
+
+  it('keeps same-user messages across lock and unlock', () => {
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+    // While locked nothing is readable or writable.
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    writeStoredConversations(edited(99));
+    // Held in memory, off disk: a tab closed at the lock screen leaves nothing.
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    unlockConversationsSession('user-a');
+    expect(readStoredConversations()).toEqual(edited(11));
+  });
+
+  it('never shows locked-user messages to a different user', () => {
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+
+    unlockConversationsSession('user-b');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // And the first user does not get them back later either.
+    setConversationsOwner('user-a');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+  });
+
+  it('a sign-in as another user while locked clears the locked user data', () => {
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+    setConversationsOwner('user-b');
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+  });
+
+  it('logout from the lock screen clears the locked user data', () => {
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+    clearConversationsSession();
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    unlockConversationsSession('user-a');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+  });
+});
+
+describe('nothing on disk behind the lock screen', () => {
+  function edited(unreadCount: number) {
+    const [first] = SEED_CONVERSATIONS;
+    if (first === undefined) throw new Error('SEED_CONVERSATIONS is empty');
+    return [{ ...first, unreadCount }];
+  }
+  const messagingKeys = () =>
+    Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)).filter(
+      (key) => key?.startsWith('medora.messaging') === true,
+    );
+
+  it('leaves no messaging key at all while locked, so a tab closed there leaves nothing', () => {
+    writeStoredConversations(edited(11));
+    expect(messagingKeys()).toEqual([STORAGE_KEY]);
+    lockConversationsSession();
+    expect(messagingKeys()).toEqual([]);
+  });
+
+  it('does not touch another user’s key when it locks', () => {
+    window.localStorage.setItem('medora.messaging.v1.user-other', '[]');
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+    expect(window.localStorage.getItem('medora.messaging.v1.user-other')).toBe('[]');
+  });
+
+  it('a held copy is not handed back by a plain owner change, only by unlock', () => {
+    writeStoredConversations(edited(11));
+    lockConversationsSession();
+    setConversationsOwner('user-a');
+    expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
+    // And the drop is final: a later unlock has nothing to restore.
+    unlockConversationsSession('user-a');
     expect(readStoredConversations()).toEqual(SEED_CONVERSATIONS);
   });
 });

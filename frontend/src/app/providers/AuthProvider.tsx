@@ -20,8 +20,10 @@ import {
 } from '@/features/doctor/ai/model/session-storage';
 import {
   clearConversationsSession,
+  lockConversationsSession,
   removeLegacyConversationsStorage,
   setConversationsOwner,
+  unlockConversationsSession,
 } from '@/features/shared-domain/conversations/session-boundary';
 import { clearUserPreferences } from '@/services/preferences';
 import { AuthError } from '@/types/auth';
@@ -125,15 +127,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Session lifecycle helpers ───────────────────────────────────────────
   const finalize = useCallback(
-    (session: AuthSession, rememberMe: boolean): SessionUser => {
+    (session: AuthSession, rememberMe: boolean, opts?: { resumingLock?: boolean }): SessionUser => {
       // A sign-in starts from an empty cache, whoever held the tab before: the
       // cached lists are another session's patient data, never this one's.
       queryClient.clear();
       clearAiSessionData();
-      // Mock messaging is per user: the previous holder's copy goes, and the
-      // store is pointed at this session's user.
-      clearConversationsSession();
-      setConversationsOwner(session.user.id);
+      if (opts?.resumingLock) {
+        // An unlock through the `/auth/login` fallback: the user who locked
+        // gets their own mock messaging back; anyone else starts fresh.
+        unlockConversationsSession(session.user.id);
+      } else {
+        // Mock messaging is per user: the previous holder's copy goes, and the
+        // store is pointed at this session's user.
+        clearConversationsSession();
+        setConversationsOwner(session.user.id);
+      }
       authService.persist(session, rememberMe);
       pendingRef.current = null;
       rememberRef.current = rememberMe;
@@ -277,7 +285,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // reads what this drops; unlocking refetches what the next page needs.
     queryClient.clear();
     clearAiSessionData();
-    clearConversationsSession();
+    // Mock messaging is taken off disk and held in memory, not wiped: only the
+    // same user's unlock in this tab puts it back; logout, another user or a
+    // closed tab loses it.
+    lockConversationsSession();
     setStatus((prev) => (prev === 'authenticated' ? 'locked' : prev));
   }, [queryClient]);
 
@@ -289,9 +300,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // (`/me/password/verify`, or the mock) — and it simply resumes. A
       // session comes back only from the `/auth/login` fallback against an
       // API without the verify route.
-      if (session) finalize(session, rememberRef.current);
+      if (session) finalize(session, rememberRef.current, { resumingLock: true });
       else {
-        setConversationsOwner(user.id);
+        unlockConversationsSession(user.id);
         setStatus('authenticated');
       }
     },
