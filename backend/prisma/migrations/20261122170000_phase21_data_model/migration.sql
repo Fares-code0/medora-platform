@@ -369,7 +369,7 @@ BEGIN
       RAISE EXCEPTION 'Vital sign encounter must belong to the same patient and hospital medical record'
         USING ERRCODE = '23514', CONSTRAINT = 'patient_vital_signs_record_scope_check';
     END IF;
-  ELSIF TG_TABLE_NAME IN ('lab_orders','prescriptions') AND NEW.record_id IS NOT NULL THEN
+  ELSIF TG_TABLE_NAME = 'prescriptions' AND NEW.record_id IS NOT NULL THEN
     SELECT hospital_id, hospital_medical_record_id, patient_id INTO target_scope FROM public.medical_records WHERE id = NEW.record_id;
     IF NOT FOUND OR
        ((target_scope.hospital_medical_record_id IS NOT NULL OR NEW.hospital_medical_record_id IS NOT NULL) AND
@@ -402,7 +402,6 @@ CREATE TRIGGER patient_medications_scoped_link_trg BEFORE INSERT OR UPDATE OF pr
 CREATE TRIGGER patient_studies_scoped_link_trg BEFORE INSERT OR UPDATE OF lab_order_id, hospital_id, hospital_medical_record_id ON public.patient_studies FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
 CREATE TRIGGER medical_records_scoped_link_trg BEFORE INSERT OR UPDATE OF appointment_id, hospital_id, hospital_medical_record_id ON public.medical_records FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
 CREATE TRIGGER patient_vital_signs_scoped_link_trg BEFORE INSERT OR UPDATE OF record_id, hospital_id, hospital_medical_record_id ON public.patient_vital_signs FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
-CREATE TRIGGER lab_orders_scoped_link_trg BEFORE INSERT OR UPDATE OF record_id, hospital_id, hospital_medical_record_id ON public.lab_orders FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
 CREATE TRIGGER prescriptions_scoped_link_trg BEFORE INSERT OR UPDATE OF record_id, hospital_id, hospital_medical_record_id ON public.prescriptions FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
 CREATE TRIGGER notifications_scoped_link_trg BEFORE INSERT OR UPDATE OF record_id, lab_order_id, prescription_id, appointment_id, hospital_id, hospital_medical_record_id ON public.notifications FOR EACH ROW EXECUTE FUNCTION public.validate_scoped_clinical_links();
 
