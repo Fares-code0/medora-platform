@@ -164,6 +164,14 @@ export function SessionProvider({
   const [pendingOtpToken, setPendingOtpToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const backgroundedAt = useRef<number | null>(null);
+  /**
+   * D-15: an absence past the lock threshold that ended while the session
+   * was not yet `authenticated` (`unconfirmed`, `booting`). There was
+   * nothing on screen to lock then, but a restore that lands afterwards
+   * must not open the app without the biometric prompt. Raised by the
+   * restore, dropped by anything that ends the session or signs in.
+   */
+  const lockOnRestore = useRef(false);
 
   /**
    * Which signed-in lifetime this is. `endSessionNow` moves it on, so the
@@ -211,6 +219,7 @@ export function SessionProvider({
       // Whatever ends a session also takes the lock down with it. A lock
       // left standing over the login screen would ask for a fingerprint
       // to reach a password field.
+      lockOnRestore.current = false;
       setLocked(false);
       setState({ status: 'unauthenticated', reason });
     },
@@ -277,6 +286,7 @@ export function SessionProvider({
         if ((await persistNow(result, null)) === 'unstorable') {
           throw new SessionStorageError();
         }
+        lockOnRestore.current = false;
         setLocked(false);
         activateNow(result, null);
       }),
@@ -295,16 +305,17 @@ export function SessionProvider({
    * `no-answer` is the only outcome that leaves the session where it was;
    * every other one has moved it (or found it already moved).
    *
-   * **Known limitation — backend-owned (audit M1).** "No answer" cannot
-   * tell "the request never arrived" from "the server rotated the token
-   * and the response was lost". In the second case the keychain still
-   * holds the superseded token; the next retry presents it, the backend
-   * reads a replay (`refresh.service.ts` `handlePossibleReplay`), revokes
-   * the session and logs `auth.refresh_reuse_detected`. The session ends
-   * correctly — but a security alarm fires for a dropped packet. A client
-   * cannot fix this without guessing at server state, so it does not try:
-   * no grace period is invented here. The fix is server-side idempotent
-   * rotation; see the patient-app checklist, D-12.
+   * **A lost response (audit M1).** "No answer" cannot tell "the request
+   * never arrived" from "the server rotated the token and the response was
+   * lost". In the second case the keychain still holds the superseded
+   * token and the next retry presents it. The backend absorbs that with an
+   * idempotent grace window (ADR-045; `session.service.ts`
+   * `REFRESH_GRACE_WINDOW_SECONDS`, 30 s): the superseded token presented
+   * again within 30 seconds of its rotation is answered as a repeat of
+   * that rotation, not as a replay. A retry later than that is still read
+   * as reuse and refused with `401 unauthorized`, which ends the session
+   * here like any other refusal. The client keeps no grace logic of its
+   * own: the window is the server's to apply.
    */
   const exchangeStoredToken = useCallback(
     async (settle: () => Promise<void>): Promise<'no-answer' | 'settled'> => {
@@ -353,7 +364,11 @@ export function SessionProvider({
       if ((await serialized(() => persistNow(result, started))) !== 'persisted') return 'settled';
       await settle();
       await serialized(async () => {
-        activateNow(result, started);
+        if (activateNow(result, started) === 'active' && lockOnRestore.current) {
+          lockOnRestore.current = false;
+          logger.info('Biometric unlock required after a background timeout');
+          setLocked(true);
+        }
       });
       return 'settled';
     },
@@ -486,10 +501,25 @@ export function SessionProvider({
 
       const since = backgroundedAt.current;
       backgroundedAt.current = null;
-      // Nothing to protect when there was no absence, or no session.
-      if (since === null || status !== 'authenticated') return;
-
+      // Nothing to protect when there was no absence.
+      if (since === null) return;
       const action = decideOnForeground(Date.now() - since, lockPolicy);
+
+      if (status !== 'authenticated') {
+        // No session on screen yet, but one may be restored from the
+        // keychain after this (`retryRestore`). An absence that crossed the
+        // lock threshold is remembered so that restore raises the lock
+        // instead of opening the app unprompted (`lockOnRestore`). Signed
+        // out, there is nothing to restore and nothing to protect.
+        if (
+          (status === 'unconfirmed' || status === 'booting') &&
+          action !== 'none' &&
+          isBiometricUnlockEnabled()
+        ) {
+          lockOnRestore.current = true;
+        }
+        return;
+      }
       switch (action) {
         case 'reauthenticate':
           logger.info('Session ended after a background timeout; re-authentication required');

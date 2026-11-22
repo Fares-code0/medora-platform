@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
+
 import { StyleSheet, View } from 'react-native';
 
+import { useAnnounceOnChange } from '@/accessibility/useAnnounceOnChange';
 import { EndpointNotImplementedError } from '@/api/seam';
 import { useT, type MessageKey, type MessageParams } from '@/i18n';
 import { ResponseContractError } from '@/schemas/envelope';
@@ -57,6 +60,12 @@ interface Presentation {
    */
   readonly bodyParamKeys?: Readonly<Record<string, MessageKey>>;
   readonly retryable: boolean;
+  /**
+   * A rate limit is not retryable NOW but is once the server's wait has
+   * elapsed. Without this the patient reads "wait 30 seconds" and is then
+   * stuck on a screen with no way forward.
+   */
+  readonly retryAfterSeconds?: number;
 }
 
 function present(error: unknown): Presentation {
@@ -145,6 +154,7 @@ function presentApiError(error: ApiError): Presentation {
         bodyKey: 'state.error.rateLimited.body',
         bodyParams: { seconds: error.retryAfterSeconds },
         retryable: false,
+        retryAfterSeconds: error.retryAfterSeconds,
       };
     case 'validation':
       return {
@@ -181,6 +191,16 @@ export function ErrorState({ error, onRetry, testID }: ErrorStateProps) {
   const theme = useTheme();
   const t = useT();
   const presentation = present(error);
+  const waitSeconds = presentation.retryAfterSeconds;
+  const [waitElapsed, setWaitElapsed] = useState(false);
+
+  // The wait restarts for a new error; the message itself stays as it was.
+  useEffect(() => {
+    setWaitElapsed(false);
+    if (waitSeconds === undefined) return undefined;
+    const timer = setTimeout(() => setWaitElapsed(true), Math.max(waitSeconds, 0) * 1000);
+    return () => clearTimeout(timer);
+  }, [error, waitSeconds]);
   const title = t(presentation.titleKey);
   const body = t(presentation.bodyKey, {
     ...presentation.bodyParams,
@@ -188,6 +208,8 @@ export function ErrorState({ error, onRetry, testID }: ErrorStateProps) {
       Object.entries(presentation.bodyParamKeys ?? {}).map(([name, key]) => [name, t(key)]),
     ),
   });
+
+  useAnnounceOnChange(`${title}. ${body}`);
 
   return (
     <View
@@ -204,7 +226,7 @@ export function ErrorState({ error, onRetry, testID }: ErrorStateProps) {
       <Text variant="bodySm" color="textTertiary" align="center">
         {body}
       </Text>
-      {presentation.retryable && onRetry !== undefined ? (
+      {(presentation.retryable || waitElapsed) && onRetry !== undefined ? (
         <Button
           label={t('action.retry')}
           tone="secondary"

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { pressableA11y } from '@/accessibility/a11y';
+import { useAnnounceOnChange } from '@/accessibility/useAnnounceOnChange';
 import { useTheme } from '@/theme';
 
 import { Icon } from './Icon';
@@ -84,6 +85,7 @@ export function Input({
   const theme = useTheme();
   const [focused, setFocused] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  useAnnounceOnChange(error);
 
   const borderColor = error
     ? theme.colors.error
@@ -151,8 +153,10 @@ export function Input({
             onPress={() => setRevealed((current) => !current)}
             hitSlop={12}
             {...pressableA11y({
+              // TODO(i18n): no catalogue keys exist for these two labels yet.
               label: revealed ? 'Hide password' : 'Show password',
               disabled,
+              selected: revealed,
             })}
           >
             <Icon name={revealed ? 'eyeOff' : 'eye'} size={20} />

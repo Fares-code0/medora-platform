@@ -95,6 +95,9 @@ const registerResultSchema = z.object({
   email: z.string().min(1),
 });
 
+/** `POST /auth/refresh` gives up after this long; see `refresh` below. */
+export const REFRESH_TIMEOUT_MS = 10_000;
+
 export type LoginResponse = z.infer<typeof loginSchema>;
 export type SessionResponse = z.infer<typeof sessionSchema>;
 export type RegisterResponse = z.infer<typeof registerResultSchema>;
@@ -136,9 +139,17 @@ export const authEndpoints = {
    * `skipRefresh`: a refused refresh is `401 unauthorized`, the same code
    * the access-token guard uses, and this request must not answer its own
    * refusal by refreshing (`ApiClient` `RequestOptions.skipRefresh`).
+   *
+   * `timeoutMs`: shorter than the client's 30 s default because the cold
+   * start waits on this call behind the boot screen. A timeout is still
+   * "no answer" (`refresh-outcome.ts`): the session lands `unconfirmed`
+   * with the token kept, and is retried from there.
    */
   async refresh(body: { refreshToken: string }) {
-    const raw = await apiClient.post<unknown>('auth/refresh', body, { skipRefresh: true });
+    const raw = await apiClient.post<unknown>('auth/refresh', body, {
+      skipRefresh: true,
+      timeoutMs: REFRESH_TIMEOUT_MS,
+    });
     return parseResponse('POST /auth/refresh', sessionSchema, raw);
   },
 

@@ -1,3 +1,5 @@
+import { onlineManager } from '@tanstack/react-query';
+
 import { ResponseContractError } from '@/schemas/envelope';
 import { isApiError, isTokenExpiryError } from '@/types/api';
 
@@ -259,6 +261,44 @@ describe('ApiClient error normalisation', () => {
     controller.abort();
     await expect(promise).rejects.toMatchObject({ kind: 'cancelled' });
   });
+
+  it('never sends a request whose signal was aborted before it started', async () => {
+    const { calls } = stubFetch([json(200, { data: {} })]);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      new ApiClient(BASE).get('thing', { signal: controller.signal }),
+    ).rejects.toMatchObject({ kind: 'cancelled' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('reads Retry-After given as an HTTP-date', async () => {
+    const now = Date.parse('2026-11-22T10:00:00Z');
+    jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      stubFetch([json(429, {}, { 'Retry-After': 'Sun, 22 Nov 2026 10:02:00 GMT' })]);
+      await expect(new ApiClient(BASE).get('thing')).rejects.toMatchObject({
+        kind: 'rate_limited',
+        retryAfterSeconds: 120,
+      });
+    } finally {
+      jest.restoreAllMocks();
+    }
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['unreadable', 'soon'],
+    ['a date already past', 'Thu, 01 Jan 2026 00:00:00 GMT'],
+    ['zero', '0'],
+  ])('falls back to thirty seconds when Retry-After is %s', async (_label, header) => {
+    stubFetch([json(429, {}, header === undefined ? {} : { 'Retry-After': header })]);
+    await expect(new ApiClient(BASE).get('thing')).rejects.toMatchObject({
+      kind: 'rate_limited',
+      retryAfterSeconds: 30,
+    });
+  });
 });
 
 describe('401 handling', () => {
@@ -489,6 +529,70 @@ describe('401 handling', () => {
     expect(onLost).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a 500', 500],
+    ['a 503', 503],
+  ])('keeps the session when the refresh gets %s', async (_label, status) => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    const refreshError = await normalizeHttpError(json(status, { message: 'down' }));
+    client.setRefreshHandler(() => Promise.reject(refreshError));
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/appointments')).rejects.toMatchObject({ kind: 'server', status });
+    expect(onLost).not.toHaveBeenCalled();
+  });
+
+  it('notifies session loss once when concurrent 401s share a refused refresh', async () => {
+    stubFetch([json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    let resolveRefresh: (token: string | null) => void = () => undefined;
+    const refresh = jest.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    const settled = Promise.allSettled([client.get('a'), client.get('b'), client.get('c')]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveRefresh(null);
+
+    const outcomes = await settled;
+    expect(outcomes.every((outcome) => outcome.status === 'rejected')).toBe(true);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(onLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays at most once: a refresh that succeeds but the replay 401s again stops there', async () => {
+    const { calls } = stubFetch([json(401, GUARD_401), json(401, GUARD_401)]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    client.setRefreshHandler(refresh);
+
+    await expect(client.get('thing')).rejects.toMatchObject({ kind: 'auth' });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not refresh on a 429 from an ordinary request', async () => {
+    const { calls } = stubFetch([json(429, { code: 'rate_limited' }, { 'Retry-After': '5' })]);
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('new-token'));
+    const onLost = jest.fn();
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    await expect(client.get('me/appointments')).rejects.toMatchObject({ kind: 'rate_limited' });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
   // A handler that throws something that is not an ApiError is a defect,
   // not a transport failure. Ending the session is the safe reading: the
   // alternative is a session that 401s on every call, forever.
@@ -583,6 +687,18 @@ describe('retry policy', () => {
 
   it('gives up after two attempts', () => {
     expect(shouldRetry(2, { kind: 'network' })).toBe(false);
+  });
+
+  it('does not retry a network failure while the phone is offline', () => {
+    // The offline error state appears at once instead of after the
+    // back-off; `refetchOnReconnect` re-asks when the signal returns.
+    onlineManager.setOnline(false);
+    try {
+      expect(shouldRetry(0, { kind: 'network' })).toBe(false);
+    } finally {
+      onlineManager.setOnline(true);
+    }
+    expect(shouldRetry(0, { kind: 'network' })).toBe(true);
   });
 
   it('does not retry something that is not an API error at all', () => {

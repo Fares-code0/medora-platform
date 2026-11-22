@@ -54,6 +54,9 @@ export function Chip({
         styles.chip,
         {
           minHeight: 32,
+          // Width floor for a one- or two-character label; height comes
+          // from the vertical hitSlop (32 + 2x8 = 48).
+          minWidth: 44,
           borderRadius: theme.radius.pill,
           paddingHorizontal: theme.space[3],
           borderColor: disabled

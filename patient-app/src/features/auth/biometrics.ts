@@ -129,9 +129,21 @@ export const expoBiometricGate: BiometricGate = {
       });
       if (result.success) return 'success';
       // `error` is an SDK code string, not free text and not PHI.
-      return result.error === 'user_cancel' || result.error === 'system_cancel'
-        ? 'cancelled'
-        : 'failed';
+      switch (result.error) {
+        case 'user_cancel':
+        case 'system_cancel':
+          return 'cancelled';
+        // Nothing enrolled any more, no usable sensor, or no device
+        // passcode (which the OS requires before it will run biometrics):
+        // another attempt can never succeed, so the lock screen must point
+        // at the password path rather than offer a retry.
+        case 'not_enrolled':
+        case 'not_available':
+        case 'passcode_not_set':
+          return 'unavailable';
+        default:
+          return 'failed';
+      }
     } catch {
       return 'unavailable';
     }

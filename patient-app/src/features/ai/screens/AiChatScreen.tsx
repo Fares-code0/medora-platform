@@ -1,10 +1,11 @@
 import { useState } from 'react';
 
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, ScrollView, StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import { EmptyState, Text } from '@/components';
+import { useKeyboardAvoidance } from '@/components/layout/screen-content';
 import { useT } from '@/i18n';
 import type { HomeStackParamList, RootStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
@@ -52,8 +53,9 @@ import type { AiTurnState } from '../model/types';
  *
  * ── Keyboard ────────────────────────────────────────────────────────
  *
- * `KeyboardAvoidingView` with the platform's own behaviour, so the
- * composer is not covered by the keyboard on iOS. The transcript is a
+ * `KeyboardAvoidingView` with `padding` on both platforms and the header
+ * height as its offset (`useKeyboardAvoidance`), so the composer is not
+ * covered by the keyboard on iOS or on edge-to-edge Android. The transcript is a
  * plain `ScrollView` rather than a `FlatList`: a list of one empty state
  * needs no virtualisation, and swapping it in when there are real
  * messages is a smaller change than unpicking a premature one.
@@ -65,6 +67,7 @@ export function AiChatScreen() {
   const t = useT();
   const navigation = useNavigation<AiNavigation>();
   const availability = useAiAvailability();
+  const keyboardAvoidance = useKeyboardAvoidance();
 
   const [draft, setDraft] = useState('');
 
@@ -77,7 +80,7 @@ export function AiChatScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.fill, { backgroundColor: theme.colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      {...keyboardAvoidance}
     >
       {/* Outside the scroll, so it cannot be scrolled away (K-03). */}
       <View style={{ padding: theme.screenGutter, paddingBottom: 0 }}>
