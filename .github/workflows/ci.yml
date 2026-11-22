@@ -164,6 +164,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Focused ADR-010 scope test
+        run: npm run test -- test/schema-adr010.e2e-spec.ts
+
       - name: Test
         run: npm run test
 
