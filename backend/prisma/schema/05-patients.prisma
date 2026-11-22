@@ -183,8 +183,8 @@ model PatientAllergy {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_allergies_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_allergies_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_allergies_hospital_scope_idx")
 
   @@map("patient_allergies")
 }
@@ -231,6 +231,7 @@ model PatientEmergencyContact {
 
   @@index([patientId])
   @@index([deletedAt])
+  @@unique([patientId], where: raw("is_primary"), map: "patient_emergency_contacts_one_primary")
   @@map("patient_emergency_contacts")
 }
 
@@ -259,6 +260,7 @@ model PatientInsurance {
   @@unique([patientId, policyNumber])
   @@index([providerId])
   @@index([deletedAt])
+  @@unique([patientId], where: raw("is_active"), map: "patient_insurance_one_active")
   @@map("patient_insurance")
 }
 
@@ -290,8 +292,8 @@ model PatientDocument {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_documents_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_documents_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_documents_hospital_scope_idx")
 
   @@map("patient_documents")
 }
@@ -327,8 +329,8 @@ model PatientNote {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_notes_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_notes_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_notes_hospital_scope_idx")
 
   @@map("patient_notes")
 }
@@ -361,8 +363,8 @@ model PatientMedicalHistory {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_medical_history_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_medical_history_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_medical_history_hospital_scope_idx")
 
   @@map("patient_medical_history")
 }
@@ -426,8 +428,8 @@ model PatientVitalSign {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_vital_signs_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_vital_signs_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_vital_signs_hospital_scope_idx")
 
   @@map("patient_vital_signs")
 }
@@ -456,8 +458,8 @@ model PatientClinicalAlert {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_clinical_alerts_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_clinical_alerts_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_clinical_alerts_hospital_scope_idx")
 
   @@map("patient_clinical_alerts")
 }
@@ -501,8 +503,8 @@ model PatientMedication {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_medications_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_medications_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_medications_hospital_scope_idx")
 
   @@map("patient_medications")
 }
@@ -538,8 +540,8 @@ model PatientStudy {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "patient_studies_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "patient_studies_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "patient_studies_hospital_scope_idx")
 
   @@map("patient_studies")
 }
@@ -576,7 +578,7 @@ model DoctorAvailability {
   @@unique([doctorEmploymentId, weekday, startTime], where: raw("doctor_employment_id IS NOT NULL"), map: "doctor_availability_employment_unique")
   hospitalId String? @map("hospital_id") @db.Uuid
   doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
-  employment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+  employment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict, map: "doctor_availability_employment_fkey")
   @@index([doctorEmploymentId], map: "doctor_availability_employment_idx")
 
   @@map("doctor_availability")
@@ -611,7 +613,7 @@ model DoctorTimeOff {
   @@index([doctorId, startsAt, endsAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
-  employment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+  employment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict, map: "doctor_time_off_employment_fkey")
   @@index([doctorEmploymentId], map: "doctor_time_off_employment_idx")
 
   @@map("doctor_time_off")

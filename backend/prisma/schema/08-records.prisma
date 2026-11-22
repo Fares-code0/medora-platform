@@ -83,13 +83,14 @@ model MedicalRecord {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
-  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "medical_records_hospital_department_fkey")
   hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
-  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict)
-  @@index([hospitalId, hospitalMedicalRecordId], map: "medical_records_hospital_scope_idx")
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "medical_records_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "medical_records_hospital_scope_idx")
   doctorEmploymentId String? @map("doctor_employment_id") @db.Uuid
-  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict)
+  doctorEmployment DoctorEmployment? @relation(fields: [doctorEmploymentId, hospitalId, doctorId], references: [id, hospitalId, doctorId], onDelete: Restrict, map: "medical_records_doctor_employment_fkey")
 
+  @@index([hospitalId, hospitalDepartmentId], map: "medical_records_hospital_department_idx")
   @@map("medical_records")
 }
 
@@ -116,6 +117,7 @@ model RecordDiagnosis {
 
   @@unique([recordId, icdCodeId])
   @@index([icdCodeId])
+  @@unique([recordId], where: raw("is_primary"), map: "record_diagnoses_one_primary")
   @@map("record_diagnoses")
 }
 
@@ -285,6 +287,7 @@ model RecordIssueReport {
 
   @@index([status, createdAt])
   @@index([recordId])
+  @@index([createdAt], where: raw("status <> 'resolved'"), map: "record_issue_reports_open_idx")
   @@map("record_issue_reports")
 }
 

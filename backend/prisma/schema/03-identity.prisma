@@ -300,6 +300,7 @@ model Session {
   /// lookup that the single-session policy and "sign out all others" run.
   @@index([userId])
   @@index([expiresAt])
+  @@index([userId], where: raw("revoked_at IS NULL"), map: "sessions_user_id_live_idx")
   @@map("sessions")
 }
 

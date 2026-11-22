@@ -147,6 +147,7 @@ model DoctorSpecialty {
 
   @@id([doctorId, specialtyId])
   @@index([specialtyId])
+  @@unique([doctorId], where: raw("is_primary"), map: "doctor_specialties_one_primary")
   @@map("doctor_specialties")
 }
 
@@ -265,7 +266,7 @@ model StaffShiftAssignment {
   @@index([deletedAt])
   hospitalId String? @map("hospital_id") @db.Uuid
   hospitalStaffAffiliationId String? @map("hospital_staff_affiliation_id") @db.Uuid
-  hospitalAffiliation HospitalStaffAffiliation? @relation(fields: [hospitalStaffAffiliationId, hospitalId, staffId], references: [id, hospitalId, staffId], onDelete: Restrict)
+  hospitalAffiliation HospitalStaffAffiliation? @relation(fields: [hospitalStaffAffiliationId, hospitalId, staffId], references: [id, hospitalId, staffId], onDelete: Restrict, map: "staff_shift_assignments_affiliation_fkey")
   @@index([hospitalStaffAffiliationId], map: "staff_shift_assignments_affiliation_idx")
 
   @@map("staff_shift_assignments")
@@ -291,7 +292,7 @@ model Room {
 
   department   Department   @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
-  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "rooms_hospital_department_fkey")
   queueEntries QueueEntry[]
 
   @@unique([name], where: raw("hospital_id IS NULL"), map: "rooms_legacy_name_key")
@@ -332,7 +333,7 @@ model Resource {
   /// away leaves its stock on the books.
   department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
-  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict)
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "resources_hospital_department_fkey")
 
   @@index([hospitalId, hospitalDepartmentId], map: "resources_hospital_department_idx")
   @@index([departmentId])

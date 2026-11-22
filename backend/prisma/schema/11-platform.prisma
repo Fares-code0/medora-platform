@@ -65,6 +65,7 @@ model ApiKey {
 
   creator User? @relation("ApiKeyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  @@index([prefix], where: raw("revoked_at IS NULL"), map: "api_keys_live_idx")
   @@map("api_keys")
 }
 
