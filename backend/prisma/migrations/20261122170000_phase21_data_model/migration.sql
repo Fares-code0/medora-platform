@@ -197,6 +197,7 @@ ALTER TABLE public.doctor_time_off ADD COLUMN hospital_id uuid, ADD COLUMN docto
 ALTER TABLE public.staff_shift_assignments ADD COLUMN hospital_id uuid, ADD COLUMN hospital_staff_affiliation_id uuid;
 ALTER TABLE public.rooms ADD COLUMN hospital_id uuid, ADD COLUMN hospital_department_id uuid;
 ALTER TABLE public.resources ADD COLUMN hospital_id uuid, ADD COLUMN hospital_department_id uuid;
+ALTER TABLE public.files ADD COLUMN hospital_id uuid;
 ALTER TABLE public.audit_events ADD COLUMN hospital_id uuid;
 ALTER TABLE public.domain_events ADD COLUMN hospital_id uuid;
 
@@ -259,6 +260,7 @@ CREATE INDEX appointments_hospital_employment_idx ON public.appointments(hospita
 CREATE INDEX appointments_published_slot_idx ON public.appointments(published_slot_id);
 CREATE INDEX hospital_role_assignments_doctor_source_idx ON public.hospital_role_assignments(source_doctor_employment_id);
 CREATE INDEX hospital_role_assignments_staff_source_idx ON public.hospital_role_assignments(source_staff_affiliation_id);
+CREATE INDEX files_hospital_id_idx ON public.files(hospital_id);
 CREATE INDEX audit_events_hospital_occurred_idx ON public.audit_events(hospital_id, occurred_at DESC);
 CREATE INDEX domain_events_hospital_created_idx ON public.domain_events(hospital_id, created_at);
 CREATE INDEX published_slots_employment_starts_idx ON public.published_slots(doctor_employment_id, starts_at);
@@ -276,6 +278,7 @@ ALTER TABLE public.appointments ADD CONSTRAINT appointments_employment_scope_che
 ALTER TABLE public.appointments ADD CONSTRAINT appointments_published_slot_fkey FOREIGN KEY (published_slot_id, hospital_id, doctor_employment_id) REFERENCES public.published_slots(id, hospital_id, doctor_employment_id) ON DELETE RESTRICT ON UPDATE CASCADE;
 CREATE UNIQUE INDEX appointments_one_active_booking_per_slot ON public.appointments(published_slot_id) WHERE published_slot_id IS NOT NULL AND status NOT IN ('cancelled', 'rescheduled', 'completed', 'no-show');
 
+ALTER TABLE public.files ADD CONSTRAINT files_hospital_id_fkey FOREIGN KEY (hospital_id) REFERENCES public.hospitals(id) ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE public.audit_events ADD CONSTRAINT audit_events_hospital_id_fkey FOREIGN KEY (hospital_id) REFERENCES public.hospitals(id) ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE public.domain_events ADD CONSTRAINT domain_events_hospital_id_fkey FOREIGN KEY (hospital_id) REFERENCES public.hospitals(id) ON DELETE RESTRICT ON UPDATE CASCADE;
 
