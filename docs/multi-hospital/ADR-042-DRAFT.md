@@ -25,7 +25,7 @@ identity-proofing is explicitly decided.
 
 Medora was specified and built as a single clinic (ADR-018 §1, ADR-010). The owner has decided that
 Medora is a multi-hospital platform. The repository audit (`docs/multi-hospital/AUDIT_FINDINGS.md`,
-AF-01…AF-40) shows that:
+AF-01…AF-40) records the pre-foundation state at audit time:
 - no hospital entity or hospital column exists;
 - authorization is anchored on doctor–patient assignment;
 - several routes are platform-wide;
