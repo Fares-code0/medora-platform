@@ -687,6 +687,9 @@ describe('AuthProvider — the AI assistant’s session data (S1)', () => {
 
 describe('AuthProvider — mock messaging is per user', () => {
   const LEGACY_KEY = 'medora.messaging.v1';
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   const marker = (n: number) => {
     const [first] = readStoredConversations();
     if (first === undefined) throw new Error('seed is empty');
@@ -722,7 +725,27 @@ describe('AuthProvider — mock messaging is per user', () => {
     expect(readStoredConversations()[0]?.unreadCount).not.toBe(7);
   });
 
-  it('clears the data when the session locks', async () => {
+  it('detaches on lock and gives the same user their data back on unlock', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const doctorId = result.current.user?.id ?? '';
+    writeStoredConversations(marker(42));
+    const doctorKey = `${LEGACY_KEY}.${doctorId}`;
+
+    act(() => {
+      result.current.lock();
+    });
+    // Detached while locked: the screen behind it reads nothing and writes nothing.
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
+    writeStoredConversations(marker(5));
+    // Off disk while locked: nothing is left behind if the tab closes here.
+    expect(window.localStorage.getItem(doctorKey)).toBeNull();
+
+    await settle(() => result.current.unlock(PASSWORD));
+    expect(readStoredConversations()[0]?.unreadCount).toBe(42);
+  });
+
+  it('clears the locked data when the user logs out from the lock screen', async () => {
     const { result } = await signedOut();
     await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
     const doctorId = result.current.user?.id ?? '';
@@ -731,7 +754,73 @@ describe('AuthProvider — mock messaging is per user', () => {
     act(() => {
       result.current.lock();
     });
+    await settle(() => result.current.logout());
 
+    expect(window.localStorage.getItem(`${LEGACY_KEY}.${doctorId}`)).toBeNull();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
+  });
+
+  it('does not show locked data to a different user who signs in', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    writeStoredConversations(marker(42));
+
+    act(() => {
+      result.current.lock();
+    });
+    await settle(() => result.current.logout());
+    await settle(() => result.current.login('admin@medora.health', PASSWORD));
+
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
+  });
+
+  /*
+   * Against an API without `/me/password/verify`, `reauthenticate` falls
+   * back to `/auth/login` and hands back a fresh session, so the unlock goes
+   * through `finalize`. Stubbed here with a real mock sign-in for `email`.
+   */
+  function unlockThroughLoginFallback(signsInAs: string) {
+    vi.spyOn(authService, 'reauthenticate').mockImplementation(async () => {
+      const outcome = await authService.login({
+        email: signsInAs,
+        password: PASSWORD,
+        rememberMe: false,
+      });
+      if (outcome.kind !== 'session') throw new Error('expected a session');
+      return outcome.session;
+    });
+  }
+
+  it('gives the same user their data back when unlock goes through the login fallback', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    writeStoredConversations(marker(42));
+    act(() => {
+      result.current.lock();
+    });
+
+    unlockThroughLoginFallback(SEEDED_DOCTOR);
+    await settle(() => result.current.unlock(PASSWORD));
+
+    expect(result.current.status).toBe('authenticated');
+    expect(readStoredConversations()[0]?.unreadCount).toBe(42);
+  });
+
+  it('does not hand locked data to a different account the login fallback returns', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const doctorId = result.current.user?.id ?? '';
+    writeStoredConversations(marker(42));
+    act(() => {
+      result.current.lock();
+    });
+
+    unlockThroughLoginFallback('admin@medora.health');
+    await settle(() => result.current.unlock(PASSWORD));
+
+    expect(result.current.user?.id).not.toBe(doctorId);
+    expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
     expect(window.localStorage.getItem(`${LEGACY_KEY}.${doctorId}`)).toBeNull();
   });
 });
