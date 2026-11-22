@@ -308,8 +308,18 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
 
   it('enforces employment provenance and the active published-slot index', async () => {
     const indexes = await client.query<{ indexname: string; indexdef: string }>(
-      'SELECT indexname, indexdef FROM pg_catalog.pg_indexes WHERE schemaname = $1 AND tablename IN ($2, $3, $4)',
-      ['public', 'doctor_employments', 'hospital_staff_affiliations', 'appointments'],
+      `SELECT indexname, indexdef FROM pg_catalog.pg_indexes
+       WHERE schemaname = $1 AND tablename = ANY($2::text[])`,
+      [
+        'public',
+        [
+          'doctor_employments',
+          'hospital_staff_affiliations',
+          'appointments',
+          'patient_doctor_assignments',
+          'record_issue_reports',
+        ],
+      ],
     );
     const definitions = indexes.rows.map((row) => row.indexname + ' ' + row.indexdef).join('\n');
     expect(definitions).toContain('doctor_employments_one_active_per_doctor_key');
@@ -317,6 +327,40 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
     expect(definitions).toContain('doctor_availability_employment_unique');
     expect(definitions).toContain('WHERE (ended_at IS NULL)');
     expect(definitions).toContain('appointments_one_active_booking_per_slot');
+    const partialIndexes = await client.query<{ indexname: string; predicate: string | null }>(
+      `
+        SELECT index_class.relname AS indexname,
+               pg_get_expr(index_catalog.indpred, index_catalog.indrelid) AS predicate
+        FROM pg_catalog.pg_index AS index_catalog
+        JOIN pg_catalog.pg_class AS index_class ON index_class.oid = index_catalog.indexrelid
+        WHERE index_class.relname = ANY($1::text[])
+      `,
+      [
+        [
+          'appointments_one_active_booking_per_slot',
+          'patient_doctor_assignments_one_live_primary',
+          'record_issue_reports_open_idx',
+        ],
+      ],
+    );
+    expect(partialIndexes.rows).toHaveLength(3);
+    const predicates = new Map(
+      partialIndexes.rows.map((row) => [row.indexname, row.predicate ?? '']),
+    );
+    expect(predicates.get('appointments_one_active_booking_per_slot')).toContain(
+      'published_slot_id',
+    );
+    for (const status of ['cancelled', 'rescheduled', 'completed', 'no-show']) {
+      expect(predicates.get('appointments_one_active_booking_per_slot')).toContain(status);
+    }
+    expect(predicates.get('patient_doctor_assignments_one_live_primary')).toContain(
+      'primary',
+    );
+    expect(predicates.get('patient_doctor_assignments_one_live_primary')).toContain(
+      'revoked_at',
+    );
+    expect(predicates.get('record_issue_reports_open_idx')).toContain('resolved');
+    expect(predicates.get('record_issue_reports_open_idx')).toContain('created_at');
     const triggers = await client.query<{ tgname: string }>(
       'SELECT tgname FROM pg_catalog.pg_trigger WHERE NOT tgisinternal AND tgname = ANY($1::text[])',
       [['doctor_employment_revoke_roles_trg', 'appointments_active_employment_trg', 'published_slots_active_employment_trg']],
