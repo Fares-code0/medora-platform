@@ -10,6 +10,10 @@ The API service for the Medora healthcare platform. NestJS 10 · TypeScript stri
 
 ## Running it
 
+Database ownership, migration, seed, and isolation guidance is in
+[`docs/DATABASE_ARCHITECTURE.md`](docs/DATABASE_ARCHITECTURE.md). The full ERD is
+[`docs/DATABASE_ERD.md`](docs/DATABASE_ERD.md).
+
 ```bash
 npm --prefix backend install
 cp backend/.env.example backend/.env                 # required since M3 — see below

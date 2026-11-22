@@ -266,6 +266,12 @@ jobs:
       - name: Seed
         run: npm run db:seed
 
+      - name: Seed multi-hospital fixtures twice (disposable PostgreSQL 16 only)
+        run: npm run db:seed:multihospital && npm run db:seed:multihospital
+        env:
+          APP_ENV: development
+          MEDORA_DISPOSABLE_DB: 'true'
+
       - name: Typecheck
         run: npm run typecheck
 

@@ -2,7 +2,7 @@
 
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Database (+ Backend)
-**Status:** IN PROGRESS — additive model and migration implementation on codex/phase21-data-model; fresh PostgreSQL 16 CI validation pending
+**Status:** IN PROGRESS — additive model, migration and isolated development seed committed on codex/phase21-data-model; draft PR #9 targets Database; fresh PostgreSQL 16 CI validation pending
 **Valid after the final decisions:** yes
 **Depends On:** PR #5 foundation merged into Database; persistent migration status remains unknown and blocks deployment
 **Enables:** 22, 22A, 23, 24, 26
@@ -61,7 +61,7 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 - [ ] [BLOCKED] Ownership backfill/default hospital assignment requires verified row-level mappings and separate approval; none is inferred.
 - [ ] [DATABASE] Deliberate existing-admin mapping via reviewed list; no automatic conversion (OD-07).
 - [ ] [DATABASE] Expand-only migrations; destructive contract/down migrations are outside Phase 21.
-- [ ] [DATABASE] Hospital and clinic seed workflow waits for backend provisioning integration.
+- [x] [DATABASE] Fictional, repeatable development-only hospital, location, clinic, department, staff, role, patient-record, appointment and clinical sample seed; explicitly gated on `APP_ENV=development`.
 
 ClinicWorkingDay remains the historical platform-wide weekday schedule. ClinicOperatingHour gives each Clinic its own weekday rows without changing the old primary key. Room.name retains unique names for legacy unassigned rooms while permitting same names in different hospitals.
 
@@ -94,6 +94,7 @@ Fresh PostgreSQL 16 CI validation of this migration. Verified status of the earl
 - Published-slot capacity is protected by a partial unique index; cancelled, rescheduled, completed and no-show appointments release capacity.
 - The new transaction-wrapped migration follows 20261122160000_facility_foundation. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment.
 - Local validation: Prisma schema validation, Prisma Client generation, TypeScript typecheck, ESLint and git diff --check pass. Source-only Vitest run: 94 test files passed; five Redis-dependent files failed (6 tests) or skipped (17 tests) because no local Redis service is available. PostgreSQL migration/drift/integration tests await disposable CI. No database was accessed.
+- Development seed was implemented but not executed; no disposable PostgreSQL 16 environment was available locally. Repeated-seed behavior is protected through natural-key upserts and stable slot IDs; verify actual row counts and constraints in disposable CI before treating it as validated.
 - Persistent application status for 20261122150000_hospital_core and 20261122160000_facility_foundation remains unknown; see docs/multi-hospital/MIGRATION_AND_COMPATIBILITY.md. Fresh-history CI cannot establish persistent-environment state.
 - OQ-02 identity proofing, cross-hospital grants, Break-Glass, AI C2 retention, provenance and RLS remain deferred. This phase does not yet enable multi-hospital backend access.
 
