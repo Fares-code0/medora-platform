@@ -15,9 +15,10 @@ import type { ForegroundAction } from './lock-policy';
  * wrong about the threat, and this file is the resolution.
  *
  * It does **not** protect the token. Nothing here encrypts anything, and
- * a force-quit restores the session on the next cold start exactly as it
- * did before — the gate is not persisted, deliberately (see below). An
- * attacker who can read the keychain is unaffected by it.
+ * an attacker who can read the keychain is unaffected by it. A force-quit
+ * while the lock is up, or after an absence that owes it, comes back
+ * locked on the next cold start (see below) — still a gate on the screen,
+ * not on the token.
  *
  * What it protects is **the screen**, against the threat patients
  * actually meet: a phone handed to somebody to look at a photo, left
@@ -33,19 +34,23 @@ import type { ForegroundAction } from './lock-policy';
  *
  * ── The password path always remains ─────────────────────────────────
  * Every lock screen offers "Use your password instead", which **ends the
- * session** and returns to Login. Not a bypass — the same
- * `endSession('locked')` T-11 uses. A patient whose fingerprint stops
+ * session** and returns to Login. Not a bypass — the same `logout()` the
+ * profile screen calls, keychain included. A patient whose fingerprint stops
  * being read (a cut, a wet hand, a failed sensor) must never be locked
  * out of their own records with no way forward, and on this app "no way
  * forward" would mean an uninstall.
  *
- * ── Why nothing about the lock is stored ─────────────────────────────
- * The locked flag lives in React state and dies with the process. A
- * persisted lock would have to remember *who* is locked out of it, and
+ * ── What about the lock is stored, and why it names nobody ───────────
+ * The locked flag lives in React state. A lock that remembered *who* is
+ * locked out of it would be a patient identifier, and
  * `features/auth/storage.ts` refuses that in as many words: a
  * convenience field on a lock screen is a patient identifier on a lost
- * phone. The lock screen therefore names nobody — no name, no email, no
- * avatar. It says "Medora is locked" and nothing else.
+ * phone. What survives the process is only the session guard
+ * (`session-guard.ts`): whether a lock was up or owed, when the app last
+ * left the foreground, and the opt-in at that moment — no name, no id, no
+ * token — in the keychain beside the refresh token, and removed with it.
+ * The lock screen therefore names nobody — no name, no email, no avatar.
+ * It says "Medora is locked" and nothing else.
  *
  * The only thing persisted is the patient's *preference*, a boolean.
  * That is not PHI and it is not an identifier, which is why it sits in

@@ -178,7 +178,9 @@ claim about what a patient would actually see:
 
 ## Security posture, in one paragraph
 
-The refresh token lives in the platform keychain and nowhere else; one module
+The refresh token lives in the platform keychain and nowhere else (beside it sits
+only a non-identifying session guard, so a cold start can apply the lock and the
+background timeout); one module
 imports `expo-secure-store` and ESLint enforces that. The access token lives in a
 private field on `ApiClient` and there is no storage API that could accept it.
 **No PHI is written to disk** — there is no persistence layer that could take it —

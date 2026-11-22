@@ -153,8 +153,9 @@ and not written to persistent storage. In this app:
 - **PHI is never written to disk** — the query cache is memory-only, and
   `clearPhiCache` sweeps it on logout, on session loss and after the background
   timeout (T-08, T-11);
-- the **only** thing written to durable storage is the refresh token, in the
-  Keychain/Keystore (`storage/secure-store.ts`).
+- the **only** things written to the Keychain/Keystore are the refresh token and
+  a non-identifying session guard beside it (`storage/secure-store.ts`,
+  `features/auth/session-guard.ts`).
 
 `src/test/security.test.ts` asserts each of those, which is why the claim is in
 the declaration rather than in a hope.
@@ -173,6 +174,7 @@ Google requires the form to say so and to give a route. See §6.
 | Value | Where | Survives a restart? |
 |---|---|---|
 | Refresh token | Keychain / Keystore, `WHEN_UNLOCKED_THIS_DEVICE_ONLY` | Yes |
+| Session guard (lock owed, last background time, opt-in at that time; no identifier) | Keychain / Keystore, beside the refresh token | Yes — removed at sign-out with the token; never transmitted |
 | Access token | Memory (`ApiClient`) | No |
 | Appointments, profile, notifications, records | Memory (the query cache) | No |
 | Theme, locale, onboarding-seen | AsyncStorage, unencrypted (`preferenceStore`) | **Yes** — E-02, P-07 |

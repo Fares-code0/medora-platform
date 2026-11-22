@@ -30,10 +30,14 @@ import { env } from '@/configs/env';
  * locked out of it, and `features/auth/storage.ts` refuses that in as
  * many words: *"a convenience field on a lock screen is a patient
  * identifier on a lost phone"*. Ending the session needs no such record,
- * survives the app being force-quit (the refresh token is gone, so a
- * cold start cannot restore past the gate), and reuses the expired-session
- * path that D-12 already builds and tests. Biometric app-unlock (D-15) is
- * a different control layered on top, not a replacement for this one.
+ * and reuses the expired-session path that D-12 already builds and tests.
+ * Ending it in the foreground handler alone did NOT survive a force-quit:
+ * a process killed in the background never runs that handler, and its
+ * refresh token is still stored. So the absence is also written to the
+ * non-identifying session guard (`session-guard.ts`), and the cold start
+ * applies this same decision before the stored token is presented.
+ * Biometric app-unlock (D-15) is a different control layered on top, not
+ * a replacement for this one.
  *
  * ── Configurable ─────────────────────────────────────────────────────
  * Both thresholds come from the validated environment, in minutes, with

@@ -59,7 +59,7 @@ peer.
 | ----------------------------------------------------------- | ------------------------------------------------------- |
 | `expo` · `react` · `react-native`                           | The platform                                            |
 | `expo-status-bar`                                           | The status bar's contrast follows the theme             |
-| `expo-secure-store`                                         | The refresh token, and nothing else (T-02)              |
+| `expo-secure-store`                                         | The refresh token and its session guard, nothing else (T-02) |
 | `expo-local-authentication`                                 | The opt-in app unlock (D-15)                            |
 | `expo-font` · `expo-asset`                                  | `@expo/vector-icons` loads its glyph font through them  |
 | `@react-navigation/native` · `native-stack` · `bottom-tabs` | The navigator (A-03)                                    |
