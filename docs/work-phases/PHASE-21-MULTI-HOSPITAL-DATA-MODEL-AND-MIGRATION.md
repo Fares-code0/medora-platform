@@ -2,7 +2,9 @@
 
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Database (+ Backend)
-**Status:** NOT STARTED (blocked on Phase 20)
+**Status:** IN PROGRESS — ADR-042 is accepted; PR #5 adds only the initial Hospital, HospitalLocation
+and Clinic foundation. The remaining data model, verified ownership mapping and migration work below
+are not implemented.
 **Valid after the final decisions:** yes
 **Depends On:** Phase 20
 **Enables:** 22, 22A, 23, 24, 26
@@ -25,8 +27,9 @@ Patient AI assistant prerequisites (added 2026-10-10): `DATABASE_CHECKLIST.md` �
 
 ## Objective
 
-Add the Hospital model to `backend/prisma/` and move existing single-clinic data under a default
-Hospital without breaking the running system.
+Add the hospital-owned data model and integrate it in stages without breaking the running system.
+Do not assign existing records to a default Hospital without a verified ownership mapping and separate
+explicit approval; unmapped records remain unassigned.
 
 ## Why it exists
 
@@ -40,8 +43,11 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 ## Deliverables
 
 **Stage 1 — model** (`DATABASE_CHECKLIST.md` A–F)
-- [ ] [DATABASE] `Hospital`; `Clinic` (separate entity); `HospitalLocation` (multiple, with
-  coordinates)
+- [x] [DATABASE] Initial additive `Hospital`, `Clinic` (separate entity), and `HospitalLocation`
+  models and migrations are present on PR #5's unmerged feature branch. They do not provide clinical
+  ownership or tenant authorization.
+- [ ] [DATABASE] Complete the target model: staff affiliations, HospitalMedicalRecord, clinical
+  ownership, composite tenant foreign keys, grants, booking, insurance, settings, and AI data classes.
 - [ ] [DATABASE] `DoctorEmployment` (one active, history; department/clinic on the employment);
   Hospital Admin assignment; Platform Admin role
 - [ ] [DATABASE] Global patient identity + `HospitalMedicalRecord (patient, hospital)`, created on the
@@ -57,19 +63,22 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 - [ ] [DATABASE] AI storage: `AiConversation.hospital_id`; `AiMessage` data class (C1/C2) and authorization tag (AF-39)
 
 **Stage 2 — migration** (`DATABASE_CHECKLIST.md` G)
-- [ ] [DATABASE] Default hospital and location; backfill; one active employment per doctor; one Medical
-  Record per existing patient at the default hospital
+- [ ] [DATABASE] Create any approved default hospital/location; backfill only rows with a verified
+  ownership mapping and separate approval. Never blanket-assign legacy records. One active employment
+  per doctor and Medical Record ownership are separate reviewed steps.
 - [ ] [DATABASE] **Existing admin accounts mapped deliberately** to Platform Admin or Hospital Admin via a
   reviewed list. No automatic conversion (OD-07)
-- [ ] [DATABASE] Expand → dual-read → enforce → contract, with down-migrations
+- [ ] [DATABASE] Use additive, forward-only expand/dual-read/validate stages. Any enforcement or schema
+  contraction requires a separate explicit approval; do not rely on destructive down-migrations.
 - [ ] [DATABASE] Gate seed (two hospitals with ≥2 locations and ≥1 clinic each, …)
-- [ ] [TESTING] Replace the ADR-010 scope-out assertion; `db:check` and `db:deploy` on clean
-  PostgreSQL 16
+- [x] [TESTING] PR #5 updates the superseded ADR-010 Clinic assertion and adds PostgreSQL 16 facility
+  tests; `db:check` and `db:deploy` passed in disposable CI run 45038104419.
 - [ ] [DATABASE] Fix or retire `database/schema.sql`
 
 ## Blocking conditions
 
-Phase 20.
+Complete remaining Phase 20 review sign-offs and verify migration history/state for every target
+environment before any persistent deployment. The PR #5 branch does not establish that status.
 
 ## Security requirements
 
