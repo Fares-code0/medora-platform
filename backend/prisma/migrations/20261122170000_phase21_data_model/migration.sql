@@ -496,7 +496,7 @@ END
 $file_lock$;
 CREATE TRIGGER files_attached_owner_immutable_trg BEFORE UPDATE OF hospital_id ON public.files FOR EACH ROW EXECUTE FUNCTION public.prevent_attached_file_reassignment();
 
-C-- Once a tenant owner is assigned, changing that owner in place is not a transfer workflow.
+-- Once a tenant owner is assigned, changing that owner in place is not a transfer workflow.
 -- A future verified ownership correction must use a separately reviewed process.
 CREATE FUNCTION public.prevent_tenant_scope_reassignment()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $scope_immutable$
