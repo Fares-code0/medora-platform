@@ -27,7 +27,6 @@ model Hospital {
   medicalRecords HospitalMedicalRecord[]
   publishedSlots PublishedSlot[]
   insuranceCoverage HospitalInsuranceCoverage[]
-  auditEvents AuditEvent[]
   domainEvents DomainEvent[]
   rooms Room[]
   resources Resource[]

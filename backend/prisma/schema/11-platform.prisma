@@ -157,8 +157,9 @@ model AuditEvent {
   @@index([sessionId])
   @@index([ipAddress])
   @@index([summary(ops: raw("gin_trgm_ops"))], type: Gin, map: "audit_events_summary_trgm_idx")
+  /// Attribution stamp only — no foreign key (ADR-024 §3; migration
+  /// 20261123120000_drop_audit_events_hospital_fkey). Immutable once set.
   hospitalId String? @map("hospital_id") @db.Uuid
-  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
   @@index([hospitalId, occurredAt(sort: Desc)], map: "audit_events_hospital_occurred_idx")
 
   @@map("audit_events")
