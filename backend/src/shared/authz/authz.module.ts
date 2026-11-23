@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 
 import { ConfigService } from '../../config';
 import { DatabaseModule } from '../database';
@@ -9,6 +10,9 @@ import { PatientSelfScopeService } from './patient-self-scope.service';
 import { PermissionResolver } from './permission-resolver.service';
 import { PrismaPatientAssignmentRepository } from './prisma-patient-assignment.repository';
 import { PrismaPatientSelfRepository } from './prisma-patient-self.repository';
+import { PrismaHospitalContextRepository } from './prisma-hospital-context.repository';
+import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
+import { HospitalContextShadowInterceptor } from './hospital-context-shadow.interceptor';
 import { PrismaRoleRepository } from './prisma-role.repository';
 import { RedisPermissionCache } from './redis-permission-cache';
 import {
@@ -66,6 +70,7 @@ import {
   imports: [DatabaseModule],
   providers: [
     { provide: ROLE_REPOSITORY, useClass: PrismaRoleRepository },
+    { provide: HOSPITAL_CONTEXT_REPOSITORY, useClass: PrismaHospitalContextRepository },
     // `useFactory`, not `useClass`: the cache's constructor takes a TTL
     // and a clock with defaults, and Nest reads constructor metadata
     // rather than honouring defaults — it tries to inject `Number` and
@@ -81,12 +86,17 @@ import {
     PermissionResolver,
     PatientScopeService,
     PatientSelfScopeService,
+    HospitalContextService,
+    // Runs after global authentication and authorization guards; this
+    // attaches observation only and does not alter their decisions.
+    { provide: APP_INTERCEPTOR, useClass: HospitalContextShadowInterceptor },
     AuthorizationGuard,
   ],
   exports: [
     PermissionResolver,
     PatientScopeService,
     PatientSelfScopeService,
+    HospitalContextService,
     AuthorizationGuard,
     ROLE_REPOSITORY,
     PERMISSION_CACHE,

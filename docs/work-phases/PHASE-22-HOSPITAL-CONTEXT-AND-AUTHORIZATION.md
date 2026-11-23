@@ -4,9 +4,10 @@
 (`PHASE-22-ORGANIZATION-SCOPED-IDENTITY-AND-AUTHORIZATION.md`), renamed on 2026-10-07.
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Backend + Security
-**Status:** NOT STARTED (blocked on Phases 20, 21)
+**Status:** IN PROGRESS (Phase 21 foundation merged; shadow-context slice underway)
 **Valid after the final decisions:** yes
 **Depends On:** 20, 21
+**Implementation progress:** The first Phase 22 slice attaches a server-derived hospital context after authentication and authorization in shadow mode. Doctor employment and active hospital-admin assignments are resolved from the database; multiple or missing doctor scopes remain unresolved, and an unassigned platform admin is explicitly marked as having no clinical data access. Patient context remains unresolved until a patient resource is known. This observation does not change existing guards, queries, or access decisions. Tenant enforcement, session scope, and the remaining deliverables below are still pending.
 **Enables:** 22A, 23, 24, 25, 26, 27, 28, 29, 30
 
 **Related documentation:** `docs/multi-hospital/BACKEND_CHECKLIST.md` A–C, `API_CONTRACT_CHANGES.md` §0–§2,
