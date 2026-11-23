@@ -23,6 +23,8 @@ import { useShellBadges } from '../badge-context';
 import { type NavigationConfig } from '../navigation';
 import { ThemeSwitch } from '../ThemeSwitch';
 
+import { ActiveHospital } from './ActiveHospital';
+
 /**
  * AppSidebar — FRONTEND_ARCHITECTURE.md §4 (layouts/Sidebar).
  * Renders the presentational ui/Sidebar from the role NavigationConfig:
@@ -163,6 +165,7 @@ export function AppSidebar({ config, collapsed = false, onNavigate, className }:
                     {displayName}
                   </p>
                   <p className="truncate text-caption text-text-tertiary">{caption}</p>
+                  <ActiveHospital />
                 </div>
               ) : null}
             </div>
