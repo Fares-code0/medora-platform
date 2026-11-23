@@ -8,6 +8,7 @@ export type HospitalContext =
   | {
       readonly kind: 'hospital';
       readonly hospitalId: string;
+      readonly hospitalName: string;
       readonly source: 'doctor_employment' | 'hospital_admin_assignment';
     }
   | { readonly kind: 'platform'; readonly clinicalDataAccess: false }

@@ -32,15 +32,30 @@ import { Injectable } from '@nestjs/common';
 
 import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import type { HospitalContext } from '../../../common/auth/hospital-context';
 import { UserStatus } from '../../../generated/prisma/enums';
 import { IdentityRepository } from '../repositories/identity.repository';
 import type { SessionUserPayload } from './login.service';
+
+export interface CurrentSessionUserPayload extends SessionUserPayload {
+  readonly activeHospital: { readonly id: string; readonly name: string } | null;
+  readonly adminScope:
+    | { readonly type: 'platform' }
+    | {
+        readonly type: 'hospital';
+        readonly hospital: { readonly id: string; readonly name: string };
+      }
+    | null;
+}
 
 @Injectable()
 export class SessionUserService {
   constructor(private readonly identity: IdentityRepository) {}
 
-  async current(principal: AuthenticatedUser): Promise<SessionUserPayload> {
+  async current(
+    principal: AuthenticatedUser,
+    hospitalContext: HospitalContext,
+  ): Promise<CurrentSessionUserPayload> {
     const user = await this.identity.findById(principal.id);
 
     if (user === null || user.status !== UserStatus.ACTIVE) {
@@ -56,6 +71,24 @@ export class SessionUserService {
       // the change visible, and the guards read the token's copy anyway.
       role: user.role.code,
       permissions: principal.permissions,
+      ...sessionHospitalScope(hospitalContext),
     };
   }
+}
+function sessionHospitalScope(
+  context: HospitalContext,
+): Pick<CurrentSessionUserPayload, 'activeHospital' | 'adminScope'> {
+  if (context.kind === 'platform') {
+    return { activeHospital: null, adminScope: { type: 'platform' } };
+  }
+
+  if (context.kind === 'hospital') {
+    const hospital = { id: context.hospitalId, name: context.hospitalName };
+    if (context.source === 'doctor_employment') {
+      return { activeHospital: hospital, adminScope: null };
+    }
+    return { activeHospital: null, adminScope: { type: 'hospital', hospital } };
+  }
+
+  return { activeHospital: null, adminScope: null };
 }

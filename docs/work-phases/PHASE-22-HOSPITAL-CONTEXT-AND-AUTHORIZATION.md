@@ -4,10 +4,10 @@
 (`PHASE-22-ORGANIZATION-SCOPED-IDENTITY-AND-AUTHORIZATION.md`), renamed on 2026-10-07.
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Backend + Security
-**Status:** IN PROGRESS (Phase 21 foundation merged; shadow-context slice underway)
+**Status:** IN PROGRESS (Phase 21 implementation is on Draft PR #9; shadow-context slice underway)
 **Valid after the final decisions:** yes
 **Depends On:** 20, 21
-**Implementation progress:** The first Phase 22 slice attaches a server-derived hospital context after authentication and authorization in shadow mode. Doctor scope comes from active employment; missing or conflicting scope remains unresolved. A hospital-admin context comes from one active hospital-admin assignment. Existing administrators without explicit mapping remain unresolved per OD-07, rather than being inferred to be Platform Admins. Platform scope, when explicitly resolved, carries no clinical data access. Patient context remains unresolved until a patient resource is known. This observation does not change existing guards, queries, or access decisions. Tenant enforcement, session scope, and the remaining deliverables below are still pending.
+**Implementation progress:** Server-derived hospital context is attached after authentication and authorization in shadow mode. GET /auth/session now adds activeHospital for a doctor with one active employment and adminScope for an explicitly mapped Hospital Admin. Missing, conflicting, or unmapped scope remains null; legacy admins are never inferred to be Platform Admins. Patient scope stays unresolved until a patient resource is known. These fields do not change guards, queries, or access decisions. Tenant enforcement and the remaining deliverables below are pending.
 **Enables:** 22A, 23, 24, 25, 26, 27, 28, 29, 30
 
 **Related documentation:** `docs/multi-hospital/BACKEND_CHECKLIST.md` A–C, `API_CONTRACT_CHANGES.md` §0–§2,
@@ -42,7 +42,7 @@ DR-01, DR-02, DR-04, DR-05, DR-07, DR-08, OD-07, OD-12, all FINAL.
   - Hospital Admin → their hospital;
   - Platform Admin → platform scope with **no** clinical data;
   - patient → resource.
-- [ ] [BACKEND] Session `activeHospital` / `adminScope`. **No switch route**
+- [x] [BACKEND] Shadow-only session activeHospital / adminScope metadata. Unresolved and unmapped scope stays null; **no switch route**
 - [ ] [BACKEND] Redesign `PatientScopeService`: active hospital + role + permissions (shadow mode first)
 - [ ] [BACKEND] Data-access-layer enforcement across ids, lists, search, filters, exports, aggregates,
   admin endpoints, assignments, messages, AI context and caches; 404 rule; stamping; mismatch rejection

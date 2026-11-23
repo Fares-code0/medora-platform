@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -54,6 +55,9 @@ interface SessionUser {
   email: string;
   role: string;
   permissions: string[];
+  activeHospital: { id: string; name: string } | null;
+  adminScope:
+    { type: 'platform' } | { type: 'hospital'; hospital: { id: string; name: string } } | null;
 }
 
 interface ActiveSession {
@@ -163,13 +167,57 @@ describe('GET /auth/session (M8.1)', () => {
     // The exact key set, not a superset: a field added to `users` must
     // not reach the shell by default. `licenseNumber` and `phone` are
     // the two that would, and neither belongs in a session payload.
-    expect(Object.keys(user).sort()).toEqual(['email', 'id', 'name', 'permissions', 'role']);
+    expect(Object.keys(user).sort()).toEqual([
+      'activeHospital',
+      'adminScope',
+      'email',
+      'id',
+      'name',
+      'permissions',
+      'role',
+    ]);
     expect(user.email).toBe(session.email);
     expect(user.id).toMatch(/^usr_/);
     expect(user.role).toBe('doctor');
     expect(Array.isArray(user.permissions)).toBe(true);
   });
 
+  it('returns the doctor hospital from the active employment', async () => {
+    const session = await seedAndSignIn('employment-scope');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: { publicId: 'hsp_' + randomUUID(), name: 'Session Scope Test Hospital' },
+    });
+
+    try {
+      await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+
+      const response = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+
+      expect(response.status).toBe(200);
+      expect(dataOf<SessionUser>(response).activeHospital).toEqual({
+        id: hospital.id,
+        name: hospital.name,
+      });
+      expect(dataOf<SessionUser>(response).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
   it('matches the payload the login response carried', async () => {
     const email = await seedAccount('parity');
     const login = await request(harness.server)
@@ -184,7 +232,14 @@ describe('GET /auth/session (M8.1)', () => {
     // Two code paths build this shape — the login service and the
     // session service — and a client that trusts one must be able to
     // trust the other.
-    expect(dataOf<SessionUser>(response)).toEqual(fromLogin);
+    const fromSession = dataOf<SessionUser>(response);
+    expect({
+      id: fromSession.id,
+      name: fromSession.name,
+      email: fromSession.email,
+      role: fromSession.role,
+      permissions: fromSession.permissions,
+    }).toEqual(fromLogin);
   });
 
   it('refuses an unauthenticated caller', async () => {

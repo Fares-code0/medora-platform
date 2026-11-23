@@ -13,8 +13,8 @@ const user = (role: string): AuthenticatedUser => ({
 
 function serviceWith(overrides: Partial<HospitalContextRepository> = {}): HospitalContextService {
   const repository: HospitalContextRepository = {
-    activeDoctorEmploymentHospitalIds: vi.fn().mockResolvedValue([]),
-    activeHospitalAdminHospitalIds: vi.fn().mockResolvedValue([]),
+    activeDoctorEmploymentHospitals: vi.fn().mockResolvedValue([]),
+    activeHospitalAdminHospitals: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
   return new HospitalContextService(repository);
@@ -22,17 +22,18 @@ function serviceWith(overrides: Partial<HospitalContextRepository> = {}): Hospit
 
 describe('HospitalContextService shadow resolution', () => {
   it('derives doctor context only from one active employment', async () => {
-    const activeDoctorEmploymentHospitalIds = vi.fn().mockResolvedValue(['hospital-a']);
-    const context = await serviceWith({ activeDoctorEmploymentHospitalIds }).resolve(
-      user('doctor'),
-    );
+    const activeDoctorEmploymentHospitals = vi
+      .fn()
+      .mockResolvedValue([{ id: 'hospital-a', name: 'North Hospital' }]);
+    const context = await serviceWith({ activeDoctorEmploymentHospitals }).resolve(user('doctor'));
 
     expect(context).toEqual({
       kind: 'hospital',
       hospitalId: 'hospital-a',
+      hospitalName: 'North Hospital',
       source: 'doctor_employment',
     });
-    expect(activeDoctorEmploymentHospitalIds).toHaveBeenCalledWith('user-1');
+    expect(activeDoctorEmploymentHospitals).toHaveBeenCalledWith('user-1');
   });
 
   it('leaves doctors without active employment unresolved', async () => {
@@ -44,7 +45,10 @@ describe('HospitalContextService shadow resolution', () => {
 
   it('does not choose between conflicting active doctor employments', async () => {
     const context = await serviceWith({
-      activeDoctorEmploymentHospitalIds: vi.fn().mockResolvedValue(['hospital-a', 'hospital-b']),
+      activeDoctorEmploymentHospitals: vi.fn().mockResolvedValue([
+        { id: 'hospital-a', name: 'North Hospital' },
+        { id: 'hospital-b', name: 'South Hospital' },
+      ]),
     }).resolve(user('doctor'));
 
     expect(context).toEqual({ kind: 'unresolved', reason: 'ambiguous_active_employment' });
@@ -52,25 +56,40 @@ describe('HospitalContextService shadow resolution', () => {
 
   it('derives hospital-admin context from one active hospital assignment', async () => {
     const context = await serviceWith({
-      activeHospitalAdminHospitalIds: vi.fn().mockResolvedValue(['hospital-a']),
+      activeHospitalAdminHospitals: vi
+        .fn()
+        .mockResolvedValue([{ id: 'hospital-a', name: 'North Hospital' }]),
     }).resolve(user('admin'));
 
     expect(context).toEqual({
       kind: 'hospital',
       hospitalId: 'hospital-a',
+      hospitalName: 'North Hospital',
       source: 'hospital_admin_assignment',
     });
   });
 
   it('deduplicates same-hospital admin assignments and leaves multiple hospitals unresolved', async () => {
     const sameHospital = await serviceWith({
-      activeHospitalAdminHospitalIds: vi.fn().mockResolvedValue(['hospital-a', 'hospital-a']),
+      activeHospitalAdminHospitals: vi.fn().mockResolvedValue([
+        { id: 'hospital-a', name: 'North Hospital' },
+        { id: 'hospital-a', name: 'North Hospital' },
+      ]),
     }).resolve(user('admin'));
     const multipleHospitals = await serviceWith({
-      activeHospitalAdminHospitalIds: vi.fn().mockResolvedValue(['hospital-a', 'hospital-b']),
+      activeHospitalAdminHospitals: vi.fn().mockResolvedValue([
+        { id: 'hospital-a', name: 'North Hospital' },
+        { id: 'hospital-a', name: 'North Hospital' },
+        { id: 'hospital-a', name: 'North Hospital' },
+        { id: 'hospital-b', name: 'South Hospital' },
+      ]),
     }).resolve(user('admin'));
 
-    expect(sameHospital).toMatchObject({ kind: 'hospital', hospitalId: 'hospital-a' });
+    expect(sameHospital).toMatchObject({
+      kind: 'hospital',
+      hospitalId: 'hospital-a',
+      hospitalName: 'North Hospital',
+    });
     expect(multipleHospitals).toEqual({
       kind: 'unresolved',
       reason: 'ambiguous_hospital_admin_scope',

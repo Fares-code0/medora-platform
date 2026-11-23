@@ -30,13 +30,12 @@ describe('HospitalContextShadowInterceptor', () => {
       [AUTHENTICATED_USER]: principal,
     };
     const service = {
-      resolve: vi
-        .fn()
-        .mockResolvedValue({
-          kind: 'hospital',
-          hospitalId: 'hospital-a',
-          source: 'doctor_employment',
-        }),
+      resolve: vi.fn().mockResolvedValue({
+        kind: 'hospital',
+        hospitalId: 'hospital-a',
+        hospitalName: 'North Hospital',
+        source: 'doctor_employment',
+      }),
     };
     const next: CallHandler = { handle: () => of('response') };
     const result = await lastValueFrom(
@@ -49,6 +48,7 @@ describe('HospitalContextShadowInterceptor', () => {
     expect(request[HOSPITAL_CONTEXT]).toEqual({
       kind: 'hospital',
       hospitalId: 'hospital-a',
+      hospitalName: 'North Hospital',
       source: 'doctor_employment',
     });
     expect(result).toBe('response');
