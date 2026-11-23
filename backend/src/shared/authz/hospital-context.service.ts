@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../common/auth/hospital-context';
+import { runAsSystem } from '../database';
 import { memoizeInRequest } from './request-scope';
 
 export const HOSPITAL_CONTEXT_REPOSITORY = Symbol('HOSPITAL_CONTEXT_REPOSITORY');
@@ -36,8 +37,9 @@ export class HospitalContextService {
    */
   async forRequest(user: Pick<AuthenticatedUser, 'id' | 'role'>): Promise<HospitalContext> {
     try {
+      // Trusted lookup of the caller's own staffing: `system` RLS scope.
       return await memoizeInRequest(`hospital-context:${user.id}:${user.role}`, () =>
-        this.resolve(user),
+        runAsSystem(() => this.resolve(user)),
       );
     } catch {
       this.logger.warn('Hospital context resolution unavailable');

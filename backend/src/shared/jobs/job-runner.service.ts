@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { runOutsideRequestScope } from '../authz/request-scope';
+import { runAsSystem } from '../database';
 
 import { DeadLetterStore } from './dead-letter.store';
 import { JobMetricsService } from './job-metrics.service';
@@ -255,7 +256,12 @@ export class JobRunner {
     });
 
     try {
-      return await Promise.race([job.handler(context), timeout]);
+      // §2.15: a job is not a request and carries no caller's tenant. It runs
+      // under an explicit `system` RLS scope (every current job is platform
+      // maintenance: retention, sweeps, reminders across hospitals). A job
+      // that acts for one hospital should run its units under that
+      // hospital's scope with `runWithTenantContext`.
+      return await Promise.race([runAsSystem(() => job.handler(context)), timeout]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }

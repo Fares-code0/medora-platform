@@ -259,6 +259,7 @@ describe('production hardening (RM M3.1)', () => {
     JWT_SECRET: 'a-signing-key-that-is-long-enough-000000',
     APP_PUBLIC_URL: 'https://app.medora.health',
     CLAMAV_HOST: 'clamav',
+    DATABASE_TENANT_CONTEXT: 'true',
   } as const;
 
   it('refuses to start with the example JWT secret', () => {
@@ -278,6 +279,11 @@ describe('production hardening (RM M3.1)', () => {
   it('refuses a localhost CORS origin', () => {
     setEnv({ ...PRODUCTION, CORS_ORIGINS: 'https://app.medora.health,http://localhost:5173' });
     expect(captureError().message).toContain('CORS_ORIGINS');
+  });
+
+  it('refuses production without the RLS tenant context (§2.15)', () => {
+    setEnv({ ...PRODUCTION, DATABASE_TENANT_CONTEXT: undefined });
+    expect(captureError().message).toContain('DATABASE_TENANT_CONTEXT');
   });
 
   it('refuses to run without a malware scan engine (M25.3)', () => {
@@ -367,6 +373,7 @@ describe('the hospital scope shadow switch (Phase 22, opt-in after the resource-
       JWT_SECRET: 'a-signing-key-that-is-long-enough-000000',
       APP_PUBLIC_URL: 'https://app.medora.health',
       CLAMAV_HOST: 'clamav',
+      DATABASE_TENANT_CONTEXT: 'true',
     });
     expect(loadEnv().HOSPITAL_SCOPE_SHADOW_COMPARISON).toBe(false);
   });

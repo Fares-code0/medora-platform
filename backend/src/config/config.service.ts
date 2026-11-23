@@ -65,6 +65,10 @@ export class ConfigService {
   }
 
   /** Phase 22: compute and log the hospital-aware patient-scope shadow decision. */
+  get databaseTenantContext(): boolean {
+    return this.env.DATABASE_TENANT_CONTEXT;
+  }
+
   get hospitalScopeShadowComparison(): boolean {
     return this.env.HOSPITAL_SCOPE_SHADOW_COMPARISON;
   }

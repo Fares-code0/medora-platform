@@ -28,3 +28,12 @@ export {
   type UpdateAuditColumns,
 } from './audit-columns';
 export { hospitalStampFor, type HospitalStamp, type StampClient } from './hospital-stamp';
+export {
+  currentTenantContext,
+  runAsSystem,
+  runInTenantScope,
+  runWithTenantContext,
+  setTenantContext,
+  type TenantContext,
+  type TenantScope,
+} from './tenant-context';

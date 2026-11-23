@@ -8,6 +8,8 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { runAsSystem } from '../database';
+
 import { applyServerPolicy, categoryOf, standingKindOf } from './authz-policy';
 import { applyLocks, normalizeMatrix } from './permission-matrix';
 import { bundleFor, isPermission, isPlatformRole, orderCapabilities } from './permission-catalogue';
@@ -45,6 +47,11 @@ export class PermissionResolver {
    * save. A lock that only one of two endpoints honours is not a lock.
    */
   async effectivePermissions(principal: Principal): Promise<EffectivePermissions> {
+    // Trusted lookups of the caller's own grants and standing (§2.15).
+    return runAsSystem(() => this.computeEffective(principal));
+  }
+
+  private async computeEffective(principal: Principal): Promise<EffectivePermissions> {
     const stored = await this.roles.currentMatrix();
     const matrix = normalizeMatrix(stored);
     const platformRole = isPlatformRole(principal.roleCode);
@@ -126,6 +133,10 @@ export class PermissionResolver {
    * Login and refresh refuse `terminated`.
    */
   async standingFor(userId: string, roleCode: string): Promise<Standing> {
+    return runAsSystem(() => this.computeStanding(userId, roleCode));
+  }
+
+  private async computeStanding(userId: string, roleCode: string): Promise<Standing> {
     const baseRoleCode = isPlatformRole(roleCode) ? null : await this.roles.baseRoleCodeOf(roleCode);
     const kind = standingKindOf(categoryOf(roleCode, baseRoleCode));
     return kind === null ? 'clinical' : this.roles.standingOf(userId, kind);

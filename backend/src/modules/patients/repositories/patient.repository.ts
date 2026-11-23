@@ -271,6 +271,11 @@ export class PatientRepository {
     readonly conditionIds: readonly string[];
   }): Promise<PatientRow> {
     return this.prisma.$transaction(async (tx) => {
+      // §2.15: names the patient this transaction registers, so Row-Level
+      // Security lets it read back the row it is creating before its Hospital
+      // Medical Record exists (transaction-local; see migration
+      // 20261124141000_rls_patient_registration_marker).
+      await tx.$executeRaw`SELECT set_config('app.registering_patient', ${input.publicId}, true)`;
       const patient = await tx.patient.create({
         data: {
           publicId: input.publicId,

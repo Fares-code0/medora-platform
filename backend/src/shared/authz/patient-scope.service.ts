@@ -42,6 +42,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AppException } from '../../common/errors/app.exception';
+import { runAsSystem } from '../database';
 import {
   PATIENT_ASSIGNMENT_REPOSITORY,
   type PatientAssignmentRepository,
@@ -78,7 +79,9 @@ export class PatientScopeService {
     // still propagates from here, before any shadow work starts.
     const allowed =
       principal.roleCode === 'doctor'
-        ? await this.assignments.reachesPatient(principal.userId, patientId)
+        ? // The DR-05 check itself reads the patient's records across the
+          // tenant boundary it decides: a trusted `system`-scope lookup.
+          await runAsSystem(() => this.assignments.reachesPatient(principal.userId, patientId))
         : false;
 
     // Started, never awaited: the decision above is returned at once, however

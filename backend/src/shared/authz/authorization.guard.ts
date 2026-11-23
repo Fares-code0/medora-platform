@@ -50,6 +50,7 @@ import { PermissionResolver } from './permission-resolver.service';
 import { AUTHENTICATED_USER, type RequestWithUser } from '../../common/auth/authenticated-user';
 import { IS_PUBLIC_KEY } from '../../common/auth/public.decorator';
 import { AdminScopeService } from './admin-scope.service';
+import { TenantContextResolver } from './tenant-context.resolver';
 import {
   AUTHENTICATED_METADATA,
   CAN_METADATA,
@@ -66,6 +67,8 @@ export class AuthorizationGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly resolver: PermissionResolver,
     private readonly scopes: AdminScopeService,
+    /** Optional only for unit tests that construct the guard by hand. */
+    private readonly tenants?: TenantContextResolver,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -146,6 +149,9 @@ export class AuthorizationGuard implements CanActivate {
     } else if (platformOnly) {
       throw AppException.forbidden();
     }
+
+    // §2.15: the request's RLS tenant context, now that the caller is known.
+    await this.tenants?.apply(user);
 
     return true;
   }

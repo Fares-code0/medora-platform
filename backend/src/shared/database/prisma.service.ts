@@ -4,6 +4,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { PrismaClient } from '../../generated/prisma/client';
 import { ConfigService } from '../../config';
 
+import { tenantAwareFactory } from './tenant-context.adapter';
 import { bypassReasons, ROLE_FACTS_SQL, type RoleFacts } from './runtime-role.check';
 import { type SoftDeletedClient, withSoftDelete } from './soft-delete';
 
@@ -37,7 +38,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   readonly db: SoftDeletedClient;
 
   constructor(private readonly config: ConfigService) {
-    super({ adapter: new PrismaPg({ connectionString: config.env.DATABASE_URL }) });
+    const adapter = new PrismaPg({ connectionString: config.env.DATABASE_URL });
+    // §2.15: with tenant context on, every transaction opens with the
+    // request's transaction-local RLS settings (tenant-context.adapter.ts).
+    super({ adapter: config.env.DATABASE_TENANT_CONTEXT ? tenantAwareFactory(adapter) : adapter });
     this.db = withSoftDelete(this);
   }
 

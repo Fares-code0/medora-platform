@@ -208,6 +208,8 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
 const PARTICIPLES: Readonly<Record<string, string>> = {
   // Whole verbs, where the words have to be reordered or reworded.
   attach_to_record: 'attached to a record',
+  // Multi-hospital §2.11–§2.13.
+  emergency_override: 'used as an Emergency Override',
   cancel_administratively: 'cancelled by an administrator',
   propose_slots: 'slots proposed',
   report_issue: 'issue reported',
@@ -246,6 +248,9 @@ const PARTICIPLES: Readonly<Record<string, string>> = {
   untrust: 'untrusted',
   upload: 'uploaded',
   view: 'viewed',
+  // Verbs whose past tense is not `+d` (multi-hospital §2.11–§2.13).
+  read: 'read',
+  reject: 'rejected',
 };
 
 export interface Classification {

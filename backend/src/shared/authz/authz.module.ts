@@ -7,6 +7,7 @@ import { DatabaseModule } from '../database';
 
 import { AdminScopeService } from './admin-scope.service';
 import { PhiReadAuditInterceptor } from './phi-read-audit.interceptor';
+import { TenantContextResolver } from './tenant-context.resolver';
 import { AuthorizationGuard } from './authorization.guard';
 import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
 import {
@@ -119,6 +120,7 @@ import {
     PatientSelfScopeService,
     AuthorizationGuard,
     AdminScopeService,
+    TenantContextResolver,
     ReauthenticationPort,
     // §2.13: every successful PHI read is audited (fail closed).
     { provide: APP_INTERCEPTOR, useClass: PhiReadAuditInterceptor },
@@ -134,6 +136,7 @@ import {
     PATIENT_ASSIGNMENT_REPOSITORY,
     PATIENT_SELF_REPOSITORY,
     AdminScopeService,
+    TenantContextResolver,
     ReauthenticationPort,
   ],
 })
