@@ -47,6 +47,7 @@ import {
   AUTHENTICATED_METADATA,
   AuthorizationGuard,
   AuthzKernelModule,
+  ADMIN_DENIED_PHI,
   CAN_METADATA,
   Can,
   IS_PUBLIC_KEY,
@@ -424,7 +425,14 @@ describe('authorization matrix — role × permission (RM M7.1)', () => {
   for (const role of PLATFORM_ROLES) {
     describe(role, () => {
       for (const permission of PERMISSIONS) {
-        const expected = SEEDED_MATRIX[role].includes(permission);
+        // The seeded matrix, as the server policy overlay leaves it: an
+        // administrator never holds clinical content or clear identity as a
+        // standing capability (multi-hospital §2.1; PHI only through
+        // Exceptional Access). Written as the named list, not derived from
+        // `applyServerPolicy`, so a wrong overlay still fails here.
+        const expected =
+          SEEDED_MATRIX[role].includes(permission) &&
+          !(role === 'admin' && ADMIN_DENIED_PHI.includes(permission));
 
         it(`${expected ? 'holds' : 'does not hold'} ${permission}`, async () => {
           expect(await resolver.can({ userId: userIdFor(role), roleCode: role }, permission)).toBe(

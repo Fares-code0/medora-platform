@@ -66,8 +66,15 @@ export class LabAttachmentRepository {
     const uploader = UUID.test(input.uploadedBy) ? { uploadedBy: input.uploadedBy } : {};
 
     return this.prisma.$transaction(async (tx) => {
+      // The file belongs to the order's hospital (§2.7; a Phase 22 trigger
+      // requires a clinical attachment's file to share its parent's hospital).
+      const order = await tx.labOrder.findUniqueOrThrow({
+        where: { id: input.labOrderId },
+        select: { hospitalId: true },
+      });
       const file = await tx.file.create({
         data: {
+          ...(order.hospitalId === null ? {} : { hospitalId: order.hospitalId }),
           storageKey: input.storageKey,
           originalName: input.name,
           mimeType: input.mimeType,

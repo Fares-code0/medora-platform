@@ -38,7 +38,7 @@ import type {
   PatientStatus,
   RiskLevel,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -413,7 +413,7 @@ export class PatientRepository {
     };
   }
 
-  createAllergy(input: {
+  async createAllergy(input: {
     readonly patientId: string;
     readonly actorId: string;
     readonly allergen: string;
@@ -421,8 +421,18 @@ export class PatientRepository {
     readonly reaction: string;
     readonly notes?: string | null | undefined;
   }): Promise<AllergyRow> {
+    // Recorded at the acting clinician's hospital, against the patient's
+    // record there (§2.7) — which is also what makes the hospital-scoped
+    // duplicate index see it.
+    const doctor = UUID.test(input.actorId)
+      ? await this.prisma.db.doctor.findUnique({ where: { userId: input.actorId }, select: { id: true } })
+      : null;
+    const stamp = doctor === null ? null : await hospitalStampFor(this.prisma.db, doctor.id, input.patientId);
     return this.prisma.db.patientAllergy.create({
       data: {
+        ...(stamp === null
+          ? {}
+          : { hospitalId: stamp.hospitalId, hospitalMedicalRecordId: stamp.hospitalMedicalRecordId }),
         patientId: input.patientId,
         allergen: input.allergen,
         severity: input.severity,

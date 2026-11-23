@@ -213,9 +213,14 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
         ['Phase 21 staff ' + randomUUID().slice(0, 8)],
       )).rows[0]!.id;
       const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+      // Multi-hospital §2.3–§2.5: one active role assignment per account
+      // (`hospital_role_assignments_one_active_per_user_key`), so the
+      // staff-sourced role belongs to a second account. "Only the role
+      // sourced from the ended row" is then proved across accounts.
+      const staffUserId = await createDoctor();
       const staffId = (await client.query<{ id: string }>(
         'INSERT INTO public.staff_members (user_id, name, role, title, department_id, phone, email, working_hours, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP) RETURNING id',
-        [userId, 'Test Nurse', 'nurse', 'RN', departmentId, '5550102', 's' + suffix + '@example.test', 'day'],
+        [staffUserId, 'Test Nurse', 'nurse', 'RN', departmentId, '5550102', 's' + suffix + '@example.test', 'day'],
       )).rows[0]!.id;
       const insertAffiliation =
         'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING id';
@@ -235,9 +240,15 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
         'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_doctor_employment_id) VALUES ($1, $2, $3, $4) RETURNING id',
         [userId, hospitalA, roleDoctor, employmentA],
       )).rows[0]!.id;
+      // A second active assignment for the same account is refused.
+      await expectSqlState(
+        'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id) VALUES ($1, $2, $3)',
+        [userId, hospitalB, roleStaffB],
+        '23505',
+      );
       const assignmentStaffA = (await client.query<{ id: string }>(
         'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_staff_affiliation_id) VALUES ($1, $2, $3, $4) RETURNING id',
-        [userId, hospitalA, roleStaffA, affiliationA],
+        [staffUserId, hospitalA, roleStaffA, affiliationA],
       )).rows[0]!.id;
       const revokedAt = async (ids: string[]): Promise<Map<string, Date | null>> => {
         const grants = await client.query<{ id: string; revoked_at: Date | null }>(
@@ -259,7 +270,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       const affiliationB = (await client.query<{ id: string }>(insertAffiliation, [staffId, hospitalB])).rows[0]!.id;
       const assignmentStaffB = (await client.query<{ id: string }>(
         'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_staff_affiliation_id) VALUES ($1, $2, $3, $4) RETURNING id',
-        [userId, hospitalB, roleStaffB, affiliationB],
+        [staffUserId, hospitalB, roleStaffB, affiliationB],
       )).rows[0]!.id;
       revoked = await revokedAt([assignmentStaffA, assignmentStaffB]);
       expect(revoked.get(assignmentStaffA)).not.toBeNull();

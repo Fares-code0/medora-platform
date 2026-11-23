@@ -198,6 +198,9 @@ export async function createAuthHarness(
       // still a row holding the unique email, and leaving it behind
       // would make the next run's registration a 409.
       await prisma.user.deleteMany({ where: { email: { endsWith: `@${domain}` } } });
+      // `staff_members.user_id` is SET NULL, so a suite's staff rows (made by
+      // `makeClinicalStaff`, keyed by the account's email) outlive it.
+      await prisma.staffMember.deleteMany({ where: { email: { endsWith: `@${domain}` } } });
       // `login_events` survives its user by design (SET NULL), so the
       // rows have to go by address or they accumulate across runs and the
       // "one row per attempt" assertions start counting history.

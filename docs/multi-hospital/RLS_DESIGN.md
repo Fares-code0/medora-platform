@@ -37,7 +37,7 @@ placeholder. Whatever is chosen must satisfy, and the tests prove why:
    active affiliation (DR-02, MRD-05 a), enforced by unique indexes (test 7), so resolution cannot be
    ambiguous. Hospital Admins with more than one hospital are unresolved by design.
 
-## 3. Coverage inventory (124 tables, from the catalog)
+## 3. Coverage inventory (128 tables, from the catalog)
 
 The authoritative per-table list — class, primary key, ownership path, foreign-key parents, sensitivity,
 expected behaviour and whether a policy is required — is **Appendix A**, generated from the catalog and
@@ -191,7 +191,7 @@ policy-dependent tests fail (verified), so they test PostgreSQL behaviour, not t
 
 ## Appendix A — Per-table RLS coverage (generated from the PostgreSQL catalog)
 
-Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue_hospital_ownership`, PR #28). **124 tables**, each listed once: Direct 35, Global/reference 36, Indirect 33, Internal/system 18, Unresolved 2. `backend/test/rls-inventory.e2e-spec.ts` fails if a table is added, removed or listed twice.
+Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue_hospital_ownership`, PR #28), then updated for the multi-hospital enforcement migrations (`20261124100000`–`20261124130000`: four new tables, `roles.hospital_id`; RLS now **enforced** — see §5 and `rls-runtime-role.e2e-spec.ts`). **128 tables**, each listed once: Direct 37, Global/reference 35, Indirect 33, Internal/system 21, Unresolved 2. `backend/test/rls-inventory.e2e-spec.ts` fails if a table is added, removed or listed twice.
 
 | Table | Class | PK | Ownership path | FK parents | Sensitivity | Expected RLS behaviour | Policy |
 |---|---|---|---|---|---|---|---|
@@ -233,6 +233,8 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `hospital_insurance_coverage` | Direct | id | hospital_id | hospitals, insurance_providers | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
 | `hospital_locations` | Direct | id | hospital_id | hospitals | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
 | `hospital_medical_record_conditions` | Direct | id | hospital_id | chronic_conditions, hospital_medical_records, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `exceptional_access_grants` | Direct | id | hospital_id | hospital_medical_records, hospitals, patients, users | PHI | ALL: own hospital or own request (requester_user_id = context user); decided by the owning Hospital Admin | Yes |
+| `information_requests` | Direct | id | target_hospital_id | hospital_medical_records, hospitals, patients, users | PHI | ALL: target hospital or own request; decided by the owning Hospital Admin | Yes |
 | `hospital_medical_records` | Direct | id | hospital_id | hospitals, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
 | `hospital_role_assignments` | Direct | id | hospital_id | doctor_employments, hospital_staff_affiliations, hospitals, roles, users | Operational | ALL: hospital_id = context | Yes |
 | `hospital_staff_affiliations` | Direct | id | hospital_id | hospital_departments, hospitals, staff_members | Operational | ALL: hospital_id = context | Yes |
@@ -260,7 +262,7 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `notification_preferences` | Global/reference | user_id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
 | `notifications` | Direct | id | hospital_id | appointments, hospital_medical_records, lab_orders, medical_records, patients, prescriptions, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17; plus a patient/participant policy for the patient app | Yes |
 | `otp_codes` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
-| `patient_access_grants` | Unresolved | id | hospital- or patient-owned? (decision with #16/#17) | patients, roles, users | PHI | Undecided — no policy until ownership is decided | Decision first |
+| `patient_access_grants` | Unresolved | id | hospital- or patient-owned? (decision with #16/#17) | patients, roles, users | PHI | Superseded by `exceptional_access_grants` / `information_requests`; no code path reads it; no policy (drop after the pre-production cleanup) | Decision first |
 | `patient_allergies` | Direct | id | hospital_id | hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
 | `patient_chronic_conditions` | Indirect | patient_id,condition_id | patients → hospital_medical_records (legacy, global) | chronic_conditions, patients, users | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
 | `patient_clinical_alerts` | Direct | id | hospital_id | hospital_medical_records, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
@@ -277,6 +279,8 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `permission_matrix_state` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
 | `permissions` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
 | `platform_integrations` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `ownership_assignments` | Internal/system | id | hospital_id (evidence of an assignment, append-only) | hospitals, users | Operational | ALL: system scope only (backfill evidence) | No |
+| `platform_admin_grants` | Internal/system | id | — (platform scope, OD-07) | users | Operational | ALL: platform or system scope only | No |
 | `platform_settings` | Internal/system | key | — | users | Operational | No hospital policy; per-user or system access | No |
 | `policies` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
 | `prescription_history_entries` | Indirect | id | prescriptions | prescriptions | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
@@ -298,7 +302,7 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `report_exports` | Indirect | id | files | files, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
 | `resources` | Direct | id | hospital_id | departments, hospital_departments, hospitals | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
 | `role_permissions` | Global/reference | role_id,permission_id | — | permissions, roles, users | Reference | No policy; read-only reference for the runtime role | No |
-| `roles` | Global/reference | id | — | roles | Reference | No policy; read-only reference for the runtime role | No |
+| `roles` | Internal/system | id | hospital_id (custom roles only; system roles NULL) | hospitals, roles | Reference | No hospital policy; custom roles are hospital-scoped by the service (§2.8), system roles are reference data | No |
 | `rooms` | Direct | id | hospital_id | departments, hospital_departments, hospitals | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
 | `satisfaction_surveys` | Unresolved | id | hospital- or patient-owned? (decision) | appointments, doctors, patients | PHI | Undecided — no policy until ownership is decided | Decision first |
 | `saved_reports` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |

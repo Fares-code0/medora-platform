@@ -393,6 +393,8 @@ async function provisionOne(
     );
   }
 
+  await ensureClinicalStanding(prisma, seed, user.id);
+
   let credentialAdded = false;
   if (user.credentials === null) {
     // Hashed only when needed — Argon2id is the slow part of this file —
@@ -422,6 +424,46 @@ async function provisionOne(
  * data — a doctor with no `doctors` row (that is `seedDemo`'s to create),
  * or a demo patient record already owned by another account.
  */
+/**
+ * Multi-hospital §2.5–§2.6: a doctor or staff account holds no capability
+ * without an active employment or affiliation at an ACTIVE hospital. A demo
+ * account that has never had one is given one at the development demo
+ * hospital; an account with any history (active or ended) is left as it is,
+ * so the provisioner never overrides a real lifecycle decision. The demo
+ * administrator is deliberately given no Platform Admin grant (owner
+ * decision: dev/test administrator accounts are not reclassified).
+ */
+async function ensureClinicalStanding(
+  prisma: Prisma.TransactionClient,
+  seed: DemoAccountSeed,
+  userId: string,
+): Promise<void> {
+  if (seed.profile.kind !== 'doctor' && seed.profile.kind !== 'staff') return;
+  const hospital = await prisma.hospital.upsert({
+    where: { publicId: 'hsp_demo_development' },
+    create: { publicId: 'hsp_demo_development', name: 'Medora Demo Hospital (development)' },
+    update: {},
+    select: { id: true },
+  });
+
+  if (seed.profile.kind === 'doctor') {
+    const doctor = await prisma.doctor.findUnique({
+      where: { userId },
+      select: { id: true, _count: { select: { employments: true } } },
+    });
+    if (doctor === null || doctor._count.employments > 0) return;
+    await prisma.doctorEmployment.create({ data: { doctorId: doctor.id, hospitalId: hospital.id } });
+    return;
+  }
+
+  const staff = await prisma.staffMember.findFirst({
+    where: { userId },
+    select: { id: true, _count: { select: { hospitalAffiliations: true } } },
+  });
+  if (staff === null || staff._count.hospitalAffiliations > 0) return;
+  await prisma.hospitalStaffAffiliation.create({ data: { staffId: staff.id, hospitalId: hospital.id } });
+}
+
 async function ensureProfile(
   prisma: Prisma.TransactionClient,
   seed: DemoAccountSeed,

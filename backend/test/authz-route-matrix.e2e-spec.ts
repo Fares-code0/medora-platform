@@ -16,6 +16,7 @@ import {
   Public,
   ROLES_METADATA,
   SEEDED_MATRIX,
+  ADMIN_DENIED_PHI,
   isPlatformRole,
   type Permission,
 } from '../src/shared/authz';
@@ -277,7 +278,12 @@ function violationOf(route: Pick<DiscoveredRoute, 'key' | 'rule'>): string | nul
 
 /** The seeded effective set — what each pinned account resolves to. */
 function heldBy(role: Role): ReadonlySet<Permission> {
-  return new Set(isPlatformRole(role) ? SEEDED_MATRIX[role] : []);
+  // The seeded bundle as the server policy overlay leaves it: an
+  // administrator holds no standing PHI capability (multi-hospital §2.1).
+  const seeded = isPlatformRole(role) ? SEEDED_MATRIX[role] : [];
+  return new Set(
+    seeded.filter((capability) => role !== 'admin' || !ADMIN_DENIED_PHI.includes(capability)),
+  );
 }
 
 /** The guard's decision, restated from the rule — see `authorization.guard.ts`. */

@@ -17,6 +17,7 @@ import {
   provisionDemoAccounts,
 } from '../prisma/seed/demo-accounts';
 import { ROLES } from '../prisma/seed/permissions';
+import { ADMIN_DENIED_PHI } from '../src/shared/authz';
 
 import {
   type AuthHarness,
@@ -392,6 +393,11 @@ describe('provisioned accounts sign in through the real API', () => {
       where: { id: doctor.userId },
       data: { emailVerifiedAt: new Date() },
     });
+    // `seedDemo` creates its doctors VERIFIED (prisma/seed/demo.ts).
+    await harness.prisma.doctor.update({
+      where: { id: doctor.id },
+      data: { verificationStatus: 'VERIFIED' },
+    });
     const [record] = await createPatientRecords(harness.prisma, 'DA', 1);
     const patient = await harness.prisma.patient.findUniqueOrThrow({ where: { id: record!.id } });
 
@@ -449,14 +455,22 @@ describe('provisioned accounts sign in through the real API', () => {
     const session = dataOf<SessionBody>(response);
     expect(session.user.email).toBe(email);
     expect(session.user.role).toBe(roleCode);
-    const bundle = ROLES.find((role) => role.code === roleCode)!.permissions;
+    // The seeded bundle as the server policy leaves it: no standing PHI for
+    // an administrator (multi-hospital §2.1).
+    const bundle = ROLES.find((role) => role.code === roleCode)!.permissions.filter(
+      (capability) => roleCode !== 'admin' || !(ADMIN_DENIED_PHI as readonly string[]).includes(capability),
+    );
     expect([...session.user.permissions].sort()).toEqual([...bundle].sort());
 
     const routes = ROUTES[roleCode]!;
     const bearer = `Bearer ${session.accessToken}`;
+    // The demo administrator is a dev/test account the owner decided not to
+    // reclassify: it holds no Platform Admin grant, so it has no
+    // administrative reach (OD-07, deny by default). Every other demo account
+    // is provisioned in clinical standing and reaches its allowed route.
     expect(
       (await request(harness.server).get(routes.allowed).set('Authorization', bearer)).status,
-    ).toBe(200);
+    ).toBe(roleCode === 'admin' ? 403 : 200);
     expect(
       (await request(harness.server).get(routes.denied).set('Authorization', bearer)).status,
     ).toBe(403);

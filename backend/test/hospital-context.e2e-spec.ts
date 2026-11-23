@@ -348,16 +348,21 @@ describe('Phase 22 hospital context resolution (PostgreSQL)', () => {
       });
     });
 
-    it('refuses to choose between two hospitals', async () => {
+    it('cannot hold two hospitals: the database refuses a second active assignment', async () => {
+      // Multi-hospital §2.3: a Hospital Admin administers exactly one
+      // hospital (`hospital_role_assignments_one_active_per_user_key`), so
+      // the ambiguous state the resolver guards against cannot be written.
+      // The resolver's own refusal to choose stays covered by
+      // hospital-context.service.spec.ts.
       const userId = await user('admin');
       const first = await hospital('P22 Admin A');
       const second = await hospital('P22 Admin B');
       await assignRole(userId, first.id, 'admin');
-      await assignRole(userId, second.id, 'admin');
+      await expect(assignRole(userId, second.id, 'admin')).rejects.toThrow();
 
-      await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toEqual({
-        kind: 'unresolved',
-        reason: 'ambiguous_hospital_admin_scope',
+      await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toMatchObject({
+        kind: 'hospital',
+        hospitalId: first.id,
       });
     });
 
@@ -448,18 +453,19 @@ describe('Phase 22 hospital context resolution (PostgreSQL)', () => {
       ).rejects.toThrow(/hospitals_status_check/);
     });
 
-    it('resolves an administrator to the one ACTIVE hospital when the other is suspended', async () => {
+    it('gives no scope when the one hospital is suspended, and never falls back to a revoked one', async () => {
+      // One active assignment per administrator (§2.3), so "one ACTIVE plus
+      // one suspended hospital" is a revoked assignment at an ACTIVE hospital
+      // and the current one at a suspended hospital. Neither yields scope.
       const userId = await user('admin');
       const active = await hospital('P22 Admin Active');
       const suspended = await hospital('P22 Admin Suspended', { status: 'SUSPENDED' });
-      await assignRole(userId, active.id, 'admin');
+      await assignRole(userId, active.id, 'admin', new Date());
       await assignRole(userId, suspended.id, 'admin');
 
       await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toEqual({
-        kind: 'hospital',
-        hospitalId: active.id,
-        hospitalName: active.name,
-        source: 'hospital_admin_assignment',
+        kind: 'unresolved',
+        reason: 'admin_scope_not_mapped',
       });
     });
 

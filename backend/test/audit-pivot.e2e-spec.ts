@@ -137,34 +137,6 @@ async function signUpAdmin(local: string): Promise<string> {
   ).accessToken;
 }
 
-/**
- * A doctor granted `logs.view` by a per-user override (M7.4) — a second
- * route to the capability, so the pivot is checked under two scopes.
- * The override is written before the first request, so no permission
- * cache entry predates it.
- */
-async function signUpAuditor(local: string): Promise<string> {
-  const email = testEmail(local);
-  await request(harness.server).post(REGISTER).send(registrationBody({ email }));
-  await markVerified(harness.prisma, email);
-
-  const user = await harness.prisma.user.findUniqueOrThrow({
-    where: { email },
-    select: { id: true },
-  });
-  const logsView = await harness.prisma.permission.findUniqueOrThrow({
-    where: { code: 'logs.view' },
-  });
-  await harness.prisma.userPermission.create({
-    data: { userId: user.id, permissionId: logsView.id, allowed: true },
-  });
-
-  return dataOf<{ accessToken: string }>(
-    await request(harness.server)
-      .post(LOGIN)
-      .send({ email, password: PASSWORD, rememberMe: false }),
-  ).accessToken;
-}
 
 const list = (query: string, token = adminToken) =>
   request(harness.server).get(`${EVENTS}?incidentRef=${INCIDENT}&${query}`).set(as(token));
@@ -195,7 +167,10 @@ beforeAll(async () => {
   harness = await createAuthHarness('audit-pivot-m32');
 
   adminToken = await signUpAdmin('pivot-admin');
-  auditorToken = await signUpAuditor('pivot-auditor');
+  // `logs.view` is platform administration (multi-hospital §2.4, §2.8): no
+  // override can put it on another role, so the second holder is a second
+  // Platform Admin.
+  auditorToken = await signUpAdmin('pivot-auditor');
   const doctor = await signUp('pivot-doctor');
   // In clinical standing, so its 403 is the missing `logs.view`, not §2.6.
   await makeClinicalDoctor(harness.prisma, doctor.email);
@@ -378,7 +353,7 @@ describe('authorization scopes', () => {
     ).toBe(403);
   });
 
-  it('gives a `logs.view` override the same pivot as an administrator', async () => {
+  it('gives a second holder of `logs.view` at platform scope the same pivot', async () => {
     // The ledger is platform-wide by design (API §14): the capability is
     // the scope, so two holders of it see the same counts.
     const admin = await page('pageSize=2');
