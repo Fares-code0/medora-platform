@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { ConfigModule, ConfigService } from '../src/config';
 import { loadEnv } from '../src/config/env';
+import { envSchema } from '../src/config/env.schema';
 import { BloodType, Gender } from '../src/generated/prisma/enums';
 import { AuthzKernelModule, PatientScopeService, type Principal } from '../src/shared/authz';
 import {
@@ -43,9 +44,19 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
   };
 
   beforeAll(async () => {
+    // The shadow is opt-in (default off); this suite tests the enabled mode,
+    // so it turns the switch on explicitly.
     const moduleRef = await Test.createTestingModule({
       imports: [ConfigModule, AuthzKernelModule],
-    }).compile();
+    })
+      .overrideProvider(ConfigService)
+      .useFactory({
+        factory: () => {
+          const real = new ConfigService(loadEnv());
+          return new ConfigService({ ...real.env, HOSPITAL_SCOPE_SHADOW_COMPARISON: true });
+        },
+      })
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init();
     prisma = app.get(PrismaService);
@@ -419,6 +430,50 @@ describe('Phase 22 shadow switch off (HOSPITAL_SCOPE_SHADOW_COMPARISON=false)', 
     await expect(
       scope.canReach({ userId: randomUUID(), roleCode: 'admin' }, 'PT-NOT-ASSIGNED'),
     ).resolves.toBe(false);
+    expect(scopeQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('Phase 22 shadow default (HOSPITAL_SCOPE_SHADOW_COMPARISON unset)', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    // The value an unset variable parses to, taken from the schema itself,
+    // so a developer's local .env cannot change what this test proves.
+    const unsetDefault = envSchema.shape.HOSPITAL_SCOPE_SHADOW_COMPARISON.parse(undefined);
+    expect(unsetDefault).toBe(false);
+    const moduleRef = await Test.createTestingModule({
+      imports: [ConfigModule, AuthzKernelModule],
+    })
+      .overrideProvider(ConfigService)
+      .useFactory({
+        factory: () => {
+          const real = new ConfigService(loadEnv());
+          return new ConfigService({ ...real.env, HOSPITAL_SCOPE_SHADOW_COMPARISON: unsetDefault });
+        },
+      })
+      .compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('creates no shadow provider and runs no shadow query by default', async () => {
+    expect(app.get(HospitalPatientScopeShadow, { strict: false })).toBeUndefined();
+    const repository = app.get<HospitalPatientScopeRepository>(HOSPITAL_PATIENT_SCOPE_REPOSITORY);
+    const scopeQuery = vi.spyOn(repository, 'liveAssignmentScopes');
+    const scope = app.get(PatientScopeService);
+
+    await expect(
+      scope.canReach({ userId: randomUUID(), roleCode: 'doctor' }, 'PT-NOT-ASSIGNED'),
+    ).resolves.toBe(false);
+    await expect(
+      scope.assertCanReach({ userId: randomUUID(), roleCode: 'doctor' }, 'PT-NOT-ASSIGNED'),
+    ).rejects.toMatchObject({ message: 'Patient not found' });
+    await new Promise((done) => setImmediate(done));
     expect(scopeQuery).not.toHaveBeenCalled();
   });
 });

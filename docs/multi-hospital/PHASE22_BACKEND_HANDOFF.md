@@ -63,7 +63,7 @@ Cut from `main` `0a331e9` (PR #13 merge). PR #9 and PR #12 are untouched and rem
 | `hospital-context.e2e`, `hospital-patient-scope.e2e`, `account-security` additions | Implemented; `main`'s `successorTokenCt` assertion kept (PR #12's base predated ADR-045) |
 | Correction 1 — duplicate context queries | Done: one lookup per request, shared |
 | Correction 2 — query on every authenticated request | Done: no lookup unless read (HTTP test asserts zero on `GET /me/sessions`, one on `GET /auth/session`) |
-| Correction 3 — shadow switch | Done: `HOSPITAL_SCOPE_SHADOW_COMPARISON` (default `true`); `false` removes the shadow provider entirely (test) |
+| Correction 3 — shadow switch | Done: `HOSPITAL_SCOPE_SHADOW_COMPARISON`, **opt-in (default `false`)** after the resource-safety audit; off creates no shadow provider and runs no shadow query (tests). Enabling it under real load requires condition C1 (bounded shadow queries) |
 | Correction 4 — strict session parity | Done: session payload equals the login payload plus exactly the two fields |
 | Correction 5 — Prettier on `account-security.e2e-spec.ts` | Not reformatted wholesale (unrelated lines); new lines follow the file's style |
 | Correction 6 — OD-07 Platform Admin mapping | **Blocked — owner decision.** Platform scope is still never produced |

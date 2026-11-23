@@ -5,7 +5,7 @@
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Backend + Security
 **Status:** IN PROGRESS — shadow slice under review from `claude/phase22-backend-hospital-authorization` (Phase 21 merged to `main` in PR #13)
-**Implementation progress:** Hospital context is server-derived, in shadow mode, and resolved lazily — only where read, at most once per request (no global interceptor). Doctor → the one active `DoctorEmployment`; Hospital Admin → the one active hospital `admin` role assignment; only an `ACTIVE`, non-deleted hospital counts; missing, ambiguous, conflicting or unmapped scope stays unresolved; Platform Admin scope is never inferred (OD-07 mapping pending); patient scope stays unresolved until a resource is known. `GET /auth/session` adds `activeHospital` / `adminScope`. `PatientScopeService` compares its unchanged legacy decision with a fail-closed hospital-aware shadow rule and logs divergence only, behind `HOSPITAL_SCOPE_SHADOW_COMPARISON` (default on). No guard, query or access decision changes.
+**Implementation progress:** Hospital context is server-derived, in shadow mode, and resolved lazily — only where read, at most once per request (no global interceptor). Doctor → the one active `DoctorEmployment`; Hospital Admin → the one active hospital `admin` role assignment; only an `ACTIVE`, non-deleted hospital counts; missing, ambiguous, conflicting or unmapped scope stays unresolved; Platform Admin scope is never inferred (OD-07 mapping pending); patient scope stays unresolved until a resource is known. `GET /auth/session` adds `activeHospital` / `adminScope`. `PatientScopeService` compares its unchanged legacy decision with a fail-closed hospital-aware shadow rule and logs divergence only, behind `HOSPITAL_SCOPE_SHADOW_COMPARISON`, **opt-in (default off)**: enabling it under real load requires bounded shadow query execution first (condition C1, below). No guard, query or access decision changes.
 **Valid after the final decisions:** yes
 **Depends On:** 20, 21
 **Enables:** 22A, 23, 24, 25, 26, 27, 28, 29, 30
@@ -72,6 +72,13 @@ comparison is detached from `canReach`/`assertCanReach`. F2 (log wording) is cor
 | F5 | Background work started inside a request (e.g. an inline-queue timer) inherits that request's memo store | `backend/src/shared/authz/request-scope.ts`; `backend/src/shared/jobs/inline-job-queue.ts` | **Authorization enforcement** |
 | F6 | The assignment-scope memo can be stale within a request that changes an assignment and then checks it (shadow logging only) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | **Shadow results becoming authoritative** |
 | F7 | The same patient looked up by public id and by internal id gets two memo entries (one extra query; no correctness impact) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | Optional optimisation |
+
+**Resource-safety audit (2026-11-23).** Shadow queries share the application's Prisma pool (10
+connections per process by default), with no enforced statement timeout and an unbounded
+connection-wait queue; because the comparison is detached, a slow database lets them accumulate.
+`HOSPITAL_SCOPE_SHADOW_COMPARISON` therefore defaults to **off**. **Condition C1 (open):** before the
+shadow is enabled in any environment with real load, bound its execution — a statement timeout on the
+shadow queries and/or an in-flight cap that skips comparisons — without changing authorization.
 
 ## Blocking conditions
 

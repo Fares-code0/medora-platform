@@ -396,8 +396,16 @@ export const envSchema = z.object({
    * assignment-scope query per (doctor, patient) per request; off costs
    * nothing (PHASE22_BACKEND_HANDOFF.md, correction 3). `GET /auth/session`
    * reports the hospital context either way.
+   *
+   * **Opt-in (default off).** Shadow queries share the application's pool
+   * (10 connections per process by default) with no enforced query timeout
+   * and an unbounded connection-wait queue, and the comparison is detached,
+   * so a slow database lets them accumulate (resource-safety audit). Enable
+   * it in a real-load environment only after shadow query execution is
+   * bounded (condition C1: a statement timeout on the shadow queries and/or
+   * an in-flight cap). Unknown values still fail startup.
    */
-  HOSPITAL_SCOPE_SHADOW_COMPARISON: booleanish.default(true),
+  HOSPITAL_SCOPE_SHADOW_COMPARISON: booleanish.default(false),
 
   // ── Metrics (M38.1) ─────────────────────────────────────────────────
   /**
