@@ -73,7 +73,9 @@ function contextFor(
 }
 
 let verify: ReturnType<typeof vi.fn<(token: string) => Promise<AuthenticatedUser | null>>>;
-let isActive: ReturnType<typeof vi.fn<(sid: string, sub: string) => Promise<boolean>>>;
+let isActive: ReturnType<
+  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>
+>;
 let belongsTo: ReturnType<typeof vi.fn<(sid: string, sub: string) => Promise<boolean>>>;
 let guard: AccessTokenGuard;
 
@@ -81,7 +83,9 @@ beforeEach(() => {
   verify = vi.fn<(token: string) => Promise<AuthenticatedUser | null>>(() =>
     Promise.resolve(PRINCIPAL),
   );
-  isActive = vi.fn<(sid: string, sub: string) => Promise<boolean>>(() => Promise.resolve(true));
+  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>(() =>
+    Promise.resolve(true),
+  );
   belongsTo = vi.fn<(sid: string, sub: string) => Promise<boolean>>(() => Promise.resolve(true));
   guard = new AccessTokenGuard(
     new Reflector(),
@@ -125,11 +129,12 @@ describe('AccessTokenGuard', () => {
     expect(isActive).not.toHaveBeenCalled();
   });
 
-  it('checks the session named by the token, for the user named by the token', async () => {
+  it('checks the session named by the token, for the user and role named by the token', async () => {
     const { context, request } = contextFor('guarded', 'Bearer good');
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-    expect(isActive).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id);
+    // F3 / ADR-046: the role claim is checked against the account's current role.
+    expect(isActive).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id, PRINCIPAL.role);
     expect(request[AUTHENTICATED_USER]).toEqual(PRINCIPAL);
   });
 
@@ -174,7 +179,7 @@ describe('AccessTokenGuard', () => {
     const error = await refusal(guard.canActivate(context));
 
     expect(error.getStatus()).toBe(HttpStatus.UNAUTHORIZED);
-    expect(isActive).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id);
+    expect(isActive).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id, PRINCIPAL.role);
     expect(belongsTo).not.toHaveBeenCalled();
   });
 

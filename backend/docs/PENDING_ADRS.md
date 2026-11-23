@@ -44,7 +44,7 @@ git grep -h '^## ADR-' origin/main origin/frontend origin/backend \
 is now registered in `docs/DECISIONS.md`; the original proposal file remains at
 [`docs/multi-hospital/ADR-042-DRAFT.md`](../../docs/multi-hospital/ADR-042-DRAFT.md) for traceability.
 **ADR-043 remains reserved** by Phase 20 for a possible split covering cross-hospital access and AI
-retention. ADR-044 and ADR-045 are registered; the next unallocated number is ADR-046. Re-run the full register and
+retention. ADR-044, ADR-045 and ADR-046 are registered; the next unallocated number is ADR-047. Re-run the full register and
 pending-ADR sweep before allocating another number.
 ---
 

@@ -586,11 +586,21 @@ export class SessionService {
    * The relation filter states `deletedAt: null` itself: the soft-delete
    * extension rewrites only the top-level `where` (see `soft-delete.ts`).
    *
+   * When `roleCode` is given (the token's `role` claim), the account must
+   * also **still hold that role** (audit F3, issue #23, ADR-046). Role and
+   * permission claims are fixed when the token is minted (API §1.11); a
+   * role change after that would otherwise leave the old role's
+   * permissions working for up to `JWT_ACCESS_TTL`. A mismatch is the same
+   * 401 as any dead session, and the client's next move is the same — one
+   * refresh, which mints a token from the current role (`RefreshService`
+   * re-reads it), so the change applies at the next issue *and* the stale
+   * token stops working now. Same row, same read: no extra query.
+   *
    * Both ids are checked for shape first. The token is signed, so a
    * malformed id means a token this service did not mint; Postgres would
    * answer it with a cast error, which must be a 401, not a 500.
    */
-  async isActive(sessionId: string, userId: string): Promise<boolean> {
+  async isActive(sessionId: string, userId: string, roleCode?: string): Promise<boolean> {
     if (!UUID.test(sessionId) || !UUID.test(userId)) return false;
 
     const session = await this.prisma.db.session.findFirst({
@@ -599,7 +609,11 @@ export class SessionService {
         userId,
         revokedAt: null,
         expiresAt: { gt: new Date() },
-        user: { status: UserStatus.ACTIVE, deletedAt: null },
+        user: {
+          status: UserStatus.ACTIVE,
+          deletedAt: null,
+          ...(roleCode === undefined ? {} : { role: { is: { code: roleCode } } }),
+        },
       },
       select: { id: true },
     });

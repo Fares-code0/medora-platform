@@ -89,12 +89,46 @@ describe('SessionUserService hospital context', () => {
     expect(result.adminScope).toBeNull();
   });
 
-  it('resolves the context for the authenticated principal', async () => {
+  it('resolves the context for the authenticated user, with the role the payload reports', async () => {
     const { current, forRequest } = service({ kind: 'unresolved', reason: 'no_active_employment' });
 
     await current(principal);
 
-    expect(forRequest).toHaveBeenCalledWith(principal);
+    expect(forRequest).toHaveBeenCalledWith({ id: principal.id, role: 'doctor' });
+  });
+
+  describe('token role and database role disagree (F3, #23)', () => {
+    it('resolves the context for the database role when a doctor token meets an admin row', async () => {
+      const { current, forRequest } = service(
+        { kind: 'unresolved', reason: 'admin_scope_not_mapped' },
+        { ...identityUser, role: { code: 'admin' } },
+      );
+
+      const result = await current({ ...principal, role: 'doctor' });
+
+      expect(forRequest).toHaveBeenCalledWith({ id: principal.id, role: 'admin' });
+      expect(result.role).toBe('admin');
+      // A doctor-employment hospital is never reported alongside role: admin.
+      expect(result.activeHospital).toBeNull();
+    });
+
+    it('resolves the context for the database role when an admin token meets a doctor row', async () => {
+      const { current, forRequest } = service(
+        {
+          kind: 'hospital',
+          hospitalId: 'hospital-1',
+          hospitalName: 'North Hospital',
+          source: 'doctor_employment',
+        },
+        { ...identityUser, role: { code: 'doctor' } },
+      );
+
+      const result = await current({ ...principal, role: 'admin' });
+
+      expect(forRequest).toHaveBeenCalledWith({ id: principal.id, role: 'doctor' });
+      expect(result.role).toBe('doctor');
+      expect(result.adminScope).toBeNull();
+    });
   });
 
   it('refuses an inactive account before any hospital-context lookup', async () => {
