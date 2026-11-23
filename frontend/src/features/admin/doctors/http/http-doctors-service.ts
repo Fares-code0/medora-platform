@@ -15,6 +15,7 @@ import {
   readPage,
   readString,
 } from '@/api/http';
+import { registerSessionMemoryReset } from '@/api/session-memory';
 import { isApiError } from '@/types/api';
 
 import type { AdminDoctorsService } from '../api/doctors-service';
@@ -304,3 +305,6 @@ export const httpDoctorsService: AdminDoctorsService = {
 export function __resetHttpDoctorTicks(): void {
   pendingTicks.clear();
 }
+
+// The ticks are this reviewer's, for this session: the next one starts clean.
+registerSessionMemoryReset(__resetHttpDoctorTicks);

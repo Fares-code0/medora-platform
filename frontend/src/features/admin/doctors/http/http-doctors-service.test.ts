@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearSessionMemory } from '@/api/session-memory';
 import { envelope, json, pageOf, stubApi } from '@/test/api-stub';
 
 import {
@@ -204,6 +205,25 @@ describe('httpDoctorsService — the checklist and document decisions', () => {
     const doctor = await httpDoctorsService.detail(DOCTOR_ID);
     expect(doctor?.documents[0]?.checklist).toEqual({
       authentic: true,
+      current: false,
+      matchesIdentity: false,
+    });
+  });
+
+  it('forgets unsubmitted ticks at the session boundary — the next reviewer starts clean', async () => {
+    stubApi({ [`GET /doctors/${DOCTOR_ID}`]: () => envelope(detailView()) });
+    await httpDoctorsService.setCheck({
+      doctorId: DOCTOR_ID,
+      documentId: 'vdoc-1',
+      field: 'authentic',
+      value: true,
+    });
+
+    clearSessionMemory();
+
+    const doctor = await httpDoctorsService.detail(DOCTOR_ID);
+    expect(doctor?.documents[0]?.checklist).toEqual({
+      authentic: false,
       current: false,
       matchesIdentity: false,
     });

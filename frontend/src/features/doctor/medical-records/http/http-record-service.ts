@@ -14,6 +14,7 @@ import {
   readOptionalString,
   readString,
 } from '@/api/http';
+import { registerSessionMemoryReset } from '@/api/session-memory';
 import type { BloodType, Gender } from '@/features/shared-domain/patient-identity';
 import { isApiError } from '@/types/api';
 
@@ -300,6 +301,9 @@ const drafts = new Map<string, MedicalRecordDraft>();
 export function __resetHttpRecordDrafts(): void {
   drafts.clear();
 }
+
+// A draft names its patient: it ends with the session that wrote it.
+registerSessionMemoryReset(__resetHttpRecordDrafts);
 
 export const httpRecordService: RecordService = {
   capabilities: { attachesVitals: false, persistsRecords: true },

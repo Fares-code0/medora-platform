@@ -14,6 +14,7 @@ import {
   readPage,
   readString,
 } from '@/api/http';
+import { registerSessionMemoryReset } from '@/api/session-memory';
 import { readPatientBloodType, type Gender } from '@/features/shared-domain/patient-identity';
 import { isApiError } from '@/types/api';
 
@@ -404,6 +405,13 @@ function createBody(draft: CompleteDraft) {
  * interceptor ignores the header.
  */
 const intentKeys = new Map<string, string>();
+
+// Drafts name their patient: all of it ends with the session that wrote it,
+// and the keys with the server drafts they guard.
+registerSessionMemoryReset(() => {
+  __resetHttpPharmacyState();
+  intentKeys.clear();
+});
 
 function intentKey(intent: string): string {
   let key = intentKeys.get(intent);
