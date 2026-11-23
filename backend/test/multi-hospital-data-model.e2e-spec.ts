@@ -328,10 +328,11 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
     expect(definitions).toContain('doctor_availability_employment_unique');
     expect(definitions).toContain('WHERE (ended_at IS NULL)');
     expect(definitions).toContain('appointments_one_active_booking_per_slot');
-    const partialIndexes = await client.query<{ indexname: string; predicate: string | null }>(
+    const partialIndexes = await client.query<{ indexname: string; predicate: string | null; index_definition: string }>(
       `
         SELECT index_class.relname AS indexname,
-               pg_get_expr(index_catalog.indpred, index_catalog.indrelid) AS predicate
+               pg_get_expr(index_catalog.indpred, index_catalog.indrelid) AS predicate,
+               pg_get_indexdef(index_catalog.indexrelid) AS index_definition
         FROM pg_catalog.pg_index AS index_catalog
         JOIN pg_catalog.pg_class AS index_class ON index_class.oid = index_catalog.indexrelid
         WHERE index_class.relname = ANY($1::text[])
@@ -348,6 +349,9 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
     const predicates = new Map(
       partialIndexes.rows.map((row) => [row.indexname, row.predicate ?? '']),
     );
+    const partialIndexDefinitions = new Map(
+      partialIndexes.rows.map((row) => [row.indexname, row.index_definition]),
+    );
     expect(predicates.get('appointments_one_active_booking_per_slot')).toContain(
       'published_slot_id',
     );
@@ -361,7 +365,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       'revoked_at',
     );
     expect(predicates.get('record_issue_reports_open_idx')).toContain('resolved');
-    expect(predicates.get('record_issue_reports_open_idx')).toContain('created_at');
+    expect(partialIndexDefinitions.get('record_issue_reports_open_idx')).toContain('created_at');
     const triggers = await client.query<{ tgname: string }>(
       'SELECT tgname FROM pg_catalog.pg_trigger WHERE NOT tgisinternal AND tgname = ANY($1::text[])',
       [['doctor_employment_revoke_roles_trg', 'appointments_active_employment_trg', 'published_slots_active_employment_trg']],
@@ -403,7 +407,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       [hospitalId, employmentId, startsAt],
     )).rows[0]!.id;
     const appointmentIds = [randomUUID(), randomUUID()];
-    const publicIds = ['p21_' + suffix + 'a', 'p21_' + suffix + 'b'];
+    const publicIds = ['APT-p21-' + suffix + 'a', 'APT-p21-' + suffix + 'b'];
     const contenders = [new Client({ connectionString: rawDatabaseUrl }), new Client({ connectionString: rawDatabaseUrl })];
     let contendersConnected = false;
     try {
