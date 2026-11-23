@@ -13,6 +13,11 @@ import { PrismaPatientSelfRepository } from './prisma-patient-self.repository';
 import { PrismaHospitalContextRepository } from './prisma-hospital-context.repository';
 import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
 import { HospitalContextShadowInterceptor } from './hospital-context-shadow.interceptor';
+import {
+  HOSPITAL_PATIENT_SCOPE_REPOSITORY,
+  HospitalPatientScopeShadow,
+} from './hospital-patient-scope.shadow';
+import { PrismaHospitalPatientScopeRepository } from './prisma-hospital-patient-scope.repository';
 import { PrismaRoleRepository } from './prisma-role.repository';
 import { RedisPermissionCache } from './redis-permission-cache';
 import {
@@ -71,6 +76,7 @@ import {
   providers: [
     { provide: ROLE_REPOSITORY, useClass: PrismaRoleRepository },
     { provide: HOSPITAL_CONTEXT_REPOSITORY, useClass: PrismaHospitalContextRepository },
+    { provide: HOSPITAL_PATIENT_SCOPE_REPOSITORY, useClass: PrismaHospitalPatientScopeRepository },
     // `useFactory`, not `useClass`: the cache's constructor takes a TTL
     // and a clock with defaults, and Nest reads constructor metadata
     // rather than honouring defaults — it tries to inject `Number` and
@@ -87,6 +93,8 @@ import {
     PatientScopeService,
     PatientSelfScopeService,
     HospitalContextService,
+    // Phase 22 shadow comparison for PatientScopeService; observation only.
+    HospitalPatientScopeShadow,
     // Runs after global authentication and authorization guards; this
     // attaches observation only and does not alter their decisions.
     { provide: APP_INTERCEPTOR, useClass: HospitalContextShadowInterceptor },

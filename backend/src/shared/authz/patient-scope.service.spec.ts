@@ -2,6 +2,7 @@ import { HttpStatus } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppException } from '../../common/errors/app.exception';
+import type { HospitalPatientScopeShadow } from './hospital-patient-scope.shadow';
 import { PatientScopeService } from './patient-scope.service';
 import { PLATFORM_ROLES } from './permission-catalogue';
 import type { PatientAssignmentRepository, PlatformRole, Principal } from './authz.types';
@@ -154,5 +155,121 @@ describe('PatientScopeService — repository failure', () => {
     const role: PlatformRole = 'reception';
 
     expect(await scope.canReach({ userId: 'u-1', roleCode: role }, 'PT-1001')).toBe(false);
+  });
+});
+
+describe('PatientScopeService — Phase 22 shadow comparison never changes a decision', () => {
+  type Compare = HospitalPatientScopeShadow['compare'];
+
+  /** A shadow whose verdict is forced, to prove the legacy rule alone decides. */
+  function shadowReturning(compare: Compare): {
+    shadow: HospitalPatientScopeShadow;
+    spy: ReturnType<typeof vi.fn>;
+  } {
+    const spy = vi.fn(compare);
+    return { shadow: { compare: spy } as unknown as HospitalPatientScopeShadow, spy };
+  }
+
+  const LINKS = { 'dr-a': ['PT-1001'], 'admin-1': ['PT-1001'], 'u-1': ['PT-1001'] };
+  const CASES: readonly [Principal, string][] = [
+    [DOCTOR_A, 'PT-1001'],
+    [DOCTOR_A, 'PT-2001'],
+    [DOCTOR_B, 'PT-1001'],
+    ...PLATFORM_ROLES.map((role): [Principal, string] => [{ userId: 'u-1', roleCode: role }, 'PT-1001']),
+    [{ userId: 'admin-1', roleCode: 'admin' }, 'PT-1001'],
+    [{ userId: 'u-1', roleCode: 'unknown-role' }, 'PT-1001'],
+  ];
+
+  const SHADOWS: Record<string, Compare> = {
+    'always allows': (_p, _id, legacy) =>
+      Promise.resolve({
+        legacyAllowed: legacy,
+        shadow: { allowed: true, hospitalId: 'h' },
+        outcome: legacy ? 'agree_allow' : 'legacy_deny_shadow_allow',
+      }),
+    'always denies': (_p, _id, legacy) =>
+      Promise.resolve({
+        legacyAllowed: legacy,
+        shadow: { allowed: false, reason: 'no_care_assignment' },
+        outcome: legacy ? 'legacy_allow_shadow_deny' : 'agree_deny',
+      }),
+    throws: () => Promise.reject(new Error('shadow down')),
+    'throws synchronously': () => {
+      throw new Error('shadow sync failure');
+    },
+  };
+
+  async function decisions(scope: PatientScopeService): Promise<unknown[]> {
+    const out: unknown[] = [];
+    for (const [principal, patientId] of CASES) {
+      out.push(await scope.canReach(principal, patientId));
+      out.push(
+        await scope.assertCanReach(principal, patientId).then(
+          () => 'reached',
+          (error: unknown) =>
+            error instanceof AppException ? [error.getStatus(), error.message] : error,
+        ),
+      );
+    }
+    return out;
+  }
+
+  it.each(Object.keys(SHADOWS))(
+    'returns exactly the legacy decisions when the shadow %s',
+    async (name) => {
+      const legacy = await decisions(serviceWith(LINKS));
+      const { shadow } = shadowReturning(SHADOWS[name]!);
+      const withShadow = new PatientScopeService(
+        new StubAssignments(new Map(Object.entries(LINKS))),
+        shadow,
+      );
+
+      expect(await decisions(withShadow)).toEqual(legacy);
+    },
+  );
+
+  it('pins the legacy decision table itself', async () => {
+    // Regression anchor: only the assigned doctor reaches; every other
+    // principal is a 404 identical to a missing patient.
+    const scope = serviceWith(LINKS);
+    const reached: string[] = [];
+    for (const [principal, patientId] of CASES) {
+      if (await scope.canReach(principal, patientId)) {
+        reached.push(principal.userId + ':' + principal.roleCode + ':' + patientId);
+      }
+    }
+    expect(reached).toEqual(['dr-a:doctor:PT-1001', 'u-1:doctor:PT-1001']);
+  });
+
+  it('hands the shadow the legacy verdict after the legacy rule has decided', async () => {
+    const { shadow, spy } = shadowReturning(SHADOWS['always denies']!);
+    const scope = new PatientScopeService(
+      new StubAssignments(new Map(Object.entries(LINKS))),
+      shadow,
+    );
+
+    await scope.canReach(DOCTOR_A, 'PT-1001');
+    await scope.canReach(DOCTOR_A, 'PT-2001');
+
+    expect(spy.mock.calls).toEqual([
+      [DOCTOR_A, 'PT-1001', true],
+      [DOCTOR_A, 'PT-2001', false],
+    ]);
+  });
+
+  it('never runs the shadow when the legacy repository fails, and still propagates', async () => {
+    const { shadow, spy } = shadowReturning(SHADOWS['always allows']!);
+    const failing: PatientAssignmentRepository = {
+      isAssigned: () => Promise.reject(new Error('database down')),
+    };
+    const scope = new PatientScopeService(failing, shadow);
+
+    await expect(scope.canReach(DOCTOR_A, 'PT-1001')).rejects.toThrow('database down');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the canReach signature free of any context or capability parameter', () => {
+    expect(PatientScopeService.prototype.canReach.length).toBe(2);
+    expect(PatientScopeService.prototype.assertCanReach.length).toBe(2);
   });
 });

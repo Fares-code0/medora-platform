@@ -7,7 +7,7 @@
 **Status:** IN PROGRESS (Phase 21 implementation is on Draft PR #9; shadow-context slice underway)
 **Valid after the final decisions:** yes
 **Depends On:** 20, 21
-**Implementation progress:** Server-derived hospital context is attached after authentication and authorization in shadow mode. GET /auth/session now adds activeHospital for a doctor with one active employment and adminScope for an explicitly mapped Hospital Admin. Missing, conflicting, or unmapped scope remains null; legacy admins are never inferred to be Platform Admins. Patient scope stays unresolved until a patient resource is known. These fields do not change guards, queries, or access decisions. The resolver is covered against PostgreSQL 16 (`backend/test/hospital-context.e2e-spec.ts`): ended employments and revoked assignments drop the hospital immediately, two admin hospitals stay ambiguous, non-admin hospital roles and admin rows held by doctor or patient accounts grant no admin scope, and an unmapped administrator never becomes platform scope; `GET /auth/session` drops `activeHospital` on the next request after an employment ends. Platform Admin scope is still never produced: no platform-role mapping exists yet (OD-07 mapping pending). Tenant enforcement and the remaining deliverables below are pending.
+**Implementation progress:** Server-derived hospital context is attached after authentication and authorization in shadow mode. GET /auth/session now adds activeHospital for a doctor with one active employment and adminScope for an explicitly mapped Hospital Admin. Missing, conflicting, or unmapped scope remains null; legacy admins are never inferred to be Platform Admins. Patient scope stays unresolved until a patient resource is known. These fields do not change guards, queries, or access decisions. The resolver is covered against PostgreSQL 16 (`backend/test/hospital-context.e2e-spec.ts`): ended employments and revoked assignments drop the hospital immediately, two admin hospitals stay ambiguous, non-admin hospital roles and admin rows held by doctor or patient accounts grant no admin scope, and an unmapped administrator never becomes platform scope; `GET /auth/session` drops `activeHospital` on the next request after an employment ends. `PatientScopeService` now also computes a shadow hospital-aware decision (see `docs/multi-hospital/SECURITY_AND_DATA_ISOLATION.md` §2.1); it is compared and logged only and changes no access decision. Platform Admin scope is still never produced: no platform-role mapping exists yet (OD-07 mapping pending). Tenant enforcement and the remaining deliverables below are pending.
 **Enables:** 22A, 23, 24, 25, 26, 27, 28, 29, 30
 
 **Related documentation:** `docs/multi-hospital/BACKEND_CHECKLIST.md` A–C, `API_CONTRACT_CHANGES.md` §0–§2,
@@ -44,6 +44,11 @@ DR-01, DR-02, DR-04, DR-05, DR-07, DR-08, OD-07, OD-12, all FINAL.
   - patient → resource.
 - [x] [BACKEND] Shadow-only session activeHospital / adminScope metadata. Unresolved and unmapped scope stays null; **no switch route**
 - [ ] [BACKEND] Redesign `PatientScopeService`: active hospital + role + permissions (shadow mode first)
+  - [x] Shadow comparison: `PatientScopeService` keeps the legacy decision and compares it with a
+    fail-closed hospital-aware rule (`HospitalPatientScopeShadow`); logged only, never enforced.
+    Regression tests pin the legacy decisions; PostgreSQL tests cover isolation, legacy unowned
+    assignments, former-hospital and ended-employment assignments, and Hospital Admin separation.
+  - [ ] Permissions in the hospital-aware rule, and switching enforcement on (needs owner approval)
 - [ ] [BACKEND] Data-access-layer enforcement across ids, lists, search, filters, exports, aggregates,
   admin endpoints, assignments, messages, AI context and caches; 404 rule; stamping; mismatch rejection
 - [ ] [BACKEND] Platform Admin vs Hospital Admin guards; explicit, audited clinical permission only

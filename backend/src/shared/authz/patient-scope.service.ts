@@ -39,7 +39,7 @@
  * audited reveal of RM M7.3 — a different path, with a different record.
  */
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AppException } from '../../common/errors/app.exception';
 import {
@@ -47,12 +47,22 @@ import {
   type PatientAssignmentRepository,
   type Principal,
 } from './authz.types';
+import { HospitalPatientScopeShadow } from './hospital-patient-scope.shadow';
 
 @Injectable()
 export class PatientScopeService {
+  private readonly logger = new Logger(PatientScopeService.name);
+
   constructor(
     @Inject(PATIENT_ASSIGNMENT_REPOSITORY)
     private readonly assignments: PatientAssignmentRepository,
+    /**
+     * Phase 22 shadow comparison (hospital-aware rule). Optional and
+     * observation-only: it runs after the legacy decision is made, its
+     * result is discarded, and its failures are swallowed. Removing it
+     * changes nothing a caller can see.
+     */
+    @Optional() private readonly shadow?: HospitalPatientScopeShadow,
   ) {}
 
   /**
@@ -64,9 +74,29 @@ export class PatientScopeService {
    * answer for them is no.
    */
   async canReach(principal: Principal, patientId: string): Promise<boolean> {
-    if (principal.roleCode !== 'doctor') return false;
+    // The legacy rule, unchanged: it alone decides. A repository failure
+    // still propagates from here, before any shadow work starts.
+    const allowed =
+      principal.roleCode === 'doctor'
+        ? await this.assignments.isAssigned(principal.userId, patientId)
+        : false;
 
-    return this.assignments.isAssigned(principal.userId, patientId);
+    await this.observeShadow(principal, patientId, allowed);
+    return allowed;
+  }
+
+  /** Never throws and never alters `allowed`; see `HospitalPatientScopeShadow`. */
+  private async observeShadow(
+    principal: Principal,
+    patientId: string,
+    allowed: boolean,
+  ): Promise<void> {
+    if (this.shadow === undefined) return;
+    try {
+      await this.shadow.compare(principal, patientId, allowed);
+    } catch {
+      this.logger.warn('Patient scope shadow comparison unavailable');
+    }
   }
 
   /**

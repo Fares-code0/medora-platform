@@ -23,7 +23,7 @@ export class HospitalContextService {
     private readonly repository: HospitalContextRepository,
   ) {}
 
-  async resolve(user: AuthenticatedUser): Promise<HospitalContext> {
+  async resolve(user: Pick<AuthenticatedUser, 'id' | 'role'>): Promise<HospitalContext> {
     if (user.role === 'doctor') {
       const hospitals = await this.repository.activeDoctorEmploymentHospitals(user.id);
       if (hospitals.length === 0) {
