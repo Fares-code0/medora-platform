@@ -180,6 +180,7 @@ export class AdminDoctorService {
       actorId: actor.id,
       verifiedAt,
     });
+    if (updated === null) throw AppException.notFound('Doctor not found');
 
     await this.recordDecision(actor, row.id, 'doctor.verify', { status: 'verified' });
     await this.notifyDoctor(row.id, 'doctor.verified', {});
@@ -206,6 +207,7 @@ export class AdminDoctorService {
       // outlives whoever could explain it.
       verifiedAt: null,
     });
+    if (updated === null) throw AppException.notFound('Doctor not found');
 
     await this.recordDecision(actor, row.id, 'doctor.verification_reject', {
       status: 'rejected',
@@ -236,6 +238,7 @@ export class AdminDoctorService {
       actorId: actor.id,
       verifiedAt: null,
     });
+    if (updated === null) throw AppException.notFound('Doctor not found');
 
     await this.recordDecision(actor, row.id, 'doctor.documents_requested', {
       status: 'docs_requested',
@@ -265,7 +268,7 @@ export class AdminDoctorService {
     // Someone else's document and a non-existent one answer the same 404.
     if (document === null) throw AppException.notFound('Document not found');
 
-    await this.doctors.decideDocument({
+    const decided = await this.doctors.decideDocument({
       documentId: document.id,
       decision: 'approved',
       actorId: actor.id,
@@ -275,6 +278,7 @@ export class AdminDoctorService {
         identityMatch: input.identityMatch,
       },
     });
+    if (!decided) throw AppException.notFound('Document not found');
 
     await this.recordDecision(actor, doctorId, 'doctor.document_approve', {
       documentId: document.id,
@@ -294,12 +298,13 @@ export class AdminDoctorService {
     const document = await this.doctors.findDocument(doctorId, documentId);
     if (document === null) throw AppException.notFound('Document not found');
 
-    await this.doctors.decideDocument({
+    const decided = await this.doctors.decideDocument({
       documentId: document.id,
       decision: 'rejected',
       actorId: actor.id,
       rejectReason: input.reason,
     });
+    if (!decided) throw AppException.notFound('Document not found');
 
     await this.recordDecision(actor, doctorId, 'doctor.document_reject', {
       documentId: document.id,
@@ -346,6 +351,7 @@ export class AdminDoctorService {
       status,
       actorId: actor.id,
     });
+    if (updated === null) throw AppException.notFound('Doctor not found');
 
     await this.recordDecision(actor, row.id, `doctor.${status === 'ACTIVE' ? 'reactivate' : 'suspend'}`, {
       practiceStatus: PRACTICE_TO_WIRE[updated.practiceStatus],

@@ -20,6 +20,7 @@
 
 import { Injectable } from '@nestjs/common';
 
+import { AppException } from '../../../common/errors/app.exception';
 import type { Weekday } from '../../../generated/prisma/enums';
 import { PrismaService } from '../../../shared/database';
 
@@ -68,12 +69,18 @@ const LIVE_APPOINTMENT_STATUSES = [
 export class AvailabilityRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The caller's `doctors` row id, or null when they are not a doctor. */
+  /**
+   * The caller's live `doctors` row id, or null when they are not a doctor.
+   *
+   * `findFirst` with `deletedAt: null`: `findUnique` is not filtered by the
+   * soft-delete extension, so a soft-deleted practitioner kept managing a
+   * grid and time off that no longer belong to anyone.
+   */
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 
@@ -84,8 +91,8 @@ export class AvailabilityRepository {
   async schedulingFor(userId: string): Promise<DoctorSchedulingRow | null> {
     if (!UUID.test(userId)) return null;
 
-    return this.prisma.db.doctor.findUnique({
-      where: { userId },
+    return this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: {
         id: true,
         defaultDurationMin: true,
@@ -133,14 +140,17 @@ export class AvailabilityRepository {
         });
       }
 
-      await tx.doctor.update({
-        where: { id: input.doctorId },
+      const { count } = await tx.doctor.updateMany({
+        where: { id: input.doctorId, deletedAt: null },
         data: {
           defaultDurationMin: input.defaultDurationMin,
           bufferMin: input.bufferMin,
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
       });
+      // Deleted since `doctorIdForUser`: roll the grid back rather than
+      // leave windows on a doctor that no longer exists.
+      if (count === 0) throw AppException.notFound('No doctor profile for this account');
     });
   }
 

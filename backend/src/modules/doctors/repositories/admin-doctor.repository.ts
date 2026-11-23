@@ -150,10 +150,25 @@ export class AdminDoctorRepository {
     return { rows, totalItems };
   }
 
+  /**
+   * One **live** doctor, or null.
+   *
+   * `findFirst` with an explicit `deletedAt: null`, not `findUnique`: the
+   * soft-delete extension cannot filter `findUnique` (see
+   * `shared/database/soft-delete.ts`), so a lookup by id returned a
+   * soft-deleted practitioner and every admin route built on it — detail,
+   * verify, reject, request-documents, suspend, reactivate — went on to
+   * read or change a row that no longer exists as far as the clinic is
+   * concerned. A deleted doctor is 404 (ADR-022). Nothing in this
+   * repository acts on deleted doctors on purpose.
+   */
   findById(doctorId: string): Promise<AdminDoctorDetailRow | null> {
     if (!UUID.test(doctorId)) return Promise.resolve(null);
 
-    return this.prisma.db.doctor.findUnique({ where: { id: doctorId }, select: DETAIL_SELECT });
+    return this.prisma.db.doctor.findFirst({
+      where: { id: doctorId, deletedAt: null },
+      select: DETAIL_SELECT,
+    });
   }
 
   /**
@@ -223,9 +238,13 @@ export class AdminDoctorRepository {
     readonly status: DoctorVerificationStatus;
     readonly actorId: string;
     readonly verifiedAt: Date | null;
-  }): Promise<{ verificationStatus: DoctorVerificationStatus; verifiedAt: Date | null }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
+  }): Promise<{ verificationStatus: DoctorVerificationStatus; verifiedAt: Date | null } | null> {
+    // `updateMany` guarded on `deletedAt`, not `update` by id: a doctor
+    // soft-deleted between `findById` and this write must not be changed.
+    // Null tells the service the row is gone (404), where `update` would
+    // have thrown P2025 and answered 500.
+    const { count } = await this.prisma.db.doctor.updateMany({
+      where: { id: input.doctorId, deletedAt: null },
       data: {
         verificationStatus: input.status,
         verifiedAt: input.verifiedAt,
@@ -235,26 +254,37 @@ export class AdminDoctorRepository {
           ? { verifiedBy: input.actorId, updatedBy: input.actorId }
           : {}),
       },
-      select: { verificationStatus: true, verifiedAt: true },
     });
+
+    return count === 0
+      ? null
+      : { verificationStatus: input.status, verifiedAt: input.verifiedAt };
   }
 
   async setPracticeStatus(input: {
     readonly doctorId: string;
     readonly status: DoctorPracticeStatus;
     readonly actorId: string;
-  }): Promise<{ practiceStatus: DoctorPracticeStatus }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
+  }): Promise<{ practiceStatus: DoctorPracticeStatus } | null> {
+    // Guarded like `setVerificationStatus`: a deleted doctor is not changed.
+    const { count } = await this.prisma.db.doctor.updateMany({
+      where: { id: input.doctorId, deletedAt: null },
       data: {
         practiceStatus: input.status,
         ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
       },
-      select: { practiceStatus: true },
     });
+
+    return count === 0 ? null : { practiceStatus: input.status };
   }
 
-  /** One verification document of a given doctor, or null. */
+  /**
+   * One live verification document of a given **live** doctor, or null.
+   *
+   * The relation filter matters: the document routes take a doctor id but
+   * never call `findById`, so without it a soft-deleted doctor's
+   * documents could still be approved or rejected.
+   */
   findDocument(
     doctorId: string,
     documentId: string,
@@ -262,7 +292,7 @@ export class AdminDoctorRepository {
     if (!UUID.test(doctorId) || !UUID.test(documentId)) return Promise.resolve(null);
 
     return this.prisma.db.doctorVerificationDocument.findFirst({
-      where: { id: documentId, doctorId },
+      where: { id: documentId, doctorId, deletedAt: null, doctor: { deletedAt: null } },
       select: { id: true, kind: true, decision: true },
     });
   }
@@ -275,9 +305,12 @@ export class AdminDoctorRepository {
     readonly checks?:
       | { readonly authentic: boolean; readonly current: boolean; readonly identityMatch: boolean }
       | undefined;
-  }): Promise<void> {
-    await this.prisma.db.doctorVerificationDocument.update({
-      where: { id: input.documentId },
+  }): Promise<boolean> {
+    // Guarded on both the document and its doctor being live, so a
+    // deletion that lands after `findDocument` changes nothing. False is
+    // a 404 to the service.
+    const { count } = await this.prisma.db.doctorVerificationDocument.updateMany({
+      where: { id: input.documentId, deletedAt: null, doctor: { deletedAt: null } },
       data: {
         decision: input.decision,
         decidedAt: new Date(),
@@ -296,14 +329,16 @@ export class AdminDoctorRepository {
             }),
       },
     });
+
+    return count > 0;
   }
 
-  /** The `users.id` behind a doctor — the notification recipient. */
+  /** The `users.id` behind a live doctor — the notification recipient. */
   async userIdFor(doctorId: string): Promise<string | null> {
     if (!UUID.test(doctorId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { id: doctorId },
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { id: doctorId, deletedAt: null },
       select: { userId: true },
     });
 
