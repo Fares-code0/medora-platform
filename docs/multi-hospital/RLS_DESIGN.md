@@ -137,13 +137,13 @@ platform operations (`backups`, `saved_reports`, `scheduled_reports`, `scheduled
 
 | # | Blocker | Owner |
 |---|---|---|
-| B1 | Tenant-context contract (GUC name, where it is set, transaction wrapping in the Prisma adapter) | Backend + Database |
-| B2 | A non-owner, non-superuser application role and grants, in every environment | Database + operations |
-| B3 | Ownership of legacy rows with `hospital_id IS NULL` (mapping or explicit legacy policy) | Owner decision |
-| B4 | OD-07 — Platform Admin / Hospital Admin access, incl. audit reads | Owner decision |
-| B5 | Patient-role and discovery policies (§3.1, §3.3) | Database, after B1 |
-| B6 | Hospital ownership for `queue_entries`, `waiting_room_entries` | Database, needs B3-style mapping |
-| B7 | Open policy questions in the effective-employment rule: does VACATION, or an unverified doctor (`verification_status`), yield clinical context? The proposal allows VACATION and ignores verification | Owner decision |
+| B1 | Tenant-context contract (GUC name, where it is set, transaction wrapping in the Prisma adapter) — #20 | Backend + Database |
+| B2 | A non-owner, non-superuser application role and grants, in every environment — #19 | Database + operations |
+| B3 | Ownership of legacy rows with `hospital_id IS NULL` (mapping or explicit legacy policy) — #17 | Owner decision |
+| B4 | OD-07 — Platform Admin / Hospital Admin access, incl. audit reads — #16 | Owner decision |
+| B5 | Patient-role and discovery policies (§3.1, §3.3) — #19 | Database, after B1 |
+| B6 | Hospital ownership for `queue_entries`, `waiting_room_entries` — #21 | Database, needs B3-style mapping |
+| B7 | Open policy questions in the effective-employment rule: does VACATION, or an unverified doctor (`verification_status`), yield clinical context? The proposal allows VACATION and ignores verification — #18 | Owner decision |
 
 ## 7. Rollout plan (once B1–B4 are resolved)
 
