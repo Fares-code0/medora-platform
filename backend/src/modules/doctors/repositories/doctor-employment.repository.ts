@@ -9,14 +9,32 @@
  * single transaction, so a failure anywhere leaves the employment active
  * and nothing half-revoked:
  *
- * 1. `ended_at` is set **only if still active** — a conditional update, so
- *    two concurrent ends serialize on the row and exactly one wins;
- * 2. live care assignments owned by this employment
+ * 1. the employment row is locked (`FOR NO KEY UPDATE`) and read: two
+ *    concurrent ends serialize on it, and the second sees `ended_at` set;
+ * 2. hospital role assignments derived from this employment
+ *    (`hospital_role_assignments.source_doctor_employment_id`) are revoked
+ *    (`revoked_at`);
+ * 3. `ended_at` is set — still conditional on the row being active;
+ * 4. live care assignments owned by this employment
  *    (`patient_doctor_assignments.doctor_employment_id`) are revoked;
- * 3. every live session of the doctor's account is revoked;
- * 4. the audit row is inserted by the caller's callback on the same
+ * 5. every live session of the doctor's account is revoked;
+ * 6. the audit row is inserted by the caller's callback on the same
  *    transaction (`TransactionalAuditWriter`), so the end and its record
  *    commit together or not at all.
+ *
+ * ## Why the derived roles are revoked before `ended_at` is set
+ *
+ * The database already revokes them: `doctor_employment_revoke_roles_trg`
+ * (migration `20261122170000_phase21_data_model`) fires `AFTER UPDATE OF
+ * ended_at` and sets `revoked_at` on every live assignment sourced from the
+ * employment. Left to the trigger alone, this transaction could not say
+ * how many it revoked. So step 2 writes the same revocation itself, and
+ * counts it, before step 3; the trigger then finds nothing left and stays
+ * the backstop for any other writer of `ended_at`. The lock in step 1 is
+ * what makes the count exact: a concurrent grant's source check
+ * (`hospital_role_assignment_source_trg`) takes `FOR UPDATE` on the same
+ * employment row, so it waits for this end and is then refused as sourced
+ * from an ended employment.
  *
  * ## Why the session revocation is written here and not by `SessionService`
  *
@@ -76,6 +94,8 @@ export interface EndedEmployment {
   readonly employment: EmploymentRow;
   readonly userId: string;
   readonly revokedAssignments: number;
+  /** Live hospital role assignments derived from this employment, now revoked. */
+  readonly revokedHospitalRoles: number;
   readonly revokedSessions: number;
   /** Live assignments with no employment (#17) — counted, not changed. */
   readonly legacyAssignmentsUntouched: number;
@@ -177,19 +197,31 @@ export class DoctorEmploymentRepository {
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
 
-      // 1. Conditional: a concurrent end waits on this row lock, then
-      //    re-reads `ended_at` and matches nothing.
+      // 1. Lock and read: a concurrent end waits on this row lock, then
+      //    reads the committed `ended_at`.
+      const locked = await tx.$queryRaw<{ ended: boolean }[]>`
+        SELECT ended_at IS NOT NULL AS ended FROM doctor_employments
+         WHERE id = ${employmentId}::uuid AND doctor_id = ${doctorId}::uuid
+         FOR NO KEY UPDATE`;
+      const current = locked[0];
+      if (current === undefined) return { kind: 'not_found' };
+      if (current.ended) return { kind: 'already_ended' };
+
+      // 2. Derived hospital roles — before `ended_at`, so this write (not
+      //    the trigger) revokes them and the count is this end's.
+      const roles = await tx.hospitalRoleAssignment.updateMany({
+        where: { sourceDoctorEmploymentId: employmentId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+
+      // 3. Still conditional on the row being active.
       const ended = await tx.doctorEmployment.updateMany({
         where: { id: employmentId, doctorId, endedAt: null },
         data: { endedAt: now },
       });
-
       if (ended.count === 0) {
-        const exists = await tx.doctorEmployment.findFirst({
-          where: { id: employmentId, doctorId },
-          select: { id: true },
-        });
-        return exists === null ? { kind: 'not_found' } : { kind: 'already_ended' };
+        // Unreachable while step 1 holds the lock; throwing rolls step 2 back.
+        throw new Error('Employment changed while locked');
       }
 
       const employment = await tx.doctorEmployment.findUniqueOrThrow({
@@ -201,7 +233,7 @@ export class DoctorEmploymentRepository {
         select: { userId: true },
       });
 
-      // 2. Care assignments this employment owns. Legacy rows (no
+      // 4. Care assignments this employment owns. Legacy rows (no
       //    employment, #17) are deliberately outside this `where`.
       const assignments = await tx.patientDoctorAssignment.updateMany({
         where: { doctorEmploymentId: employmentId, revokedAt: null },
@@ -211,7 +243,7 @@ export class DoctorEmploymentRepository {
         where: { doctorId, doctorEmploymentId: null, revokedAt: null },
       });
 
-      // 3. Every live session — `SessionService.revokeAllFor`'s write.
+      // 5. Every live session — `SessionService.revokeAllFor`'s write.
       const sessions = await tx.session.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date(), rotatedAt: null, successorTokenCt: null },
@@ -221,11 +253,12 @@ export class DoctorEmploymentRepository {
         employment,
         userId,
         revokedAssignments: assignments.count,
+        revokedHospitalRoles: roles.count,
         revokedSessions: sessions.count,
         legacyAssignmentsUntouched,
       };
 
-      // 4. The audit row, on this transaction.
+      // 6. The audit row, on this transaction.
       await within(tx, result);
 
       return { kind: 'ended', ...result };

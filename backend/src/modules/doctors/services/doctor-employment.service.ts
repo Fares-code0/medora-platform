@@ -25,10 +25,10 @@
  * `doctor.employment_started` and `doctor.employment_ended`, written on the
  * mutation's own transaction through `TransactionalAuditWriter`, so the
  * change and its record commit together. Metadata only: ids and counts,
- * never a patient. The audit row's `hospital_id` column is **not** set:
- * `AuditEvent` has no hospital field and `auditRowOf` never writes one,
- * so the hospital is carried in `metadata.hospitalId` instead (changing
- * the audit kernel is outside this module).
+ * never a patient. Both rows set the audit row's `hospital_id` column to
+ * the employment's hospital (`AuditEvent.hospitalId`, server-derived from
+ * the employment row, never from the request); `metadata.hospitalId`
+ * carries the same id, as it did before the column was written.
  */
 
 import { Injectable } from '@nestjs/common';
@@ -102,6 +102,7 @@ export class DoctorEmploymentService {
             actor: { userId: actor.id, role: actor.role, sessionId: actor.sessionId },
             entityType: 'doctor',
             entityId: doctor.id,
+            hospitalId: created.hospitalId,
             metadata: {
               employmentId: created.id,
               hospitalId: created.hospitalId,
@@ -125,7 +126,7 @@ export class DoctorEmploymentService {
    * `POST /doctors/{doctorId}/employments/{employmentId}/end`.
    *
    * OD-12: immediate, no grace period. The employment, its care
-   * assignments, the doctor's sessions and the audit row change in one
+   * assignments, its derived hospital roles, the doctor's sessions and the audit row change in one
    * transaction (`DoctorEmploymentRepository.end`).
    *
    * Works for a soft-deleted doctor too: ending is the direction that
@@ -143,11 +144,13 @@ export class DoctorEmploymentService {
         actor: { userId: actor.id, role: actor.role, sessionId: actor.sessionId },
         entityType: 'doctor',
         entityId: ended.employment.doctorId,
+        hospitalId: ended.employment.hospitalId,
         metadata: {
           employmentId: ended.employment.id,
           hospitalId: ended.employment.hospitalId,
           hospitalDepartmentId: ended.employment.hospitalDepartmentId,
           revokedAssignments: ended.revokedAssignments,
+          revokedHospitalRoles: ended.revokedHospitalRoles,
           revokedSessions: ended.revokedSessions,
           legacyAssignmentsUntouched: ended.legacyAssignmentsUntouched,
         },
@@ -162,6 +165,7 @@ export class DoctorEmploymentService {
     return {
       employment: toView(outcome.employment),
       revokedAssignments: outcome.revokedAssignments,
+      revokedHospitalRoles: outcome.revokedHospitalRoles,
       revokedSessions: outcome.revokedSessions,
     };
   }

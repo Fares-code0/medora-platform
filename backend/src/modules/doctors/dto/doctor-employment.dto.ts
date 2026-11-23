@@ -3,7 +3,8 @@
  *
  * Administrative metadata only: who is employed where, since when, until
  * when. No patient identity crosses this boundary — the end result reports
- * how many care assignments and sessions were revoked as **counts**.
+ * how many care assignments, derived hospital roles and sessions were
+ * revoked as **counts**.
  */
 
 export interface EmploymentHospitalView {
@@ -34,6 +35,11 @@ export interface EndEmploymentResult {
   readonly employment: DoctorEmploymentView;
   /** Live care assignments owned by this employment, now revoked. */
   readonly revokedAssignments: number;
+  /**
+   * Live hospital role assignments derived from this employment
+   * (`hospital_role_assignments.source_doctor_employment_id`), now revoked.
+   */
+  readonly revokedHospitalRoles: number;
   /** Live sessions of the doctor's account, now revoked (OD-12: no grace). */
   readonly revokedSessions: number;
 }

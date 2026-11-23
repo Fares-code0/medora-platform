@@ -53,6 +53,17 @@ export interface AuditEvent {
   /** Ties the audit row to the request's log lines (API §0.1). */
   readonly correlationId?: string;
   readonly metadata?: AuditMetadata;
+  /**
+   * `hospitals.id` the event belongs to, written to `audit_events.hospital_id`.
+   *
+   * Optional and added after every existing call site, which leave it
+   * unset (the column stays NULL). **Server-derived only** — read from a
+   * row the caller already holds, never taken from a request. The column
+   * is an attribution stamp with no foreign key (ADR-024 §3, migration
+   * `20261123120000_drop_audit_events_hospital_fkey`), so nothing in the
+   * database checks the hospital exists: that is the caller's job.
+   */
+  readonly hospitalId?: string;
   /** Defaults to now at write time; set it when replaying. */
   readonly occurredAt?: Date;
 }

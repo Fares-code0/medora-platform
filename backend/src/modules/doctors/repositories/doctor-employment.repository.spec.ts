@@ -34,7 +34,7 @@ function revocationWrite(file: string, anchor: string): string {
 describe('employment end revokes sessions exactly as SessionService.revokeAllFor does', () => {
   it('writes the same filter and the same columns', () => {
     const auth = revocationWrite(SESSION_SERVICE, 'async revokeAllFor(');
-    const doctors = revocationWrite(EMPLOYMENT_REPOSITORY, '3. Every live session');
+    const doctors = revocationWrite(EMPLOYMENT_REPOSITORY, '5. Every live session');
 
     expect(auth).toContain('revokedAt: null');
     expect(doctors).toBe(auth);

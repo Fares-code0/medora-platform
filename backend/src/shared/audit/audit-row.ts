@@ -31,6 +31,8 @@ const SEVERITY_TO_PRISMA: Readonly<Record<AuditSeverity, PrismaSeverity>> = {
   critical: 'CRITICAL',
 };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The `audit_events` row for one event (RM M28.1).
  *
@@ -58,6 +60,12 @@ export function auditRowOf(event: AuditEvent): Prisma.AuditEventCreateInput {
     // `unknown`, a comma-separated chain, or a port.
     ...(ipAddress === null ? {} : { ipAddress }),
     ...(event.actor.sessionId === undefined ? {} : { sessionId: event.actor.sessionId }),
+    // `uuid` refuses a malformed id, and a refused insert is a lost audit
+    // row (ADR-024 §4: worse than a misfiled one) — so, as with the
+    // address above, a value that is not a UUID leaves the column NULL.
+    ...(event.hospitalId !== undefined && UUID.test(event.hospitalId)
+      ? { hospitalId: event.hospitalId }
+      : {}),
     payload: {
       // The correlation id has no column of its own and belongs
       // with the event: it is what ties this row to the request's

@@ -28,7 +28,10 @@ import { createPatientRecords, destroyPatientRecords } from './support/patient-f
  *
  * Also pinned: the employment's own care assignments are revoked while a
  * legacy assignment with no employment (#17) is left exactly as it was;
- * the audit row is written; only `doctors.manage` reaches the routes; and
+ * hospital role assignments derived from the employment are revoked while
+ * an independent grant and a grant at another hospital are not; the audit
+ * rows are written, with `audit_events.hospital_id` set to the
+ * employment's hospital (and still NULL on other events); only `doctors.manage` reaches the routes; and
  * every refusal (409 twice active, 409 double end, 422 foreign
  * department, 404 unknown ids) answers as documented.
  */
@@ -66,6 +69,7 @@ interface EmploymentView {
 interface EndResult {
   employment: EmploymentView;
   revokedAssignments: number;
+  revokedHospitalRoles: number;
   revokedSessions: number;
 }
 
@@ -225,6 +229,8 @@ afterAll(async () => {
   // an employment references its doctor and hospital (RESTRICT), and the
   // harness reset deletes this suite's users, cascading to their doctors.
   const db = harness.prisma;
+  // A role assignment references its source employment (RESTRICT).
+  await db.hospitalRoleAssignment.deleteMany({ where: { hospitalId: { in: created.hospitals } } });
   await db.patientDoctorAssignment.deleteMany({ where: { doctorId: { in: created.doctors } } });
   await db.doctorEmployment.deleteMany({
     where: {
@@ -299,6 +305,30 @@ describe('termination is immediate (OD-12)', () => {
       select: { id: true },
     });
 
+    // Hospital roles: one derived from this employment (must end), one
+    // independent grant at the same hospital and one at another hospital
+    // (both must survive — OD-12 ends what depended on the employment).
+    const elsewhere = await hospital('Lifecycle Elsewhere');
+    const roleId = async (code: string): Promise<string> =>
+      (await harness.prisma.role.findUniqueOrThrow({ where: { code }, select: { id: true } })).id;
+    const derivedRole = await harness.prisma.hospitalRoleAssignment.create({
+      data: {
+        userId: doctor.userId,
+        hospitalId: employer.id,
+        roleId: await roleId('doctor'),
+        sourceDoctorEmploymentId: employment.id,
+      },
+      select: { id: true },
+    });
+    const independentRole = await harness.prisma.hospitalRoleAssignment.create({
+      data: { userId: doctor.userId, hospitalId: employer.id, roleId: await roleId('nurse') },
+      select: { id: true },
+    });
+    const otherHospitalRole = await harness.prisma.hospitalRoleAssignment.create({
+      data: { userId: doctor.userId, hospitalId: elsewhere.id, roleId: await roleId('doctor') },
+      select: { id: true },
+    });
+
     const ended = await endEmployment(doctor.doctorId, employment.id);
 
     expect(ended.status).toBe(200);
@@ -307,7 +337,23 @@ describe('termination is immediate (OD-12)', () => {
     expect(result.employment.active).toBe(false);
     expect(result.employment.endedAt).not.toBeNull();
     expect(result.revokedAssignments).toBe(2);
+    expect(result.revokedHospitalRoles).toBe(1);
     expect(result.revokedSessions).toBe(2);
+
+    const roleRows = await harness.prisma.hospitalRoleAssignment.findMany({
+      where: { id: { in: [derivedRole.id, independentRole.id, otherHospitalRole.id] } },
+      select: { id: true, revokedAt: true },
+    });
+    const revokedAtOf = (id: string): Date | null | undefined =>
+      roleRows.find((row) => row.id === id)?.revokedAt;
+    // Revoked in the end's own transaction, at the employment's end time.
+    const endedRow = await harness.prisma.doctorEmployment.findUniqueOrThrow({
+      where: { id: employment.id },
+      select: { endedAt: true },
+    });
+    expect(revokedAtOf(derivedRole.id)).toEqual(endedRow.endedAt);
+    expect(revokedAtOf(independentRole.id)).toBeNull();
+    expect(revokedAtOf(otherHospitalRole.id)).toBeNull();
 
     // The access token the doctor already holds: refused on the next request.
     for (const session of [first, second]) {
@@ -351,11 +397,13 @@ describe('termination is immediate (OD-12)', () => {
       orderBy: { occurredAt: 'desc' },
     });
     expect(audit.actorRole).toBe('admin');
+    expect(audit.hospitalId).toBe(employer.id);
     expect(audit.payload).toMatchObject({
       employmentId: employment.id,
       hospitalId: employer.id,
       hospitalDepartmentId: ward,
       revokedAssignments: 2,
+      revokedHospitalRoles: 1,
       revokedSessions: 2,
       legacyAssignmentsUntouched: 1,
     });
@@ -364,6 +412,15 @@ describe('termination is immediate (OD-12)', () => {
       where: { eventType: 'doctor.employment_started', target: `doctor:${doctor.doctorId}` },
     });
     expect(startAudit).not.toBeNull();
+    expect(startAudit?.hospitalId).toBe(employer.id);
+
+    // Every other event keeps the column NULL — here, the doctor's sign-ins.
+    const logins = await harness.prisma.auditEvent.findMany({
+      where: { eventType: 'auth.login', actorId: doctor.userId },
+      select: { hospitalId: true },
+    });
+    expect(logins.length).toBeGreaterThan(0);
+    for (const row of logins) expect(row.hospitalId).toBeNull();
   });
 
   it('refuses to end an employment twice (409) and changes nothing the second time', async () => {

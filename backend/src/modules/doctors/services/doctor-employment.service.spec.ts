@@ -77,6 +77,7 @@ function setup(
     employment: employmentRow({ endedAt: new Date('2026-11-23T10:00:00.000Z') }),
     userId: USER,
     revokedAssignments: 2,
+    revokedHospitalRoles: 4,
     revokedSessions: 3,
     legacyAssignmentsUntouched: 1,
   };
@@ -171,6 +172,7 @@ describe('DoctorEmploymentService.start', () => {
       actor: { userId: ADMIN.id, role: 'admin', sessionId: ADMIN.sessionId },
       entityType: 'doctor',
       entityId: DOCTOR,
+      hospitalId: HOSPITAL,
       metadata: {
         employmentId: EMPLOYMENT,
         hospitalId: HOSPITAL,
@@ -268,6 +270,7 @@ describe('DoctorEmploymentService.end', () => {
         active: false,
       }) as unknown,
       revokedAssignments: 2,
+      revokedHospitalRoles: 4,
       revokedSessions: 3,
     });
     expect(recorded).toHaveLength(1);
@@ -277,11 +280,13 @@ describe('DoctorEmploymentService.end', () => {
       actor: { userId: ADMIN.id, role: 'admin', sessionId: ADMIN.sessionId },
       entityType: 'doctor',
       entityId: DOCTOR,
+      hospitalId: HOSPITAL,
       metadata: {
         employmentId: EMPLOYMENT,
         hospitalId: HOSPITAL,
         hospitalDepartmentId: null,
         revokedAssignments: 2,
+        revokedHospitalRoles: 4,
         revokedSessions: 3,
         legacyAssignmentsUntouched: 1,
       },
