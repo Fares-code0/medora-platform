@@ -2,7 +2,12 @@ import { HttpStatus, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppException } from '../../common/errors/app.exception';
-import type { HospitalPatientScopeShadow } from './hospital-patient-scope.shadow';
+import type { HospitalContextService } from './hospital-context.service';
+import {
+  HospitalPatientScopeShadow,
+  type HospitalPatientScopeRepository,
+  type LiveAssignmentScope,
+} from './hospital-patient-scope.shadow';
 import { PatientScopeService } from './patient-scope.service';
 import { PLATFORM_ROLES } from './permission-catalogue';
 import type { PatientAssignmentRepository, PlatformRole, Principal } from './authz.types';
@@ -167,7 +172,14 @@ describe('PatientScopeService — Phase 22 shadow comparison never changes a dec
     spy: ReturnType<typeof vi.fn>;
   } {
     const spy = vi.fn(compare);
-    return { shadow: { compare: spy } as unknown as HospitalPatientScopeShadow, spy };
+    // `admit` always grants a slot here; the C1 cap has its own cases below.
+    return {
+      shadow: {
+        admit: () => () => undefined,
+        compare: spy,
+      } as unknown as HospitalPatientScopeShadow,
+      spy,
+    };
   }
 
   const LINKS = { 'dr-a': ['PT-1001'], 'admin-1': ['PT-1001'], 'u-1': ['PT-1001'] };
@@ -302,6 +314,7 @@ describe('PatientScopeService — the shadow is detached from the decision (audi
   } {
     const compareSpy = vi.fn(compare);
     const scope = new PatientScopeService(new StubAssignments(new Map(Object.entries(ASSIGNED))), {
+      admit: () => () => undefined,
       compare: compareSpy,
     } as unknown as HospitalPatientScopeShadow);
     return { scope, compareSpy };
@@ -408,5 +421,170 @@ describe('PatientScopeService — the shadow is detached from the decision (audi
 
     expect(isAssigned).toHaveBeenCalledTimes(2);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * C1 (#26): the in-flight cap and slot accounting, with the real shadow class
+ * and a repository whose every call the test settles by hand — a hung query,
+ * a timeout (`57014`) and a failure are each a promise the test controls.
+ */
+describe('PatientScopeService — shadow resource bounds (C1)', () => {
+  const ASSIGNED = { 'dr-a': ['PT-1001'] };
+  const SCOPED: LiveAssignmentScope = {
+    hospitalId: 'h-a',
+    hospitalMedicalRecordId: 'hmr-a',
+    doctorEmploymentId: 'emp-a',
+    employmentEndedAt: null,
+    hospitalActive: true,
+  };
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  interface Pending {
+    resolve: (rows: readonly LiveAssignmentScope[]) => void;
+    reject: (error: unknown) => void;
+  }
+
+  function bounded(maxInFlight: number) {
+    const pending: Pending[] = [];
+    const repository: HospitalPatientScopeRepository = {
+      liveAssignmentScopes: () =>
+        new Promise((resolve, reject) => {
+          pending.push({ resolve, reject });
+        }),
+    };
+    const contexts = {
+      forRequest: () =>
+        Promise.resolve({
+          kind: 'hospital',
+          hospitalId: 'h-a',
+          hospitalName: 'A',
+          source: 'doctor_employment',
+        }),
+    } as unknown as HospitalContextService;
+    const shadow = new HospitalPatientScopeShadow(contexts, repository, { maxInFlight });
+    const scope = new PatientScopeService(
+      new StubAssignments(new Map(Object.entries(ASSIGNED))),
+      shadow,
+    );
+    return { shadow, scope, pending };
+  }
+
+  const flush = (): Promise<void> => new Promise((done) => setImmediate(done));
+
+  it('skips, without queuing, once the cap is reached — and the decision returns at once', async () => {
+    const { shadow, scope, pending } = bounded(2);
+
+    for (let i = 0; i < 5; i += 1) {
+      await expect(scope.canReach(DOCTOR_A, 'PT-1001')).resolves.toBe(true);
+    }
+    await flush();
+
+    expect(pending).toHaveLength(2);
+    expect(shadow.load()).toEqual({ inFlight: 2, skipped: 3, maxInFlight: 2 });
+  });
+
+  it('releases the slot after a successful comparison', async () => {
+    const { shadow, scope, pending } = bounded(1);
+
+    await scope.canReach(DOCTOR_A, 'PT-1001');
+    await flush();
+    expect(shadow.load().inFlight).toBe(1);
+
+    pending[0]?.resolve([SCOPED]);
+    await flush();
+
+    expect(shadow.load().inFlight).toBe(0);
+    await scope.canReach(DOCTOR_A, 'PT-1001');
+    await flush();
+    expect(pending).toHaveLength(2);
+  });
+
+  it('releases the slot after a failed comparison, and logs it', async () => {
+    const { shadow, scope, pending } = bounded(1);
+
+    await scope.canReach(DOCTOR_A, 'PT-1001');
+    await flush();
+    pending[0]?.reject(new Error('connection reset'));
+    await flush();
+
+    expect(shadow.load().inFlight).toBe(0);
+    expect(warn).toHaveBeenCalledWith('Patient scope shadow comparison unavailable');
+  });
+
+  it('releases the slot when the statement timeout cancels the shadow query (57014)', async () => {
+    const { shadow, scope, pending } = bounded(1);
+
+    await expect(scope.canReach(DOCTOR_A, 'PT-1001')).resolves.toBe(true);
+    await flush();
+    pending[0]?.reject(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }),
+    );
+    await flush();
+
+    expect(shadow.load().inFlight).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the slot when the comparison throws synchronously', async () => {
+    const { shadow, scope } = bounded(1);
+    vi.spyOn(shadow, 'compare').mockImplementation(() => {
+      throw new Error('sync failure');
+    });
+
+    await expect(scope.canReach(DOCTOR_A, 'PT-1001')).resolves.toBe(true);
+
+    expect(shadow.load().inFlight).toBe(0);
+  });
+
+  it('keeps a hung comparison counted, so hung work stays bounded by the cap', async () => {
+    const { shadow, scope, pending } = bounded(1);
+
+    await scope.canReach(DOCTOR_A, 'PT-1001'); // never settled by the test
+    await flush();
+    await expect(scope.canReach(DOCTOR_B, 'PT-1001')).resolves.toBe(false);
+    await expect(scope.assertCanReach(DOCTOR_B, 'PT-1001')).rejects.toBeInstanceOf(AppException);
+    await flush();
+
+    expect(pending).toHaveLength(1);
+    expect(shadow.load()).toMatchObject({ inFlight: 1, skipped: 2 });
+
+    // Once the database answers (or times it out), the slot comes back.
+    pending[0]?.resolve([]);
+    await flush();
+    expect(shadow.load().inFlight).toBe(0);
+  });
+
+  it('never lets a slot go negative or be released twice', () => {
+    const { shadow } = bounded(1);
+    const release = shadow.admit();
+
+    release?.();
+    release?.();
+
+    expect(shadow.load().inFlight).toBe(0);
+    expect(shadow.admit()).not.toBeNull();
+  });
+
+  it('returns the legacy decisions unchanged whether the shadow runs, is skipped or hangs', async () => {
+    const { scope } = bounded(1);
+    const cases: [Principal, string, boolean][] = [
+      [DOCTOR_A, 'PT-1001', true],
+      [DOCTOR_A, 'PT-2001', false],
+      [DOCTOR_B, 'PT-1001', false],
+      [{ userId: 'adm', roleCode: 'admin' }, 'PT-1001', false],
+    ];
+
+    for (const [principal, patient, expected] of cases) {
+      await expect(scope.canReach(principal, patient)).resolves.toBe(expected);
+    }
   });
 });

@@ -91,15 +91,65 @@ function deny(reason: ShadowDenyReason): ShadowPatientScopeDecision {
   return { allowed: false, reason };
 }
 
+/** C1 resource bounds (issue #26). */
+export interface ShadowLimits {
+  /** Comparisons allowed in flight per process; beyond it they are skipped. */
+  readonly maxInFlight: number;
+}
+
+export const DEFAULT_SHADOW_LIMITS: ShadowLimits = { maxInFlight: 4 };
+
+/** Releases an admitted comparison's slot. Idempotent. */
+export type ShadowSlotRelease = () => void;
+
 @Injectable()
 export class HospitalPatientScopeShadow {
   private readonly logger = new Logger(HospitalPatientScopeShadow.name);
+
+  private inFlight = 0;
+  private skipped = 0;
 
   constructor(
     private readonly contexts: HospitalContextService,
     @Inject(HOSPITAL_PATIENT_SCOPE_REPOSITORY)
     private readonly repository: HospitalPatientScopeRepository,
+    private readonly limits: ShadowLimits = DEFAULT_SHADOW_LIMITS,
   ) {}
+
+  /**
+   * C1 in-flight cap. Returns a release function when a slot is free, or
+   * `null` when `maxInFlight` comparisons are already running — the caller
+   * then skips the comparison entirely (no queue, no wait). Synchronous, so
+   * admission can never delay the authorization decision.
+   *
+   * The slot is held until the comparison **settles**, not until a timer
+   * fires: releasing early would let the work it stands for keep running
+   * uncounted. The shadow's own query is bounded by a transaction-local
+   * `statement_timeout`, so a slow or lock-blocked database settles it; a
+   * comparison that never settled would keep its slot, and the cap would
+   * still bound such work at `maxInFlight`.
+   */
+  admit(): ShadowSlotRelease | null {
+    if (this.inFlight >= this.limits.maxInFlight) {
+      this.skipped += 1;
+      // Debug, not warn: under a slow database this fires per request.
+      this.logger.debug({ maxInFlight: this.limits.maxInFlight }, 'Patient scope shadow skipped');
+      return null;
+    }
+
+    this.inFlight += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.inFlight -= 1;
+    };
+  }
+
+  /** In-flight and skipped counts, for tests and diagnostics. No identifiers. */
+  load(): { readonly inFlight: number; readonly skipped: number; readonly maxInFlight: number } {
+    return { inFlight: this.inFlight, skipped: this.skipped, maxInFlight: this.limits.maxInFlight };
+  }
 
   /** The hospital-aware decision. Observation only — never an access gate. */
   async evaluate(principal: Principal, patientId: string): Promise<ShadowPatientScopeDecision> {

@@ -372,6 +372,40 @@ describe('the hospital scope shadow switch (Phase 22, opt-in after the resource-
   });
 });
 
+describe('the hospital scope shadow bounds (C1, #26)', () => {
+  it('defaults to 4 in flight and a 250 ms statement timeout', () => {
+    setEnv({});
+    expect(new ConfigService(loadEnv()).hospitalScopeShadowLimits).toEqual({
+      maxInFlight: 4,
+      statementTimeoutMs: 250,
+    });
+  });
+
+  it('reads explicit values', () => {
+    setEnv({
+      HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT: '2',
+      HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS: '500',
+    });
+    expect(new ConfigService(loadEnv()).hospitalScopeShadowLimits).toEqual({
+      maxInFlight: 2,
+      statementTimeoutMs: 500,
+    });
+  });
+
+  it.each(['0', '-1', '9', '1.5', 'many'])(
+    'refuses an in-flight cap of %j (below the pool size, at least one)',
+    (value) => {
+      setEnv({ HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT: value });
+      expect(captureError().message).toContain('HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT');
+    },
+  );
+
+  it.each(['0', '9', '5001', 'soon'])('refuses a statement timeout of %j', (value) => {
+    setEnv({ HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS: value });
+    expect(captureError().message).toContain('HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS');
+  });
+});
+
 describe('.env.example (RM M3.2)', () => {
   it('is itself a valid environment', () => {
     // The classic rot: the schema gains a required variable and the

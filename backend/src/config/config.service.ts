@@ -69,6 +69,17 @@ export class ConfigService {
     return this.env.HOSPITAL_SCOPE_SHADOW_COMPARISON;
   }
 
+  /** Phase 22, C1: the shadow's in-flight cap and its transaction-local statement timeout. */
+  get hospitalScopeShadowLimits(): {
+    readonly maxInFlight: number;
+    readonly statementTimeoutMs: number;
+  } {
+    return {
+      maxInFlight: this.env.HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT,
+      statementTimeoutMs: this.env.HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS,
+    };
+  }
+
   /** Express's `trust proxy` value; `false` unless the deployment names its proxies. */
   get trustProxy(): TrustProxySetting {
     const parsed = parseTrustProxy(this.env.TRUST_PROXY);

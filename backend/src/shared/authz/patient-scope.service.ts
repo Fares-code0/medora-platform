@@ -93,23 +93,39 @@ export class PatientScopeService {
    * Synchronous: it returns before the comparison settles, so nothing the
    * shadow does can delay or change `allowed`. Both failure modes are
    * contained here — a synchronous throw by the `try`, an asynchronous
-   * rejection by the `.catch` attached before this method returns — so no
-   * rejection can go unhandled. A comparison that never settles only keeps
-   * its own query open until the database times it out; no queue or timer
-   * is created. Its result is discarded either way.
+   * rejection by the handler attached before this method returns — so no
+   * rejection can go unhandled. No queue or timer is created, and the
+   * result is discarded either way.
+   *
+   * C1 (#26): a comparison runs only if the shadow admits it (in-flight
+   * cap); otherwise it is skipped. An admitted comparison's slot is released
+   * exactly once, whether it resolves, rejects (including a statement
+   * timeout, `57014`) or throws synchronously.
    */
   private observeShadow(principal: Principal, patientId: string, allowed: boolean): void {
     const shadow = this.shadow;
     if (shadow === undefined) return;
 
-    let comparison: Promise<unknown>;
+    let release: (() => void) | null;
     try {
-      comparison = Promise.resolve(shadow.compare(principal, patientId, allowed));
+      release = shadow.admit();
     } catch {
       this.logger.warn('Patient scope shadow comparison unavailable');
       return;
     }
-    comparison.catch(() => {
+    if (release === null) return;
+    const done = release;
+
+    let comparison: Promise<unknown>;
+    try {
+      comparison = Promise.resolve(shadow.compare(principal, patientId, allowed));
+    } catch {
+      done();
+      this.logger.warn('Patient scope shadow comparison unavailable');
+      return;
+    }
+    comparison.then(done, () => {
+      done();
       this.logger.warn('Patient scope shadow comparison unavailable');
     });
   }
