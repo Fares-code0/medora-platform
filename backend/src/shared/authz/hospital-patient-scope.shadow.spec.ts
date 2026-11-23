@@ -26,6 +26,7 @@ const SCOPED_AT_A: LiveAssignmentScope = {
   hospitalMedicalRecordId: 'hmr-a',
   doctorEmploymentId: 'emp-a',
   employmentEndedAt: null,
+  hospitalActive: true,
 };
 
 function shadowWith(
@@ -99,9 +100,15 @@ describe('HospitalPatientScopeShadow — the hospital-aware rule', () => {
           hospitalMedicalRecordId: null,
           doctorEmploymentId: null,
           employmentEndedAt: null,
+          hospitalActive: false,
         },
       ],
       'assignment_hospital_unassigned',
+    ],
+    [
+      'an assignment owned by a suspended, inactive or deleted hospital',
+      [{ ...SCOPED_AT_A, hospitalActive: false }],
+      'assignment_hospital_inactive',
     ],
     [
       'an assignment owned by another hospital',
@@ -170,17 +177,14 @@ describe('HospitalPatientScopeShadow — comparison with the legacy decision', (
     );
     await shadowWith(DOCTOR_AT_A, [SCOPED_AT_A]).shadow.compare(DOCTOR, 'PT-SECRET-2', false);
 
-    expect(debug).toHaveBeenCalledWith({
-      msg: 'Patient scope shadow divergence',
-      outcome: 'legacy_allow_shadow_deny',
-      role: 'doctor',
-      reason: 'cross_hospital_assignment',
-    });
-    expect(warn).toHaveBeenCalledWith({
-      msg: 'Patient scope shadow divergence',
-      outcome: 'legacy_deny_shadow_allow',
-      role: 'doctor',
-    });
+    expect(debug).toHaveBeenCalledWith(
+      { outcome: 'legacy_allow_shadow_deny', role: 'doctor', reason: 'cross_hospital_assignment' },
+      'Patient scope shadow divergence',
+    );
+    expect(warn).toHaveBeenCalledWith(
+      { outcome: 'legacy_deny_shadow_allow', role: 'doctor' },
+      'Patient scope shadow divergence',
+    );
     const logged = JSON.stringify([...debug.mock.calls, ...warn.mock.calls]);
     expect(logged).not.toContain('PT-SECRET');
     expect(logged).not.toContain('Hospital A');

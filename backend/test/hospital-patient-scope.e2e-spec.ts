@@ -20,7 +20,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { ConfigModule } from '../src/config';
 import { BloodType, Gender } from '../src/generated/prisma/enums';
 import { AuthzKernelModule, PatientScopeService, type Principal } from '../src/shared/authz';
-import { HospitalPatientScopeShadow } from '../src/shared/authz/hospital-patient-scope.shadow';
+import {
+  HOSPITAL_PATIENT_SCOPE_REPOSITORY,
+  HospitalPatientScopeShadow,
+  type HospitalPatientScopeRepository,
+} from '../src/shared/authz/hospital-patient-scope.shadow';
 import { PrismaService } from '../src/shared/database';
 
 describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () => {
@@ -28,6 +32,7 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
   let prisma: PrismaService;
   let scope: PatientScopeService;
   let shadow: HospitalPatientScopeShadow;
+  let repository: HospitalPatientScopeRepository;
 
   const created = {
     users: [] as string[],
@@ -45,13 +50,16 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
     prisma = app.get(PrismaService);
     scope = app.get(PatientScopeService);
     shadow = app.get(HospitalPatientScopeShadow);
+    repository = app.get<HospitalPatientScopeRepository>(HOSPITAL_PATIENT_SCOPE_REPOSITORY);
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
     const db = prisma.db;
     await db.patientDoctorAssignment.deleteMany({
-      where: { OR: [{ doctorId: { in: created.doctors } }, { patientId: { in: created.patients } }] },
+      where: {
+        OR: [{ doctorId: { in: created.doctors } }, { patientId: { in: created.patients } }],
+      },
     });
     await db.hospitalRoleAssignment.deleteMany({ where: { userId: { in: created.users } } });
     await db.hospitalMedicalRecord.deleteMany({ where: { patientId: { in: created.patients } } });
@@ -317,6 +325,60 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
     await expect(shadow.compare(admin, p.publicId, false)).resolves.toMatchObject({
       shadow: { allowed: false, reason: 'role_has_no_care_relationship' },
       outcome: 'agree_deny',
+    });
+  });
+
+  describe('hospital state: suspended, inactive or deleted hospitals fail closed', () => {
+    async function scopedAssignment(): Promise<{
+      principal: Principal;
+      hospitalId: string;
+      patient: { id: string; publicId: string };
+    }> {
+      const { principal, doctorId } = await doctor();
+      const hospitalId = await hospital('P22S Hospital Later Unavailable');
+      const employmentId = await employ(doctorId, hospitalId);
+      const p = await patient();
+      await assign(p.id, doctorId, {
+        hospitalId,
+        employmentId,
+        recordId: await record(p.id, hospitalId),
+      });
+      return { principal, hospitalId, patient: p };
+    }
+
+    it.each([
+      ['suspended', { status: 'SUSPENDED' }],
+      ['inactive', { status: 'INACTIVE' }],
+      ['soft-deleted', { deletedAt: new Date() }],
+    ] as const)(
+      'keeps legacy access but the shadow denies once the hospital is %s',
+      async (_label, change) => {
+        const { principal, hospitalId, patient: p } = await scopedAssignment();
+        await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
+          outcome: 'agree_allow',
+        });
+
+        await prisma.db.hospital.update({ where: { id: hospitalId }, data: change });
+
+        await expect(scope.canReach(principal, p.publicId)).resolves.toBe(true);
+        await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
+          shadow: { allowed: false, reason: 'no_active_employment' },
+          outcome: 'legacy_allow_shadow_deny',
+        });
+        // The assignment's own hospital flag fails closed too, so the rule
+        // does not depend on the context check alone.
+        await expect(
+          repository.liveAssignmentScopes(principal.userId, p.publicId),
+        ).resolves.toEqual([expect.objectContaining({ hospitalId, hospitalActive: false })]);
+      },
+    );
+
+    it('reports an ACTIVE, non-deleted owning hospital as active', async () => {
+      const { principal, hospitalId, patient: p } = await scopedAssignment();
+
+      await expect(repository.liveAssignmentScopes(principal.userId, p.id)).resolves.toEqual([
+        expect.objectContaining({ hospitalId, hospitalActive: true }),
+      ]);
     });
   });
 });

@@ -62,9 +62,17 @@ describe('Phase 22 hospital context resolution (PostgreSQL)', () => {
     await app.close();
   });
 
-  async function hospital(name: string): Promise<{ id: string; name: string }> {
+  async function hospital(
+    name: string,
+    state: { status?: string; deleted?: boolean } = {},
+  ): Promise<{ id: string; name: string }> {
     const row = await prisma.db.hospital.create({
-      data: { publicId: 'hsp_' + randomUUID(), name },
+      data: {
+        publicId: 'hsp_' + randomUUID(),
+        name,
+        ...(state.status === undefined ? {} : { status: state.status }),
+        ...(state.deleted === true ? { deletedAt: new Date() } : {}),
+      },
       select: { id: true, name: true },
     });
     created.hospitals.push(row.id);
@@ -286,6 +294,107 @@ describe('Phase 22 hospital context resolution (PostgreSQL)', () => {
       await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toEqual({
         kind: 'unresolved',
         reason: 'admin_scope_not_mapped',
+      });
+    });
+  });
+
+  describe('hospital state: only ACTIVE, non-deleted hospitals yield context', () => {
+    const UNAVAILABLE: readonly [string, { status?: string; deleted?: boolean }][] = [
+      ['suspended', { status: 'SUSPENDED' }],
+      ['inactive', { status: 'INACTIVE' }],
+      ['soft-deleted while still ACTIVE', { deleted: true }],
+    ];
+
+    it.each(UNAVAILABLE)(
+      'treats a %s employer as missing doctor context',
+      async (_label, state) => {
+        const { userId, doctorId } = await doctor();
+        const h = await hospital('P22 Unavailable Employer', state);
+        await prisma.db.doctorEmployment.create({ data: { doctorId, hospitalId: h.id } });
+
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toEqual({
+          kind: 'unresolved',
+          reason: 'no_active_employment',
+        });
+      },
+    );
+
+    it.each(UNAVAILABLE)(
+      'treats a %s hospital as missing hospital-admin context',
+      async (_label, state) => {
+        const userId = await user('admin');
+        const h = await hospital('P22 Unavailable Admin Hospital', state);
+        await assignRole(userId, h.id, 'admin');
+
+        await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toEqual({
+          kind: 'unresolved',
+          reason: 'admin_scope_not_mapped',
+        });
+      },
+    );
+
+    it('drops the hospital on the next resolution once it is suspended', async () => {
+      const { userId, doctorId } = await doctor();
+      const h = await hospital('P22 Suspended Later');
+      await prisma.db.doctorEmployment.create({ data: { doctorId, hospitalId: h.id } });
+      await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toMatchObject({
+        kind: 'hospital',
+        hospitalId: h.id,
+      });
+
+      await prisma.db.hospital.update({ where: { id: h.id }, data: { status: 'SUSPENDED' } });
+
+      await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toEqual({
+        kind: 'unresolved',
+        reason: 'no_active_employment',
+      });
+    });
+
+    it('rejects an unknown status at the database, so the allow-list is the only path', async () => {
+      // `hospitals_status_check` allows ACTIVE, SUSPENDED and INACTIVE only;
+      // the resolver additionally accepts ACTIVE alone.
+      await expect(
+        prisma.db.$executeRaw`INSERT INTO public.hospitals (public_id, name, status, updated_at)
+          VALUES (${'hsp_' + randomUUID()}, 'P22 Unknown Status', 'PENDING', CURRENT_TIMESTAMP)`,
+      ).rejects.toThrow(/hospitals_status_check/);
+    });
+
+    it('resolves an administrator to the one ACTIVE hospital when the other is suspended', async () => {
+      const userId = await user('admin');
+      const active = await hospital('P22 Admin Active');
+      const suspended = await hospital('P22 Admin Suspended', { status: 'SUSPENDED' });
+      await assignRole(userId, active.id, 'admin');
+      await assignRole(userId, suspended.id, 'admin');
+
+      await expect(contexts.resolve(principal(userId, 'admin'))).resolves.toEqual({
+        kind: 'hospital',
+        hospitalId: active.id,
+        hospitalName: active.name,
+        source: 'hospital_admin_assignment',
+      });
+    });
+
+    it('never falls back to an ended employment at an ACTIVE hospital when the current employer is suspended', async () => {
+      // A doctor cannot hold two active employments (one-active-per-doctor
+      // index), so "one active plus one suspended hospital" for a doctor is
+      // an ended employment at an ACTIVE hospital and the current one at a
+      // suspended hospital. Neither may yield context.
+      const { userId, doctorId } = await doctor();
+      const former = await hospital('P22 Former Active Employer');
+      const current = await hospital('P22 Current Suspended Employer', { status: 'SUSPENDED' });
+      await prisma.db.doctorEmployment.create({
+        data: {
+          doctorId,
+          hospitalId: former.id,
+          startedAt: new Date(Date.now() - 86_400_000),
+          endedAt: new Date(),
+        },
+      });
+      await prisma.db.doctorEmployment.create({ data: { doctorId, hospitalId: current.id } });
+
+      await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toEqual({
+        kind: 'unresolved',
+        reason: 'no_active_employment',
       });
     });
   });

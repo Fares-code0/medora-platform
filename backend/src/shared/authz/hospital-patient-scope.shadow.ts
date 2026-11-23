@@ -12,7 +12,9 @@
  * a "no access" shadow decision with a reason:
  *
  * - the server-derived hospital context is exactly one active
- *   `DoctorEmployment` (hospital is the isolation boundary, DR-01);
+ *   `DoctorEmployment` at an `ACTIVE`, non-deleted hospital (hospital is
+ *   the isolation boundary, DR-01); a suspended, inactive or deleted
+ *   hospital is missing context;
  * - exactly one live care assignment links the doctor and the patient;
  * - that assignment is explicitly owned by the same hospital — legacy rows
  *   with no hospital are never assumed to belong to one;
@@ -40,6 +42,8 @@ export interface LiveAssignmentScope {
   readonly doctorEmploymentId: string | null;
   /** `ended_at` of the bound employment; `null` when active or unbound. */
   readonly employmentEndedAt: Date | null;
+  /** The owning hospital is `ACTIVE` and not soft-deleted; `false` when unowned. */
+  readonly hospitalActive: boolean;
 }
 
 export interface HospitalPatientScopeRepository {
@@ -59,6 +63,7 @@ export type ShadowDenyReason =
   | 'no_care_assignment'
   | 'ambiguous_care_assignment'
   | 'assignment_hospital_unassigned'
+  | 'assignment_hospital_inactive'
   | 'cross_hospital_assignment'
   | 'assignment_employment_unassigned'
   | 'assignment_employment_ended'
@@ -116,6 +121,7 @@ export class HospitalPatientScopeShadow {
     if (assignment === undefined) return deny('no_care_assignment');
 
     if (assignment.hospitalId === null) return deny('assignment_hospital_unassigned');
+    if (!assignment.hospitalActive) return deny('assignment_hospital_inactive');
     if (assignment.hospitalId !== context.hospitalId) return deny('cross_hospital_assignment');
     if (assignment.doctorEmploymentId === null) return deny('assignment_employment_unassigned');
     if (assignment.employmentEndedAt !== null) return deny('assignment_employment_ended');
@@ -146,14 +152,12 @@ export class HospitalPatientScopeShadow {
           : 'legacy_deny_shadow_allow';
 
     if (outcome === 'legacy_deny_shadow_allow') {
-      this.logger.warn({ msg: 'Patient scope shadow divergence', outcome, role: principal.roleCode });
+      this.logger.warn({ outcome, role: principal.roleCode }, 'Patient scope shadow divergence');
     } else if (outcome === 'legacy_allow_shadow_deny' && !shadow.allowed) {
-      this.logger.debug({
-        msg: 'Patient scope shadow divergence',
-        outcome,
-        role: principal.roleCode,
-        reason: shadow.reason,
-      });
+      this.logger.debug(
+        { outcome, role: principal.roleCode, reason: shadow.reason },
+        'Patient scope shadow divergence',
+      );
     }
 
     return { legacyAllowed, shadow, outcome };

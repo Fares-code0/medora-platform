@@ -175,7 +175,10 @@ describe('PatientScopeService — Phase 22 shadow comparison never changes a dec
     [DOCTOR_A, 'PT-1001'],
     [DOCTOR_A, 'PT-2001'],
     [DOCTOR_B, 'PT-1001'],
-    ...PLATFORM_ROLES.map((role): [Principal, string] => [{ userId: 'u-1', roleCode: role }, 'PT-1001']),
+    ...PLATFORM_ROLES.map((role): [Principal, string] => [
+      { userId: 'u-1', roleCode: role },
+      'PT-1001',
+    ]),
     [{ userId: 'admin-1', roleCode: 'admin' }, 'PT-1001'],
     [{ userId: 'u-1', roleCode: 'unknown-role' }, 'PT-1001'],
   ];

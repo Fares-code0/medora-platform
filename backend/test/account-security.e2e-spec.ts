@@ -263,6 +263,45 @@ describe('GET /auth/session (M8.1)', () => {
     }
   });
 
+  it('returns no activeHospital when the employer is suspended', async () => {
+    // Phase 22: only an ACTIVE, non-deleted hospital yields context.
+    const session = await seedAndSignIn('employer-suspended');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: {
+        publicId: 'hsp_' + randomUUID(),
+        name: 'Suspended Employer Test Hospital',
+        status: 'SUSPENDED',
+      },
+    });
+
+    try {
+      await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+
+      const response = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+
+      expect(response.status).toBe(200);
+      expect(dataOf<SessionUser>(response).activeHospital).toBeNull();
+      expect(dataOf<SessionUser>(response).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
+
   it('matches the payload the login response carried', async () => {
     const email = await seedAccount('parity');
     const login = await request(harness.server)

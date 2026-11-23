@@ -17,7 +17,11 @@ describe('PrismaHospitalContextRepository', () => {
       { id: 'hospital-a', name: 'North Hospital' },
     ]);
     expect(findMany).toHaveBeenCalledWith({
-      where: { endedAt: null, doctor: { is: { userId: 'user-1' } } },
+      where: {
+        endedAt: null,
+        doctor: { is: { userId: 'user-1' } },
+        hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+      },
       select: { hospitalId: true, hospital: { select: { name: true } } },
       take: 2,
     });
@@ -40,6 +44,7 @@ describe('PrismaHospitalContextRepository', () => {
         userId: 'user-1',
         revokedAt: null,
         role: { is: { code: 'admin' } },
+        hospital: { is: { status: 'ACTIVE', deletedAt: null } },
       },
       select: { hospitalId: true, hospital: { select: { name: true } } },
       distinct: ['hospitalId'],
