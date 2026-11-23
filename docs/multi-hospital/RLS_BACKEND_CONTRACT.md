@@ -1,8 +1,11 @@
 # Backend ↔ PostgreSQL Tenant-Context Contract (for #20)
 
-**Status:** PROPOSED by database engineering, **pending Backend agreement** (#20). Nothing here is
-implemented in the Backend, and no policy is active. Every PostgreSQL behaviour stated is proven by a
-test on PostgreSQL 16 (references in brackets).
+**Status:** **AGREED** for the setting name and transaction rules (§1–§2), 2026-11-23, Multi-Hospital
+implementation branch (#20). The Backend writes the setting only through
+`withHospitalTenantContext` (`backend/src/shared/database/hospital-tenant-transaction.ts`), proven by
+`backend/test/hospital-tenant-context.e2e-spec.ts`. **No policy is active** (#19), and no request is
+routed through the wrapper yet: that is enforcement work (S3/S4) and activation (S8). Every PostgreSQL
+behaviour stated is proven by a test on PostgreSQL 16 (references in brackets).
 
 ## 1. What PostgreSQL needs
 
@@ -10,7 +13,7 @@ One transaction-local setting per request transaction:
 
 | Item | Proposed value |
 |---|---|
-| Setting name | `app.hospital_id` (placeholder; final name agreed in #20 and then used by the policy migrations) |
+| Setting name | `app.hospital_id` (**agreed**; the policy migrations use this name) |
 | Value | The server-derived hospital id (UUID text) from `HospitalContextService.forRequest`, or `''` when the context is unresolved |
 | Scope | **Transaction-local** only: `SELECT set_config('app.hospital_id', $1, true)` |
 | Role | The runtime role (`DATABASE_ROLES.md`); never the owner |
