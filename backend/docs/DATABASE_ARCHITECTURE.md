@@ -168,6 +168,51 @@ still proportional to table size.
    moves out of the blocking lock. Restructuring Phase 21 itself that way is possible only if every
    environment is verified never to have applied it — an owner decision.
 
+## Doctor, employment and hospital status (Phase 22 audit F4)
+
+The schema already distinguishes every state the hospital context needs; no schema change is required:
+
+| State | Column | Index |
+|---|---|---|
+| Doctor practice | `doctors.practice_status` (`doctor_practice_status`: active, suspended, vacation) | `doctors_practice_status_idx` |
+| Doctor verification | `doctors.verification_status` | `doctors_verification_status_idx` |
+| Doctor profile deleted | `doctors.deleted_at` (soft delete) | `doctors_deleted_at_idx` |
+| Employment | `doctor_employments.started_at` / `ended_at`; one active per doctor | `doctor_employments_one_active_per_doctor_key (doctor_id) WHERE ended_at IS NULL` |
+| Hospital | `hospitals.status` (CHECK: ACTIVE, SUSPENDED, INACTIVE), `hospitals.deleted_at` | `hospitals_status_idx`, `hospitals_deleted_at_idx` |
+
+Ended employments are kept as history; nothing deletes them. The gap found by the audit is in what the
+Backend's context query reads (it ignores `practice_status` and `deleted_at` on `doctors`). The
+effective-employment rule is written once, as `app_rls.effective_doctor_hospital()` in the RLS
+proposal (`prisma/rls-proposal/`), and proven in `test/rls-proposal.e2e-spec.ts` (tests 4–6). Whether
+VACATION or an unverified doctor should yield clinical context is an open owner question
+(`docs/multi-hospital/RLS_DESIGN.md` §6, B7).
+
+## Shadow query resource safety (condition C1, database side)
+
+**Verified:** nothing bounds a query on the application connection today — no `statement_timeout`,
+`lock_timeout` or `idle_in_transaction_session_timeout` in the server defaults, the Compose service, any
+role or database setting, any migration, or the `PrismaPg` options (`src/shared/database/prisma.service.ts`).
+`test/database-statement-timeout.e2e-spec.ts` asserts the connection starts with `statement_timeout = 0`.
+
+**Recommendation: a transaction-local timeout on the shadow queries only.**
+
+| Option | Verdict |
+|---|---|
+| `SET LOCAL statement_timeout` (or `set_config('statement_timeout', …, true)`) inside a transaction that wraps the two shadow queries | **Recommended.** Cancels a slow statement and a lock wait with `57014`, and ends with the transaction, so the pooled connection carries nothing into the next request (all three proven in the test). Scope is exactly the shadow. |
+| Role- or database-wide `ALTER ROLE/DATABASE … SET statement_timeout` | **Not recommended now.** The application, migrations and seeds share one role; a global limit would also cut migrations (the Phase 21 migration holds locks for its whole transaction), long exports and reports, and the re-encryption CLI's own bounded connection relies on its own settings. |
+| Session-level `SET statement_timeout` from the application | **Unsafe** with a pool: it survives into the next request on that connection (proven). |
+| Dedicated database role with a role-level timeout for shadow work | Possible later; needs a second connection pool (Backend-owned). |
+
+Suggested value: a few hundred milliseconds (the two queries are single-row index lookups); the exact
+value is the Backend's choice. A timeout alone does not bound *how many* comparisons queue for a pool
+connection: the Backend also needs an in-flight cap that skips comparisons when it is reached. Both are
+Backend work (issue linked from the Phase 22 plan); the shadow stays off until then.
+
+Hygiene for operations (not applied here; environment configuration is outside the repository):
+`idle_in_transaction_session_timeout` at the server or role level protects against a leaked open
+transaction pinning a connection, and is safe for this application because no code path holds a
+transaction idle on purpose.
+
 ## Local database setup
 
 For disposable local work, copy `backend/.env.example` to `backend/.env`, use the repository's
