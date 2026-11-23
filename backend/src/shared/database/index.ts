@@ -11,6 +11,12 @@ export { DatabaseModule } from './database.module';
 export { conflictingFields, isLockNotGranted, isUniqueViolation } from './prisma-errors';
 export { PrismaService } from './prisma.service';
 export {
+  type HospitalTenantTransactionOptions,
+  type InteractiveTransactionRunner,
+  TENANT_HOSPITAL_SETTING,
+  withHospitalTenantContext,
+} from './hospital-tenant-transaction';
+export {
   applySoftDeleteFilter,
   FILTERED_READ_OPERATIONS,
   ONLY_DELETED,
