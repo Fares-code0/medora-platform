@@ -1,6 +1,6 @@
 # Multi-Hospital — API Contract Changes (Proposal)
 
-**Status:** proposal for the Backend team. Implemented so far: only the shadow-only `GET /auth/session` fields `activeHospital` and `adminScope` (Phase 22); everything else is not implemented. Paths and shapes are **TECHNICAL
+**Status:** proposal for the Backend team. Implemented so far: the shadow-only `GET /auth/session` fields `activeHospital` and `adminScope` (Phase 22), and the platform-wide admin's doctor employment lifecycle (§8a, #54); everything else is not implemented. Paths and shapes are **TECHNICAL
 RECOMMENDATIONS**; the rules in §0 follow the FINAL owner decisions.
 **Base path:** `/api/v1` (ADR-011). Errors use the machine `code` envelope (ADR-012).
 **Supersedes:** the 2026-10-06 proposals API-W01…W14 (`origin/frontend:frontend/FRONTEND_CHECKLIST.md`
@@ -147,6 +147,32 @@ Insurance (OD-14):
 - `/hospital-admin/*`: one hospital's administration (staff, doctor employment hire/end, clinics,
   locations, operations, oversight, logs, reports, cross-hospital approvals).
 - Clinical access by any admin only through explicit permission, audited.
+
+## 8a. Doctor employment lifecycle — implemented (OD-12, #54)
+
+Platform-wide administrator routes beside the existing `/doctors/*` administration, permission
+`doctors.manage` (today's `admin`, platform-wide per OD-07). Hospital Admin scoping is not implemented
+(S5, #16); the `/hospital-admin/*` home in §8 remains the target once that mapping is decided.
+`doctorId` is the `doctors.id` uuid, as on every other administrator doctor route; the hospital is
+named by its public id. Responses carry ids and counts only — no patient data.
+
+| Method | Path | Request → Response | Errors |
+|---|---|---|---|
+| GET | `/doctors/:doctorId/employments` | → `200 DoctorEmploymentView[]`, newest first: `{ id, doctorId, hospital: { id: publicId, name }, hospitalDepartment: { id, name } \| null, startedAt, endedAt, active }` | 404 unknown or soft-deleted doctor |
+| POST | `/doctors/:doctorId/employments` | `{ hospitalId: <hospital public id>, hospitalDepartmentId?: uuid }` → `201 DoctorEmploymentView` | 404 unknown/soft-deleted doctor or hospital; `409 hospital_inactive` (hospital not `ACTIVE`); `409 employment_active` (DR-02: one active employment per doctor, enforced by the database); 422 department not in that hospital |
+| POST | `/doctors/:doctorId/employments/:employmentId/end` | → `200 { employment, revokedAssignments, revokedSessions }` | 404 unknown employment, or one belonging to another doctor; `409 invalid_status_transition` already ended |
+
+Ending is immediate (OD-12, no grace period) and is one transaction: `ended_at` is set only if still
+active; live `patient_doctor_assignments` whose `doctor_employment_id` is this employment are
+revoked; **every** session of the doctor's account is revoked (the doctor's next request is 401 and
+the refresh token is refused; a new sign-in carries `activeHospital: null`); the audit row
+`doctor.employment_ended` (metadata: employment, hospital and department ids, the counts) is written
+on the same transaction. Starting writes `doctor.employment_started`.
+
+**Limitations:** legacy assignments with no `doctor_employment_id` are not touched (#17) and are only
+counted (`legacyAssignmentsUntouched` in the audit metadata); hospital role assignments sourced from
+the employment, published slots and permission caches are not revoked; `audit_events.hospital_id` is
+not set (the audit kernel has no hospital field).
 
 ## 9. Mapping from the 2026-10-06 proposals
 

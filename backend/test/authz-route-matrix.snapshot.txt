@@ -75,6 +75,7 @@ GET /api/v1/dashboard/doctor/schedule                                     .D.L..
 GET /api/v1/dashboard/doctor/trends                                       .D.L...  can:records.view
 GET /api/v1/doctors                                                       A......  can:doctors.manage
 GET /api/v1/doctors/:doctorId                                             A......  can:doctors.manage
+GET /api/v1/doctors/:doctorId/employments                                 A......  can:doctors.manage
 GET /api/v1/files/:fileId                                                 ADRLPTN  authenticated
 GET /api/v1/files/:fileId/download                                        ADRLPTN  authenticated
 GET /api/v1/health                                                        ADRLPTN  public
@@ -230,6 +231,8 @@ POST /api/v1/conversations/:conversationId/messages                       ADRLP.
 POST /api/v1/conversations/:conversationId/read                           ADRLP..  can:messages.send
 POST /api/v1/doctors/:doctorId/documents/:documentId/approve              A......  can:doctors.verify
 POST /api/v1/doctors/:doctorId/documents/:documentId/reject               A......  can:doctors.verify
+POST /api/v1/doctors/:doctorId/employments                                A......  can:doctors.manage
+POST /api/v1/doctors/:doctorId/employments/:employmentId/end              A......  can:doctors.manage
 POST /api/v1/doctors/:doctorId/reactivate                                 A......  can:doctors.manage
 POST /api/v1/doctors/:doctorId/reject                                     A......  can:doctors.verify
 POST /api/v1/doctors/:doctorId/request-documents                          A......  can:doctors.verify

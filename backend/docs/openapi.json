@@ -7032,6 +7032,154 @@
         }
       }
     },
+    "/api/v1/doctors/{doctorId}/employments": {
+      "get": {
+        "operationId": "DoctorEmployment_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doctorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "DoctorEmployment"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [
+            "doctors.manage"
+          ],
+          "public": false,
+          "roles": []
+        }
+      },
+      "post": {
+        "operationId": "DoctorEmployment_start",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doctorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "hospitalDepartmentId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "hospitalId": {
+                    "maxLength": 40,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hospitalId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "DoctorEmployment"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [
+            "doctors.manage"
+          ],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/doctors/{doctorId}/employments/{employmentId}/end": {
+      "post": {
+        "operationId": "DoctorEmployment_end",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doctorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "employmentId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "DoctorEmployment"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [
+            "doctors.manage"
+          ],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
     "/api/v1/doctors/{doctorId}/reactivate": {
       "post": {
         "operationId": "AdminDoctor_reactivate",
@@ -18435,14 +18583,14 @@
     }
   ],
   "x-medora-coverage": {
-    "operations": 303,
-    "withAnyRequestSchema": 166,
-    "withoutRequestSchema": 137,
+    "operations": 306,
+    "withAnyRequestSchema": 167,
+    "withoutRequestSchema": 139,
     "withQuery": 44,
     "withQuerySchema": 40,
     "withQueryWithoutSchema": 4,
-    "withRequestBody": 126,
-    "withRequestBodySchema": 126,
+    "withRequestBody": 127,
+    "withRequestBodySchema": 127,
     "withRequestBodyWithoutSchema": 0
   }
 }
