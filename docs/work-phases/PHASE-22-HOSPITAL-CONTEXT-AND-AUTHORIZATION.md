@@ -59,6 +59,20 @@ DR-01, DR-02, DR-04, DR-05, DR-07, DR-08, OD-07, OD-12, all FINAL.
 - [ ] [BACKEND] Fix F33; lock-screen re-authentication endpoint
 - [ ] [TESTING] N-1, N-6, N-7, N-8, N-9, N-10, N-11, N-23
 
+## Open findings — PR #14 security audit (2026-11-23)
+
+The audit returned *approved with conditions*. F1 (shadow awaited inline) is fixed in PR #14: the
+comparison is detached from `canReach`/`assertCanReach`. F2 (log wording) is corrected in
+`SECURITY_AND_DATA_ISOLATION.md` §2.1. The rest are **open**:
+
+| # | Finding | Location | Must be resolved before |
+|---|---|---|---|
+| F3 | Context is resolved from the token's role while the session payload's `role` is read from the database; after a role change within the access-token lifetime they can disagree (display only) | `backend/src/modules/auth/services/session-user.service.ts` | Any use of the context beyond display |
+| F4 | A doctor whose practice is suspended, or whose profile is soft-deleted, still resolves an active-employment context (display and shadow logging only today) | `backend/src/shared/authz/prisma-hospital-context.repository.ts` | **Authorization enforcement** |
+| F5 | Background work started inside a request (e.g. an inline-queue timer) inherits that request's memo store | `backend/src/shared/authz/request-scope.ts`; `backend/src/shared/jobs/inline-job-queue.ts` | **Authorization enforcement** |
+| F6 | The assignment-scope memo can be stale within a request that changes an assignment and then checks it (shadow logging only) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | **Shadow results becoming authoritative** |
+| F7 | The same patient looked up by public id and by internal id gets two memo entries (one extra query; no correctness impact) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | Optional optimisation |
+
 ## Blocking conditions
 
 Phases 20 and 21.

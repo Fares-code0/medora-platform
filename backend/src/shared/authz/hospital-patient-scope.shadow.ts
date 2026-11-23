@@ -140,8 +140,12 @@ export class HospitalPatientScopeShadow {
   }
 
   /**
-   * Computes and records the comparison. Logs carry the role, outcome and
-   * reason only — no patient identifier and no hospital name (no PHI).
+   * Computes and records the comparison. The fields this method logs are the
+   * role, outcome and reason only — it passes no patient identifier, hospital
+   * name, token or session id. The request logger (nestjs-pino) still adds
+   * its own `req` fields to every line written inside a request, including
+   * the URL path, which can contain a public patient id such as `PT-1001`
+   * (`common/logging/logger.config.ts`; only query strings are dropped).
    */
   async compare(
     principal: Principal,

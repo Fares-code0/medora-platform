@@ -40,7 +40,7 @@ that belongs to the same backend PR is listed here by name. None of them is in t
 | `backend/src/shared/authz/hospital-context-shadow.interceptor.spec.ts` | PR #9 (`8282af2`, `b3020e8`) | Context attached after guards; no principal; lookup failure → `resolution_unavailable`; handler errors not swallowed | Carry over; update if the interceptor becomes lazy (correction 2 below) |
 | `backend/src/modules/auth/services/session-user.service.spec.ts` | PR #9 (`b3020e8`) | `activeHospital` / `adminScope` mapping in `GET /auth/session` | Carry over unchanged |
 | `backend/src/shared/authz/prisma-hospital-context.repository.spec.ts` | PR #9 (`8282af2`, `b3020e8`), changed by PR #12 (`063abc1`) | Query shape, including the `status = 'ACTIVE' AND deleted_at IS NULL` filter | Carry over at PR #12's version |
-| `backend/src/shared/authz/hospital-patient-scope.shadow.spec.ts` | PR #12 (`8baec77`, `063abc1`) | Fail-closed hospital-aware rule, comparison outcomes, log fields without PHI | Carry over at PR #12's version |
+| `backend/src/shared/authz/hospital-patient-scope.shadow.spec.ts` | PR #12 (`8baec77`, `063abc1`) | Fail-closed hospital-aware rule, comparison outcomes, the logged fields (role, outcome, reason; the request logger may still add the URL path, see SECURITY §2.1) | Carry over at PR #12's version |
 | `backend/src/shared/authz/patient-scope.service.spec.ts` | Exists on `main`; extended by PR #12 (`8baec77`, `063abc1`) | Regression matrix proving `canReach` / `assertCanReach` are unchanged with no shadow and with shadows that allow, deny or throw | Merge PR #12's additions into `main`'s file; do not drop the existing cases |
 
 | Documentation update | Origin | Content | Backend responsibility |

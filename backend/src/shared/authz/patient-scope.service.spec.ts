@@ -1,5 +1,5 @@
-import { HttpStatus } from '@nestjs/common';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpStatus, Logger } from '@nestjs/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppException } from '../../common/errors/app.exception';
 import type { HospitalPatientScopeShadow } from './hospital-patient-scope.shadow';
@@ -274,5 +274,139 @@ describe('PatientScopeService — Phase 22 shadow comparison never changes a dec
   it('keeps the canReach signature free of any context or capability parameter', () => {
     expect(PatientScopeService.prototype.canReach.length).toBe(2);
     expect(PatientScopeService.prototype.assertCanReach.length).toBe(2);
+  });
+});
+
+describe('PatientScopeService — the shadow is detached from the decision (audit F1)', () => {
+  const ASSIGNED = { 'dr-a': ['PT-1001'] };
+  /** Resolves to 'blocked' if `work` has not settled within `ms` — a hang detector. */
+  async function settlesWithin<T>(work: Promise<T>, ms = 250): Promise<T | 'blocked'> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const blocked = new Promise<'blocked'>((done) => {
+      timer = setTimeout(() => done('blocked'), ms);
+    });
+    try {
+      return await Promise.race([work, blocked]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  /** Lets queued microtasks and the next macrotask run, so late rejections surface. */
+  async function flush(): Promise<void> {
+    await new Promise((done) => setImmediate(done));
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  function serviceWithShadow(compare: (...args: unknown[]) => unknown): {
+    scope: PatientScopeService;
+    compareSpy: ReturnType<typeof vi.fn>;
+  } {
+    const compareSpy = vi.fn(compare);
+    const scope = new PatientScopeService(new StubAssignments(new Map(Object.entries(ASSIGNED))), {
+      compare: compareSpy,
+    } as unknown as HospitalPatientScopeShadow);
+    return { scope, compareSpy };
+  }
+  const never = (): Promise<never> => new Promise<never>(() => undefined);
+
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('canReach returns the legacy result although the comparison never settles', async () => {
+    const { scope, compareSpy } = serviceWithShadow(never);
+
+    expect(await settlesWithin(scope.canReach(DOCTOR_A, 'PT-1001'))).toBe(true);
+    expect(await settlesWithin(scope.canReach(DOCTOR_A, 'PT-2001'))).toBe(false);
+    // The comparison really was started, with the legacy verdict.
+    expect(compareSpy.mock.calls).toEqual([
+      [DOCTOR_A, 'PT-1001', true],
+      [DOCTOR_A, 'PT-2001', false],
+    ]);
+  });
+
+  it('assertCanReach resolves or 404s exactly as before although the comparison never settles', async () => {
+    const { scope } = serviceWithShadow(never);
+
+    expect(await settlesWithin(scope.assertCanReach(DOCTOR_A, 'PT-1001'))).toBeUndefined();
+    const refused = await settlesWithin(
+      scope.assertCanReach(DOCTOR_A, 'PT-2001').then(
+        () => 'reached',
+        (error: unknown) => error,
+      ),
+    );
+    expect(refused).toBeInstanceOf(AppException);
+    expect((refused as AppException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+  });
+
+  it('a synchronous throw from the comparison does not affect the decision and is logged', async () => {
+    const { scope, compareSpy } = serviceWithShadow(() => {
+      throw new Error('shadow exploded synchronously');
+    });
+
+    expect(await settlesWithin(scope.canReach(DOCTOR_A, 'PT-1001'))).toBe(true);
+    await expect(scope.assertCanReach(DOCTOR_A, 'PT-2001')).rejects.toBeInstanceOf(AppException);
+    expect(compareSpy).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith('Patient scope shadow comparison unavailable');
+  });
+
+  it('an asynchronous rejection does not affect the decision and is handled after the decision returns', async () => {
+    let reject: (reason: unknown) => void = () => undefined;
+    const { scope } = serviceWithShadow(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+
+    expect(await settlesWithin(scope.canReach(DOCTOR_A, 'PT-1001'))).toBe(true);
+    // The decision is already returned; only now does the shadow fail.
+    reject(new Error('shadow query failed late'));
+    await flush();
+
+    expect(warn).toHaveBeenCalledWith('Patient scope shadow comparison unavailable');
+  });
+
+  it('produces no unhandled promise rejection, synchronous or asynchronous', async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', listener);
+    try {
+      const rejecting = serviceWithShadow(() => Promise.reject(new Error('async failure')));
+      const throwing = serviceWithShadow(() => {
+        throw new Error('sync failure');
+      });
+      for (let i = 0; i < 5; i += 1) {
+        await rejecting.scope.canReach(DOCTOR_A, 'PT-1001');
+        await rejecting.scope.assertCanReach(DOCTOR_A, 'PT-1001');
+        await throwing.scope.canReach(DOCTOR_A, 'PT-2001');
+      }
+      await flush();
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it('runs no comparison at all when the shadow is disabled (not provided)', async () => {
+    // HOSPITAL_SCOPE_SHADOW_COMPARISON=false makes the module provide no
+    // shadow (authz.module.ts); the PostgreSQL switch-off test proves the
+    // wiring. Here: with no shadow, nothing is started and nothing is logged.
+    const assignments = new StubAssignments(new Map(Object.entries(ASSIGNED)));
+    const isAssigned = vi.spyOn(assignments, 'isAssigned');
+    const scope = new PatientScopeService(assignments);
+
+    expect(await scope.canReach(DOCTOR_A, 'PT-1001')).toBe(true);
+    await expect(scope.assertCanReach(DOCTOR_A, 'PT-2001')).rejects.toBeInstanceOf(AppException);
+    await flush();
+
+    expect(isAssigned).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
