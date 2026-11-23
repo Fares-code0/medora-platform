@@ -20,6 +20,13 @@
 > authorization, RLS, cross-hospital access, or the other downstream features. The migration status
 > outside disposable CI remains unverified; see
 > [`PR5_MIGRATION_STATUS_AND_RECOVERY.md`](../../docs/multi-hospital/PR5_MIGRATION_STATUS_AND_RECOVERY.md).
+>
+> **Phase 21 (database only, under review):** the additive multi-hospital data model — staff
+> employment and affiliations, hospital role assignments, `HospitalMedicalRecord`, nullable
+> hospital scope on clinical tables with composite tenant foreign keys, published slots — with its
+> migrations, guarded development seed and PostgreSQL 16 tests, is proposed against `main` from
+> `fix/phase21-database-main-integration`. It assigns no existing record to a hospital and enables
+> no tenant-scoped access; see [`DATABASE_ARCHITECTURE.md`](DATABASE_ARCHITECTURE.md).
 > Completed milestones below stay as historical records. Where a single-clinic assumption
 > below disagrees with the plan, the plan wins. Where the milestones meet it:
 >

@@ -43,10 +43,12 @@ content of its own.
 2. **Frontend phases A–F and FE-10.1–10.10 are historical / ongoing integration
    tracks.** FE-10 left 27 rows connected, 22 still mock and 10 blocked. Those
    rows are owned by Phases 26, 28 and 29.
-3. **Phases 20–31 (plus 22A) are audit-derived work tracks.** Phase 21
-   is implemented on Draft PR #9 and awaits review; Phase 22 shadow context
-   and additive session metadata are in progress. Neither status implies
-   persistent migration application or tenant-enforcement readiness.
+3. **Phases 20–31 (plus 22A) are audit-derived work tracks.** Phase 21's
+   database model is under review in the database-only pull request
+   `fix/phase21-database-main-integration` (superseding the database part of
+   PR #9). Phase 22 shadow context work is preserved on PR #9 / PR #12 and is
+   not part of `main`. Neither status implies persistent migration
+   application or tenant-enforcement readiness.
 4. **Phase 20 is now based on the owner's decisions**
    (`docs/multi-hospital/OWNER_DECISIONS.md`). It formalizes them as
    **ADR-042**.
@@ -199,8 +201,8 @@ FE-10 sub-phases, from commits recorded in `docs/FE-10-INTEGRATION-STATUS.md`:
 | Phase | Title | Primary Area | Status | Owner decisions | Depends On |
 |---|---|---|---|---|---|
 | [20](PHASE-20-MULTI-HOSPITAL-ARCHITECTURE-DECISION.md) | Multi-Hospital Architecture Decision (ADR-042) | Architecture | IN PROGRESS (ADR-042 accepted and registered 2026-11-22; remaining review sign-offs open) | DR-01…13 | — |
-| [21](PHASE-21-MULTI-HOSPITAL-DATA-MODEL-AND-MIGRATION.md) | Data Model & Migration | Database + Backend | IMPLEMENTED ON DRAFT PR #9; migration application in persistent environments remains unknown | DR-01…04, 06, 07, 10, 11 · OD-06, 09, 12 | 20 |
-| [22](PHASE-22-HOSPITAL-CONTEXT-AND-AUTHORIZATION.md) | Hospital Context, Session & Authorization | Backend + Security | IN PROGRESS (shadow resolution and session metadata; enforcement pending) | DR-01, 02, 04, 05, 07, 08 · OD-07, 12 | 20, 21 |
+| [21](PHASE-21-MULTI-HOSPITAL-DATA-MODEL-AND-MIGRATION.md) | Data Model & Migration | Database + Backend | UNDER REVIEW (database-only PR from `fix/phase21-database-main-integration`); migration application in persistent environments remains unknown | DR-01…04, 06, 07, 10, 11 · OD-06, 09, 12 | 20 |
+| [22](PHASE-22-HOSPITAL-CONTEXT-AND-AUTHORIZATION.md) | Hospital Context, Session & Authorization | Backend + Security | IN PROGRESS on PR #9 / PR #12 (shadow only; not in `main`; backend handoff in `docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md`) | DR-01, 02, 04, 05, 07, 08 · OD-07, 12 | 20, 21 |
 | [22A](PHASE-22A-CROSS-HOSPITAL-ACCESS-WORKFLOW.md) | Cross-Hospital Access: Grants, Break-Glass, Documentation & Consultations | Backend + Security + Frontend | NOT STARTED | DR-06, 07 · OD-01…05, 07, 12, 13 · OQ-01 | 21, 22 |
 | [23](PHASE-23-AUTHENTICATED-DISCOVERY-API.md) | Authenticated Hospital & Doctor Discovery API | Backend | NOT STARTED | DR-09, 02 · OD-06, 10, 14 | 21, 22 |
 | [24](PHASE-24-PUBLISHED-SLOTS-AND-BOOKING.md) | Doctor-Published Slots & Hospital-Scoped Booking | Backend + Database | NOT STARTED | DR-10, 11 · OD-08, 09 | 21, 22, 23 |

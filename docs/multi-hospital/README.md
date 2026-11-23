@@ -2,7 +2,8 @@
 
 This folder is the authoritative architecture specification for Medora as a multi-hospital platform.
 The repository implementation remains partial. PR #5 merged the Hospital/Location/Clinic foundation;
-Phase 21's additive data model is under review in PR #9. Backend tenant-context and authorization
+Phase 21's additive data model is under review in the database-only PR from
+`fix/phase21-database-main-integration`. Backend tenant-context and authorization
 integration remain incomplete, so the schema does not enable real multi-hospital access
 (AUDIT_FINDINGS.md and `backend/docs/DATABASE_ARCHITECTURE.md`).
 

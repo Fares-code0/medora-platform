@@ -2,9 +2,9 @@
 
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Database (+ Backend)
-**Status:** IN PROGRESS — additive model, migration and isolated development seed committed on codex/phase21-data-model; draft PR #9 targets Database; fresh PostgreSQL 16 CI validation pending
+**Status:** UNDER REVIEW — database-only pull request from `fix/phase21-database-main-integration` targets `main` (2026-11-23), superseding the database part of PR #9; PR #9 and PR #12 are kept unchanged as history. Two owner decisions are open (see *Main integration*).
 **Valid after the final decisions:** yes
-**Depends On:** PR #5 foundation merged into Database; persistent migration status remains unknown and blocks deployment
+**Depends On:** the PR #5/#6 foundation migrations, carried in the same pull request; persistent migration status remains unknown and blocks deployment
 **Enables:** 22, 22A, 23, 24, 26
 
 **Implementation update (2026-11-22):** The current branch adds hospital departments, one-active-employment-per-doctor, multi-hospital staff affiliations, hospital role assignments, HospitalMedicalRecord, hospital-owned chronic-condition links, published slots, hospital insurance coverage and nullable hospital ownership for clinical rows/files. Legacy clinical identifiers and soft-deleted rows remain in place; no ownership backfill, default hospital assignment, patient claim, or existing migration edit is part of this phase. Details and validation evidence are appended under “Current implementation”.
@@ -73,7 +73,7 @@ HospitalRoleAssignment is structural data, not an authorization engine. Employme
 
 ## Blocking conditions
 
-Fresh PostgreSQL 16 CI validation of this migration. Verified status of the earlier hospital_core migration in every persistent environment remains a deployment prerequisite.
+Owner decisions on the audit-ledger foreign key (ADR-024) and MRD-05 (a). Verified status of all four hospital migrations in every persistent environment remains a deployment prerequisite.
 
 ## Security requirements
 
@@ -92,13 +92,34 @@ Fresh PostgreSQL 16 CI validation of this migration. Verified status of the earl
 - Existing patient/clinical identifiers and patient FKs are preserved. Eight patient clinical tables and related encounter, appointment, lab, prescription, messaging, notification and AI conversation tables gain nullable hospital/HMR anchors with composite patient/hospital FKs. PatientEmergencyContact and PatientChronicCondition are unchanged; the new HMR condition association is additive.
 - File hospital ownership remains nullable. New scoped patient documents and attachments require same-hospital files; legacy files remain unassigned.
 - Published-slot capacity is protected by a partial unique index; cancelled, rescheduled, completed and no-show appointments release capacity.
-- The new transaction-wrapped migration follows 20261122160000_facility_foundation. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment. PR #5 facility tests passed earlier in disposable CI run 45038104419; Phase 21 migration and seed checks are pending on this PR.
+- The new migration follows 20261122160000_facility_foundation. It wraps itself in `BEGIN; … COMMIT;` (Prisma 7 adds no transaction of its own), so it is atomic but holds every lock until its final commit; see `backend/docs/DATABASE_ARCHITECTURE.md`, *Migration safety and locking*. No prior migration was edited/replayed/resolved, and there is no backfill or default hospital assignment. PR #5 facility tests passed earlier in disposable CI run 45038104419; Phase 21 migration and seed checks are pending on this PR.
 - Historical local validation on commit 68c864a: Prisma validation/client generation, typecheck, ESLint and diff check passed. That full source test run had 94 files pass; five Redis-dependent files failed (6 tests) or skipped (17 tests) because Redis was unavailable.
-- Added the guarded multi-hospital seed runner, ERD generator and database guide. The seed was not run locally; CI is configured to run it twice against its disposable PostgreSQL 16 service.
+- Added the guarded multi-hospital seed runner, ERD generator and database guide. (Correction 2026-11-23: `main`'s CI does not run this seed; it is run locally on a disposable database and must not share the test database — see `DATABASE_ARCHITECTURE.md`, *Development seed*.)
 - Persistent application status for 20261122150000_hospital_core and 20261122160000_facility_foundation remains unknown; see docs/multi-hospital/MIGRATION_AND_COMPATIBILITY.md. Fresh-history CI cannot establish persistent-environment state.
 - OQ-02 identity proofing, cross-hospital grants, Break-Glass, AI C2 retention, provenance and RLS remain deferred. This phase does not yet enable multi-hospital backend access.
 
 - Continuation validation: Prisma validate/generate, typecheck, lint, build, workflow YAML parse, diff check and the offline seed guard test (4/4) passed. A full local Vitest run was stopped after database-backed tests targeted `localhost:5432/medora_test`; the database disposable status and possible fixture writes are unknown. No cleanup or further database access was performed. Phase 21 PostgreSQL 16 migration, drift and integration results remain pending CI.
+
+## Main integration (2026-11-23)
+
+The database work was re-applied onto `main` (`773b667`) as a database-only change; Phase 22 application
+code is handed off in `docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md`.
+
+- **Migrations unchanged.** All four hospital migrations are carried byte-for-byte; persistent status is
+  unknown, so `20261123100000_fix_scoped_clinical_link_trigger` stays as the corrective migration for the
+  `validate_scoped_clinical_links()` defect (reproduced and covered by a test on all six affected tables).
+- **Drift check restored to `main`'s.** `db:check` is again
+  `prisma migrate diff --from-migrations … --exit-code` with the shadow database; PR #9's allowlisting
+  `check-drift.ts` is not used. Partial-index predicates are declared in PostgreSQL's normalized form, and
+  `main`'s ADR-045 `sessions_successor_rotated_at_idx` is declared in the schema. Result: no difference.
+- **No CI change.** `.github/workflows/ci.yml` is `main`'s.
+- **Test guarantees restored.** `authz-repositories` and `administration-center` keep `main`'s strict
+  assertions; the multi-hospital seed is kept off the test database instead. `schema-platform`'s
+  audit-ledger foreign-key assertion is kept strict.
+- **Open owner decisions.** (1) `audit_events_hospital_id_fkey` contradicts ADR-024 §3 — the strict test
+  fails until decided. (2) MRD-05 (a) (one active employment for non-doctor staff) vs the schema's
+  multiple active hospital affiliations. (3) Whether CI should exercise the multi-hospital seed on a
+  separate disposable database.
 
 ## Source / evidence
 
