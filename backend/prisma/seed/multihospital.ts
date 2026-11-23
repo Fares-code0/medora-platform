@@ -270,23 +270,14 @@ export async function seedMultiHospital(prisma: PrismaClient): Promise<Record<st
     }
   }
 
+  // MRD-05 (a): one active hospital affiliation per non-doctor staff member,
+  // enforced by hospital_staff_affiliations_one_active_per_staff_key. Each
+  // fixture is affiliated with exactly one hospital; both hospitals are staffed.
   const staffSeeds = [
-    {
-      email: 'reception@medora.health',
-      hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
-    },
-    {
-      email: 'lab@medora.health',
-      hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
-    },
-    {
-      email: 'pharmacy@medora.health',
-      hospitalDepartments: [northstarInternalMedicine, harborviewInternalMedicine],
-    },
-    {
-      email: 'nurse@medora.health',
-      hospitalDepartments: [northstarCardiology, harborviewCardiology],
-    },
+    { email: 'reception@medora.health', hospitalDepartment: northstarInternalMedicine },
+    { email: 'lab@medora.health', hospitalDepartment: harborviewInternalMedicine },
+    { email: 'pharmacy@medora.health', hospitalDepartment: northstarInternalMedicine },
+    { email: 'nurse@medora.health', hospitalDepartment: harborviewCardiology },
   ];
   let affiliationCount = 0;
 
@@ -349,13 +340,20 @@ export async function seedMultiHospital(prisma: PrismaClient): Promise<Record<st
       throw new Error(`Staff profile ${seed.email} is linked to a different user`);
     }
 
-    for (const department of seed.hospitalDepartments) {
+    {
+      const department = seed.hospitalDepartment;
       const hospitalId = department.hospitalId;
       const existing: HospitalStaffAffiliation | null =
         await prisma.hospitalStaffAffiliation.findFirst({
-          where: { staffId: staffMember.id, hospitalId, endedAt: null },
+          where: { staffId: staffMember.id, endedAt: null },
           orderBy: { startedAt: 'asc' },
         });
+      // Never end or move an existing affiliation; that is an owner decision.
+      if (existing !== null && existing.hospitalId !== hospitalId) {
+        throw new Error(
+          `Staff fixture ${seed.email} already has an active affiliation at another hospital; end it deliberately before reseeding`,
+        );
+      }
       const affiliation: HospitalStaffAffiliation =
         existing ??
         (await prisma.hospitalStaffAffiliation.create({

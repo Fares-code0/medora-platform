@@ -152,7 +152,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
     });
   });
 
-  it('allows staff affiliations at multiple hospitals but prevents duplicates within one hospital', async () => {
+  it('allows one active staff affiliation (MRD-05 a), keeps history, and rejects a second active one with 23505', async () => {
     await inRollback(async () => {
       const hospitalA = await createHospital('Staff Hospital A');
       const hospitalB = await createHospital('Staff Hospital B');
@@ -165,24 +165,36 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
         'INSERT INTO public.staff_members (name, role, title, department_id, phone, email, working_hours, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP) RETURNING id',
         ['Test Nurse', 'nurse', 'RN', departmentId, '5550102', 's' + suffix + '@example.test', 'day'],
       )).rows[0]!.id;
+      const insertAffiliation =
+        'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING id';
+      const first = (await client.query<{ id: string }>(insertAffiliation, [staffId, hospitalA])).rows[0]!.id;
+
+      // A second active affiliation at another hospital violates the new global key …
+      await client.query('SAVEPOINT expected_failure');
+      await expect(client.query(insertAffiliation, [staffId, hospitalB])).rejects.toMatchObject({
+        code: '23505',
+        constraint: 'hospital_staff_affiliations_one_active_per_staff_key',
+      });
+      await client.query('ROLLBACK TO SAVEPOINT expected_failure');
+      // … and a duplicate at the same hospital is still refused.
+      await expectSqlState(insertAffiliation, [staffId, hospitalA], '23505');
+
+      // Ending the first frees the staff member for a new hospital; history is kept.
       await client.query(
-        'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP), ($1, $3, CURRENT_TIMESTAMP)',
-        [staffId, hospitalA, hospitalB],
+        'UPDATE public.hospital_staff_affiliations SET ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+        [first],
       );
-      await expectSqlState(
-        'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
-        [staffId, hospitalA],
-        '23505',
-      );
-      const rows = await client.query<{ hospital_id: string }>(
-        'SELECT hospital_id FROM public.hospital_staff_affiliations WHERE staff_id = $1 AND ended_at IS NULL',
+      await client.query(insertAffiliation, [staffId, hospitalB]);
+      const rows = await client.query<{ hospital_id: string; active: boolean }>(
+        'SELECT hospital_id, ended_at IS NULL AS active FROM public.hospital_staff_affiliations WHERE staff_id = $1 ORDER BY started_at, active',
         [staffId],
       );
-      expect(new Set(rows.rows.map((row) => row.hospital_id))).toEqual(new Set([hospitalA, hospitalB]));
+      expect(rows.rows).toHaveLength(2);
+      expect(rows.rows.filter((row) => row.active).map((row) => row.hospital_id)).toEqual([hospitalB]);
     });
   });
 
-  it('enforces one active doctor employment and revokes only roles sourced from the ended employment', async () => {
+  it('enforces one active doctor employment and revokes only roles sourced from the ended employment or affiliation', async () => {
     await inRollback(async () => {
       const hospitalA = await createHospital('Employment Hospital A');
       const hospitalB = await createHospital('Employment Hospital B');
@@ -205,10 +217,11 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
         'INSERT INTO public.staff_members (user_id, name, role, title, department_id, phone, email, working_hours, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP) RETURNING id',
         [userId, 'Test Nurse', 'nurse', 'RN', departmentId, '5550102', 's' + suffix + '@example.test', 'day'],
       )).rows[0]!.id;
-      const affiliations = await client.query<{ id: string }>(
-        'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP), ($1, $3, CURRENT_TIMESTAMP) RETURNING id',
-        [staffId, hospitalA, hospitalB],
-      );
+      const insertAffiliation =
+        'INSERT INTO public.hospital_staff_affiliations (staff_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING id';
+      const affiliationA = (await client.query<{ id: string }>(insertAffiliation, [staffId, hospitalA])).rows[0]!.id;
+      // MRD-05 (a): no second active affiliation while the first is active.
+      await expectSqlState(insertAffiliation, [staffId, hospitalB], '23505');
       const roleDoctor = randomUUID();
       const roleStaffA = randomUUID();
       const roleStaffB = randomUUID();
@@ -224,20 +237,32 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       )).rows[0]!.id;
       const assignmentStaffA = (await client.query<{ id: string }>(
         'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_staff_affiliation_id) VALUES ($1, $2, $3, $4) RETURNING id',
-        [userId, hospitalA, roleStaffA, affiliations.rows[0]!.id],
+        [userId, hospitalA, roleStaffA, affiliationA],
       )).rows[0]!.id;
-      const assignmentStaffB = (await client.query<{ id: string }>(
-        'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_staff_affiliation_id) VALUES ($1, $2, $3, $4) RETURNING id',
-        [userId, hospitalB, roleStaffB, affiliations.rows[1]!.id],
-      )).rows[0]!.id;
+      const revokedAt = async (ids: string[]): Promise<Map<string, Date | null>> => {
+        const grants = await client.query<{ id: string; revoked_at: Date | null }>(
+          'SELECT id, revoked_at FROM public.hospital_role_assignments WHERE id = ANY($1::uuid[])',
+          [ids],
+        );
+        return new Map(grants.rows.map((row) => [row.id, row.revoked_at]));
+      };
+
+      // Ending the doctor employment revokes only the role it sourced.
       await client.query('UPDATE public.doctor_employments SET ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [employmentA]);
-      const grants = await client.query<{ id: string; revoked_at: Date | null }>(
-        'SELECT id, revoked_at FROM public.hospital_role_assignments WHERE id = ANY($1::uuid[])',
-        [[assignmentDoctor, assignmentStaffA, assignmentStaffB]],
-      );
-      const revoked = new Map(grants.rows.map((row) => [row.id, row.revoked_at]));
+      let revoked = await revokedAt([assignmentDoctor, assignmentStaffA]);
       expect(revoked.get(assignmentDoctor)).not.toBeNull();
       expect(revoked.get(assignmentStaffA)).toBeNull();
+
+      // Ending the staff affiliation revokes its role; a new affiliation at
+      // another hospital can then start, and its role stays live.
+      await client.query('UPDATE public.hospital_staff_affiliations SET ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [affiliationA]);
+      const affiliationB = (await client.query<{ id: string }>(insertAffiliation, [staffId, hospitalB])).rows[0]!.id;
+      const assignmentStaffB = (await client.query<{ id: string }>(
+        'INSERT INTO public.hospital_role_assignments (user_id, hospital_id, role_id, source_staff_affiliation_id) VALUES ($1, $2, $3, $4) RETURNING id',
+        [userId, hospitalB, roleStaffB, affiliationB],
+      )).rows[0]!.id;
+      revoked = await revokedAt([assignmentStaffA, assignmentStaffB]);
+      expect(revoked.get(assignmentStaffA)).not.toBeNull();
       expect(revoked.get(assignmentStaffB)).toBeNull();
     });
   });

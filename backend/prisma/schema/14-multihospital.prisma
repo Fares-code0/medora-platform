@@ -74,6 +74,9 @@ model HospitalStaffAffiliation {
   @@unique([id, hospitalId], map: "hospital_staff_affiliations_id_hospital_id_key")
   @@unique([id, hospitalId, staffId], map: "hospital_staff_affiliations_id_hospital_staff_key")
   @@unique([staffId, hospitalId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_hospital_key")
+  /// MRD-05 (a): one active hospital affiliation per non-doctor staff member
+  /// (migration 20261123120100_one_active_staff_affiliation).
+  @@unique([staffId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_staff_key")
   @@index([hospitalId, endedAt], map: "hospital_staff_affiliations_hospital_ended_idx")
   @@index([staffId, startedAt(sort: Desc)], map: "hospital_staff_affiliations_staff_started_idx")
   shiftAssignments StaffShiftAssignment[]
