@@ -574,4 +574,72 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       await client.query('DELETE FROM public.hospitals WHERE id = $1', [hospitalId]);
     }
   });
+
+  it('queue and waiting-room entries: hospital ownership is optional, immutable, and must match the room or appointment (#21)', async () => {
+    await inRollback(async () => {
+      const hospitalA = await createHospital('Queue Hospital A');
+      const hospitalB = await createHospital('Queue Hospital B');
+      const departmentId = (await client.query<{ id: string }>(
+        'INSERT INTO public.departments (name, updated_at) VALUES ($1, CURRENT_TIMESTAMP) RETURNING id',
+        ['Queue ' + randomUUID().slice(0, 8)],
+      )).rows[0]!.id;
+      const room = async (hospitalId: string | null): Promise<string> =>
+        (await client.query<{ id: string }>(
+          "INSERT INTO public.rooms (name, kind, capacity, department_id, updated_at, hospital_id) VALUES ($1, 'consultation', 1, $2, CURRENT_TIMESTAMP, $3) RETURNING id",
+          ['Q-room ' + randomUUID().slice(0, 8), departmentId, hospitalId],
+        )).rows[0]!.id;
+      const roomA = await room(hospitalA);
+      const roomB = await room(hospitalB);
+      const legacyRoom = await room(null);
+      const insertQueue =
+        "INSERT INTO public.queue_entries (ticket, patient_name, reason, estimated_minutes, updated_at, room_id, hospital_id) VALUES ($1, 'Queue Patient', 'reason', 5, CURRENT_TIMESTAMP, $2, $3) RETURNING id";
+      const ticket = (): string => 'Q' + randomUUID().replaceAll('-', '').slice(0, 8);
+
+      // Valid: same-hospital room, no room, and legacy rows (unchecked).
+      const scoped = (await client.query<{ id: string }>(insertQueue, [ticket(), roomA, hospitalA])).rows[0]!.id;
+      await client.query(insertQueue, [ticket(), null, hospitalA]);
+      const legacy = (await client.query<{ id: string }>(insertQueue, [ticket(), roomB, null])).rows[0]!.id;
+      await client.query('UPDATE public.queue_entries SET room_id = $1 WHERE id = $2', [roomA, legacy]);
+
+      // Invalid: another hospital's room, a legacy room, an unknown hospital.
+      await expectSqlState(insertQueue, [ticket(), roomB, hospitalA], '23514');
+      await expectSqlState(insertQueue, [ticket(), legacyRoom, hospitalA], '23514');
+      await expectSqlState(insertQueue, [ticket(), null, randomUUID()], '23503');
+      await expectSqlState('UPDATE public.queue_entries SET room_id = $1 WHERE id = $2', [roomB, scoped], '23514');
+      // Ownership is immutable once assigned.
+      await expectSqlState('UPDATE public.queue_entries SET hospital_id = $1 WHERE id = $2', [hospitalB, scoped], '23514');
+      // A legacy row may be assigned an owner once (approved-mapping path), consistently with its room.
+      await client.query('UPDATE public.queue_entries SET hospital_id = $1 WHERE id = $2', [hospitalA, legacy]);
+      // The owning hospital cannot be hard-deleted while it owns entries.
+      await expectSqlState('DELETE FROM public.hospitals WHERE id = $1', [hospitalA], '23503');
+
+      // Waiting room: same-hospital appointment, walk-in, cross-hospital refused.
+      const patientId = await createPatient();
+      const userId = await createDoctor();
+      const doctorId = (await client.query<{ id: string }>('SELECT id FROM public.doctors WHERE user_id = $1', [userId])).rows[0]!.id;
+      const employmentA = (await client.query<{ id: string }>(
+        'INSERT INTO public.doctor_employments (doctor_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING id',
+        [doctorId, hospitalA],
+      )).rows[0]!.id;
+      const hmrA = (await client.query<{ id: string }>(
+        'INSERT INTO public.hospital_medical_records (patient_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) RETURNING id',
+        [patientId, hospitalA],
+      )).rows[0]!.id;
+      const visitTypeId = (await client.query<{ id: string }>('SELECT id FROM public.visit_types LIMIT 1')).rows[0]!.id;
+      const appointmentA = (await client.query<{ id: string }>(
+        "INSERT INTO public.appointments (public_id, patient_id, doctor_id, visit_type_id, starts_at, duration_min, status, reason, updated_at, hospital_id, hospital_medical_record_id, doctor_employment_id) VALUES ($1, $2, $3, $4, $5, 30, 'pending', 'Queue fixture', CURRENT_TIMESTAMP, $6, $7, $8) RETURNING id",
+        ['APT-Q' + randomUUID().replaceAll('-', '').slice(0, 10), patientId, doctorId, visitTypeId, new Date(Date.now() + 7_200_000), hospitalA, hmrA, employmentA],
+      )).rows[0]!.id;
+      const insertWaiting =
+        "INSERT INTO public.waiting_room_entries (patient_name, area, updated_at, appointment_id, hospital_id) VALUES ('Waiting Patient', 'Main', CURRENT_TIMESTAMP, $1, $2) RETURNING id";
+      const waiting = (await client.query<{ id: string }>(insertWaiting, [appointmentA, hospitalA])).rows[0]!.id;
+      await client.query(insertWaiting, [null, hospitalB]);
+      await client.query(insertWaiting, [appointmentA, null]);
+      await expectSqlState(insertWaiting, [appointmentA, hospitalB], '23514');
+      await expectSqlState('UPDATE public.waiting_room_entries SET hospital_id = $1 WHERE id = $2', [hospitalB, waiting], '23514');
+      // The existing check-in mirror still runs for a hospital-owned entry.
+      const mirrored = await client.query<{ checked_in_at: Date | null }>('SELECT checked_in_at FROM public.appointments WHERE id = $1', [appointmentA]);
+      expect(mirrored.rows[0]?.checked_in_at).not.toBeNull();
+    });
+  });
 });
