@@ -32,7 +32,6 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { HospitalContext } from '../../common/auth/hospital-context';
 import type { Principal } from './authz.types';
 import { HospitalContextService } from './hospital-context.service';
-import { memoizeInRequest } from './request-scope';
 
 export const HOSPITAL_PATIENT_SCOPE_REPOSITORY = Symbol('HOSPITAL_PATIENT_SCOPE_REPOSITORY');
 
@@ -116,12 +115,18 @@ export class HospitalPatientScopeShadow {
       return deny('context_not_clinical');
     }
 
-    // Memoized per (doctor, patient) for this request, so a route that checks
-    // the same patient repeatedly (e.g. per file) costs one query.
-    const assignments = await memoizeInRequest(
-      `assignment-scope:${principal.userId}:${patientId}`,
-      () => this.repository.liveAssignmentScopes(principal.userId, patientId),
-    );
+    // Read fresh on every evaluation — deliberately not memoized (audit F6,
+    // #25). A per-request memo keyed by (doctor, patient handle) went stale
+    // when the request itself created or revoked an assignment, and the same
+    // patient by public id and by uuid got two entries (F7). Invalidating it
+    // would need a hook on every write to patient_doctor_assignments,
+    // doctor_employments and hospital_medical_records; not caching is the
+    // safer rule, and the legacy `isAssigned` is not cached either. The cost
+    // (one query per evaluation, only while the shadow is on) is bounded by
+    // the in-flight cap (C1). The hospital context stays memoized: it depends
+    // only on the caller's own employment, which no route lets the caller
+    // change about themselves within a request.
+    const assignments = await this.repository.liveAssignmentScopes(principal.userId, patientId);
     if (assignments.length === 0) return deny('no_care_assignment');
     if (assignments.length > 1) return deny('ambiguous_care_assignment');
     const assignment = assignments[0];

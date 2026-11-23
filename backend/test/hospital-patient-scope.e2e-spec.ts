@@ -27,6 +27,7 @@ import {
   HospitalPatientScopeShadow,
   type HospitalPatientScopeRepository,
 } from '../src/shared/authz/hospital-patient-scope.shadow';
+import { runInRequestScope } from '../src/shared/authz/request-scope';
 import { PrismaService } from '../src/shared/database';
 
 describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () => {
@@ -225,6 +226,126 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
         outcome: 'agree_allow',
       });
     }
+  });
+
+  // Audit F6 / F7 (#25): inside one request store, a decision always reflects
+  // the assignment rows as they are now, whichever handle names the patient.
+  describe('assignment changes within one request (F6)', () => {
+    async function scopedAssignment(): Promise<{
+      principal: Principal;
+      doctorId: string;
+      patient: { id: string; publicId: string };
+      hospitalId: string;
+      employmentId: string;
+      recordId: string;
+    }> {
+      const { principal, doctorId } = await doctor();
+      const hospitalId = await hospital('P22S F6 Hospital');
+      const employmentId = await employ(doctorId, hospitalId);
+      const p = await patient();
+      const recordId = await record(p.id, hospitalId);
+      return { principal, doctorId, patient: p, hospitalId, employmentId, recordId };
+    }
+
+    it('sees a revocation made earlier in the same request', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+
+      const [before, after] = await runInRequestScope(async () => {
+        const first = await shadow.evaluate(f.principal, f.patient.publicId);
+        await prisma.db.patientDoctorAssignment.updateMany({
+          where: { patientId: f.patient.id, doctorId: f.doctorId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return [first, await shadow.evaluate(f.principal, f.patient.publicId)];
+      });
+
+      expect(before).toEqual({ allowed: true, hospitalId: f.hospitalId });
+      expect(after).toEqual({ allowed: false, reason: 'no_care_assignment' });
+    });
+
+    it('sees an assignment created earlier in the same request', async () => {
+      const f = await scopedAssignment();
+
+      const [before, after] = await runInRequestScope(async () => {
+        const first = await shadow.evaluate(f.principal, f.patient.id);
+        await assign(f.patient.id, f.doctorId, {
+          hospitalId: f.hospitalId,
+          employmentId: f.employmentId,
+          recordId: f.recordId,
+        });
+        return [first, await shadow.evaluate(f.principal, f.patient.id)];
+      });
+
+      expect(before).toEqual({ allowed: false, reason: 'no_care_assignment' });
+      expect(after).toEqual({ allowed: true, hospitalId: f.hospitalId });
+    });
+
+    it('answers the same for the public id and the uuid, before and after a revocation', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+
+      await runInRequestScope(async () => {
+        for (const handle of [f.patient.publicId, f.patient.id]) {
+          await expect(shadow.evaluate(f.principal, handle)).resolves.toMatchObject({
+            allowed: true,
+          });
+        }
+        await prisma.db.patientDoctorAssignment.updateMany({
+          where: { patientId: f.patient.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        for (const handle of [f.patient.id, f.patient.publicId]) {
+          await expect(shadow.evaluate(f.principal, handle)).resolves.toMatchObject({
+            allowed: false,
+          });
+        }
+      });
+    });
+
+    it('keeps two concurrent requests for two doctors apart', async () => {
+      const mine = await scopedAssignment();
+      const theirs = await scopedAssignment();
+      await assign(mine.patient.id, mine.doctorId, {
+        hospitalId: mine.hospitalId,
+        employmentId: mine.employmentId,
+        recordId: mine.recordId,
+      });
+
+      const [a, b] = await Promise.all([
+        runInRequestScope(() => shadow.evaluate(mine.principal, mine.patient.publicId)),
+        runInRequestScope(() => shadow.evaluate(theirs.principal, mine.patient.publicId)),
+      ]);
+
+      expect(a).toMatchObject({ allowed: true });
+      expect(b).toMatchObject({ allowed: false });
+    });
+
+    it('denies a suspended doctor through the context (F4), whatever the assignment says', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+      await prisma.db.doctor.update({
+        where: { id: f.doctorId },
+        data: { practiceStatus: 'SUSPENDED' },
+      });
+
+      await expect(shadow.evaluate(f.principal, f.patient.publicId)).resolves.toEqual({
+        allowed: false,
+        reason: 'no_active_employment',
+      });
+    });
   });
 
   it('keeps legacy access to an unowned legacy assignment, and never guesses its hospital', async () => {

@@ -9,6 +9,7 @@ import {
   type HospitalPatientScopeRepository,
   type LiveAssignmentScope,
 } from './hospital-patient-scope.shadow';
+import { runInRequestScope } from './request-scope';
 
 const DOCTOR: Principal = { userId: 'dr-1', roleCode: 'doctor' };
 const HOSPITAL_A = 'hospital-a';
@@ -188,5 +189,82 @@ describe('HospitalPatientScopeShadow — comparison with the legacy decision', (
     const logged = JSON.stringify([...debug.mock.calls, ...warn.mock.calls]);
     expect(logged).not.toContain('PT-SECRET');
     expect(logged).not.toContain('Hospital A');
+  });
+});
+
+// Audit F6 / F7 (#25): the assignment lookup is not memoized, so a decision
+// can never be served from an earlier read in the same request.
+describe('HospitalPatientScopeShadow — no stale assignment cache (F6)', () => {
+  it('reads assignments again on every evaluation within one request', async () => {
+    const { shadow, liveAssignmentScopes } = shadowWith(DOCTOR_AT_A, [SCOPED_AT_A]);
+    liveAssignmentScopes.mockResolvedValueOnce([SCOPED_AT_A]).mockResolvedValueOnce([]);
+
+    const decisions = await runInRequestScope(async () => [
+      await shadow.evaluate(DOCTOR, 'PT-1'),
+      await shadow.evaluate(DOCTOR, 'PT-1'),
+    ]);
+
+    // Revoked between the two reads: the second sees it.
+    expect(decisions).toEqual([
+      { allowed: true, hospitalId: HOSPITAL_A },
+      { allowed: false, reason: 'no_care_assignment' },
+    ]);
+    expect(liveAssignmentScopes).toHaveBeenCalledTimes(2);
+  });
+
+  it('sees an assignment created earlier in the same request', async () => {
+    const { shadow, liveAssignmentScopes } = shadowWith(DOCTOR_AT_A, []);
+    liveAssignmentScopes.mockResolvedValueOnce([]).mockResolvedValueOnce([SCOPED_AT_A]);
+
+    const decisions = await runInRequestScope(async () => [
+      await shadow.evaluate(DOCTOR, 'PT-1'),
+      await shadow.evaluate(DOCTOR, 'PT-1'),
+    ]);
+
+    expect(decisions.map((decision) => decision.allowed)).toEqual([false, true]);
+  });
+
+  it('passes the public id and the uuid through as given, one fresh read each', async () => {
+    const { shadow, liveAssignmentScopes } = shadowWith(DOCTOR_AT_A, [SCOPED_AT_A]);
+    const uuid = '0b7c1a52-9a1f-4a4e-9d55-2a4f1d0c3e11';
+
+    await runInRequestScope(async () => {
+      await shadow.evaluate(DOCTOR, 'PT-1');
+      await shadow.evaluate(DOCTOR, uuid);
+    });
+
+    expect(liveAssignmentScopes.mock.calls).toEqual([
+      [DOCTOR.userId, 'PT-1'],
+      [DOCTOR.userId, uuid],
+    ]);
+  });
+
+  it('keeps several patients in one request apart', async () => {
+    const repository: HospitalPatientScopeRepository = {
+      liveAssignmentScopes: (_doctor, patient) =>
+        Promise.resolve(patient === 'PT-MINE' ? [SCOPED_AT_A] : []),
+    };
+    const shadow = new HospitalPatientScopeShadow(
+      { forRequest: () => Promise.resolve(DOCTOR_AT_A) } as unknown as HospitalContextService,
+      repository,
+    );
+
+    const decisions = await runInRequestScope(() =>
+      Promise.all([shadow.evaluate(DOCTOR, 'PT-MINE'), shadow.evaluate(DOCTOR, 'PT-OTHER')]),
+    );
+
+    expect(decisions.map((decision) => decision.allowed)).toEqual([true, false]);
+  });
+
+  it('still resolves the hospital context once per request (it depends only on the caller)', async () => {
+    const { shadow, forRequest } = shadowWith(DOCTOR_AT_A, [SCOPED_AT_A]);
+
+    await runInRequestScope(async () => {
+      await shadow.evaluate(DOCTOR, 'PT-1');
+      await shadow.evaluate(DOCTOR, 'PT-2');
+    });
+
+    // `forRequest` memoizes itself; the shadow simply asks it each time.
+    expect(forRequest).toHaveBeenCalledTimes(2);
   });
 });
