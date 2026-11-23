@@ -17,6 +17,7 @@ export type HospitalContext =
         | 'no_active_employment'
         | 'ambiguous_active_employment'
         | 'ambiguous_hospital_admin_scope'
+        | 'admin_scope_not_mapped'
         | 'resource_required'
         | 'unsupported_role'
         | 'resolution_unavailable';

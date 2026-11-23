@@ -47,10 +47,9 @@ export class HospitalContextService {
           return { kind: 'hospital', hospitalId, source: 'hospital_admin_assignment' };
         }
       }
-      // The existing `admin` role is the platform administrator role.
-      // A hospital assignment overrides this observation only for its
-      // explicitly assigned hospital; this does not grant clinical access.
-      return { kind: 'platform', clinicalDataAccess: false };
+      // Existing administrator accounts require deliberate mapping (OD-07).
+      // Never infer platform scope from the absence of a hospital assignment.
+      return { kind: 'unresolved', reason: 'admin_scope_not_mapped' };
     }
 
     if (user.role === 'patient') {

@@ -77,10 +77,10 @@ describe('HospitalContextService shadow resolution', () => {
     });
   });
 
-  it('identifies the current admin role as platform scope without clinical access when unassigned', async () => {
+  it('does not infer platform scope for an unmapped administrator', async () => {
     await expect(serviceWith().resolve(user('admin'))).resolves.toEqual({
-      kind: 'platform',
-      clinicalDataAccess: false,
+      kind: 'unresolved',
+      reason: 'admin_scope_not_mapped',
     });
   });
 
