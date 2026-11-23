@@ -33,6 +33,7 @@ integration remain incomplete, so the schema does not enable real multi-hospital
 | 11 | [`AI_CHECKLIST.md`](AI_CHECKLIST.md) | AI, Backend |
 | 12 | [`SECURITY_AND_DATA_ISOLATION.md`](SECURITY_AND_DATA_ISOLATION.md) | Security, Testing, everyone |
 | 12a | [`BACKEND_ENFORCEMENT_INVENTORY.md`](BACKEND_ENFORCEMENT_INVENTORY.md) | Backend, Security. Where isolation must be enforced; staged plan (2026-11-23) |
+| 12b | [`LEGACY_OWNERSHIP_BACKFILL.md`](LEGACY_OWNERSHIP_BACKFILL.md) | Database. S2 evidence-only assignment backfill; real runs wait on #17 |
 | 13 | [`MIGRATION_AND_COMPATIBILITY.md`](MIGRATION_AND_COMPATIBILITY.md) | Database, Backend, Architecture |
 
 ## The architecture in one screen
