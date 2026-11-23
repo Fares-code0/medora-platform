@@ -52,8 +52,15 @@ import {
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import { isUniqueViolation } from '../../../shared/database';
 import { bloodTypeToWire, genderToWire } from '../dto/clinical-enums';
-import { ageOn, type DoctorProfileView, type SelfProfileView } from '../dto/self-profile.dto';
-import { LICENSE_FIELDS, type UpdateDoctorProfileInput } from '../dto/self-profile.schema';
+import {
+  ageOn,
+  type DoctorProfileView,
+  type SelfProfileView,
+} from '../dto/self-profile.dto';
+import {
+  LICENSE_FIELDS,
+  type UpdateDoctorProfileInput,
+} from '../dto/self-profile.schema';
 import {
   SelfProfileRepository,
   type DoctorProfilePatch,
@@ -186,7 +193,10 @@ export class SelfProfileService {
     }
 
     if (file.buffer.byteLength > PHOTO_MAX_BYTES) {
-      throw AppException.validation({ photo: ['Keep the image under 5 MB'] }, 'Image too large');
+      throw AppException.validation(
+        { photo: ['Keep the image under 5 MB'] },
+        'Image too large',
+      );
     }
 
     // The declared type is the client's word; this checks the bytes are

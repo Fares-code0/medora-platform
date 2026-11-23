@@ -53,7 +53,12 @@ import { SelfProfileService } from './services/self-profile.service';
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [AccountController, SelfProfileController, PlatformUserController, RolesController],
+  controllers: [
+    AccountController,
+    SelfProfileController,
+    PlatformUserController,
+    RolesController,
+  ],
   providers: [
     AccountService,
     AccountRepository,

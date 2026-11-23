@@ -22,12 +22,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
-import {
-  ACTIVITY_RECORDER,
-  KIND_FROM_WIRE,
-  KIND_TO_WIRE,
-  type ActivityRecorder,
-} from '../../../shared/activity';
+import { ACTIVITY_RECORDER, KIND_FROM_WIRE, KIND_TO_WIRE, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { isUniqueViolation } from '../../../shared/database';
 import type { AccountView, ActivityEntryView } from '../dto/account.dto';
@@ -102,7 +97,10 @@ export class AccountService {
 
     if (!usernameChanged && !phoneChanged) return toAccountView(updated);
 
-    const changed = [...(usernameChanged ? ['username'] : []), ...(phoneChanged ? ['phone'] : [])];
+    const changed = [
+      ...(usernameChanged ? ['username'] : []),
+      ...(phoneChanged ? ['phone'] : []),
+    ];
 
     await this.audit.record({
       action: 'account.update',
@@ -118,12 +116,11 @@ export class AccountService {
     await this.activity.record({
       userId: user.id,
       kind: 'profile',
-      summary:
-        usernameChanged && phoneChanged
-          ? 'Username and phone number updated'
-          : usernameChanged
-            ? 'Username updated'
-            : 'Phone number updated',
+      summary: usernameChanged && phoneChanged
+        ? 'Username and phone number updated'
+        : usernameChanged
+          ? 'Username updated'
+          : 'Phone number updated',
       // The new username is safe to show — it is a public handle. The
       // phone number is not, and is deliberately not echoed.
       ...(usernameChanged ? { detail: input.username } : {}),
