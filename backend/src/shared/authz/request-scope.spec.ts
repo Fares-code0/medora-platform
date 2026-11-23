@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { memoizeInRequest, RequestScopeMiddleware, runInRequestScope } from './request-scope';
+import {
+  inRequestScope,
+  memoizeInRequest,
+  RequestScopeMiddleware,
+  runInRequestScope,
+  runOutsideRequestScope,
+} from './request-scope';
 
 describe('request-scope memo', () => {
   it('runs the lookup every time outside a request (no store, nothing cached)', async () => {
@@ -75,5 +81,102 @@ describe('request-scope memo', () => {
     await handle();
 
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('request-scope isolation (audit F5, #24)', () => {
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 1));
+
+  it('keeps two interleaved concurrent requests apart', async () => {
+    const seen: string[] = [];
+    const request = (user: string) =>
+      runInRequestScope(async () => {
+        await memoizeInRequest('hospital-context', () => Promise.resolve(user));
+        await tick(); // the other request runs here
+        seen.push(await memoizeInRequest('hospital-context', () => Promise.resolve('LEAK')));
+      });
+
+    await Promise.all([request('hospital-a'), request('hospital-b')]);
+
+    expect(seen.sort()).toEqual(['hospital-a', 'hospital-b']);
+  });
+
+  it('proves the hazard: a plain timer started in a request carries its store', async () => {
+    const observed = await runInRequestScope(async () => {
+      await memoizeInRequest('key', () => Promise.resolve('request value'));
+      return new Promise<string>((resolve) => {
+        setTimeout(() => {
+          void memoizeInRequest('key', () => Promise.resolve('fresh')).then(resolve);
+        }, 1);
+      });
+    });
+
+    expect(observed).toBe('request value');
+  });
+
+  it('runs background work started inside a request with no store', async () => {
+    const result = await runInRequestScope(async () => {
+      await memoizeInRequest('key', () => Promise.resolve('request value'));
+      expect(inRequestScope()).toBe(true);
+
+      return runOutsideRequestScope(
+        () =>
+          new Promise<{ scoped: boolean; value: string }>((resolve) => {
+            setTimeout(() => {
+              void memoizeInRequest('key', () => Promise.resolve('fresh')).then((value) =>
+                resolve({ scoped: inRequestScope(), value }),
+              );
+            }, 1);
+          }),
+      );
+    });
+
+    expect(result).toEqual({ scoped: false, value: 'fresh' });
+  });
+
+  it('does not cache anything for detached work: every lookup runs', async () => {
+    const lookup = vi.fn().mockResolvedValue('value');
+
+    await runInRequestScope(() =>
+      runOutsideRequestScope(async () => {
+        await memoizeInRequest('key', lookup);
+        await memoizeInRequest('key', lookup);
+      }),
+    );
+
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a retry after a failure outside the store too', async () => {
+    const scopes: boolean[] = [];
+    const attempt = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => {
+        scopes.push(inRequestScope());
+        return Promise.reject(new Error('first attempt failed'));
+      })
+      .mockImplementationOnce(() => {
+        scopes.push(inRequestScope());
+        return Promise.resolve('ok');
+      });
+
+    await runInRequestScope(() =>
+      runOutsideRequestScope(async () => {
+        await attempt().catch(async () => {
+          await tick();
+          await attempt();
+        });
+      }),
+    );
+
+    expect(scopes).toEqual([false, false]);
+  });
+
+  it('leaves the request store intact for the request itself', () => {
+    runInRequestScope(() => {
+      expect(runOutsideRequestScope(() => inRequestScope())).toBe(false);
+      expect(inRequestScope()).toBe(true);
+    });
+    expect(inRequestScope()).toBe(false);
   });
 });
