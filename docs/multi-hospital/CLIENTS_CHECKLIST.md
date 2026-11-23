@@ -113,7 +113,7 @@ frontend work.
 | WEB-6 | Blocked — Phase 22 (API-W03) | No employment data. The free-text hospital field is already not offered in live builds (`SERVER_PROFILE_FIELDS` omits it); it remains editable over the mock profile only |
 | WEB-7 | Blocked — Phase 24 | No slot-publishing API |
 | WEB-8 | **Done** | The safety screen's subtitle and its "No safety warnings" result say they screened *this hospital's record of the patient*; the patient Overview opens with "This hospital's record of the patient: what this hospital has recorded, not their history at other providers." `SafetyScreen.test.tsx` (2, new), `OverviewTab.test.tsx` +1. True today (one hospital) and under DR-04. The hospital's name is WEB-1's |
-| WEB-9 | Blocked — Phase 28 (and D-09) | `/ai/*` routes exist on `main` (`backend/src/modules/ai`), but no AI provider/gateway is bound and the server binds no hospital, so the web client runs the disclosed mock assistant and sends no request to keep a hospital out of *(corrected 2026-11-22; was "The assistant has no backend")* |
+| WEB-9 | Blocked — Phase 28 (and D-09) | The assistant has no backend; there is no request to keep a hospital out of |
 | WEB-10…WEB-13c | Blocked — Phase 22A | No grant, Break-Glass, consultation or documentation API |
 | WEB-14, WEB-15 | Blocked — Phase 26 | No Hospital Admin or Platform Admin API |
 | WEB-16 | Blocked — Phase 22 | The client's roles are `doctor`, `admin`, `reception`, `laboratory` and `pharmacy` (`frontend/src/types/auth/index.ts`); the session carries no platform-admin or hospital-admin role to guard on |

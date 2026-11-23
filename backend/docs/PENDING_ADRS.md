@@ -23,7 +23,7 @@ the decisions are implemented, tested and described under their milestones in
 > **2026-10-22 — the two rows below are now in the `docs/DECISIONS.md` register**, linking here,
 > on `backend` only. **The ADR text was not moved:** this file stays its only copy, so do not
 > append it to the register as well, and do not add the rows a second time. The register also now
-> records ADR-042 (Proposed) and ADR-043 (reserved) as allocated outside it.
+> records ADR-042 (Accepted; full text in `docs/DECISIONS.md`) and ADR-043 (reserved) as allocated.
 
 | ADR | Title | Status |
 |---|---|---|
@@ -40,19 +40,12 @@ git grep -h '^## ADR-' origin/main origin/frontend origin/backend \
     origin/Database origin/Ai origin/patient-app -- docs/DECISIONS.md | sort -u
 ```
 
-⚠️ **ADR-042 is taken (2026-10-07).** It is allocated to the Multi-Hospital
-architecture, held as a *Proposed* draft at
-[`docs/multi-hospital/ADR-042-DRAFT.md`](../../docs/multi-hospital/ADR-042-DRAFT.md) (merged to
-`frontend` in PR #47, outside the register on purpose, like this file). The
-register sweep above does not see it, because it reads only
-`docs/DECISIONS.md`, so also run
-`git grep -l 'ADR-04[2-9]' origin/frontend origin/backend origin/patient-app -- docs backend/docs`
-before numbering. **ADR-043 is also spoken for**: Phase 20
-([`PHASE-20-MULTI-HOSPITAL-ARCHITECTURE-DECISION.md`](../../docs/work-phases/PHASE-20-MULTI-HOSPITAL-ARCHITECTURE-DECISION.md))
-names it for an optional split of ADR-042 (cross-hospital access and AI
-retention). An unrelated backend ADR therefore starts at **ADR-044**, after the
-sweep. Do not reuse or renumber ADR-042.
-
+**ADR-042 was allocated to the Multi-Hospital architecture and accepted on 2026-11-22.** Its full text
+is now registered in `docs/DECISIONS.md`; the original proposal file remains at
+[`docs/multi-hospital/ADR-042-DRAFT.md`](../../docs/multi-hospital/ADR-042-DRAFT.md) for traceability.
+**ADR-043 remains reserved** by Phase 20 for a possible split covering cross-hospital access and AI
+retention. ADR-044 and ADR-045 are registered; the next unallocated number is ADR-046. Re-run the full register and
+pending-ADR sweep before allocating another number.
 ---
 
 ## ADR-040 — Platform Settings: The Crypto Kernel, the Policy Delegate, and the Three Conventions M24 Had to Name

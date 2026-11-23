@@ -178,6 +178,13 @@ model User {
   @@index([deletedAt])
   @@index([status])
   @@index([roleId])
+  hospitalRoleAssignments HospitalRoleAssignment[]
+  hospitalRoleAssignmentsGranted HospitalRoleAssignment[] @relation("HospitalRoleAssignmentGrantedBy")
+  recordedHospitalConditions HospitalMedicalRecordCondition[]
+
+  clinicHoursCreated ClinicOperatingHour[] @relation("ClinicOperatingHourCreatedBy")
+  clinicHoursUpdated ClinicOperatingHour[] @relation("ClinicOperatingHourUpdatedBy")
+
   @@map("users")
 }
 
@@ -311,6 +318,11 @@ model Session {
   /// lookup that the single-session policy and "sign out all others" run.
   @@index([userId])
   @@index([expiresAt])
+  @@index([userId], where: raw("revoked_at IS NULL"), map: "sessions_user_id_live_idx")
+  /// ADR-045 / RA-045.1 — the successor sweep's partial index, created by
+  /// migration `20261121090000_session_refresh_grace`. Declared here since
+  /// `partialIndexes` lets Prisma express its predicate.
+  @@index([rotatedAt], where: raw("successor_token_ct IS NOT NULL"), map: "sessions_successor_rotated_at_idx")
   @@map("sessions")
 }
 

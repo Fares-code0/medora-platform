@@ -258,16 +258,35 @@ export async function seedDemo(prisma: PrismaClient): Promise<Record<string, num
     }
 
     for (const allergy of seed.allergies) {
-      await prisma.patientAllergy.upsert({
-        where: { patientId_allergen: { patientId: patient.id, allergen: allergy.allergen } },
-        create: {
+      // PatientAllergy uniqueness is split across two partial indexes: one
+      // for legacy rows without a hospital medical record and one for
+      // hospital-owned rows. PostgreSQL cannot infer either partial index
+      // from Prisma's generic ON CONFLICT target, so use an explicit lookup.
+      const existingAllergy = await prisma.patientAllergy.findFirst({
+        where: {
           patientId: patient.id,
           allergen: allergy.allergen,
-          severity: allergy.severity as 'SEVERE',
-          reaction: allergy.reaction,
+          hospitalMedicalRecordId: null,
         },
-        update: { severity: allergy.severity as 'SEVERE', reaction: allergy.reaction },
       });
+      const allergyData = {
+        severity: allergy.severity as 'SEVERE',
+        reaction: allergy.reaction,
+      };
+      if (existingAllergy === null) {
+        await prisma.patientAllergy.create({
+          data: {
+            patientId: patient.id,
+            allergen: allergy.allergen,
+            ...allergyData,
+          },
+        });
+      } else {
+        await prisma.patientAllergy.update({
+          where: { id: existingAllergy.id },
+          data: allergyData,
+        });
+      }
       allergyCount += 1;
     }
   }

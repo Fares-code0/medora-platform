@@ -65,6 +65,7 @@ model ApiKey {
 
   creator User? @relation("ApiKeyCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
 
+  @@index([prefix], where: raw("revoked_at IS NULL"), map: "api_keys_live_idx")
   @@map("api_keys")
 }
 
@@ -156,6 +157,10 @@ model AuditEvent {
   @@index([sessionId])
   @@index([ipAddress])
   @@index([summary(ops: raw("gin_trgm_ops"))], type: Gin, map: "audit_events_summary_trgm_idx")
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  @@index([hospitalId, occurredAt(sort: Desc)], map: "audit_events_hospital_occurred_idx")
+
   @@map("audit_events")
 }
 
@@ -204,6 +209,10 @@ model DomainEvent {
   /// FOR UPDATE SKIP LOCKED so two instances never build the same
   /// notification twice.
   @@index([status, createdAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  @@index([hospitalId, createdAt], map: "domain_events_hospital_created_idx")
+
   @@map("domain_events")
 }
 
