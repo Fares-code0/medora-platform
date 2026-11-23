@@ -42,6 +42,7 @@ export const CAN_METADATA = 'medora:authz:can';
 export const ROLES_METADATA = 'medora:authz:roles';
 export const AUTHENTICATED_METADATA = 'medora:authz:authenticated';
 export const PLATFORM_SCOPE_METADATA = 'medora:authz:platform-scope';
+export const HOSPITAL_SCOPE_METADATA = 'medora:authz:hospital-scope';
 
 /**
  * API §0.4's `✓` — any authenticated user, no capability required.
@@ -84,6 +85,16 @@ export function Roles(...roles: readonly PlatformRole[]): CustomDecorator<string
  */
 export function PlatformScope(): CustomDecorator<string> {
   return SetMetadata(PLATFORM_SCOPE_METADATA, true);
+}
+
+/**
+ * Hospital-tier route (§2.3): a Hospital Admin may call it, confined by the
+ * service to its own hospital. Administrative routes are platform-tier by
+ * default (deny by default): a route opens to Hospital Admins only when it
+ * has been built to scope its data to one hospital and says so here.
+ */
+export function HospitalScope(): CustomDecorator<string> {
+  return SetMetadata(HOSPITAL_SCOPE_METADATA, true);
 }
 
 export { IS_PUBLIC_KEY, Public } from '../../common/auth/public.decorator';

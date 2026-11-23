@@ -313,6 +313,16 @@ describe('administrative tiering (§2.2, §2.3, OD-07)', () => {
       .set(as(hospitalAdmin.token));
 
     expect([transfer.status, assign.status, platform.status]).toEqual([403, 403, 403]);
+    // Existing administrative surfaces act across hospitals, so they are
+    // platform-tier by default until each is scoped to one hospital.
+    for (const path of ['/api/v1/admin/users', '/api/v1/doctors', '/api/v1/platform-settings']) {
+      const response = await request(harness.server).get(path).set(as(hospitalAdmin.token));
+      expect(response.status, path).toBe(403);
+    }
+    // While the hospital-tier role catalogue stays open to it.
+    expect(
+      (await request(harness.server).get('/api/v1/roles').set(as(hospitalAdmin.token))).status,
+    ).toBe(200);
     // `roles.manage` alone does not open the platform's permission matrix.
     expect(matrix.status).toBe(403);
   });

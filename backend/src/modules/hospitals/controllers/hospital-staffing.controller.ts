@@ -3,7 +3,7 @@ import { Body, Controller, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } fr
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can, PlatformScope } from '../../../shared/authz';
+import { Can, HospitalScope, PlatformScope } from '../../../shared/authz';
 import {
   endAccessSchema,
   grantAdminSchema,
@@ -36,6 +36,7 @@ export class HospitalStaffingController {
   constructor(private readonly staffing: HospitalStaffingService) {}
 
   @Can('doctors.manage')
+  @HospitalScope()
   @Post('hospitals/:hospitalId/doctor-employments')
   startEmployment(
     @CurrentUser() actor: AuthenticatedUser,
@@ -46,6 +47,7 @@ export class HospitalStaffingController {
   }
 
   @Can('doctors.manage')
+  @HospitalScope()
   @Post('hospitals/:hospitalId/doctor-employments/:employmentId/end')
   @HttpCode(HttpStatus.OK)
   endEmployment(
@@ -70,6 +72,7 @@ export class HospitalStaffingController {
   }
 
   @Can('roles.manage')
+  @HospitalScope()
   @Post('hospitals/:hospitalId/staff-affiliations')
   startAffiliation(
     @CurrentUser() actor: AuthenticatedUser,
@@ -80,6 +83,7 @@ export class HospitalStaffingController {
   }
 
   @Can('roles.manage')
+  @HospitalScope()
   @Post('hospitals/:hospitalId/staff-affiliations/:affiliationId/end')
   @HttpCode(HttpStatus.OK)
   endAffiliation(

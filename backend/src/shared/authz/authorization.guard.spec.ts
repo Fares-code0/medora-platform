@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { AppException } from '../../common/errors/app.exception';
 import { AuthorizationGuard } from './authorization.guard';
 import type { AdminScope, AdminScopeService } from './admin-scope.service';
-import { Can, PlatformScope, Public, Roles } from './authz.decorators';
+import { Can, HospitalScope, PlatformScope, Public, Roles } from './authz.decorators';
 import { InMemoryPermissionCache } from './in-memory-permission-cache';
 import { PermissionResolver } from './permission-resolver.service';
 import { AUTHENTICATED_USER } from '../../common/auth/authenticated-user';
@@ -57,6 +57,10 @@ class FixtureController {
   @Can('roles.manage')
   @PlatformScope()
   platformTier(): void {}
+
+  @Can('doctors.manage')
+  @HospitalScope()
+  hospitalTier(): void {}
 }
 
 @Roles('admin')
@@ -333,9 +337,25 @@ describe('AuthorizationGuard — administrative tiering (§2.2, §2.3, OD-07)', 
     );
   });
 
-  it('lets a Hospital Admin reach an ordinary administrative route', async () => {
+  it('lets a Hospital Admin reach a route marked @HospitalScope()', async () => {
     adminScope = { kind: 'hospital', hospitalId: 'h-1' };
-    expect(await statusOf(guard, contextFor(fixture, 'adminOnly', principal('admin')))).toBe(
+    expect(await statusOf(guard, contextFor(fixture, 'hospitalTier', principal('admin')))).toBe(
+      HttpStatus.OK,
+    );
+  });
+
+  it('refuses a Hospital Admin on an unmarked administrative route (platform-tier by default)', async () => {
+    adminScope = { kind: 'hospital', hospitalId: 'h-1' };
+    for (const method of ['adminOnly', 'adminExport']) {
+      expect(await statusOf(guard, contextFor(fixture, method, principal('admin')))).toBe(
+        HttpStatus.FORBIDDEN,
+      );
+    }
+  });
+
+  it('lets a Platform Admin reach a hospital-tier route too', async () => {
+    adminScope = { kind: 'platform' };
+    expect(await statusOf(guard, contextFor(fixture, 'hospitalTier', principal('admin')))).toBe(
       HttpStatus.OK,
     );
   });

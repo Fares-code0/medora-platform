@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can, PlatformScope } from '../../../shared/authz';
+import { Can, HospitalScope, PlatformScope } from '../../../shared/authz';
 import type {
   CapabilityCatalogueView,
   MatrixPreviewView,
@@ -51,12 +51,14 @@ export class RolesController {
   constructor(private readonly roles: RolesService) {}
 
   /** API §15.1 — roles with member counts. */
+  @HospitalScope()
   @Get('roles')
   list(): Promise<readonly RoleView[]> {
     return this.roles.list();
   }
 
   /** API §15.1 — the 22-capability catalogue, grouped by domain. */
+  @HospitalScope()
   @Get('permissions')
   catalogue(): CapabilityCatalogueView {
     return this.roles.catalogue();
@@ -103,6 +105,7 @@ export class RolesController {
   }
 
   /** API §15.4 — a custom role from a base template. */
+  @HospitalScope()
   @Post('roles')
   @HttpCode(HttpStatus.CREATED)
   create(

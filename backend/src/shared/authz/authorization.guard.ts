@@ -53,6 +53,7 @@ import { AdminScopeService } from './admin-scope.service';
 import {
   AUTHENTICATED_METADATA,
   CAN_METADATA,
+  HOSPITAL_SCOPE_METADATA,
   PLATFORM_SCOPE_METADATA,
   ROLES_METADATA,
 } from './authz.decorators';
@@ -127,17 +128,21 @@ export class AuthorizationGuard implements CanActivate {
 
     const platformOnly =
       this.reflector.getAllAndOverride<boolean>(PLATFORM_SCOPE_METADATA, targets) === true;
+    const hospitalTier =
+      !platformOnly &&
+      this.reflector.getAllAndOverride<boolean>(HOSPITAL_SCOPE_METADATA, targets) === true;
 
     // Administrative tiering (§2.2, §2.3, OD-07). An administrator acting
     // through a capability or role rule needs a resolved scope: platform
     // (explicit grant) or exactly one hospital. An unmapped or ambiguous
     // administrator is refused rather than inferred to be platform-wide;
-    // self-service `@Authenticated()` routes are unaffected. A platform-tier
-    // route additionally refuses a Hospital Admin.
+    // self-service `@Authenticated()` routes are unaffected. Administrative
+    // routes are platform-tier by default: a Hospital Admin reaches only a
+    // route marked `@HospitalScope()`, which confines it to its hospital.
     if (principal.roleCode === 'admin' && !authenticatedOnly) {
       const scope = await this.scopes.scopeOf(user);
       if (scope.kind === 'none') throw AppException.forbidden();
-      if (platformOnly && scope.kind !== 'platform') throw AppException.forbidden();
+      if (scope.kind === 'hospital' && !hospitalTier) throw AppException.forbidden();
     } else if (platformOnly) {
       throw AppException.forbidden();
     }

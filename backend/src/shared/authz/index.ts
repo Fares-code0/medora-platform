@@ -64,6 +64,8 @@ export {
   Authenticated,
   CAN_METADATA,
   Can,
+  HospitalScope,
+  HOSPITAL_SCOPE_METADATA,
   PlatformScope,
   PLATFORM_SCOPE_METADATA,
   IS_PUBLIC_KEY,
