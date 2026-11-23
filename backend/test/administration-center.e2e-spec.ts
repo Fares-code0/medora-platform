@@ -215,6 +215,7 @@ describe('M23.1 — the clinic overview', () => {
 describe('M23.2 verify — derived fields, capacity and the department guard', () => {
   beforeEach(async () => {
     await harness.prisma.db.resource.deleteMany({});
+    await harness.prisma.db.hospitalStaffAffiliation.deleteMany({});
     await harness.prisma.db.staffMember.deleteMany({});
   });
 
