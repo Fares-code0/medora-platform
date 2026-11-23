@@ -94,6 +94,7 @@ function serviceFor(stub: RepoStub): PlatformUserService {
     accounts as never,
     audit,
     activity,
+    { forget: vi.fn().mockResolvedValue(undefined) } as never,
   );
 }
 

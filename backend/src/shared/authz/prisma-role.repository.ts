@@ -109,6 +109,15 @@ export class PrismaRoleRepository implements RoleRepository {
    * Soft-deleted users are excluded by the middleware of M4.2, so a
    * departed account does not keep a cache entry alive.
    */
+  async baseRoleCodeOf(roleCode: string): Promise<string | null> {
+    const row = await this.prisma.db.role.findUnique({
+      where: { code: roleCode },
+      select: { baseRole: { select: { code: true } } },
+    });
+
+    return row?.baseRole?.code ?? null;
+  }
+
   async userIdsWithRole(roleCode: string): Promise<readonly string[]> {
     const rows = await this.prisma.db.user.findMany({
       where: { role: { code: roleCode } },

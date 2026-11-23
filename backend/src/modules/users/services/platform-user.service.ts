@@ -56,6 +56,7 @@ import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { PermissionResolver } from '../../../shared/authz';
 import { UserStatus } from '../../../generated/prisma/enums';
 import type { PlatformUserView } from '../dto/account.dto';
 import type {
@@ -101,6 +102,7 @@ export class PlatformUserService {
     private readonly accounts: AccountService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   async list(query: PlatformUserQuery): Promise<PaginatedPlatformUsers> {
@@ -184,10 +186,16 @@ export class PlatformUserService {
     // Deactivation ends the sessions that are already open. Without this
     // the lever does nothing for the case it is pulled in — an account
     // being used right now — until the access token expires.
-    const revoked =
-      status !== undefined && status !== UserStatus.ACTIVE
-        ? await this.users.revokeSessions(target.id)
-        : 0;
+    //
+    // A role change ends them too (ADR-046 as revised, multi-hospital
+    // §2.10): every session and refresh token of the old role is revoked,
+    // and the account signs in again to hold the new role. Together with
+    // the `authz_version` bump in `users.update`, no request can be
+    // authorized with the old role's permissions after this commits.
+    const roleChanged = roleId !== undefined;
+    const deactivated = status !== undefined && status !== UserStatus.ACTIVE;
+    const revoked = roleChanged || deactivated ? await this.users.revokeSessions(target.id) : 0;
+    await this.permissions.forget(target.id);
 
     await this.audit.record({
       action: 'user.administer',

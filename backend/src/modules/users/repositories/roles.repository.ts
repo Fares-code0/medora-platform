@@ -278,6 +278,15 @@ export class RolesRepository {
       });
       await tx.rolePermission.createMany({ data: rows });
 
+      // Every member of an edited role gets a new authorization version in
+      // this transaction, so a permission set cached before the edit is
+      // never served again (multi-hospital §2.9), even if the cache
+      // eviction that follows the commit fails.
+      await tx.user.updateMany({
+        where: { role: { code: { in: Object.keys(input.grid) } } },
+        data: { authzVersion: { increment: 1 } },
+      });
+
       const saved = await tx.permissionMatrixState.findUniqueOrThrow({
         where: { id: MATRIX_STATE_ID },
         select: { revision: true, updatedAt: true, updater: { select: { publicId: true } } },
@@ -400,6 +409,13 @@ export class RolesRepository {
         .filter((row): row is NonNullable<typeof row> => row !== null);
 
       if (rows.length > 0) await tx.userPermission.createMany({ data: rows });
+
+      // Same transaction as the overrides: the cached set is stale the moment
+      // this commits (§2.9).
+      await tx.user.update({
+        where: { id: input.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
     });
   }
 }

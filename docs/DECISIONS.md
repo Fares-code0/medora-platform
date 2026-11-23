@@ -4782,7 +4782,9 @@ schema files are reverted too.
 ## ADR-046 — An Access Token Is Refused Once Its Role Claim Is Stale
 
 **Status:** Proposed (Backend, 2026-11-23) — implemented with audit finding F3 (issue #23); accepted
-when its pull request is approved · **Interprets:** API §1.11 ("permissions are static per session
+when its pull request is approved · **Corrected:** 2026-11-23 by the owner's approved multi-hospital
+decision (#16, §2.10): rule 2 now revokes sessions on a role change, rule 5 is replaced, and rule 6
+is new · **Interprets:** API §1.11 ("permissions are static per session
 (changes apply at next issue)") · **Preserves:** ADR-013, ADR-026, ADR-045, PRE-01 (I4, O-13)
 
 ### Context
@@ -4809,37 +4811,53 @@ the next refresh was open.
    more predicate and no extra query. A mismatch is the same 401 `unauthorized` / "Session expired"
    as any dead session: the client's next move is the same (ADR-013, refresh once), and a stolen token
    gives no way to tell a role change from a revocation.
-2. **The session is not revoked.** The refresh family survives, and the one refresh mints a token for
-   the current role. The change takes effect "at next issue" as API §1.11 says. The difference is
-   that the stale token stops working at once. Deactivation still revokes every session, as before.
+2. **A role change revokes every session and refresh token of the account** (corrected; §2.10).
+   `PlatformUserService.update` revokes on a role change exactly as it does on deactivation, in the
+   request that makes the change, so no token minted for the old role, and no refresh family that
+   could mint one, survives it. Rule 1 stays as an independent defence: a role written out of band
+   (a migration, a support query) still makes the stale token a 401 even though nothing revoked it.
 3. **`@AllowEndedSession()` (logout) is unchanged.** It checks identity only, so a demoted account can
    still sign out.
 4. **`GET /auth/session` resolves the hospital context for the database role**, the role the payload
    reports, so `role`, `activeHospital` and `adminScope` always describe one role.
-5. **Out of scope:** a change to a role's *permission set* (`role_permissions`) or to per-user
-   overrides is not detected by this check. Those still take effect at the next issue, within
-   `JWT_ACCESS_TTL`. Changing that needs a permission version on the token or the session, which is a
-   separate decision (#27, session invalidation).
+5. **Permission changes apply on the next request, without revoking sessions** (corrected; §2.10).
+   Authorization never trusts the token's `permissions` claim: `AuthorizationGuard` resolves the
+   effective set from the database through `PermissionResolver`. Every change that can alter it (a
+   role-matrix save, a per-user override, a role or status change, a doctor's verification or
+   practice status, an invitation's activation) increments `users.authz_version` in the same
+   transaction, and the access-token guard reads the live version with the session row it already
+   reads. The token's claim remains display-only for the client's `useCan()`.
+6. **The permission cache is keyed by user, role and `authz_version`** (`user|role|vN`), and the
+   affected user's entries are evicted after every change. Eviction is the fast path; the key is
+   what makes freshness fail closed. If eviction fails (Redis unreachable), the bumped version
+   still misses the stale entry, and a refreshed token for a new role can never be answered from
+   the old role's cached set (audit A-1).
 
 ### Consequences
 
 - A role change can no longer leave a user with permissions they no longer hold (beyond the request
   already in flight).
-- Every open session of the account sees one 401 and one refresh after a role change. Both web
-  clients already refresh once on a 401 that carried a token.
+- A role change signs the account out everywhere; its next sign-in mints a token for the new role
+  and passes whatever that role's sign-in policy requires (administrator MFA, for instance).
+- An ordinary permission edit costs the subject nothing: same session, same token, a different
+  answer on the next request.
 - An administrator promoted from another role must still pass the administrator MFA policy at the
   next password sign-in. The refresh path is unchanged.
-- Tests: `access-token.guard.spec.ts`, `session-user.service.spec.ts` and
-  `account-security.e2e-spec.ts` ("a role change after token issuance") cover promotion, demotion,
-  the session payload, several concurrent sessions, logout and the unchanged-role path.
+- Tests: `access-token.guard.spec.ts`, `session-user.service.spec.ts`,
+  `permission-resolver.service.spec.ts` and `account-security.e2e-spec.ts` ("a role change after
+  token issuance") cover promotion, demotion, the session payload, several concurrent sessions,
+  logout, the unchanged-role path and the doctor → pharmacy cache regression;
+  `users-account.e2e-spec.ts` covers revocation through the API, and `roles-permissions.e2e-spec.ts`
+  covers an override applying on the next request without revocation.
 
 ### Alternatives rejected
 
 | Alternative | Why not |
 |---|---|
-| Revoke every session on a role change | Signs the user out for an administrative change. Rule 2 gets the same security property with one refresh |
+| Keep the refresh family alive across a role change (this ADR's original rule 2) | Superseded by the owner's decision (§2.10): a role change is the one authorization change that must end every session |
+| Revoke sessions on an ordinary permission edit | The owner's decision applies those on the next request instead; rule 5 makes that safe without a sign-out |
 | Resolve context from the token role and report the token role | Keeps the 15-minute stale-privilege window open, which is the real defect |
-| Re-resolve permissions per request | Contradicts API §1.11. The guards and `useCan()` would then disagree within one token's life |
+| Trust the token's `permissions` claim until the next issue | Not adopted (rule 5). The guard already resolved from the database; the claim is display-only, and `useCan()` may briefly show a control the server then refuses, which fails safe |
 
 ---
 

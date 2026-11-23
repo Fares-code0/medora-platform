@@ -75,10 +75,12 @@ export class DashboardService {
    * ever coalesced when they would have computed the identical answer.
    */
   overview(user: AuthenticatedUser) {
+    // The live authorization version, not the token's permission claim:
+    // the claim can be stale for up to the token's lifetime (§2.8).
     const scope = paramsKey('scope', {
       user: user.id,
       role: user.role,
-      permissions: [...user.permissions].sort(),
+      authz: user.authzVersion ?? null,
     });
 
     return this.cache.coalesce(DOCTOR_DASHBOARD, scope, () => this.composite(user));

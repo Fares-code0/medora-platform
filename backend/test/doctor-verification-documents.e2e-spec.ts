@@ -491,6 +491,39 @@ describe('GET /me/verification-documents — what the doctor has filed', () => {
   });
 });
 
+describe('GET /files/:id — a verification document follows the live permission set (A-3)', () => {
+  it('refuses an administrator on the next request after doctors.verify is revoked', async () => {
+    const reviewer = await adminToken('livereviewer');
+    const owner = await adminToken('liveowner');
+    const doctor = await seedDoctor('livedoc');
+    const fileId = await uploadFile(doctor.token);
+    const filed = await submit(doctor.token, { fileId, kind: 'medical_license' });
+    expect(filed.status, JSON.stringify(filed.body)).toBe(201);
+
+    const before = await request(harness.server).get(`${FILES}/${fileId}`).set(as(reviewer));
+    expect(before.status).toBe(200);
+
+    const reviewerUser = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: testEmail('livereviewer') },
+      select: { publicId: true },
+    });
+    const revoked = await request(harness.server)
+      .put(`/api/v1/users/${reviewerUser.publicId}/permissions`)
+      .set(as(owner))
+      .send({ granted: [], revoked: ['doctors.verify'] });
+    expect(revoked.status, JSON.stringify(revoked.body)).toBe(200);
+
+    // Same access token, whose `permissions` claim still lists
+    // doctors.verify: the file is now out of reach, answered as unknown.
+    const after = await request(harness.server).get(`${FILES}/${fileId}`).set(as(reviewer));
+    expect(after.status).toBe(404);
+
+    // The doctor it describes still reads it.
+    const own = await request(harness.server).get(`${FILES}/${fileId}`).set(as(doctor.token));
+    expect(own.status).toBe(200);
+  });
+});
+
 describe('NEW-46 acceptance — a registered doctor can be verified end to end', () => {
   it('files the three required documents, an administrator approves them, and verify succeeds', async () => {
     const admin = await adminToken('verifier');

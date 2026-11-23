@@ -23,7 +23,10 @@
 import { Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../../../generated/prisma/client';
-import type { DoctorPracticeStatus, DoctorVerificationStatus } from '../../../generated/prisma/enums';
+import type {
+  DoctorPracticeStatus,
+  DoctorVerificationStatus,
+} from '../../../generated/prisma/enums';
 import { PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -122,9 +125,7 @@ export class AdminDoctorRepository {
         ? {}
         : { specialties: { some: { specialtyId: criteria.specialtyId } } }),
       ...(criteria.departmentId === undefined ? {} : { departmentId: criteria.departmentId }),
-      ...(criteria.verification === undefined
-        ? {}
-        : { verificationStatus: criteria.verification }),
+      ...(criteria.verification === undefined ? {} : { verificationStatus: criteria.verification }),
       ...(criteria.status === undefined ? {} : { practiceStatus: criteria.status }),
       ...(criteria.joinedFrom === undefined && criteria.joinedTo === undefined
         ? {}
@@ -224,18 +225,28 @@ export class AdminDoctorRepository {
     readonly actorId: string;
     readonly verifiedAt: Date | null;
   }): Promise<{ verificationStatus: DoctorVerificationStatus; verifiedAt: Date | null }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
-      data: {
-        verificationStatus: input.status,
-        verifiedAt: input.verifiedAt,
-        // `verified_by` records who took the decision, whichever way it
-        // went — a rejection is as much a decision as an approval.
-        ...(UUID.test(input.actorId)
-          ? { verifiedBy: input.actorId, updatedBy: input.actorId }
-          : {}),
-      },
-      select: { verificationStatus: true, verifiedAt: true },
+    // One transaction with the `authz_version` bump: a doctor's lifecycle
+    // state decides clinical context (§2.7), so the account's cached
+    // authorization is stale from this write on.
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.doctor.update({
+        where: { id: input.doctorId },
+        data: {
+          verificationStatus: input.status,
+          verifiedAt: input.verifiedAt,
+          // `verified_by` records who took the decision, whichever way it
+          // went — a rejection is as much a decision as an approval.
+          ...(UUID.test(input.actorId)
+            ? { verifiedBy: input.actorId, updatedBy: input.actorId }
+            : {}),
+        },
+        select: { verificationStatus: true, verifiedAt: true, userId: true },
+      });
+      await tx.user.update({
+        where: { id: row.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
+      return { verificationStatus: row.verificationStatus, verifiedAt: row.verifiedAt };
     });
   }
 
@@ -244,13 +255,21 @@ export class AdminDoctorRepository {
     readonly status: DoctorPracticeStatus;
     readonly actorId: string;
   }): Promise<{ practiceStatus: DoctorPracticeStatus }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
-      data: {
-        practiceStatus: input.status,
-        ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
-      },
-      select: { practiceStatus: true },
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.doctor.update({
+        where: { id: input.doctorId },
+        data: {
+          practiceStatus: input.status,
+          ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
+        },
+        select: { practiceStatus: true, userId: true },
+      });
+      // Suspension and reactivation change what the doctor may reach (§2.7).
+      await tx.user.update({
+        where: { id: row.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
+      return { practiceStatus: row.practiceStatus };
     });
   }
 
@@ -281,9 +300,7 @@ export class AdminDoctorRepository {
       data: {
         decision: input.decision,
         decidedAt: new Date(),
-        ...(UUID.test(input.actorId)
-          ? { decidedBy: input.actorId, updatedBy: input.actorId }
-          : {}),
+        ...(UUID.test(input.actorId) ? { decidedBy: input.actorId, updatedBy: input.actorId } : {}),
         // Cleared on approval so a document re-approved after a
         // rejection does not keep the old reason beside a green tick.
         rejectReason: input.rejectReason ?? null,

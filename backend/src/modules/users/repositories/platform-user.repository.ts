@@ -142,6 +142,11 @@ export class PlatformUserRepository {
         ...(data.roleId === undefined ? {} : { roleId: data.roleId }),
         ...(data.status === undefined ? {} : { status: data.status }),
         ...(UUID.test(actorId) ? { updatedBy: actorId } : {}),
+        // Role and status are authorization: the cached permission set and
+        // any token minted before this write are stale (ADR-046, §2.10).
+        ...(data.roleId === undefined && data.status === undefined
+          ? {}
+          : { authzVersion: { increment: 1 } }),
       },
       select: LIST_SELECT,
     });

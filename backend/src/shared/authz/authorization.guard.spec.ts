@@ -77,6 +77,7 @@ const SEEDED_ROLES: RoleRepository = {
   currentMatrix: () => Promise.resolve(SEEDED_MATRIX),
   overridesFor: () => Promise.resolve(NO_OVERRIDES),
   userIdsWithRole: () => Promise.resolve([]),
+  baseRoleCodeOf: () => Promise.resolve(null),
 };
 
 function contextFor(target: object, method: string, principal?: Principal): ExecutionContext {

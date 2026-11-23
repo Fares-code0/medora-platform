@@ -19,6 +19,7 @@ import { PrismaHospitalContextRepository } from './prisma-hospital-context.repos
 import { PrismaHospitalPatientScopeRepository } from './prisma-hospital-patient-scope.repository';
 import { RequestScopeMiddleware } from './request-scope';
 import { PrismaRoleRepository } from './prisma-role.repository';
+import { ReauthenticationPort } from './reauthentication.port';
 import { RedisPermissionCache } from './redis-permission-cache';
 import {
   PATIENT_ASSIGNMENT_REPOSITORY,
@@ -113,6 +114,7 @@ import {
     PatientScopeService,
     PatientSelfScopeService,
     AuthorizationGuard,
+    ReauthenticationPort,
   ],
   exports: [
     PermissionResolver,
@@ -124,6 +126,7 @@ import {
     PERMISSION_CACHE,
     PATIENT_ASSIGNMENT_REPOSITORY,
     PATIENT_SELF_REPOSITORY,
+    ReauthenticationPort,
   ],
 })
 export class AuthzKernelModule implements NestModule {

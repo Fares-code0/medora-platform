@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../../../shared/database';
-import { applyLocks, isPermission } from '../../../shared/authz';
+import { PermissionResolver } from '../../../shared/authz';
 
 /**
  * Resolving a user's capabilities (RM M6.2; M7.1 owns the guard).
@@ -38,40 +37,20 @@ import { applyLocks, isPermission } from '../../../shared/authz';
  */
 @Injectable()
 export class PermissionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly resolver: PermissionResolver) {}
 
-  /** Permission **codes**, sorted, so a token diff is readable. */
-  async resolve(userId: string, roleId: string, roleCode: string): Promise<string[]> {
-    const [bundle, overrides] = await Promise.all([
-      this.prisma.db.rolePermission.findMany({
-        where: { roleId },
-        select: { permission: { select: { code: true } } },
-      }),
-      this.prisma.db.userPermission.findMany({
-        where: { userId },
-        select: { allowed: true, permission: { select: { code: true } } },
-      }),
-    ]);
-
-    const codes = new Set(bundle.map((row) => row.permission.code));
-
-    for (const override of overrides) {
-      if (override.allowed) codes.add(override.permission.code);
-      else codes.delete(override.permission.code);
-    }
-
-    // `applyLocks` speaks the 22-capability union, so anything the
-    // database holds that the union does not is dropped here rather than
-    // being copied into a token no guard will ever check against it.
-    // `assertBundlesReferenceKnownCodes` makes that unreachable for the
-    // seed; this keeps it unreachable for a hand-edited row.
-    const known = [...codes].filter(isPermission);
-
-    // A role with no matrix column — `nurse` — has no locks, so this
-    // returns the overrides unchanged rather than emptying them.
-    //
-    // Re-sorted afterwards: `applyLocks` returns catalogue order, and
-    // this method's contract is alphabetical so a token diff is readable.
-    return [...applyLocks(roleCode, known)].sort();
+  /**
+   * Permission **codes**, sorted, so a token diff is readable.
+   *
+   * The same computation `AuthorizationGuard` enforces — matrix or
+   * custom-role grants, per-user overrides, locks and the server policy
+   * overlay — so the claim a client renders can never list a capability
+   * the server would refuse (audit A-8: custom roles used to differ). The
+   * claim is display data only; no server decision reads it (§2.8).
+   * `roleId` is kept for the call sites' signature; the role code decides.
+   */
+  async resolve(userId: string, _roleId: string, roleCode: string): Promise<string[]> {
+    const { permissions } = await this.resolver.effectivePermissions({ userId, roleCode });
+    return [...permissions].sort();
   }
 }

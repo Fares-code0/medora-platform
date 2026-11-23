@@ -40,6 +40,7 @@ const SEEDED_ROLES: RoleRepository = {
   currentMatrix: () => Promise.resolve(SEEDED_MATRIX),
   overridesFor: () => Promise.resolve(NO_OVERRIDES),
   userIdsWithRole: () => Promise.resolve([]),
+  baseRoleCodeOf: () => Promise.resolve(null),
 };
 
 /** Never holds anything, so every decision is resolved afresh from the matrix. */

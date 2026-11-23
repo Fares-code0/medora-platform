@@ -331,7 +331,11 @@ export class AdminInvitationService {
 
       await tx.user.update({
         where: { id: userId },
-        data: { status: UserStatus.ACTIVE, twoFactorEnabled: true },
+        data: {
+          status: UserStatus.ACTIVE,
+          twoFactorEnabled: true,
+          authzVersion: { increment: 1 },
+        },
       });
 
       // Written inside the transaction, and so deliberately **not**

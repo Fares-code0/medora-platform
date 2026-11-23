@@ -52,12 +52,14 @@ describe('DashboardService.overview', () => {
     expect(composite).toHaveBeenCalledTimes(1);
   });
 
-  it('does not coalesce one account across two capability sets', async () => {
+  it('does not coalesce one account across two authorization versions', async () => {
+    // The live authz_version, not the token's permission claim, scopes the
+    // flight: a claim can be stale for a token's lifetime (§2.8).
     const { dashboard, composite } = service();
 
     await Promise.all([
-      dashboard.overview(user(['records.view', 'labs.review'])),
-      dashboard.overview(user(['records.view'])),
+      dashboard.overview({ ...user(['records.view', 'labs.review']), authzVersion: 3 }),
+      dashboard.overview({ ...user(['records.view', 'labs.review']), authzVersion: 4 }),
     ]);
 
     expect(composite).toHaveBeenCalledTimes(2);

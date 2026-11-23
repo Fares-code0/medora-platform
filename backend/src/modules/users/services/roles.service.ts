@@ -48,7 +48,6 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import {
-  applyLocks,
   diffMatrix,
   isPermission,
   lockViolations,
@@ -327,7 +326,7 @@ export class RolesService {
       fromRole: [...fromRole],
       granted: row.granted,
       revoked: row.revoked,
-      effective: [...effectiveSet(fromRole, row.role, row.granted, row.revoked)],
+      effective: await this.effectiveFor(row.userId, row.role),
     };
   }
 
@@ -390,8 +389,18 @@ export class RolesService {
       fromRole: [...fromRole],
       granted: input.granted,
       revoked: input.revoked,
-      effective: [...effectiveSet(fromRole, row.role, input.granted, input.revoked)],
+      effective: await this.effectiveFor(row.userId, row.role),
     };
+  }
+
+  /**
+   * The effective set exactly as the guard will see it: the resolver's own
+   * answer (matrix, custom-role bundle, overrides, locks and the server
+   * policy's category ceilings), computed from the database rather than a
+   * second copy of the algebra that could drift from it.
+   */
+  private async effectiveFor(userId: string, roleCode: string): Promise<Permission[]> {
+    return [...(await this.permissions.effectivePermissions({ userId, roleCode })).permissions];
   }
 
   /**
@@ -423,31 +432,6 @@ export class RolesService {
       detail: JSON.stringify(conflict),
     });
   }
-}
-
-/**
- * `bundle ∪ granted − revoked`, locks re-applied.
- *
- * The same three steps, in the same order, as
- * `PermissionService.resolve`. Deliberately duplicated rather than
- * imported: that method lives in the auth module and M2.2's zone 1
- * forbids reaching it from here. The duplication is two lines of set
- * algebra over the kernel's own `applyLocks`, and
- * `roles.service.spec.ts` asserts this agrees with the resolver's
- * answer for the seeded roles, so the two cannot drift unnoticed.
- */
-function effectiveSet(
-  fromRole: readonly Permission[],
-  roleCode: string,
-  granted: readonly string[],
-  revoked: readonly string[],
-): readonly Permission[] {
-  const codes = new Set<Permission>(fromRole);
-
-  for (const code of granted) if (isPermission(code)) codes.add(code);
-  for (const code of revoked) if (isPermission(code)) codes.delete(code);
-
-  return applyLocks(roleCode, codes);
 }
 
 /**

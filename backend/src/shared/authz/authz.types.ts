@@ -40,6 +40,13 @@ export interface Principal {
   readonly roleCode: string;
   /** The `sid` claim, for cache scoping and audit correlation. */
   readonly sessionId?: string;
+  /**
+   * `users.authz_version` as read with the session on this request. Part of
+   * the permission cache key: any change to the account's authorization
+   * bumps it in the same transaction, so a cached set can never outlive the
+   * change (multi-hospital §2.8–§2.10). Absent → the cache is bypassed.
+   */
+  readonly authzVersion?: number;
 }
 
 /**
@@ -53,7 +60,12 @@ export interface Principal {
  * gone.
  */
 export function principalOf(user: AuthenticatedUser): Principal {
-  return { userId: user.id, roleCode: user.role, sessionId: user.sessionId };
+  return {
+    userId: user.id,
+    roleCode: user.role,
+    sessionId: user.sessionId,
+    ...(user.authzVersion === undefined ? {} : { authzVersion: user.authzVersion }),
+  };
 }
 
 /**
@@ -84,6 +96,11 @@ export interface RoleRepository {
   overridesFor(userId: string): Promise<PermissionOverrides>;
   /** Every user holding a role — what `forgetRole` needs to invalidate. */
   userIdsWithRole(roleCode: string): Promise<readonly string[]>;
+  /**
+   * The base role's code for a custom role (`roles.base_role_id`), `null`
+   * for a system role or an unknown code.
+   */
+  baseRoleCodeOf(roleCode: string): Promise<string | null>;
 }
 
 export const ROLE_REPOSITORY = Symbol('ROLE_REPOSITORY');

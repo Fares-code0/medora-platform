@@ -593,6 +593,40 @@ describe('PATCH /admin/users/{id} (§2.10)', () => {
     expect(entries[1]?.summary).toContain('role');
   });
 
+  it('revokes every session and refresh token of the subject on a role change (ADR-046 §2.10)', async () => {
+    const admin = await adminToken('revoker');
+    const email = await seedAccount('revokedbyrole');
+    const login = await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
+    const raw: unknown = login.headers['set-cookie'];
+    const cookie = (Array.isArray(raw) ? raw : [raw])
+      .find((value): value is string => typeof value === 'string' && value.startsWith('medora_rt='))
+      ?.split(';')[0];
+    expect(cookie).toBeDefined();
+
+    const response = await request(harness.server)
+      .patch(`${ADMIN_USERS}/${await publicIdOf(email)}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ role: 'nurse' });
+    expect(response.status).toBe(200);
+
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    });
+    await expect(
+      harness.prisma.session.count({ where: { userId: user.id, revokedAt: null } }),
+    ).resolves.toBe(0);
+
+    // The refresh family is dead: no token for either role can be minted
+    // from the old session.
+    const refreshed = await request(harness.server)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', cookie ?? '');
+    expect(refreshed.status).toBe(401);
+  });
+
   it('refuses to promote anyone to admin through this route', async () => {
     const admin = await adminToken('escalator');
     const subject = await seedAccount('wouldbeadmin');

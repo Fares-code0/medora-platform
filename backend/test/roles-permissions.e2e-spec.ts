@@ -622,12 +622,15 @@ describe('/users/{id}/permissions (§15.5)', () => {
     const updated = await request(harness.server)
       .put(`/api/v1/users/${publicId}/permissions`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ granted: ['logs.view'], revoked: ['prescriptions.create'] });
+      .send({ granted: ['appointments.reassign', 'logs.view'], revoked: ['prescriptions.create'] });
 
     expect(updated.status).toBe(200);
 
     const view = dataOf<UserPermissionsView>(updated);
-    expect(view.effective).toContain('logs.view');
+    expect(view.effective).toContain('appointments.reassign');
+    // `logs.view` is platform administration: outside the doctor category's
+    // ceiling, so the override row is stored but never effective (§2.4, §2.8).
+    expect(view.effective).not.toContain('logs.view');
     expect(view.effective).not.toContain('prescriptions.create');
     // The bundle itself is untouched — this is an override, not an edit.
     expect(view.fromRole).toContain('prescriptions.create');
@@ -639,7 +642,8 @@ describe('/users/{id}/permissions (§15.5)', () => {
       .set('Authorization', `Bearer ${refreshed}`);
 
     const permissions = dataOf<{ permissions: string[] }>(session).permissions;
-    expect(permissions).toContain('logs.view');
+    expect(permissions).toContain('appointments.reassign');
+    expect(permissions).not.toContain('logs.view');
     expect(permissions).not.toContain('prescriptions.create');
   });
 
@@ -679,6 +683,44 @@ describe('/users/{id}/permissions (§15.5)', () => {
       .set('Authorization', `Bearer ${refreshed}`);
 
     expect(denied.status).toBe(403);
+  });
+
+  it('applies a revocation on the subject’s next request, without ending their session (ADR-046)', async () => {
+    const token = await adminToken('nextrequest');
+    const subject = await seedAccount('nextrequestsubject');
+    const subjectToken = await tokenFor(subject);
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: subject },
+      select: { id: true, publicId: true },
+    });
+
+    // Warm the permission cache with the doctor's full set.
+    const warm = await request(harness.server)
+      .get('/api/v1/ai/conversations')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(warm.status).toBe(200);
+
+    const updated = await request(harness.server)
+      .put(`/api/v1/users/${user.publicId}/permissions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ granted: [], revoked: ['ai.use'] });
+    expect(updated.status).toBe(200);
+
+    // Same token, next request: the capability is gone (the token's
+    // `permissions` claim still lists it — claims are never trusted).
+    const after = await request(harness.server)
+      .get('/api/v1/ai/conversations')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(after.status).toBe(403);
+
+    // An ordinary permission change does not revoke the session.
+    const session = await request(harness.server)
+      .get('/api/v1/auth/session')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(session.status).toBe(200);
+    await expect(
+      harness.prisma.session.count({ where: { userId: user.id, revokedAt: null } }),
+    ).resolves.toBeGreaterThan(0);
   });
 
   it('rejects a body that both grants and revokes a capability', async () => {

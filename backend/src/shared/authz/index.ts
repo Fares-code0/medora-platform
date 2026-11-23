@@ -77,3 +77,15 @@ export {
 } from './hospital-context.service';
 export { PatientSelfScopeService } from './patient-self-scope.service';
 export { AuthzKernelModule } from './authz.module';
+
+export { ReauthenticationPort, type ReauthenticationVerifier } from './reauthentication.port';
+
+export {
+  ADMIN_DENIED_PHI,
+  ADMIN_ONLY,
+  applyServerPolicy,
+  categoryOf,
+  ceilingFor,
+  isRoleCategory,
+  type RoleCategory,
+} from './authz-policy';

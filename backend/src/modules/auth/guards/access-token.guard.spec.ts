@@ -73,9 +73,11 @@ function contextFor(
 }
 
 let verify: ReturnType<typeof vi.fn<(token: string) => Promise<AuthenticatedUser | null>>>;
+/** `SessionService.liveAuthzVersion`: the live account's version, or null. */
 let isActive: ReturnType<
-  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>
+  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>
 >;
+const AUTHZ_VERSION = 7;
 let belongsTo: ReturnType<typeof vi.fn<(sid: string, sub: string) => Promise<boolean>>>;
 let guard: AccessTokenGuard;
 
@@ -83,14 +85,14 @@ beforeEach(() => {
   verify = vi.fn<(token: string) => Promise<AuthenticatedUser | null>>(() =>
     Promise.resolve(PRINCIPAL),
   );
-  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>(() =>
-    Promise.resolve(true),
+  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>(() =>
+    Promise.resolve(AUTHZ_VERSION),
   );
   belongsTo = vi.fn<(sid: string, sub: string) => Promise<boolean>>(() => Promise.resolve(true));
   guard = new AccessTokenGuard(
     new Reflector(),
     { verify } as unknown as AccessTokenService,
-    { isActive, belongsTo } as unknown as SessionService,
+    { liveAuthzVersion: isActive, belongsTo } as unknown as SessionService,
   );
 });
 
@@ -135,11 +137,13 @@ describe('AccessTokenGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
     // F3 / ADR-046: the role claim is checked against the account's current role.
     expect(isActive).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id, PRINCIPAL.role);
-    expect(request[AUTHENTICATED_USER]).toEqual(PRINCIPAL);
+    // The principal carries the account's live authz_version, read from the
+    // database with the session (never a token claim).
+    expect(request[AUTHENTICATED_USER]).toEqual({ ...PRINCIPAL, authzVersion: AUTHZ_VERSION });
   });
 
   it('refuses a validly signed token whose session is no longer live — 401 unauthorized', async () => {
-    isActive.mockResolvedValueOnce(false);
+    isActive.mockResolvedValueOnce(null);
     const { context, request } = contextFor('guarded', 'Bearer good');
 
     const error = await refusal(guard.canActivate(context));
@@ -151,7 +155,7 @@ describe('AccessTokenGuard', () => {
   });
 
   it('lets @AllowEndedSession() through an ended session, waiving liveness only', async () => {
-    isActive.mockResolvedValue(false);
+    isActive.mockResolvedValue(null);
     const { context, request } = contextFor('logout', 'Bearer good');
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -173,7 +177,7 @@ describe('AccessTokenGuard', () => {
   });
 
   it('ignores the marker on a controller: its routes still need a live session', async () => {
-    isActive.mockResolvedValueOnce(false);
+    isActive.mockResolvedValueOnce(null);
     const { context } = contextFor('ordinary', 'Bearer good', MarkedController);
 
     const error = await refusal(guard.canActivate(context));

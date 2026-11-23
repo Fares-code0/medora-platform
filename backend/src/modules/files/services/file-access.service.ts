@@ -31,7 +31,12 @@ import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { PatientScopeService, PatientSelfScopeService, principalOf } from '../../../shared/authz';
+import {
+  PatientScopeService,
+  PatientSelfScopeService,
+  PermissionResolver,
+  principalOf,
+} from '../../../shared/authz';
 import { FileRepository, type FileRow } from '../repositories/file.repository';
 
 /**
@@ -51,6 +56,7 @@ export class FileAccessService {
     private readonly files: FileRepository,
     private readonly patientScope: PatientScopeService,
     private readonly selfScope: PatientSelfScopeService,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   /** The file, if this caller may read it. 404 in every other case. */
@@ -99,9 +105,13 @@ export class FileAccessService {
         // The doctor it describes, or an administrator who may act on
         // the verification decision (API §3.6). Not every admin — the
         // capability is the rule, as it is on the decision route.
+        //
+        // Decided by the live permission set, never the token's claim: a
+        // revoked `doctors.verify` must stop working on the next request,
+        // not when the access token expires (audit A-3 / §2.8).
         return (
           (await this.files.userForVerificationDocument(file.id)) === user.id ||
-          user.permissions.includes('doctors.verify')
+          (await this.permissions.can(principalOf(user), 'doctors.verify'))
         );
       default:
         // `backup_artifact`, and anything a later migration adds to the

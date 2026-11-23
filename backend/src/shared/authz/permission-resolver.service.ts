@@ -8,8 +8,9 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { applyServerPolicy } from './authz-policy';
 import { applyLocks, normalizeMatrix } from './permission-matrix';
-import { bundleFor, isPlatformRole } from './permission-catalogue';
+import { bundleFor, isPermission, isPlatformRole, orderCapabilities } from './permission-catalogue';
 import {
   PERMISSION_CACHE,
   ROLE_REPOSITORY,
@@ -43,22 +44,34 @@ export class PermissionResolver {
    * save. A lock that only one of two endpoints honours is not a lock.
    */
   async effectivePermissions(principal: Principal): Promise<EffectivePermissions> {
-    const matrix = normalizeMatrix(await this.roles.currentMatrix());
-    // A role with no matrix column resolves to an empty bundle rather
-    // than to `undefined` — see `bundleFor`. `nurse` can authenticate,
-    // so authorization is asked about it and must answer "nothing".
-    const fromRole = isPlatformRole(principal.roleCode)
+    const stored = await this.roles.currentMatrix();
+    const matrix = normalizeMatrix(stored);
+    const platformRole = isPlatformRole(principal.roleCode);
+    // A system role outside the matrix (`nurse`) or a custom role resolves
+    // from its own stored grants. A custom role used to resolve to the empty
+    // bundle here while the token claim listed its grants — two answers for
+    // one account (audit A-8); both paths now read the same rows.
+    const baseRoleCode = platformRole ? null : await this.roles.baseRoleCodeOf(principal.roleCode);
+    const fromRole = platformRole
       ? matrix[principal.roleCode]
-      : bundleFor(principal.roleCode);
+      : storedGrants(stored, principal.roleCode, bundleFor(principal.roleCode));
     const overrides = await this.overridesFor(principal.userId);
 
     const held = new Set<Permission>(fromRole);
     for (const permission of overrides.granted) held.add(permission);
     for (const permission of overrides.revoked) held.delete(permission);
 
+    // Locks, then the server policy overlay (§2.1, §2.4, §2.8): no override,
+    // matrix edit or custom-role grant can take a role past its category
+    // ceiling, give `admin` standing PHI access, or give anyone else
+    // platform administration. Applied last, so nothing re-adds a capability.
+    const locked = applyLocks(principal.roleCode, held);
+
     return {
       principal,
-      permissions: applyLocks(principal.roleCode, held),
+      permissions: orderCapabilities(
+        applyServerPolicy(principal.roleCode, baseRoleCode, locked),
+      ),
       fromRole,
       overrides,
     };
@@ -69,11 +82,19 @@ export class PermissionResolver {
    * miss, never a denial (see `PermissionCache`).
    */
   async permissionsFor(principal: Principal): Promise<readonly Permission[]> {
-    const cached = await this.readCache(principal.userId);
-    if (cached !== undefined) return cached;
+    // Keyed by user, role and `authz_version` (audit A-3). Every change to
+    // an account's authorization bumps the version in the change's own
+    // transaction, so an entry cached before it is simply never read again —
+    // even when the eviction below fails or Redis is unreachable. Without a
+    // version (a caller outside a request) the cache is not used at all.
+    const key = cacheKeyFor(principal);
+    if (key !== null) {
+      const cached = await this.readCache(key);
+      if (cached !== undefined) return cached;
+    }
 
     const { permissions } = await this.effectivePermissions(principal);
-    await this.writeCache(principal.userId, permissions);
+    if (key !== null) await this.writeCache(key, permissions);
 
     return permissions;
   }
@@ -161,4 +182,22 @@ export class PermissionResolver {
 
 function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** `user|role|vVERSION`, or `null` when the principal carries no version. */
+export function cacheKeyFor(principal: Principal): string | null {
+  if (principal.authzVersion === undefined) return null;
+  return `${principal.userId}|${principal.roleCode}|v${principal.authzVersion}`;
+}
+
+/** A non-matrix role's stored grants, or its built-in bundle when it has none. */
+function storedGrants(
+  stored: unknown,
+  roleCode: string,
+  fallback: readonly Permission[],
+): readonly Permission[] {
+  if (typeof stored !== 'object' || stored === null) return fallback;
+  const raw = (stored as Record<string, unknown>)[roleCode];
+  if (!Array.isArray(raw)) return fallback;
+  return raw.filter((id): id is Permission => typeof id === 'string' && isPermission(id));
 }

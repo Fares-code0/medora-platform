@@ -178,6 +178,8 @@ export class SelfProfileRepository {
             // Cleared with the status: a `verified_at` left beside
             // `pending` would read as a verification that is still good.
             verifiedAt: null,
+            // Unverified doctors have no clinical context (§2.7).
+            user: { update: { authzVersion: { increment: 1 } } },
           }
         : {}),
     };

@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { ReauthenticationPort } from '../../../shared/authz';
 import { IdentityRepository } from '../repositories/identity.repository';
 
 import { CredentialLockoutService } from './credential-lockout.service';
@@ -60,14 +61,25 @@ import { SessionService } from './session.service';
  * looks for.
  */
 @Injectable()
-export class ReauthenticationService {
+export class ReauthenticationService implements OnModuleInit {
   constructor(
     private readonly identity: IdentityRepository,
     private readonly passwords: PasswordService,
     private readonly sessions: SessionService,
     private readonly lockout: CredentialLockoutService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
+    private readonly port?: ReauthenticationPort,
   ) {}
+
+  /**
+   * Binds this service to the shared kernel's `ReauthenticationPort`, so
+   * Exceptional Access and Emergency Override re-prove the password through
+   * exactly this check (fix-list item 5). Optional only for unit tests that
+   * construct the service by hand.
+   */
+  onModuleInit(): void {
+    this.port?.bind(this);
+  }
 
   async verify(principal: AuthenticatedUser, password: string): Promise<void> {
     const user = await this.identity.findById(principal.id);

@@ -103,15 +103,28 @@ export class RedisPermissionCache implements PermissionCache, OnModuleDestroy {
     await this.client.set(keyFor(userId), JSON.stringify(permissions), 'PX', this.ttlMs);
   }
 
+  /**
+   * Drops every entry of this user: entries are keyed `user|role|vN`
+   * (`cacheKeyFor`), so this deletes the bare key and the user's prefix.
+   * Freshness never depends on this succeeding — a bumped `authz_version`
+   * makes the old entries unreachable — it only frees them early.
+   */
   async forget(userId: string): Promise<void> {
     await this.client.del(keyFor(userId));
+    await this.deleteMatching(`${keyFor(userId)}|*`);
   }
 
   async forgetMany(userIds: readonly string[]): Promise<void> {
-    for (let start = 0; start < userIds.length; start += BATCH) {
-      const keys = userIds.slice(start, start + BATCH).map(keyFor);
+    for (const userId of userIds) await this.forget(userId);
+  }
+
+  private async deleteMatching(pattern: string): Promise<void> {
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', BATCH);
+      cursor = next;
       if (keys.length > 0) await this.client.del(...keys);
-    }
+    } while (cursor !== '0');
   }
 
   /**

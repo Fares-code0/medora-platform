@@ -921,7 +921,7 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
   const USERS = '/api/v1/admin/users';
   const LOGOUT = '/api/v1/auth/logout';
 
-  async function setRole(email: string, code: 'doctor' | 'admin'): Promise<void> {
+  async function setRole(email: string, code: 'doctor' | 'admin' | 'pharmacy'): Promise<void> {
     const role = await harness.prisma.db.role.findUniqueOrThrow({ where: { code } });
     await harness.prisma.db.user.update({ where: { email }, data: { roleId: role.id } });
   }
@@ -1056,12 +1056,15 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     expect((await session(newerRefreshed.accessToken)).status).toBe(401);
   });
 
-  it('does not revoke the session: the refresh family survives a role change', async () => {
+  it('an out-of-band role write is caught by the guard alone (role changes through the API revoke — users-account)', async () => {
     const signedIn = await seedAndSignIn('f3-family');
     await setRole(signedIn.email, 'admin');
 
-    // Only the access token is refused; the session row stays live, so the
-    // change costs one refresh, not a sign-out (deactivation still revokes).
+    // This write bypasses `PlatformUserService`, which is where a role change
+    // revokes every session (ADR-046 as corrected; users-account.e2e-spec).
+    // What is proved here is the guard's independent defence: the stale-role
+    // access token is refused even when nothing revoked the session, and the
+    // refresh that follows is re-derived from the account's current role.
     const user = await harness.prisma.db.user.findUniqueOrThrow({
       where: { email: signedIn.email },
       select: { id: true },
@@ -1070,6 +1073,32 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       harness.prisma.db.session.count({ where: { userId: user.id, revokedAt: null } }),
     ).resolves.toBeGreaterThan(0);
     expect((await refresh(signedIn.refreshToken)).status).toBe(200);
+  });
+
+  it('never authorizes a refreshed token from the old role’s cached set (doctor → pharmacy)', async () => {
+    const AI = '/api/v1/ai/conversations'; // ai.use: doctor yes, pharmacy no
+    const RECORDS = '/api/v1/medical-records'; // records.view: doctor yes, pharmacy no
+    const signedIn = await seedAndSignIn('f3-cache');
+
+    // Warm the permission cache with the doctor's effective set.
+    expect(
+      (await request(harness.server).get(AI).set('Authorization', 'Bearer ' + signedIn.accessToken))
+        .status,
+    ).toBe(200);
+
+    await setRole(signedIn.email, 'pharmacy');
+    const refreshed = await refresh(signedIn.refreshToken);
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.role).toBe('pharmacy');
+
+    // The cache is keyed by user, role and authz_version: the doctor's entry
+    // can never answer for the pharmacy token.
+    for (const route of [AI, RECORDS]) {
+      const response = await request(harness.server)
+        .get(route)
+        .set('Authorization', 'Bearer ' + refreshed.accessToken);
+      expect(response.status).toBe(403);
+    }
   });
 
   it('still lets a stale-role token log out (@AllowEndedSession keeps identity only)', async () => {
