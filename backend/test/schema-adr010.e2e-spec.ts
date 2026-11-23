@@ -116,16 +116,18 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
       expect(await tablesPresent(['saved_views'])).toEqual([]);
     });
 
-    it('has no clinic_id anywhere (ADR-018 §1)', async () => {
-      // MG §17-10: "keep clinic FK out of v1". An unused column on ~100
-      // tables plus scoping code with one tenant that cannot be
-      // meaningfully tested.
+    it('limits clinic_id to clinic-owned data and has no generic tenant_id', async () => {
+      // ADR-042 supersedes ADR-018 §1's blanket clinic_id prohibition.
+      // ClinicOperatingHour is a normal child of Clinic, while Hospital
+      // remains the isolation boundary. No other model may use clinic_id
+      // as a competing tenant scope, and tenant_id is never used.
       const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
         SELECT table_name FROM information_schema.columns
         WHERE table_schema = 'public' AND column_name IN ('clinic_id', 'tenant_id')
+        ORDER BY table_name
       `;
 
-      expect(rows).toEqual([]);
+      expect(rows).toEqual([{ table_name: 'clinic_operating_hours' }]);
     });
   });
 
