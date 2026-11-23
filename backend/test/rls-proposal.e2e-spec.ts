@@ -15,6 +15,8 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 let databaseUrl: URL;
 try {
@@ -45,23 +47,32 @@ const PROPOSAL = readFileSync(
   resolve(__dirname, '../prisma/rls-proposal/phase22-rls-proposal.sql'),
   'utf8',
 );
-const client = new Client({ connectionString: rawDatabaseUrl });
+// Applying the proposal takes ACCESS EXCLUSIVE locks on 68 real tables until
+// rollback, so every test here runs in a throwaway database of its own
+// (test/support/isolated-database.ts), migrated and seeded like medora_test,
+// never on the shared medora_test that parallel spec files use. The guard
+// above still applies to the shared URL the throwaway database sits next to.
+let isolated: IsolatedDatabase | undefined;
+let client: Client;
 let connected = false;
 
 beforeAll(async () => {
+  isolated = await createIsolatedDatabase(rawDatabaseUrl, 'rlsprop');
+  client = new Client({ connectionString: isolated.url });
   await client.connect();
   connected = true;
   const identity = await client.query<{ db: string; version: string }>(
     "SELECT current_database() AS db, current_setting('server_version_num') AS version",
   );
-  if (identity.rows[0]?.db !== 'medora_test' || !identity.rows[0]?.version.startsWith('16')) {
-    throw new Error('Refusing RLS proposal tests: expected disposable PostgreSQL 16 medora_test.');
+  if (identity.rows[0]?.db !== isolated.name || !identity.rows[0]?.version.startsWith('16')) {
+    throw new Error('Refusing RLS proposal tests: expected the isolated PostgreSQL 16 database.');
   }
-}, 15_000);
+}, 120_000);
 
 afterAll(async () => {
   if (connected) await client.end();
-});
+  await isolated?.drop();
+}, 30_000);
 
 const suffix = (): string => randomUUID().replaceAll('-', '').slice(0, 10);
 
@@ -677,8 +688,8 @@ describe('concurrent transactions on separate connections (committed scratch obj
   const role = 'medora_rls_conc_' + tag;
   const a = randomUUID();
   const b = randomUUID();
-  const sessionA = new Client({ connectionString: rawDatabaseUrl });
-  const sessionB = new Client({ connectionString: rawDatabaseUrl });
+  let sessionA: Client;
+  let sessionB: Client;
 
   async function dropLeftovers(): Promise<void> {
     const stale = await client.query<{ nspname: string }>(
@@ -709,6 +720,8 @@ describe('concurrent transactions on separate connections (committed scratch obj
     await client.query(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
     await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${schema}.owned TO ${role}`);
     await client.query(`GRANT USAGE ON SEQUENCE ${schema}.owned_id_seq TO ${role}`);
+    sessionA = new Client({ connectionString: isolated!.url });
+    sessionB = new Client({ connectionString: isolated!.url });
     await Promise.all([sessionA.connect(), sessionB.connect()]);
   }, 15_000);
 
