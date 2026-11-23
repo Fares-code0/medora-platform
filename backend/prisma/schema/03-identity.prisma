@@ -64,6 +64,15 @@ model User {
   twoFactorEnabled Boolean   @default(false) @map("two_factor_enabled")
   status           UserStatus @default(ACTIVE)
 
+  /// Authoritative permission version (G4, ADR-047). Bumped by database
+  /// triggers — never by application code — whenever this account's
+  /// effective permissions can change: a `user_permissions` row of theirs,
+  /// a `role_permissions` row of their role, a permission code rename, or a
+  /// change of `role_id`. The access-token guard reads it on every request
+  /// (same row as the session check) and a cached permission set stamped
+  /// with any other value is never used.
+  permissionVersion Int @default(1) @map("permission_version")
+
   licenseNumber String? @map("license_number") @db.VarChar(40)
 
   /// Consent timestamps, both required at signup (API §1.1). NOT NULL:
