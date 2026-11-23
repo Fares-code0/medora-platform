@@ -66,7 +66,17 @@ export class SessionUserService {
     // Phase 22, shadow mode: server-derived, resolved only for this route and
     // shared with any other reader in the request. A lookup failure reads as
     // unresolved (both fields null) — it never fails the session call.
-    const hospitalContext = await this.contexts.forRequest(principal);
+    //
+    // Resolved for the role this payload reports — the database's — so `role`
+    // and `activeHospital`/`adminScope` can never describe two different
+    // roles (audit F3, #23). The access-token guard has already refused a
+    // token whose role claim no longer matches (ADR-046), so on this path
+    // the two agree; reading the role from one place keeps that true even
+    // if the guard were bypassed by a test or a future route.
+    const hospitalContext = await this.contexts.forRequest({
+      id: principal.id,
+      role: user.role.code,
+    });
 
     return {
       id: user.publicId,

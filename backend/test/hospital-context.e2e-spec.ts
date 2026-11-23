@@ -213,6 +213,95 @@ describe('Phase 22 hospital context resolution (PostgreSQL)', () => {
       ).rejects.toMatchObject({ code: 'P2002' });
     });
 
+    // Audit F4 (#22): the doctor profile's own state, not only the employment
+    // and the hospital, decides clinical context. Mirrors the Database
+    // reference rule `app_rls.effective_doctor_hospital`.
+    describe('doctor profile state (F4)', () => {
+      async function employed(
+        name: string,
+      ): Promise<{ userId: string; doctorId: string; hospitalId: string }> {
+        const { userId, doctorId } = await doctor();
+        const h = await hospital(name);
+        await prisma.db.doctorEmployment.create({ data: { doctorId, hospitalId: h.id } });
+        return { userId, doctorId, hospitalId: h.id };
+      }
+
+      it('fails closed for a doctor whose practice is suspended', async () => {
+        const { userId, doctorId } = await employed('P22 F4 Suspended');
+        await prisma.db.doctor.update({
+          where: { id: doctorId },
+          data: { practiceStatus: 'SUSPENDED' },
+        });
+
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toEqual({
+          kind: 'unresolved',
+          reason: 'no_active_employment',
+        });
+      });
+
+      it('fails closed for a soft-deleted doctor profile', async () => {
+        const { userId, doctorId } = await employed('P22 F4 Deleted');
+        await prisma.db.doctor.update({ where: { id: doctorId }, data: { deletedAt: new Date() } });
+
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toEqual({
+          kind: 'unresolved',
+          reason: 'no_active_employment',
+        });
+      });
+
+      it('drops the context on the next resolution once the practice is suspended, and restores it on reinstatement', async () => {
+        const { userId, doctorId, hospitalId } = await employed('P22 F4 Reinstated');
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toMatchObject({
+          kind: 'hospital',
+          hospitalId,
+        });
+
+        await prisma.db.doctor.update({
+          where: { id: doctorId },
+          data: { practiceStatus: 'SUSPENDED' },
+        });
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toMatchObject({
+          kind: 'unresolved',
+        });
+
+        await prisma.db.doctor.update({
+          where: { id: doctorId },
+          data: { practiceStatus: 'ACTIVE' },
+        });
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toMatchObject({
+          kind: 'hospital',
+          hospitalId,
+        });
+      });
+
+      it('keeps the employment row (history) when the profile is suspended', async () => {
+        const { userId, doctorId } = await employed('P22 F4 History');
+        await prisma.db.doctor.update({
+          where: { id: doctorId },
+          data: { practiceStatus: 'SUSPENDED' },
+        });
+
+        await contexts.resolve(principal(userId, 'doctor'));
+
+        await expect(
+          prisma.db.doctorEmployment.count({ where: { doctorId, endedAt: null } }),
+        ).resolves.toBe(1);
+      });
+
+      it('still resolves VACATION, as the reference rule does, pending owner decision #18', async () => {
+        const { userId, doctorId, hospitalId } = await employed('P22 F4 Vacation');
+        await prisma.db.doctor.update({
+          where: { id: doctorId },
+          data: { practiceStatus: 'VACATION' },
+        });
+
+        await expect(contexts.resolve(principal(userId, 'doctor'))).resolves.toMatchObject({
+          kind: 'hospital',
+          hospitalId,
+        });
+      });
+    });
+
     it('ignores hospital-admin assignments held by a doctor account', async () => {
       const { userId } = await doctor();
       const h = await hospital('P22 Doctor With Admin Row');

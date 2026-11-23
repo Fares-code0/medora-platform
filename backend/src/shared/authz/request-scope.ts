@@ -22,11 +22,46 @@ import { Injectable, type NestMiddleware } from '@nestjs/common';
  * Callers key entries by everything the value depends on (user id, role,
  * patient id), so two principals can never share an entry even if they ever
  * ran in one store.
+ *
+ * ## Background work never inherits a request's store (audit F5, #24)
+ *
+ * AsyncLocalStorage follows the async call graph, so a timer, a
+ * fire-and-forget promise or an inline job started *during* a request would
+ * otherwise carry that request's store for its whole life — and with it
+ * whatever the store holds then (today the Phase 22 memo; later, a tenant
+ * context). The rules:
+ *
+ * - **Request-bound work** (guards, handlers, and the detached patient-scope
+ *   shadow, which observes the very request that started it) may read the
+ *   store.
+ * - **Independent background work** — every background job run (both
+ *   drivers, every retry) — starts under `runOutsideRequestScope`, so it sees
+ *   no store and every lookup runs fresh for the principal it names.
+ * - A job that ever needs a hospital must be given an explicit, validated
+ *   hospital id and actor in its payload and resolve them itself. There is no
+ *   ambient fallback: with no store, nothing is cached and nothing is
+ *   implied, and no code path reads "no context" as "every hospital".
  */
 const storage = new AsyncLocalStorage<Map<string, Promise<unknown>>>();
 
 export function runInRequestScope<T>(work: () => T): T {
   return storage.run(new Map(), work);
+}
+
+/**
+ * Runs `work` with no request store, even when called from inside a request.
+ *
+ * For work that outlives, or is independent of, the request that started it.
+ * Promises, timers and callbacks created inside `work` inherit the empty
+ * context, so retries and re-armed timers stay outside any request too.
+ */
+export function runOutsideRequestScope<T>(work: () => T): T {
+  return storage.exit(work);
+}
+
+/** Whether the caller is running inside a request store. For assertions and diagnostics. */
+export function inRequestScope(): boolean {
+  return storage.getStore() !== undefined;
 }
 
 export function memoizeInRequest<T>(key: string, lookup: () => Promise<T>): Promise<T> {

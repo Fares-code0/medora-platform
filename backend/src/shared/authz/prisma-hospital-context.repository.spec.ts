@@ -19,7 +19,10 @@ describe('PrismaHospitalContextRepository', () => {
     expect(findMany).toHaveBeenCalledWith({
       where: {
         endedAt: null,
-        doctor: { is: { userId: 'user-1' } },
+        // F4 (#22): suspended or soft-deleted doctor profiles never resolve.
+        doctor: {
+          is: { userId: 'user-1', deletedAt: null, practiceStatus: { in: ['ACTIVE', 'VACATION'] } },
+        },
         hospital: { is: { status: 'ACTIVE', deletedAt: null } },
       },
       select: { hospitalId: true, hospital: { select: { name: true } } },

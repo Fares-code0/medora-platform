@@ -32,7 +32,6 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { HospitalContext } from '../../common/auth/hospital-context';
 import type { Principal } from './authz.types';
 import { HospitalContextService } from './hospital-context.service';
-import { memoizeInRequest } from './request-scope';
 
 export const HOSPITAL_PATIENT_SCOPE_REPOSITORY = Symbol('HOSPITAL_PATIENT_SCOPE_REPOSITORY');
 
@@ -92,15 +91,65 @@ function deny(reason: ShadowDenyReason): ShadowPatientScopeDecision {
   return { allowed: false, reason };
 }
 
+/** C1 resource bounds (issue #26). */
+export interface ShadowLimits {
+  /** Comparisons allowed in flight per process; beyond it they are skipped. */
+  readonly maxInFlight: number;
+}
+
+export const DEFAULT_SHADOW_LIMITS: ShadowLimits = { maxInFlight: 4 };
+
+/** Releases an admitted comparison's slot. Idempotent. */
+export type ShadowSlotRelease = () => void;
+
 @Injectable()
 export class HospitalPatientScopeShadow {
   private readonly logger = new Logger(HospitalPatientScopeShadow.name);
+
+  private inFlight = 0;
+  private skipped = 0;
 
   constructor(
     private readonly contexts: HospitalContextService,
     @Inject(HOSPITAL_PATIENT_SCOPE_REPOSITORY)
     private readonly repository: HospitalPatientScopeRepository,
+    private readonly limits: ShadowLimits = DEFAULT_SHADOW_LIMITS,
   ) {}
+
+  /**
+   * C1 in-flight cap. Returns a release function when a slot is free, or
+   * `null` when `maxInFlight` comparisons are already running — the caller
+   * then skips the comparison entirely (no queue, no wait). Synchronous, so
+   * admission can never delay the authorization decision.
+   *
+   * The slot is held until the comparison **settles**, not until a timer
+   * fires: releasing early would let the work it stands for keep running
+   * uncounted. The shadow's own query is bounded by a transaction-local
+   * `statement_timeout`, so a slow or lock-blocked database settles it; a
+   * comparison that never settled would keep its slot, and the cap would
+   * still bound such work at `maxInFlight`.
+   */
+  admit(): ShadowSlotRelease | null {
+    if (this.inFlight >= this.limits.maxInFlight) {
+      this.skipped += 1;
+      // Debug, not warn: under a slow database this fires per request.
+      this.logger.debug({ maxInFlight: this.limits.maxInFlight }, 'Patient scope shadow skipped');
+      return null;
+    }
+
+    this.inFlight += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.inFlight -= 1;
+    };
+  }
+
+  /** In-flight and skipped counts, for tests and diagnostics. No identifiers. */
+  load(): { readonly inFlight: number; readonly skipped: number; readonly maxInFlight: number } {
+    return { inFlight: this.inFlight, skipped: this.skipped, maxInFlight: this.limits.maxInFlight };
+  }
 
   /** The hospital-aware decision. Observation only — never an access gate. */
   async evaluate(principal: Principal, patientId: string): Promise<ShadowPatientScopeDecision> {
@@ -116,12 +165,18 @@ export class HospitalPatientScopeShadow {
       return deny('context_not_clinical');
     }
 
-    // Memoized per (doctor, patient) for this request, so a route that checks
-    // the same patient repeatedly (e.g. per file) costs one query.
-    const assignments = await memoizeInRequest(
-      `assignment-scope:${principal.userId}:${patientId}`,
-      () => this.repository.liveAssignmentScopes(principal.userId, patientId),
-    );
+    // Read fresh on every evaluation — deliberately not memoized (audit F6,
+    // #25). A per-request memo keyed by (doctor, patient handle) went stale
+    // when the request itself created or revoked an assignment, and the same
+    // patient by public id and by uuid got two entries (F7). Invalidating it
+    // would need a hook on every write to patient_doctor_assignments,
+    // doctor_employments and hospital_medical_records; not caching is the
+    // safer rule, and the legacy `isAssigned` is not cached either. The cost
+    // (one query per evaluation, only while the shadow is on) is bounded by
+    // the in-flight cap (C1). The hospital context stays memoized: it depends
+    // only on the caller's own employment, which no route lets the caller
+    // change about themselves within a request.
+    const assignments = await this.repository.liveAssignmentScopes(principal.userId, patientId);
     if (assignments.length === 0) return deny('no_care_assignment');
     if (assignments.length > 1) return deny('ambiguous_care_assignment');
     const assignment = assignments[0];

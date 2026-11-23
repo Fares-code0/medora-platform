@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Test } from '@nestjs/testing';
-import type { INestApplication } from '@nestjs/common';
+import { Logger, type INestApplication } from '@nestjs/common';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { ConfigModule, ConfigService } from '../src/config';
@@ -27,6 +27,7 @@ import {
   HospitalPatientScopeShadow,
   type HospitalPatientScopeRepository,
 } from '../src/shared/authz/hospital-patient-scope.shadow';
+import { runInRequestScope } from '../src/shared/authz/request-scope';
 import { PrismaService } from '../src/shared/database';
 
 describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () => {
@@ -225,6 +226,221 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
         outcome: 'agree_allow',
       });
     }
+  });
+
+  // Audit F6 / F7 (#25): inside one request store, a decision always reflects
+  // the assignment rows as they are now, whichever handle names the patient.
+  describe('assignment changes within one request (F6)', () => {
+    async function scopedAssignment(): Promise<{
+      principal: Principal;
+      doctorId: string;
+      patient: { id: string; publicId: string };
+      hospitalId: string;
+      employmentId: string;
+      recordId: string;
+    }> {
+      const { principal, doctorId } = await doctor();
+      const hospitalId = await hospital('P22S F6 Hospital');
+      const employmentId = await employ(doctorId, hospitalId);
+      const p = await patient();
+      const recordId = await record(p.id, hospitalId);
+      return { principal, doctorId, patient: p, hospitalId, employmentId, recordId };
+    }
+
+    it('sees a revocation made earlier in the same request', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+
+      const [before, after] = await runInRequestScope(async () => {
+        const first = await shadow.evaluate(f.principal, f.patient.publicId);
+        await prisma.db.patientDoctorAssignment.updateMany({
+          where: { patientId: f.patient.id, doctorId: f.doctorId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        return [first, await shadow.evaluate(f.principal, f.patient.publicId)];
+      });
+
+      expect(before).toEqual({ allowed: true, hospitalId: f.hospitalId });
+      expect(after).toEqual({ allowed: false, reason: 'no_care_assignment' });
+    });
+
+    it('sees an assignment created earlier in the same request', async () => {
+      const f = await scopedAssignment();
+
+      const [before, after] = await runInRequestScope(async () => {
+        const first = await shadow.evaluate(f.principal, f.patient.id);
+        await assign(f.patient.id, f.doctorId, {
+          hospitalId: f.hospitalId,
+          employmentId: f.employmentId,
+          recordId: f.recordId,
+        });
+        return [first, await shadow.evaluate(f.principal, f.patient.id)];
+      });
+
+      expect(before).toEqual({ allowed: false, reason: 'no_care_assignment' });
+      expect(after).toEqual({ allowed: true, hospitalId: f.hospitalId });
+    });
+
+    it('answers the same for the public id and the uuid, before and after a revocation', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+
+      await runInRequestScope(async () => {
+        for (const handle of [f.patient.publicId, f.patient.id]) {
+          await expect(shadow.evaluate(f.principal, handle)).resolves.toMatchObject({
+            allowed: true,
+          });
+        }
+        await prisma.db.patientDoctorAssignment.updateMany({
+          where: { patientId: f.patient.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        for (const handle of [f.patient.id, f.patient.publicId]) {
+          await expect(shadow.evaluate(f.principal, handle)).resolves.toMatchObject({
+            allowed: false,
+          });
+        }
+      });
+    });
+
+    it('keeps two concurrent requests for two doctors apart', async () => {
+      const mine = await scopedAssignment();
+      const theirs = await scopedAssignment();
+      await assign(mine.patient.id, mine.doctorId, {
+        hospitalId: mine.hospitalId,
+        employmentId: mine.employmentId,
+        recordId: mine.recordId,
+      });
+
+      const [a, b] = await Promise.all([
+        runInRequestScope(() => shadow.evaluate(mine.principal, mine.patient.publicId)),
+        runInRequestScope(() => shadow.evaluate(theirs.principal, mine.patient.publicId)),
+      ]);
+
+      expect(a).toMatchObject({ allowed: true });
+      expect(b).toMatchObject({ allowed: false });
+    });
+
+    it('denies a suspended doctor through the context (F4), whatever the assignment says', async () => {
+      const f = await scopedAssignment();
+      await assign(f.patient.id, f.doctorId, {
+        hospitalId: f.hospitalId,
+        employmentId: f.employmentId,
+        recordId: f.recordId,
+      });
+      await prisma.db.doctor.update({
+        where: { id: f.doctorId },
+        data: { practiceStatus: 'SUSPENDED' },
+      });
+
+      await expect(shadow.evaluate(f.principal, f.patient.publicId)).resolves.toEqual({
+        allowed: false,
+        reason: 'no_active_employment',
+      });
+    });
+  });
+
+  // C1 (#26): the shadow's assignment query runs under a transaction-local
+  // statement_timeout (default 250 ms). A real lock held by another
+  // transaction blocks it; PostgreSQL must cancel it, the legacy decision must
+  // be unaffected, and the setting must not leak to pooled connections.
+  //
+  // The lock is on `public.hospitals` only — the table the Database timeout
+  // suite already locks — and is held for well under a second: table locks
+  // on the busier clinical tables deadlocked the RLS-proposal DDL suites that
+  // run in parallel against the same database.
+  describe('shadow query resource bounds against PostgreSQL (C1)', () => {
+    async function scopedFixture(): Promise<{ principal: Principal; publicId: string }> {
+      const { principal, doctorId } = await doctor();
+      const h = await hospital('P22S C1 Hospital');
+      const employmentId = await employ(doctorId, h);
+      const p = await patient();
+      await assign(p.id, doctorId, {
+        hospitalId: h,
+        employmentId,
+        recordId: await record(p.id, h),
+      });
+      return { principal, publicId: p.publicId };
+    }
+
+    /** Holds ACCESS EXCLUSIVE on `public.hospitals` while `work` runs, then rolls back. */
+    async function whileHospitalsLocked<T>(work: () => Promise<T>): Promise<T> {
+      let result: { value: T } | undefined;
+      await prisma
+        .$transaction(
+          async (tx) => {
+            // Never queue indefinitely behind another suite's DDL.
+            await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '2s'`);
+            await tx.$executeRawUnsafe('LOCK TABLE public.hospitals IN ACCESS EXCLUSIVE MODE');
+            result = { value: await work() };
+            throw new Error('rollback');
+          },
+          { timeout: 10_000 },
+        )
+        .catch((error: unknown) => {
+          if (!(error instanceof Error && error.message === 'rollback')) throw error;
+        });
+      if (result === undefined) throw new Error('work did not run');
+      return result.value;
+    }
+
+    it('cancels a lock-blocked shadow query within the timeout and leaves no setting behind', async () => {
+      const f = await scopedFixture();
+
+      const outcome = await whileHospitalsLocked(async () => {
+        const started = Date.now();
+        const error = await repository.liveAssignmentScopes(f.principal.userId, f.publicId).then(
+          () => null,
+          (reason: unknown) => reason,
+        );
+        return { error, elapsed: Date.now() - started };
+      });
+
+      expect(outcome.error).not.toBeNull();
+      expect(
+        JSON.stringify(outcome.error, Object.getOwnPropertyNames(outcome.error ?? {})),
+      ).toMatch(/57014|statement timeout/);
+      // 250 ms timeout; generous headroom for a loaded CI runner.
+      expect(outcome.elapsed).toBeLessThan(3_000);
+
+      // Unblocked, the same query succeeds — and neither run leaves a
+      // statement_timeout on the pooled connections.
+      await expect(
+        repository.liveAssignmentScopes(f.principal.userId, f.publicId),
+      ).resolves.toHaveLength(1);
+      for (let i = 0; i < 12; i += 1) {
+        const rows = await prisma.$queryRaw<
+          { statement_timeout: string }[]
+        >`SHOW statement_timeout`;
+        expect(rows[0]?.statement_timeout).toBe('0');
+      }
+    });
+
+    it('answers canReach from the legacy rule while the shadow is blocked, then frees the slot', async () => {
+      const f = await scopedFixture();
+      const compare = vi.spyOn(shadow, 'compare');
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      // The legacy query does not read `hospitals`; the shadow does.
+      await whileHospitalsLocked(async () => {
+        const started = Date.now();
+        await expect(scope.canReach(f.principal, f.publicId)).resolves.toBe(true);
+        expect(Date.now() - started).toBeLessThan(1_000);
+        expect(shadow.load().inFlight).toBe(1);
+      });
+
+      // Settled (timed out or completed once the lock went): the slot is back.
+      await expect.poll(() => shadow.load().inFlight, { timeout: 3_000 }).toBe(0);
+      expect(compare).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('keeps legacy access to an unowned legacy assignment, and never guesses its hospital', async () => {

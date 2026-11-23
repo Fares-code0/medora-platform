@@ -68,15 +68,17 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 | [ADR-042](#adr-042--hospital-is-the-isolation-boundary) | Hospital Is the Isolation Boundary | **Accepted** (2026-11-22) |
 | [ADR-044](#adr-044--discarding-an-unsigned-prescription-draft-is-a-soft-delete) | Discarding an Unsigned Prescription Draft Is a Soft Delete | **Accepted** (BR-DEC-002) |
 | [ADR-045](#adr-045--refresh-rotation-is-idempotent-for-30-seconds) | Refresh Rotation Is Idempotent for 30 Seconds | **Accepted** — owner decision, 2026-11-21 (amends ADR-026) |
+| [ADR-046](#adr-046--an-access-token-is-refused-once-its-role-claim-is-stale) | An Access Token Is Refused Once Its Role Claim Is Stale | **Proposed** (Backend, 2026-11-23) — implemented with audit F3 (#23); accepted when its pull request is approved |
 
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044 and ADR-045 are registered.
+ADR-044, ADR-045 and ADR-046 are registered.
 
-The next unallocated number is **ADR-046** (ADR-045 was allocated 2026-11-21 to the refresh grace
-window, after the sweep below found it free on every remote branch; ADR-044 was allocated 2026-10-24
-to BR-DEC-002 the same way). Before using it, run the `CLAUDE.md` sweep **and**
+The next unallocated number is **ADR-047** (ADR-046 was allocated 2026-11-23 to the stale role
+claim, audit F3, after the sweep below found it free on every remote branch; ADR-045 was allocated
+2026-11-21 to the refresh grace window the same way; ADR-044 was allocated 2026-10-24 to BR-DEC-002
+the same way). Before using it, run the `CLAUDE.md` sweep **and**
 `git grep -l 'ADR-04[2-9]' origin/frontend origin/backend origin/patient-app -- docs backend/docs`,
 and inspect all available `PENDING_ADRS.md` files.
 
@@ -4776,6 +4778,68 @@ schema files are reverted too.
 | Store the successor in Redis with a 30 s TTL | See §Retention option (c) |
 | Store the successor in clear | Turns any database read into session hijack |
 | Make the window an environment variable | A security bound an operator can widen silently; an ADR amendment is the right friction |
+
+## ADR-046 — An Access Token Is Refused Once Its Role Claim Is Stale
+
+**Status:** Proposed (Backend, 2026-11-23) — implemented with audit finding F3 (issue #23); accepted
+when its pull request is approved · **Interprets:** API §1.11 ("permissions are static per session
+(changes apply at next issue)") · **Preserves:** ADR-013, ADR-026, ADR-045, PRE-01 (I4, O-13)
+
+### Context
+
+An access token carries `role` and `permissions`, fixed when it is minted (API §1.11), for up to
+`JWT_ACCESS_TTL` (900 s). Since PRE-01 the access-token guard reads the session row on every
+request, so revocation, expiry and account suspension take effect at once. A **role change** did
+not: `PlatformUserService.update` changes `users.role_id` and revokes sessions only on
+deactivation, so for up to 15 minutes:
+
+- a demoted administrator's token still carried `roles.manage` and the other administrative
+  permissions, and every guard honoured them (security audit F3, #23);
+- `GET /auth/session` read the role back from the database but resolved the Phase 22 hospital
+  context from the token's role, so one payload could say `role: admin` beside a doctor's
+  `activeHospital`.
+
+`RefreshService` already mints from the current role. Only the window between a role change and
+the next refresh was open.
+
+### Decision
+
+1. **`SessionService.isActive` also requires the account to still hold the token's role** (the
+   `role` claim, joined through `users.role_id → roles.code`). It is the same indexed read, with one
+   more predicate and no extra query. A mismatch is the same 401 `unauthorized` / "Session expired"
+   as any dead session: the client's next move is the same (ADR-013, refresh once), and a stolen token
+   gives no way to tell a role change from a revocation.
+2. **The session is not revoked.** The refresh family survives, and the one refresh mints a token for
+   the current role. The change takes effect "at next issue" as API §1.11 says. The difference is
+   that the stale token stops working at once. Deactivation still revokes every session, as before.
+3. **`@AllowEndedSession()` (logout) is unchanged.** It checks identity only, so a demoted account can
+   still sign out.
+4. **`GET /auth/session` resolves the hospital context for the database role**, the role the payload
+   reports, so `role`, `activeHospital` and `adminScope` always describe one role.
+5. **Out of scope:** a change to a role's *permission set* (`role_permissions`) or to per-user
+   overrides is not detected by this check. Those still take effect at the next issue, within
+   `JWT_ACCESS_TTL`. Changing that needs a permission version on the token or the session, which is a
+   separate decision (#27, session invalidation).
+
+### Consequences
+
+- A role change can no longer leave a user with permissions they no longer hold (beyond the request
+  already in flight).
+- Every open session of the account sees one 401 and one refresh after a role change. Both web
+  clients already refresh once on a 401 that carried a token.
+- An administrator promoted from another role must still pass the administrator MFA policy at the
+  next password sign-in. The refresh path is unchanged.
+- Tests: `access-token.guard.spec.ts`, `session-user.service.spec.ts` and
+  `account-security.e2e-spec.ts` ("a role change after token issuance") cover promotion, demotion,
+  the session payload, several concurrent sessions, logout and the unchanged-role path.
+
+### Alternatives rejected
+
+| Alternative | Why not |
+|---|---|
+| Revoke every session on a role change | Signs the user out for an administrative change. Rule 2 gets the same security property with one refresh |
+| Resolve context from the token role and report the token role | Keeps the 15-minute stale-privilege window open, which is the real defect |
+| Re-resolve permissions per request | Contradicts API §1.11. The guards and `useCan()` would then disagree within one token's life |
 
 ---
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { inRequestScope, runInRequestScope } from '../authz/request-scope';
+
 import { DeadLetterStore, DEAD_LETTER_CAPACITY } from './dead-letter.store';
 import { JobMetricsService } from './job-metrics.service';
 import { JobRunner, messageOf, type RunHooks } from './job-runner.service';
@@ -234,5 +236,55 @@ describe('DeadLetterStore', () => {
 
     expect(store.list('a.one')).toHaveLength(1);
     expect(store.list()).toHaveLength(2);
+  });
+});
+
+// Audit F5 (#24): `attempt` is the BullMQ worker's entry point and
+// `runToCompletion` the in-process loop. Called from inside a request
+// store, neither may hand it to the job.
+describe('JobRunner request-scope isolation (F5)', () => {
+  it('runs a single attempt (the broker path) outside the caller request store', async () => {
+    const { runner } = harness();
+    let scoped: boolean | undefined;
+
+    await runInRequestScope(() =>
+      runner.attempt(
+        job(() => {
+          scoped = inRequestScope();
+          return Promise.resolve({});
+        }),
+        { attempt: 1, trigger: 'manual', correlationId: 'c-1', now: new Date() },
+      ),
+    );
+
+    expect(scoped).toBe(false);
+  });
+
+  it('runs every attempt of a run, and the backoff between them, outside it', async () => {
+    const { runner } = harness();
+    const scopes: boolean[] = [];
+    const hooks: RunHooks = {
+      sleep: () => {
+        scopes.push(inRequestScope());
+        return Promise.resolve();
+      },
+      clock: () => new Date(),
+    };
+    let calls = 0;
+
+    await runInRequestScope(() =>
+      runner.runToCompletion(
+        job(() => {
+          calls += 1;
+          scopes.push(inRequestScope());
+          return calls < 3 ? Promise.reject(new Error('transient')) : Promise.resolve({});
+        }),
+        'manual',
+        hooks,
+      ),
+    );
+
+    expect(scopes.length).toBeGreaterThanOrEqual(3);
+    expect(scopes.every((scoped) => !scoped)).toBe(true);
   });
 });

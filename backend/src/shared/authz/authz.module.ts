@@ -104,7 +104,9 @@ import {
         repository: HospitalPatientScopeRepository,
       ): HospitalPatientScopeShadow | undefined =>
         config.hospitalScopeShadowComparison
-          ? new HospitalPatientScopeShadow(contexts, repository)
+          ? new HospitalPatientScopeShadow(contexts, repository, {
+              maxInFlight: config.hospitalScopeShadowLimits.maxInFlight,
+            })
           : undefined,
     },
     PermissionResolver,
