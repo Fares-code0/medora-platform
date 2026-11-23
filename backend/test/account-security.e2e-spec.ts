@@ -1,5 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  HOSPITAL_CONTEXT_REPOSITORY,
+  type HospitalContextRepository,
+} from '../src/shared/authz/hospital-context.service';
 
 import {
   type AuthHarness,
@@ -54,6 +60,9 @@ interface SessionUser {
   email: string;
   role: string;
   permissions: string[];
+  activeHospital: { id: string; name: string } | null;
+  adminScope:
+    { type: 'platform' } | { type: 'hospital'; hospital: { id: string; name: string } } | null;
 }
 
 interface ActiveSession {
@@ -163,11 +172,163 @@ describe('GET /auth/session (M8.1)', () => {
     // The exact key set, not a superset: a field added to `users` must
     // not reach the shell by default. `licenseNumber` and `phone` are
     // the two that would, and neither belongs in a session payload.
-    expect(Object.keys(user).sort()).toEqual(['email', 'id', 'name', 'permissions', 'role']);
+    expect(Object.keys(user).sort()).toEqual([
+      'activeHospital',
+      'adminScope',
+      'email',
+      'id',
+      'name',
+      'permissions',
+      'role',
+    ]);
     expect(user.email).toBe(session.email);
     expect(user.id).toMatch(/^usr_/);
     expect(user.role).toBe('doctor');
     expect(Array.isArray(user.permissions)).toBe(true);
+  });
+
+  it('returns the doctor hospital from the active employment', async () => {
+    const session = await seedAndSignIn('employment-scope');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: { publicId: 'hsp_' + randomUUID(), name: 'Session Scope Test Hospital' },
+    });
+
+    try {
+      await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+
+      const response = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+
+      expect(response.status).toBe(200);
+      expect(dataOf<SessionUser>(response).activeHospital).toEqual({
+        id: hospital.id,
+        name: hospital.name,
+      });
+      expect(dataOf<SessionUser>(response).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
+  it('drops activeHospital on the next request once the employment ends', async () => {
+    // Phase 22 / OD-12: no grace period. The same access token, read
+    // again right after the employment ends, must carry no hospital —
+    // the context is derived per request, never cached on the token.
+    const session = await seedAndSignIn('employment-ended');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: { publicId: 'hsp_' + randomUUID(), name: 'Ended Employment Test Hospital' },
+    });
+
+    try {
+      const employment = await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      const before = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(dataOf<SessionUser>(before).activeHospital?.id).toBe(hospital.id);
+
+      await harness.prisma.db.doctorEmployment.update({
+        where: { id: employment.id },
+        data: { endedAt: new Date() },
+      });
+
+      const after = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(after.status).toBe(200);
+      expect(dataOf<SessionUser>(after).activeHospital).toBeNull();
+      expect(dataOf<SessionUser>(after).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
+
+  it('returns no activeHospital when the employer is suspended', async () => {
+    // Phase 22: only an ACTIVE, non-deleted hospital yields context.
+    const session = await seedAndSignIn('employer-suspended');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: {
+        publicId: 'hsp_' + randomUUID(),
+        name: 'Suspended Employer Test Hospital',
+        status: 'SUSPENDED',
+      },
+    });
+
+    try {
+      await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+
+      const response = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+
+      expect(response.status).toBe(200);
+      expect(dataOf<SessionUser>(response).activeHospital).toBeNull();
+      expect(dataOf<SessionUser>(response).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
+
+  it('looks the hospital context up only where it is read, once per request', async () => {
+    // PHASE22_BACKEND_HANDOFF corrections 1–2: no global per-request query,
+    // and no duplicate lookup when a request reads the context.
+    const session = await seedAndSignIn('context-lookups');
+    const repository = harness.app.get<HospitalContextRepository>(HOSPITAL_CONTEXT_REPOSITORY);
+    const lookup = vi.spyOn(repository, 'activeDoctorEmploymentHospitals');
+
+    try {
+      const other = await request(harness.server)
+        .get(SESSIONS)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(other.status).toBe(200);
+      expect(lookup).not.toHaveBeenCalled();
+
+      const response = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(response.status).toBe(200);
+      expect(lookup).toHaveBeenCalledTimes(1);
+    } finally {
+      lookup.mockRestore();
+    }
   });
 
   it('matches the payload the login response carried', async () => {
@@ -184,7 +345,13 @@ describe('GET /auth/session (M8.1)', () => {
     // Two code paths build this shape — the login service and the
     // session service — and a client that trusts one must be able to
     // trust the other.
-    expect(dataOf<SessionUser>(response)).toEqual(fromLogin);
+    // Strict: the session payload is the login payload plus exactly the two
+    // Phase 22 fields — no other key may appear or differ.
+    expect(dataOf<SessionUser>(response)).toEqual({
+      ...fromLogin,
+      activeHospital: null,
+      adminScope: null,
+    });
   });
 
   it('refuses an unauthenticated caller', async () => {

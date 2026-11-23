@@ -64,6 +64,11 @@ export class ConfigService {
     return this.env.JOBS_ENABLED;
   }
 
+  /** Phase 22: compute and log the hospital-aware patient-scope shadow decision. */
+  get hospitalScopeShadowComparison(): boolean {
+    return this.env.HOSPITAL_SCOPE_SHADOW_COMPARISON;
+  }
+
   /** Express's `trust proxy` value; `false` unless the deployment names its proxies. */
   get trustProxy(): TrustProxySetting {
     const parsed = parseTrustProxy(this.env.TRUST_PROXY);
