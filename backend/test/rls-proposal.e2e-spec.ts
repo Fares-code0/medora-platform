@@ -15,7 +15,11 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import {
+  closeThenDrop,
+  createIsolatedDatabase,
+  type IsolatedDatabase,
+} from './support/isolated-database';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 let databaseUrl: URL;
@@ -70,8 +74,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  if (connected) await client.end();
-  await isolated?.drop();
+  // The drop is attempted even if closing the client throws (closeThenDrop).
+  await closeThenDrop(connected ? client : undefined, isolated);
 }, 30_000);
 
 const suffix = (): string => randomUUID().replaceAll('-', '').slice(0, 10);
