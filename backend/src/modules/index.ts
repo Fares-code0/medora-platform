@@ -5,6 +5,7 @@ import { AiModule } from './ai/ai.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { ControlledAccessModule } from './controlled-access/controlled-access.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DoctorsModule } from './doctors/doctors.module';
 import { FilesModule } from './files/files.module';
@@ -54,4 +55,5 @@ export const DOMAIN_MODULES: readonly Type[] = [
   SearchModule,
   DashboardModule,
   HospitalsModule,
+  ControlledAccessModule,
 ];

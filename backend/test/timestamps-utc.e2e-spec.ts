@@ -6,6 +6,8 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  grantPlatformAdmin,
+  makeClinicalStaff,
   markVerified,
   patientRegistrationBody,
   registrationBody,
@@ -156,6 +158,8 @@ async function adminToken(): Promise<string> {
     .set('Authorization', `Bearer ${bootstrap}`)
     .send({ code: currentCode(secret) });
   await setRole(email, 'admin');
+  // A fixture administrator acts at platform scope through an explicit grant (OD-07).
+  await grantPlatformAdmin(harness.prisma, email);
 
   const { otpToken } = await login(email);
   return dataOf<{ accessToken: string }>(
@@ -165,8 +169,16 @@ async function adminToken(): Promise<string> {
   ).accessToken;
 }
 
+/** `staff_members` outlive their user (SET NULL) and hold the unique email. */
+async function removeStaffProfiles(): Promise<void> {
+  const staff = { email: { endsWith: `@${harness.domain}` } };
+  await harness.prisma.hospitalStaffAffiliation.deleteMany({ where: { staff: { is: staff } } });
+  await harness.prisma.staffMember.deleteMany({ where: staff });
+}
+
 beforeAll(async () => {
   harness = await createAuthHarness('timestamps-utc');
+  await removeStaffProfiles();
 
   // A doctor with a chart and a lab order part-way through its pipeline,
   // so the clinical lists carry timeline and workflow instants.
@@ -189,6 +201,8 @@ beforeAll(async () => {
     await request(harness.server).post(`${PREFIX}/auth/register`).send(registrationBody({ email }));
     await markVerified(harness.prisma, email);
     await setRole(email, role);
+    // Staff standing (§2.4): an active affiliation at the fixture hospital.
+    await makeClinicalStaff(harness.prisma, email);
     tokens.set(role, (await login(email)).accessToken ?? '');
   }
 
@@ -200,6 +214,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (harness === undefined) return;
   await destroyLabFixtures(harness, patientIds);
+  await removeStaffProfiles();
   await harness.reset();
   await harness.close();
 });

@@ -48,7 +48,8 @@ import type {
   RecordStatus,
 } from '../../../generated/prisma/enums';
 import { CacheService, REFERENCE_DATA, REFERENCE_SCOPE } from '../../../shared/cache';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
+import { AppException } from '../../../common/errors/app.exception';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -453,8 +454,14 @@ export class RecordRepository {
     readonly actorName: string;
   }): Promise<string> {
     return this.prisma.$transaction(async (tx) => {
+      // §2.7: stamped with hospital, record and employment. DR-05 makes the
+      // stamp exist whenever the doctor reaches the patient; without one the
+      // row would be unattributed, so the write is refused.
+      const stamp = await hospitalStampFor(tx, input.doctorId, input.patientId);
+      if (stamp === null) throw AppException.notFound('Patient not found');
       const created = await tx.medicalRecord.create({
         data: {
+          ...stamp,
           publicId: input.publicId,
           patientId: input.patientId,
           doctorId: input.doctorId,

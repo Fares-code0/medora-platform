@@ -569,7 +569,9 @@ describe('PRE-01 — a failed session read fails closed', () => {
   it('answers 5xx with no data, never the protected response, when the session read throws', async () => {
     const email = await seedAccount('db-down');
     const { accessToken } = await signIn(email);
-    vi.spyOn(harness.app.get(SessionService), 'isActive').mockRejectedValueOnce(
+    // The guard reads the session through `liveAuthzVersion`, the query
+    // `isActive` wraps (it also yields the live `authz_version`).
+    vi.spyOn(harness.app.get(SessionService), 'liveAuthzVersion').mockRejectedValueOnce(
       new Error('connection terminated unexpectedly'),
     );
 

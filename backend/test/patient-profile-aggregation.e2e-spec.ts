@@ -139,7 +139,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('profile-agg');
 
   doctorToken = await seedDoctor(harness, 'agg-owner');
-  strangerToken = await seedDoctor(harness, 'agg-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  strangerToken = await seedDoctor(harness, 'agg-stranger', 'b');
   patient = await seedPatient(harness, doctorToken);
   charts.push(patient.id);
 

@@ -22,7 +22,8 @@ import type {
   SafetyWarningKind,
   SafetyWarningSeverity,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
+import { AppException } from '../../../common/errors/app.exception';
 
 /**
  * A Prisma client that may be a transaction's.
@@ -151,8 +152,12 @@ export class PrescriptionRepository {
     readonly endDate: Date;
     readonly actorId: string;
   }): Promise<DetailRow> {
+    // §2.7: stamped like every doctor-authored clinical row; refused without.
+    const stamp = await hospitalStampFor(this.prisma.db, input.prescribingDoctorId, input.patientId);
+    if (stamp === null) throw AppException.notFound('Patient not found');
     const created = await this.prisma.db.prescription.create({
       data: {
+        ...stamp,
         publicId: input.publicId,
         patientId: input.patientId,
         medicationId: input.medicationId,
@@ -284,10 +289,18 @@ export class PrescriptionRepository {
     // M13.6 — the patient's current-medication list. Written by the
     // same transaction as the signature, because "signing an Rx adds a
     // `patient_medications` row" is a property, not a follow-up job.
+    // The medication-list row inherits the prescription's hospital stamp
+    // (a Phase 22 trigger requires child and parent to share a scope).
+    const scope = await tx.prescription.findUniqueOrThrow({
+      where: { id: input.prescriptionId },
+      select: { hospitalId: true, hospitalMedicalRecordId: true },
+    });
     await tx.patientMedication.create({
       data: {
         patientId: input.patientId,
         prescriptionId: input.prescriptionId,
+        hospitalId: scope.hospitalId,
+        hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
         name: input.medicationName,
         dosage: input.dosage,
         frequency: input.frequency,
@@ -562,8 +575,12 @@ export class PrescriptionRepository {
         },
       });
 
+      // A renewal is attributed like the original therapy: the prescriber's
+      // current hospital and the patient's record there, when both exist.
+      const renewalStamp = await hospitalStampFor(tx, source.prescribingDoctorId, source.patientId);
       const draft = await tx.prescription.create({
         data: {
+          ...(renewalStamp ?? {}),
           publicId: input.publicId,
           // Copied verbatim — the identity of the therapy. Changing any
           // of these would make it a different prescription, not a

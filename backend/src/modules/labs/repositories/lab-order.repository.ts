@@ -42,7 +42,8 @@ import type {
   LabTestCategory,
   LabTimelineKind,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
+import { AppException } from '../../../common/errors/app.exception';
 
 /**
  * A Prisma client that may be a transaction's.
@@ -159,8 +160,14 @@ export class LabOrderRepository {
     readonly testName: string;
   }): Promise<DetailRow> {
     const created = await this.prisma.$transaction(async (tx) => {
+      // §2.7: stamped with hospital, record and employment. DR-05 makes the
+      // stamp exist whenever the doctor reaches the patient; without one the
+      // row would be unattributed, so the write is refused.
+      const stamp = await hospitalStampFor(tx, input.orderedBy, input.patientId);
+      if (stamp === null) throw AppException.notFound('Patient not found');
       const order = await tx.labOrder.create({
         data: {
+          ...stamp,
           publicId: input.publicId,
           patientId: input.patientId,
           testId: input.testId,

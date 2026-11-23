@@ -7,10 +7,13 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
-  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -119,10 +122,12 @@ function currentCode(secret: string): string {
   }).generate();
 }
 
-async function seedDoctor(local: string): Promise<string> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const response = await request(harness.server)
     .post(LOGIN)
@@ -232,6 +237,15 @@ async function clearCharts(): Promise<void> {
   // `TypeError` and hide it.
   if (harness === undefined || createdCharts.length === 0) return;
 
+  await purgeHospitalRecords(
+    harness.prisma,
+    (
+      await harness.prisma.patient.findMany({
+        where: { publicId: { in: createdCharts } },
+        select: { id: true },
+      })
+    ).map((row) => row.id),
+  );
   await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   createdCharts.length = 0;
 }
@@ -341,7 +355,8 @@ describe('POST /patients (§4.2)', () => {
 describe('GET /patients (§4.1)', () => {
   it('shows a doctor only their own assigned patients', async () => {
     const mine = await seedDoctor('mine');
-    const theirs = await seedDoctor('theirs');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('theirs', 'b');
 
     const patient = await createPatient(mine, { fullName: 'Only Mine' });
 
@@ -360,7 +375,8 @@ describe('GET /patients (§4.1)', () => {
 
   it('agrees with the per-record scope check', async () => {
     const mine = await seedDoctor('agreeing');
-    const theirs = await seedDoctor('excluded');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('excluded', 'b');
     const patient = await createPatient(mine);
 
     // A patient absent from a doctor's list must be a patient whose
@@ -381,7 +397,8 @@ describe('GET /patients (§4.1)', () => {
 
   it('answers the same 404 for an out-of-scope chart and a missing one', async () => {
     const mine = await seedDoctor('owner');
-    const theirs = await seedDoctor('stranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('stranger', 'b');
     const patient = await createPatient(mine);
 
     const outOfScope = await request(harness.server)
@@ -680,7 +697,8 @@ describe('allergy CRUD (§4.6, M10.4)', () => {
 
   it('refuses every allergy write from a doctor with no care relationship', async () => {
     const owner = await seedDoctor('allergyowner');
-    const stranger = await seedDoctor('allergystranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const stranger = await seedDoctor('allergystranger', 'b');
     const patient = await createPatient(owner);
 
     const response = await request(harness.server)

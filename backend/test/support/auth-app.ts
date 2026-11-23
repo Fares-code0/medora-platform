@@ -321,11 +321,71 @@ export async function markVerified(prisma: PrismaService, email: string): Promis
 /** Deletes the staffing rows of every account in `domain` (test cleanup only). */
 async function removeStaffingOf(prisma: PrismaService, domain: string): Promise<void> {
   const users = { email: { endsWith: `@${domain}` } };
-  await prisma.hospitalRoleAssignment.deleteMany({ where: { user: { is: users } } });
-  await prisma.doctorEmployment.deleteMany({ where: { doctor: { is: { user: { is: users } } } } });
-  await prisma.hospitalStaffAffiliation.deleteMany({
-    where: { staff: { is: { user: { is: users } } } },
-  });
+  const ids = async (rows: Promise<{ id: string }[]>) => (await rows).map((row) => row.id);
+  await deleteWithDependents(
+    prisma,
+    'hospital_role_assignments',
+    await ids(prisma.hospitalRoleAssignment.findMany({ where: { user: { is: users } }, select: { id: true } })),
+  );
+  await deleteWithDependents(
+    prisma,
+    'doctor_employments',
+    await ids(
+      prisma.doctorEmployment.findMany({
+        where: { doctor: { is: { user: { is: users } } } },
+        select: { id: true },
+      }),
+    ),
+  );
+  await deleteWithDependents(
+    prisma,
+    'hospital_staff_affiliations',
+    await ids(
+      prisma.hospitalStaffAffiliation.findMany({
+        where: { staff: { is: { user: { is: users } } } },
+        select: { id: true },
+      }),
+    ),
+  );
+}
+
+/**
+ * Test cleanup only: deletes rows of `table` by id after first deleting —
+ * recursively — every row that references them through a RESTRICT / NO
+ * ACTION foreign key (discovered from `pg_constraint`, so it stays correct
+ * as hospital stamping spreads). Cascading and SET NULL references are left
+ * to PostgreSQL. Stamped tenant keys cannot be nulled in place (a Phase 22
+ * trigger), which is why dependents are deleted rather than detached.
+ */
+export async function deleteWithDependents(
+  prisma: PrismaService,
+  table: string,
+  ids: readonly string[],
+  depth = 0,
+): Promise<void> {
+  if (ids.length === 0) return;
+  if (depth > 8) throw new Error(`deleteWithDependents: reference chain too deep at ${table}`);
+  const references = await prisma.$queryRaw<{ child: string; column: string }[]>`
+    SELECT c.conrelid::regclass::text AS child, a.attname AS column
+      FROM pg_constraint c
+      JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = ANY (c.confkey) AND pa.attname = 'id'
+      JOIN pg_attribute a ON a.attrelid = c.conrelid
+       AND a.attnum = c.conkey[array_position(c.confkey, pa.attnum)]
+     WHERE c.contype = 'f' AND c.confrelid = ${table}::regclass AND c.confdeltype IN ('r', 'a')
+       AND c.conrelid <> c.confrelid`;
+  for (const { child, column } of references) {
+    const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id::text AS id FROM ${child} WHERE "${column}" = ANY($1::uuid[])`,
+      ids,
+    );
+    await deleteWithDependents(
+      prisma,
+      child,
+      rows.map((row) => row.id),
+      depth + 1,
+    );
+  }
+  await prisma.$executeRawUnsafe(`DELETE FROM ${table} WHERE id = ANY($1::uuid[])`, ids);
 }
 
 /**
@@ -414,10 +474,9 @@ export async function makeClinicalStaff(
 }
 
 /**
- * Test cleanup only: removes the Hospital Medical Records of `patientIds`,
- * first deleting every row that references them (discovered from the
- * foreign-key catalogue, so it stays correct as stamping spreads). Call it
- * before deleting the patients themselves — HMRs restrict their patient.
+ * Test cleanup only: removes the Hospital Medical Records of `patientIds`
+ * and everything that restricts their deletion. Call it before deleting the
+ * patients themselves — HMRs restrict their patient.
  */
 export async function purgeHospitalRecords(
   prisma: PrismaService,
@@ -428,29 +487,11 @@ export async function purgeHospitalRecords(
     where: { patientId: { in: [...patientIds] } },
     select: { id: true },
   });
-  const ids = records.map((row) => row.id);
-  if (ids.length === 0) return;
-  const referencing = await prisma.$queryRaw<{ table_name: string; column_name: string }[]>`
-    SELECT kcu.table_name, kcu.column_name
-      FROM information_schema.referential_constraints rc
-      JOIN information_schema.key_column_usage kcu
-        ON kcu.constraint_name = rc.constraint_name AND kcu.constraint_schema = rc.constraint_schema
-      JOIN information_schema.constraint_column_usage ccu
-        ON ccu.constraint_name = rc.unique_constraint_name
-       AND ccu.constraint_schema = rc.unique_constraint_schema
-     WHERE ccu.table_name = 'hospital_medical_records' AND ccu.column_name = 'id'
-       AND kcu.table_schema = current_schema()`;
-  const seen = new Set<string>();
-  for (const { table_name: table, column_name: column } of referencing) {
-    const key = `${table}.${column}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    await prisma.$executeRawUnsafe(
-      `DELETE FROM "${table}" WHERE "${column}" = ANY($1::uuid[])`,
-      ids,
-    );
-  }
-  await prisma.hospitalMedicalRecord.deleteMany({ where: { id: { in: ids } } });
+  await deleteWithDependents(
+    prisma,
+    'hospital_medical_records',
+    records.map((row) => row.id),
+  );
 }
 
 

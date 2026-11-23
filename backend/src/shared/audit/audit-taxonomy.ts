@@ -71,6 +71,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // Multi-hospital §2.2–§2.6: staffing lifecycle and administrative scope.
   hospital: 'admin_activity',
   platform: 'admin_activity',
+  // §2.11–§2.12: reaching past a hospital boundary, or deciding who can.
+  exceptional_access: 'security',
+  information_request: 'user_action',
 
   account: 'user_action',
   settings: 'user_action',
@@ -134,6 +137,12 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   'hospital.admin_revoked': 'warning',
   'platform.admin_granted': 'critical',
   'platform.admin_revoked': 'warning',
+  'exceptional_access.emergency_override': 'critical',
+  'exceptional_access.request': 'warning',
+  'exceptional_access.approve': 'warning',
+  'exceptional_access.read': 'warning',
+  'information_request.approve': 'warning',
+  'information_request.read': 'warning',
   'user.administer': 'warning',
   'device.trust': 'warning',
   'session.revoke': 'warning',

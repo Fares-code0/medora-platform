@@ -161,8 +161,16 @@ function userIdFor(role: string): string {
 
 let harness: AuthHarness;
 
+/** `staff_members` outlive their user (SET NULL) and hold the unique email. */
+async function removeStaffProfiles(): Promise<void> {
+  const staff = { email: { endsWith: `@${harness.domain}` } };
+  await harness.prisma.hospitalStaffAffiliation.deleteMany({ where: { staff: { is: staff } } });
+  await harness.prisma.staffMember.deleteMany({ where: staff });
+}
+
 beforeAll(async () => {
   harness = await createAuthHarness('authz-matrix');
+  await removeStaffProfiles();
   for (const role of PLATFORM_ROLES) {
     const email = testEmail(`matrix-${role}`);
     await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
@@ -185,6 +193,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (harness === undefined) return;
+  await removeStaffProfiles();
   await harness.reset();
   await harness.close();
 });

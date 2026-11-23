@@ -141,8 +141,27 @@ export class NotificationDispatchService {
     });
 
     await this.prisma.$transaction(async (tx) => {
+      // A notification about a lab order or an appointment inherits that
+      // row's hospital stamp (§2.7; a Phase 22 trigger requires the pointer
+      // and its target to share a scope).
+      const scope =
+        target.labOrderId !== null
+          ? await tx.labOrder.findUnique({
+              where: { id: target.labOrderId },
+              select: { hospitalId: true, hospitalMedicalRecordId: true },
+            })
+          : target.appointmentId !== null
+            ? await tx.appointment.findUnique({
+                where: { id: target.appointmentId },
+                select: { hospitalId: true, hospitalMedicalRecordId: true },
+              })
+            : null;
       const notification = await tx.notification.create({
         data: {
+          ...(scope?.hospitalId == null ? {} : { hospitalId: scope.hospitalId }),
+          ...(scope?.hospitalMedicalRecordId == null
+            ? {}
+            : { hospitalMedicalRecordId: scope.hospitalMedicalRecordId }),
           recipientId: target.userId,
           title: rule.title,
           // The body names the entity by its public id and nothing else.

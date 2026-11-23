@@ -8,7 +8,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -112,10 +115,12 @@ interface Doctor {
   readonly email: string;
 }
 
-async function seedDoctor(local: string): Promise<Doctor> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -197,6 +202,18 @@ async function seedAppointment(doctor: Doctor, patientReference: string): Promis
     select: { id: true },
   });
   const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
+  // Stamped as a booking through the API would be (§2.7): the doctor's
+  // employment, its hospital, and the patient's record there.
+  const employment = await harness.prisma.doctorEmployment.findFirstOrThrow({
+    where: { doctorId: doctorRow.id, endedAt: null },
+    select: { id: true, hospitalId: true },
+  });
+  const record = await harness.prisma.hospitalMedicalRecord.findUniqueOrThrow({
+    where: {
+      patientId_hospitalId: { patientId: patientRow.id, hospitalId: employment.hospitalId },
+    },
+    select: { id: true },
+  });
 
   appointmentCount += 1;
   const publicId = `${APPOINTMENT_TAG}${appointmentCount}`;
@@ -205,6 +222,9 @@ async function seedAppointment(doctor: Doctor, patientReference: string): Promis
       publicId,
       patientId: patientRow.id,
       doctorId: doctorRow.id,
+      hospitalId: employment.hospitalId,
+      hospitalMedicalRecordId: record.id,
+      doctorEmploymentId: employment.id,
       visitTypeId: visitType.id,
       startsAt: new Date('2026-09-10T09:00:00.000Z'),
       reason: 'Headache review',
@@ -242,6 +262,15 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { publicId: { startsWith: APPOINTMENT_TAG } },
     });
+    await purgeHospitalRecords(
+      harness.prisma,
+      (
+        await harness.prisma.patient.findMany({
+          where: { publicId: { in: createdCharts } },
+          select: { id: true },
+        })
+      ).map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -430,7 +459,8 @@ describe('POST /medical-records (§6.3)', () => {
 
   it('refuses a record for a patient outside the caller’s care', async () => {
     const mine = await seedDoctor('scope-mine');
-    const theirs = await seedDoctor('scope-theirs');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('scope-theirs', 'b');
     const patientId = await seedPatient(theirs.token);
 
     const response = await request(harness.server)
@@ -509,7 +539,8 @@ describe('POST /medical-records (§6.3)', () => {
 describe('GET /medical-records (§6.1, §6.2)', () => {
   it('lists only records for patients the caller is on, and the detail agrees', async () => {
     const mine = await seedDoctor('list-mine');
-    const theirs = await seedDoctor('list-theirs');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('list-theirs', 'b');
     const minePatient = await seedPatient(mine.token);
     const theirsPatient = await seedPatient(theirs.token);
 

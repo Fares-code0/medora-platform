@@ -9,10 +9,12 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
-  grantPlatformAdmin,
 } from './support/auth-app';
 import { destroyLabFixtures, orderTest } from './support/lab-fixture';
 
@@ -77,10 +79,15 @@ async function userIdOf(email: string): Promise<string> {
     .id;
 }
 
-async function seedDoctor(local: string): Promise<{ token: string; userId: string }> {
+async function seedDoctor(
+  local: string,
+  hospital = 'a',
+): Promise<{ token: string; userId: string }> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -235,7 +242,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('clinical-exports');
 
   ({ token: doctorToken, userId: doctorUserId } = await seedDoctor('export-doctor'));
-  ({ token: strangerToken } = await seedDoctor('export-stranger'));
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  ({ token: strangerToken } = await seedDoctor('export-stranger', 'b'));
   ({ token: adminToken, userId: adminUserId } = await seedAdmin('export-admin'));
 
   ownPatient = await createPatient(doctorToken, {

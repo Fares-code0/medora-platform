@@ -27,3 +27,4 @@ export {
   type SoftDeleteColumns,
   type UpdateAuditColumns,
 } from './audit-columns';
+export { hospitalStampFor, type HospitalStamp, type StampClient } from './hospital-stamp';

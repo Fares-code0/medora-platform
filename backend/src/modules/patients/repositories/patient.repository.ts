@@ -291,10 +291,21 @@ export class PatientRepository {
         select: { id: true },
       });
 
+      // DR-05 / §2.7: registration opens the patient's Hospital Medical
+      // Record at the registering doctor's hospital, in the same
+      // transaction — the record is what makes the chart reachable there.
+      const record = await tx.hospitalMedicalRecord.create({
+        data: { patientId: patient.id, hospitalId: input.hospitalId },
+        select: { id: true },
+      });
+
       if (input.allergies.length > 0) {
         await tx.patientAllergy.createMany({
           data: input.allergies.map((allergy) => ({
             patientId: patient.id,
+            // Recorded at the registering hospital (§2.7).
+            hospitalId: input.hospitalId,
+            hospitalMedicalRecordId: record.id,
             allergen: allergy.allergen,
             severity: allergy.severity,
             reaction: allergy.reaction,
@@ -317,14 +328,6 @@ export class PatientRepository {
           })),
         });
       }
-
-      // DR-05 / §2.7: registration opens the patient's Hospital Medical
-      // Record at the registering doctor's hospital, in the same
-      // transaction — the record is what makes the chart reachable there.
-      const record = await tx.hospitalMedicalRecord.create({
-        data: { patientId: patient.id, hospitalId: input.hospitalId },
-        select: { id: true },
-      });
 
       // `role: 'primary'` — the clinician who registered the patient is
       // their primary care relationship until someone changes it. Stamped
