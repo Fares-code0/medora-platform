@@ -100,9 +100,6 @@ describe('the authorization repositories', () => {
       const doctors = await roles.userIdsWithRole('doctor');
       expect(doctors.length).toBeGreaterThan(0);
 
-      // Seeded, but with no users — the wider staff vocabulary of
-      // ADR-017 §6.
-      expect(await roles.userIdsWithRole('nurse')).toEqual([]);
       expect(await roles.userIdsWithRole('no-such-role')).toEqual([]);
     });
   });

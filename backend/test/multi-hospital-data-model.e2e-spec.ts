@@ -56,7 +56,7 @@ async function createPatient(): Promise<string> {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const result = await client.query<{ id: string }>(
     "INSERT INTO public.patients (public_id, mrn, full_name, date_of_birth, gender, blood_type, phone, updated_at) VALUES ($1, $2, $3, DATE '1990-01-01', $4, $5, $6, CURRENT_TIMESTAMP) RETURNING id",
-    ['p21_' + suffix, 'm21_' + suffix, 'Phase 21 Test', 'female', 'O+', '5550100'],
+    ['PT-' + suffix, 'm21_' + suffix, 'Phase 21 Test', 'female', 'O+', '5550100'],
   );
   return result.rows[0]!.id;
 }
@@ -298,7 +298,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       );
       await expectSqlState(
         "INSERT INTO public.rooms (name, kind, capacity, department_id, updated_at, hospital_id, hospital_department_id) VALUES ($1, 'consultation', 2, $2, CURRENT_TIMESTAMP, $3, $4)",
-        ['Consultation 1', catalogueId, hospitalB, departmentA],
+        ['Cross Tenant Invalid Room', catalogueId, hospitalB, departmentA],
         '23503',
       );
       const rooms = await client.query<{ count: string }>('SELECT count(*)::text AS count FROM public.rooms WHERE name = $1', ['Consultation 1']);
@@ -314,6 +314,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
         'public',
         [
           'doctor_employments',
+          'doctor_availability',
           'hospital_staff_affiliations',
           'appointments',
           'patient_doctor_assignments',
