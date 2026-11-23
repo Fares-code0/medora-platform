@@ -327,8 +327,8 @@ describe('role-permission edits (API §15.3) reach every member of the role', ()
   });
 });
 
-describe('a role change keeps its ADR-046 behaviour', () => {
-  it('the old access token is refused 401; the account signs in under the new role', async () => {
+describe('a role change: ADR-046 plus the approved G4 contract', () => {
+  it('the old access token is refused 401, the sessions are revoked; the account signs in under the new role', async () => {
     const admin = await adminToken('role-admin');
     const email = await seedAccount('role-subject');
     const token = await tokenFor(email);
@@ -341,9 +341,9 @@ describe('a role change keeps its ADR-046 behaviour', () => {
     expect(response.status).toBe(200);
 
     expect(await status(AI_SETTINGS, token)).toBe(401);
-    // ADR-046 §2: the role claim is refused; the session itself is not
-    // revoked (deactivation is what revokes). Unchanged by G4.
-    expect(await liveSessions(id)).toBe(1);
+    // ADR-046 §2 refuses the role claim; the approved G4 contract also
+    // revokes the sessions (database trigger, same transaction).
+    expect(await liveSessions(id)).toBe(0);
     // The database also bumped the version with the role change.
     expect((await account(email)).permissionVersion).toBeGreaterThan(permissionVersion);
 

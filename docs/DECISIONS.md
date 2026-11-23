@@ -4865,7 +4865,7 @@ session".
 The approved contract: permission changes apply on the **next request**; the affected users' caches
 are invalidated **after** persistence, and an invalidation failure **fails closed** (no request is
 authorized from a possibly stale cache); ordinary permission changes do **not** revoke sessions;
-role changes keep ADR-046's behaviour.
+role changes **revoke existing sessions and reject old access tokens**.
 
 ### Decision
 
@@ -4901,9 +4901,13 @@ role changes keep ADR-046's behaviour.
    *read* is a miss, answered from PostgreSQL.
 6. **No session is revoked and no 401 is answered for an ordinary permission change.** The same
    token is authorized against the new set on its next request.
-7. **Role changes are unchanged** (ADR-046): the old token is refused 401 through the role check;
-   sessions are revoked only by deactivation. The trigger also bumps the version on a role change,
-   which changes nothing observable because the role check refuses first.
+7. **Role changes revoke sessions** (approved G4 contract, 2026-11-23; extends ADR-046): the old token
+   is refused 401 through ADR-046's role check, **and** the database trigger
+   `users_role_change_revokes_sessions` (migration `20261123150000_role_change_revokes_sessions`)
+   revokes every live session of the account in the same transaction as the `users.role_id` change,
+   from any write path. The account signs in again under its new role; there is no refreshing into
+   it. This supersedes ADR-046 §2's "the session is not revoked". The version trigger also bumps on a
+   role change, which changes nothing observable because the role check refuses first.
 
 ### Consequences
 
@@ -4922,7 +4926,8 @@ role changes keep ADR-046's behaviour.
 - Tests: `test/permission-version.e2e-spec.ts` (every write path bumps the right users),
   `test/permission-changes.e2e-spec.ts` (real Postgres and Redis: grant and revoke on the next request,
   matrix edit reaching every member, stale and planted cache entries ignored, failing invalidation,
-  sessions not revoked, role change still 401), `access-token.guard.spec.ts`,
+  sessions not revoked by permission changes; a role change is 401 and revokes the sessions),
+  `test/role-change-sessions.e2e-spec.ts` (the trigger), `test/account-security.e2e-spec.ts` (F3 block), `access-token.guard.spec.ts`,
   `permission-resolver.service.spec.ts`, `redis-permission-cache.spec.ts`.
 
 ### Alternatives rejected

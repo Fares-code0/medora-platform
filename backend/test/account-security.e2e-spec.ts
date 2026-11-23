@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+
+import { Secret, TOTP } from 'otpauth';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -43,6 +45,7 @@ const REGISTER = '/api/v1/auth/register';
 const LOGIN = '/api/v1/auth/login';
 const REFRESH = '/api/v1/auth/refresh';
 const SESSION = '/api/v1/auth/session';
+const OTP_VERIFY = '/api/v1/auth/otp/verify';
 const SESSIONS = '/api/v1/me/sessions';
 const DEVICES = '/api/v1/me/devices';
 const HISTORY = '/api/v1/me/login-history';
@@ -499,7 +502,7 @@ describe('GET /me/sessions (M8.3)', () => {
 });
 
 describe('DELETE /me/sessions/{id} (M8.3)', () => {
-  it("revokes the session so its refresh answers 401", async () => {
+  it('revokes the session so its refresh answers 401', async () => {
     const email = await seedAccount('revoke');
     const doomed = await signIn(email);
     const keeper = await signIn(email);
@@ -908,14 +911,19 @@ describe('the activity feed records what the security routes did (M8.6)', () => 
 });
 
 /**
- * Audit F3 (#23), ADR-046 — a role changed after an access token was minted.
+ * Audit F3 (#23), ADR-046 — a role changed after an access token was minted,
+ * with the approved G4 contract (2026-11-23): a role change revokes every live
+ * session and rejects old access tokens.
  *
  * The token's role and permission claims are fixed at issue (API §1.11). The
- * access-token guard now also requires the account to still hold the token's
- * role, so a stale-role token is a 401 (refresh once, ADR-013) and the
- * refresh mints a token for the current role. Driven over HTTP with real
- * tokens; the role is changed in PostgreSQL exactly as
- * `PlatformUserRepository.update` does (`users.role_id`).
+ * access-token guard requires the account to still hold the token's role, so
+ * a stale-role token is a 401; and the database trigger
+ * `users_role_change_revokes_sessions` revokes the sessions in the same
+ * transaction as the change, so the refresh is refused too and the account
+ * signs in again under its new role. Driven over HTTP with real tokens; the
+ * role is changed in PostgreSQL exactly as `PlatformUserRepository.update`
+ * does (`users.role_id`). Accounts that become administrators enable 2FA
+ * first, because an administrator's sign-in goes through the OTP challenge.
  */
 describe('a role change after token issuance (F3, ADR-046)', () => {
   const USERS = '/api/v1/admin/users';
@@ -946,8 +954,60 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       .set('Authorization', 'Bearer ' + accessToken);
   }
 
-  it('refuses the stale token and lets one refresh mint the current role (promotion)', async () => {
-    const signedIn = await seedAndSignIn('f3-promoted');
+  function currentCode(secret: string): string {
+    return new TOTP({
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: Secret.fromBase32(secret),
+    }).generate();
+  }
+
+  /** Signs in through the OTP challenge (2FA enabled). */
+  async function signInWithCode(email: string, secret: string): Promise<SignedIn> {
+    const login = await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
+    const verified = await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: currentCode(secret) });
+    expect(verified.status).toBe(200);
+    return {
+      email,
+      accessToken: dataOf<SessionPayload>(verified).accessToken,
+      refreshToken: refreshTokenOf(verified),
+    };
+  }
+
+  /**
+   * A doctor account with 2FA enabled, signed in. Enabling 2FA ends the
+   * account's sessions, so the sign-in comes after it.
+   */
+  async function seedWithTwoFactor(local: string): Promise<SignedIn & { secret: string }> {
+    const first = await seedAndSignIn(local);
+    const setup = await request(harness.server)
+      .post('/api/v1/me/2fa/setup')
+      .set('Authorization', 'Bearer ' + first.accessToken)
+      .send({ password: PASSWORD });
+    const secret = dataOf<{ secret: string }>(setup).secret;
+    const enabled = await request(harness.server)
+      .post('/api/v1/me/2fa/enable')
+      .set('Authorization', 'Bearer ' + first.accessToken)
+      .send({ code: currentCode(secret) });
+    expect(enabled.status).toBeLessThan(300);
+    return { ...(await signInWithCode(first.email, secret)), secret };
+  }
+
+  async function liveSessions(email: string): Promise<number> {
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    });
+    return harness.prisma.db.session.count({ where: { userId: user.id, revokedAt: null } });
+  }
+
+  it('refuses the stale token and the revoked refresh; a fresh sign-in carries the current role (promotion)', async () => {
+    const signedIn = await seedWithTwoFactor('f3-promoted');
     expect((await session(signedIn.accessToken)).status).toBe(200);
 
     await setRole(signedIn.email, 'admin');
@@ -957,11 +1017,12 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     const stale = await session(signedIn.accessToken);
     expect(stale.status).toBe(401);
 
-    const refreshed = await refresh(signedIn.refreshToken);
-    expect(refreshed.status).toBe(200);
-    expect(refreshed.role).toBe('admin');
+    // G4 contract: the role change revoked the session, so there is no
+    // refreshing into the new role.
+    expect((await refresh(signedIn.refreshToken)).status).toBe(401);
 
-    const current = await session(refreshed.accessToken);
+    const fresh = await signInWithCode(signedIn.email, signedIn.secret);
+    const current = await session(fresh.accessToken);
     expect(current.status).toBe(200);
     expect(dataOf<SessionUser>(current).role).toBe('admin');
     // The context is the admin's (unmapped), never a doctor employment.
@@ -969,10 +1030,9 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
   });
 
   it('withdraws an administrative capability as soon as the role is downgraded', async () => {
-    const signedIn = await seedAndSignIn('f3-demoted');
+    const signedIn = await seedWithTwoFactor('f3-demoted');
     await setRole(signedIn.email, 'admin');
-    const asAdmin = await refresh(signedIn.refreshToken);
-    expect(asAdmin.role).toBe('admin');
+    const asAdmin = await signInWithCode(signedIn.email, signedIn.secret);
 
     const before = await request(harness.server)
       .get(USERS)
@@ -987,10 +1047,12 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       .get(USERS)
       .set('Authorization', 'Bearer ' + asAdmin.accessToken);
     expect(after.status).toBe(401);
+    // And the administrator session ended with the downgrade.
+    expect((await refresh(asAdmin.refreshToken)).status).toBe(401);
   });
 
   it('keeps the session payload consistent: role and hospital context describe one role', async () => {
-    const signedIn = await seedAndSignIn('f3-consistent');
+    const signedIn = await seedWithTwoFactor('f3-consistent');
     const user = await harness.prisma.db.user.findUniqueOrThrow({
       where: { email: signedIn.email },
       select: { id: true },
@@ -1015,9 +1077,10 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       // with a doctor's activeHospital) must be impossible.
       await setRole(signedIn.email, 'admin');
       expect((await session(signedIn.accessToken)).status).toBe(401);
+      expect((await refresh(signedIn.refreshToken)).status).toBe(401);
 
-      const refreshed = await refresh(signedIn.refreshToken);
-      const body = dataOf<SessionUser>(await session(refreshed.accessToken));
+      const fresh = await signInWithCode(signedIn.email, signedIn.secret);
+      const body = dataOf<SessionUser>(await session(fresh.accessToken));
       expect(body.role).toBe('admin');
       expect(body.activeHospital).toBeNull();
       expect(body.adminScope).toBeNull();
@@ -1027,49 +1090,43 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     }
   });
 
-  it('refuses every older session token and accepts the tokens each session refreshes to', async () => {
-    const email = await seedAccount('f3-concurrent');
-    const older = await signIn(email);
-    const newer = await signIn(email);
-    expect((await session(older.accessToken)).status).toBe(200);
-    expect((await session(newer.accessToken)).status).toBe(200);
+  it('refuses every older session token and revokes every session, in both directions', async () => {
+    const first = await seedWithTwoFactor('f3-concurrent');
+    const second = await signInWithCode(first.email, first.secret);
+    expect((await session(first.accessToken)).status).toBe(200);
+    expect((await session(second.accessToken)).status).toBe(200);
 
-    await setRole(email, 'admin');
+    await setRole(first.email, 'admin');
 
-    expect((await session(older.accessToken)).status).toBe(401);
-    expect((await session(newer.accessToken)).status).toBe(401);
-
-    // Each session refreshes independently and both land on the new role.
-    // (A fresh password sign-in as an administrator goes through the MFA
-    // challenge instead — unchanged, and not what this case is about.)
-    const olderRefreshed = await refresh(older.refreshToken);
-    const newerRefreshed = await refresh(newer.refreshToken);
-    for (const token of [olderRefreshed.accessToken, newerRefreshed.accessToken]) {
-      const response = await session(token);
-      expect(response.status).toBe(200);
-      expect(dataOf<SessionUser>(response).role).toBe('admin');
+    for (const signedIn of [first, second]) {
+      expect((await session(signedIn.accessToken)).status).toBe(401);
+      expect((await refresh(signedIn.refreshToken)).status).toBe(401);
     }
+    expect(await liveSessions(first.email)).toBe(0);
 
-    // Demoted back: the tokens minted for the admin role stop in turn.
-    await setRole(email, 'doctor');
-    expect((await session(olderRefreshed.accessToken)).status).toBe(401);
-    expect((await session(newerRefreshed.accessToken)).status).toBe(401);
+    // Signed in again as administrator, twice; demoted back: the admin
+    // tokens and their sessions end in turn.
+    const adminA = await signInWithCode(first.email, first.secret);
+    const adminB = await signInWithCode(first.email, first.secret);
+    await setRole(first.email, 'doctor');
+    for (const signedIn of [adminA, adminB]) {
+      expect((await session(signedIn.accessToken)).status).toBe(401);
+      expect((await refresh(signedIn.refreshToken)).status).toBe(401);
+    }
+    expect(await liveSessions(first.email)).toBe(0);
   });
 
-  it('does not revoke the session: the refresh family survives a role change', async () => {
+  it('revokes the session: the refresh family ends with a role change (G4 contract)', async () => {
     const signedIn = await seedAndSignIn('f3-family');
+    expect(await liveSessions(signedIn.email)).toBe(1);
+
     await setRole(signedIn.email, 'admin');
 
-    // Only the access token is refused; the session row stays live, so the
-    // change costs one refresh, not a sign-out (deactivation still revokes).
-    const user = await harness.prisma.db.user.findUniqueOrThrow({
-      where: { email: signedIn.email },
-      select: { id: true },
-    });
-    await expect(
-      harness.prisma.db.session.count({ where: { userId: user.id, revokedAt: null } }),
-    ).resolves.toBeGreaterThan(0);
-    expect((await refresh(signedIn.refreshToken)).status).toBe(200);
+    // Approved G4 contract: a role change revokes existing sessions, not only
+    // the access token. Previously (ADR-046 alone) the session stayed live and
+    // the change cost one refresh.
+    expect(await liveSessions(signedIn.email)).toBe(0);
+    expect((await refresh(signedIn.refreshToken)).status).toBe(401);
   });
 
   it('still lets a stale-role token log out (@AllowEndedSession keeps identity only)', async () => {

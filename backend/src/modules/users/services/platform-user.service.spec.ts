@@ -72,6 +72,7 @@ function repositoryFor(options: {
       ),
     ),
     countActiveWithRole: vi.fn().mockResolvedValue(options.activeWithRole ?? 3),
+    countLiveSessions: vi.fn().mockResolvedValue(2),
     update,
     revokeSessions,
     list: vi.fn(),
@@ -89,12 +90,7 @@ function serviceFor(stub: RepoStub): PlatformUserService {
   // in this file touches the feed, so the double only has to exist.
   const accounts = { activityFeed: vi.fn().mockResolvedValue(undefined) };
 
-  return new PlatformUserService(
-    stub.repository,
-    accounts as never,
-    audit,
-    activity,
-  );
+  return new PlatformUserService(stub.repository, accounts as never, audit, activity);
 }
 
 async function statusOf(promise: Promise<unknown>): Promise<number> {
@@ -183,12 +179,27 @@ describe('PlatformUserService.update — the four refusals', () => {
     expect(stub.revokeSessions).toHaveBeenCalledWith(TARGET_ID);
   });
 
-  it('leaves sessions alone when only the role changes', async () => {
+  it('leaves sessions alone when the role is written unchanged', async () => {
     const stub = repositoryFor({ targetRole: 'nurse' });
     const service = serviceFor(stub);
 
     await service.update(ACTOR, 'usr_target', { role: 'nurse' });
 
+    expect(stub.revokeSessions).not.toHaveBeenCalled();
+    expect(stub.repository.countLiveSessions).not.toHaveBeenCalled();
+  });
+
+  it('counts the sessions a role change ends (the database trigger revokes them)', async () => {
+    const stub = repositoryFor({ targetRole: 'doctor' });
+    const service = serviceFor(stub);
+
+    await service.update(ACTOR, 'usr_target', { role: 'nurse' });
+
+    // Approved G4 contract: a role change revokes every live session. The
+    // revocation itself is the `users_role_change_revokes_sessions` trigger,
+    // in the same transaction as the update; the service counts beforehand
+    // so the audit row can say how many ended.
+    expect(stub.repository.countLiveSessions).toHaveBeenCalledWith(TARGET_ID);
     expect(stub.revokeSessions).not.toHaveBeenCalled();
   });
 

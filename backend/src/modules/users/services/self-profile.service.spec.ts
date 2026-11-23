@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActivityRecorder } from '../../../shared/activity';
 import type { AuditDispatcher } from '../../../shared/audit';
 import type { PrismaService } from '../../../shared/database';
-import { DOWNLOAD_TTL_SECONDS, type FileStoragePort, ProfilePhotoUrls } from '../../../shared/files';
+import {
+  DOWNLOAD_TTL_SECONDS,
+  type FileStoragePort,
+  ProfilePhotoUrls,
+} from '../../../shared/files';
 import type { OutboxPort } from '../../../shared/outbox';
 import type {
   SelfProfileRepository,
@@ -75,11 +79,13 @@ function serviceFor(options: {
   readonly scanResult?: string | null;
   readonly signingFails?: boolean;
 }) {
-  const findMany = vi.fn().mockResolvedValue(
-    options.scanResult === undefined
-      ? []
-      : [{ id: FILE_ID, storageKey: KEY, scanResult: options.scanResult }],
-  );
+  const findMany = vi
+    .fn()
+    .mockResolvedValue(
+      options.scanResult === undefined
+        ? []
+        : [{ id: FILE_ID, storageKey: KEY, scanResult: options.scanResult }],
+    );
   const signedDownloadUrl = vi.fn(() =>
     options.signingFails === true
       ? Promise.reject(new Error('store unreachable'))

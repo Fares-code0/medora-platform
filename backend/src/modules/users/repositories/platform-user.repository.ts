@@ -164,6 +164,11 @@ export class PlatformUserRepository {
     return result.count;
   }
 
+  /** Live (unrevoked) sessions of an account. */
+  countLiveSessions(userId: string): Promise<number> {
+    return this.prisma.db.session.count({ where: { userId, revokedAt: null } });
+  }
+
   /** How many ACTIVE accounts hold a given role — the last-admin guard. */
   countActiveWithRole(roleCode: string): Promise<number> {
     return this.prisma.db.user.count({

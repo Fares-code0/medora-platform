@@ -73,7 +73,12 @@ export const updateDoctorProfileSchema = z.object({
   certifications: boundedList(8, 160).optional(),
   skills: boundedList(12, 60).optional(),
   contactEmail: z.string().trim().email('Enter a valid email address').max(160).optional(),
-  contactPhone: z.string().trim().regex(phoneRegex, 'Enter a valid phone number').max(30).optional(),
+  contactPhone: z
+    .string()
+    .trim()
+    .regex(phoneRegex, 'Enter a valid phone number')
+    .max(30)
+    .optional(),
   officeLocation: z.string().trim().max(80).nullable().optional(),
   officeHours: z.string().trim().max(80).nullable().optional(),
   linkedinUrl: optionalUrl,

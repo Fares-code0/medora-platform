@@ -179,15 +179,23 @@ export class PlatformUserService {
 
     await this.assertAdministrationSurvives(target.role.code, input.role, input.active);
 
+    // A role change revokes every live session (approved G4 contract; the
+    // database trigger `users_role_change_revokes_sessions` does it in the
+    // same transaction as the update, from any write path). Counted first so
+    // the audit row records how many sessions the change ended.
+    const roleChanging = input.role !== undefined && input.role !== target.role.code;
+    const endedByRoleChange = roleChanging ? await this.users.countLiveSessions(target.id) : 0;
+
     const updated = await this.users.update(target.id, actor.id, { roleId, status });
 
     // Deactivation ends the sessions that are already open. Without this
     // the lever does nothing for the case it is pulled in — an account
     // being used right now — until the access token expires.
     const revoked =
-      status !== undefined && status !== UserStatus.ACTIVE
+      endedByRoleChange +
+      (status !== undefined && status !== UserStatus.ACTIVE
         ? await this.users.revokeSessions(target.id)
-        : 0;
+        : 0);
 
     await this.audit.record({
       action: 'user.administer',
