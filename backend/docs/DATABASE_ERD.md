@@ -1519,9 +1519,11 @@ erDiagram
     DateTime deletedAt
     String createdBy
     String updatedBy
+    String hospitalId FK
   }
   %% Prisma index: QueueEntry @@index([enqueuedAt])
   %% Prisma index: QueueEntry @@index([deletedAt])
+  %% Prisma index: QueueEntry @@index([hospitalId, enqueuedAt], map: "queue_entries_hospital_enqueued_idx")
   RecordAllergy {
     String id PK
     String recordId FK
@@ -1974,9 +1976,11 @@ erDiagram
     DateTime deletedAt
     String createdBy
     String updatedBy
+    String hospitalId FK
   }
   %% Prisma index: WaitingRoomEntry @@index([status, checkedInAt])
   %% Prisma index: WaitingRoomEntry @@index([deletedAt])
+  %% Prisma index: WaitingRoomEntry @@index([hospitalId, status, checkedInAt], map: "waiting_room_entries_hospital_status_idx")
   User o|--o{ AdminInvitation : "inviter"
   Role ||--o{ AdminInvitation : "role"
   User o|--o{ AdminInvitation : "user"
@@ -2170,6 +2174,7 @@ erDiagram
   Prescription ||--o{ PrescriptionTimelineEvent : "prescription"
   DoctorEmployment ||--o{ PublishedSlot : "employment"
   Hospital ||--o{ PublishedSlot : "hospital"
+  Hospital o|--o{ QueueEntry : "hospital"
   Patient o|--o{ QueueEntry : "patient"
   Room o|--o{ QueueEntry : "room"
   MedicalRecord ||--o{ RecordAllergy : "record"
@@ -2227,5 +2232,6 @@ erDiagram
   User ||--o| UserSetting : "user"
   User ||--o{ VerificationToken : "user"
   Appointment o|--o{ WaitingRoomEntry : "appointment"
+  Hospital o|--o{ WaitingRoomEntry : "hospital"
   Patient o|--o{ WaitingRoomEntry : "patient"
 ```
