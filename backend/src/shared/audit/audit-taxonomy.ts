@@ -73,6 +73,10 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   platform: 'admin_activity',
   // §2.11–§2.12: reaching past a hospital boundary, or deciding who can.
   exceptional_access: 'security',
+  // §2.13: reading the ledger is itself recorded.
+  audit_ledger: 'admin_activity',
+  // §2.13: a read of clinical content or clear identity.
+  phi: 'user_action',
   information_request: 'user_action',
 
   account: 'user_action',

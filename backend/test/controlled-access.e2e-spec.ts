@@ -349,3 +349,28 @@ describe('cross-hospital information requests', () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe('mandatory PHI read audit (§2.13)', () => {
+  it('records one phi.read row per successful PHI read, at the reader’s hospital; none for non-PHI reads', async () => {
+    const reader = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: testEmail('ca-doctor-a') },
+      select: { id: true },
+    });
+    const count = () =>
+      harness.prisma.auditEvent.count({ where: { eventType: 'phi.read', actorId: reader.id } });
+
+    const before = await count();
+    // `patients.view` is masked identity, not PHI: no row.
+    expect((await request(harness.server).get(`/api/v1/patients/${patient.id}`).set(as(doctorA))).status).toBe(200);
+    await expect(count()).resolves.toBe(before);
+
+    // `records.view` is PHI: one row, attributed to hospital A.
+    expect((await request(harness.server).get('/api/v1/medical-records').set(as(doctorA))).status).toBe(200);
+    await expect(count()).resolves.toBe(before + 1);
+    const row = await harness.prisma.auditEvent.findFirstOrThrow({
+      where: { eventType: 'phi.read', actorId: reader.id },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect(row.hospitalId).toBe(hospitalA);
+  });
+});

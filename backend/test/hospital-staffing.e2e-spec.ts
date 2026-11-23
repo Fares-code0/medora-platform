@@ -385,6 +385,56 @@ describe('administrative tiering (§2.2, §2.3, OD-07)', () => {
     expect(selfGrant.status).toBe(403);
   });
 
+  it('scopes the audit ledger to a Hospital Admin’s hospital, and audits every ledger read', async () => {
+    const platform = await seedAdmin('ledgerplatform', { platform: true });
+    const a = await hospital('LedgerA');
+    const b = await hospital('LedgerB');
+    const hospitalAdmin = await seedAdmin('ledgerhadmin', { hospitalId: a });
+    const own = dataOf<{ id: string }>(await hire(hospitalAdmin.token, a, (await seedDoctor('ledgerdoca')).doctorId)).id;
+    const other = dataOf<{ id: string }>(await hire(platform.token, b, (await seedDoctor('ledgerdocb')).doctorId)).id;
+
+    const listed = await request(harness.server)
+      .get('/api/v1/audit-events?pageSize=100&q=employment')
+      .set(as(hospitalAdmin.token));
+    expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+    const targets = dataOf<{ items: { target: string | null }[] }>(listed).items.map((item) => item.target);
+    expect(targets).toContain(`doctor_employment:${own}`);
+    expect(targets).not.toContain(`doctor_employment:${other}`);
+
+    // Another hospital's event is not found; the platform sees both.
+    const otherEvent = await harness.prisma.auditEvent.findFirstOrThrow({
+      where: { target: `doctor_employment:${other}` },
+      select: { id: true },
+    });
+    expect(
+      (await request(harness.server).get(`/api/v1/audit-events/${otherEvent.id}`).set(as(hospitalAdmin.token)))
+        .status,
+    ).toBe(404);
+    expect(
+      (await request(harness.server).get(`/api/v1/audit-events/${otherEvent.id}`).set(as(platform.token))).status,
+    ).toBe(200);
+    // Export stays platform-tier.
+    expect(
+      (await request(harness.server).post('/api/v1/audit-events/export').set(as(hospitalAdmin.token))).status,
+    ).toBe(403);
+
+    // The Hospital Admin's list read is recorded at its hospital (the refused
+    // detail read disclosed nothing and is not a read); the platform's
+    // detail read is recorded against the event it opened.
+    const platformUser = await harness.prisma.user.findUniqueOrThrow({
+      where: { publicId: platform.publicId },
+      select: { id: true },
+    });
+    await expect(
+      harness.prisma.auditEvent.count({ where: { eventType: 'audit_ledger.read', hospitalId: a } }),
+    ).resolves.toBe(1);
+    await expect(
+      harness.prisma.auditEvent.count({
+        where: { eventType: 'audit_ledger.read', actorId: platformUser.id, target: `audit_ledger:${otherEvent.id}` },
+      }),
+    ).resolves.toBe(1);
+  });
+
   it('audits each change with actor, affected user, hospital and previous/new values', async () => {
     const admin = await seedAdmin('auditor', { platform: true });
     const h = await hospital('Audit');
