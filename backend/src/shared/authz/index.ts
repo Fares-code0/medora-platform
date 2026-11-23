@@ -51,6 +51,7 @@ export {
   type EffectivePermissions,
   type PatientAssignmentRepository,
   type PatientSelfRepository,
+  type CachedPermissions,
   type PermissionCache,
   type PermissionOverrides,
   type Principal,

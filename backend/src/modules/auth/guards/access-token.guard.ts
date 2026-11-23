@@ -4,8 +4,13 @@ import type { Request } from 'express';
 
 import { AppException } from '../../../common/errors/app.exception';
 import { ALLOW_ENDED_SESSION_KEY } from '../../../common/auth/allow-ended-session.decorator';
-import { AUTHENTICATED_USER, type RequestWithUser } from '../../../common/auth/authenticated-user';
+import {
+  AUTHENTICATED_USER,
+  type AuthenticatedUser,
+  type RequestWithUser,
+} from '../../../common/auth/authenticated-user';
 import { IS_PUBLIC_KEY } from '../../../common/auth/public.decorator';
+import { PermissionResolver } from '../../../shared/authz';
 import { AccessTokenService } from '../services/access-token.service';
 import { SessionService } from '../services/session.service';
 
@@ -40,6 +45,21 @@ import { SessionService } from '../services/session.service';
  * exist and belong to its subject (`SessionService.belongsTo`). The
  * marker's own comment says why that grants nothing.
  *
+ * ## Permissions apply on the next request (G4, ADR-047)
+ *
+ * The same read returns `users.permission_version`, which the database
+ * bumps in the same transaction as every permission change. It is attached
+ * to the principal, so `PermissionResolver` uses a cached set only at that
+ * exact version. And when the token's `pv` claim differs from it (or is
+ * absent), the token's `permissions` claim is stale: it is replaced, here,
+ * by a fresh resolution, so nothing downstream that reads
+ * `user.permissions` can be granted anything by an old claim. A failure to
+ * re-resolve propagates and the request is refused — fail closed.
+ *
+ * None of this revokes a session or answers 401: an ordinary permission
+ * change takes effect on the same token. A *role* change is still refused
+ * 401 through the role check above (ADR-046; its session is not revoked).
+ *
  * ## 401 and not 403
  *
  * ADR-013: 401 is reserved for authentication and token problems, and
@@ -53,6 +73,7 @@ export class AccessTokenGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly accessTokens: AccessTokenService,
     private readonly sessions: SessionService,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -93,15 +114,47 @@ export class AccessTokenGuard implements CanActivate {
     // token's role (F3, ADR-046): a role changed after the token was minted
     // is refused here, and the client's one refresh mints a token for the
     // current role. Logout keeps working for a demoted account.
-    const valid =
-      allowEnded === true
-        ? await this.sessions.belongsTo(user.sessionId, user.id)
-        : await this.sessions.isActive(user.sessionId, user.id, user.role);
-    if (!valid) throw AppException.unauthorized('unauthorized', 'Session expired');
+    if (allowEnded === true) {
+      if (!(await this.sessions.belongsTo(user.sessionId, user.id))) {
+        throw AppException.unauthorized('unauthorized', 'Session expired');
+      }
+      // No version was read, so the principal carries none: the resolver
+      // then never serves this request from cache (G4). The permission
+      // claim is dropped for the same reason — nothing on an ended session
+      // is authorized by a claim that cannot be checked.
+      request[AUTHENTICATED_USER] = withoutVersion(user);
+      return true;
+    }
 
-    request[AUTHENTICATED_USER] = user;
+    // One statement: the session check, the role check and the account's
+    // authoritative permission version (G4, ADR-047).
+    const version = await this.sessions.activePermissionVersion(user.sessionId, user.id, user.role);
+    if (version === null) throw AppException.unauthorized('unauthorized', 'Session expired');
+
+    // A token whose `pv` matches was resolved at this version, so its claim
+    // is current. Otherwise it is stale (or predates the claim) and is
+    // replaced; a resolution failure throws and the request is refused.
+    const permissions =
+      user.permissionVersion === version
+        ? user.permissions
+        : [
+            ...(await this.permissions.permissionsFor({
+              userId: user.id,
+              roleCode: user.role,
+              sessionId: user.sessionId,
+              permissionVersion: version,
+            })),
+          ].sort();
+
+    request[AUTHENTICATED_USER] = { ...user, permissions, permissionVersion: version };
     return true;
   }
+}
+
+/** The principal for a route that read no version: no version, no claim. */
+function withoutVersion(user: AuthenticatedUser): AuthenticatedUser {
+  const { permissionVersion: _ignored, ...rest } = user;
+  return { ...rest, permissions: [] };
 }
 
 /**

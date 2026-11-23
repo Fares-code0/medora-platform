@@ -12,8 +12,9 @@ import {
   type RoleRepository,
 } from './authz.types';
 
-function principal(roleCode: PlatformRole, userId = 'u-1'): Principal {
-  return { userId, roleCode };
+/** Version 1 by default, so the caching cases exercise the cache (G4). */
+function principal(roleCode: PlatformRole, userId = 'u-1', permissionVersion = 1): Principal {
+  return { userId, roleCode, permissionVersion };
 }
 
 /** A repository whose matrix and overrides the test controls. */
@@ -242,6 +243,78 @@ describe('PermissionResolver — caching', () => {
     await resolver.forgetAll();
 
     expect(cache.size).toBe(0);
+  });
+});
+
+describe('PermissionResolver — the permission version (G4, ADR-047)', () => {
+  let roles: StubRoleRepository;
+  let cache: InMemoryPermissionCache;
+  let resolver: PermissionResolver;
+
+  beforeEach(() => {
+    roles = new StubRoleRepository();
+    cache = new InMemoryPermissionCache();
+    resolver = new PermissionResolver(roles, cache);
+  });
+
+  it('stamps a resolved set with the version the request read', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 7));
+
+    expect((await cache.get('u-1'))?.version).toBe(7);
+  });
+
+  it('never uses an entry stamped with an older version, even without invalidation', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 1));
+    // The change commits and bumps the version; no forget() reaches the cache.
+    roles.overrides.set('u-1', { granted: [], revoked: ['prescriptions.create'] });
+
+    expect(await resolver.can(principal('doctor', 'u-1', 1), 'prescriptions.create')).toBe(true);
+    expect(await resolver.can(principal('doctor', 'u-1', 2), 'prescriptions.create')).toBe(false);
+    expect((await cache.get('u-1'))?.version).toBe(2);
+  });
+
+  it('a grant applies at the next version without invalidation', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 1));
+    roles.overrides.set('u-1', { granted: ['logs.view'], revoked: [] });
+
+    expect(await resolver.can(principal('doctor', 'u-1', 2), 'logs.view')).toBe(true);
+  });
+
+  it('a planted entry under a different version grants nothing', async () => {
+    await cache.set('u-1', { version: 4, permissions: ['roles.manage', 'logs.view'] });
+
+    expect(await resolver.can(principal('doctor', 'u-1', 5), 'logs.view')).toBe(false);
+  });
+
+  it('a principal with no version never reads the cache', async () => {
+    await cache.set('u-1', { version: 1, permissions: ['logs.view'] });
+    const get = vi.spyOn(cache, 'get');
+
+    const held = await resolver.permissionsFor({ userId: 'u-1', roleCode: 'doctor' });
+
+    expect(held).toEqual(SEEDED_MATRIX.doctor);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('a failed invalidation fails closed: the old entry is not used at the new version', async () => {
+    const failingForget = new InMemoryPermissionCache();
+    failingForget.forget = () => Promise.reject(new Error('redis down'));
+    const guarded = new PermissionResolver(roles, failingForget);
+
+    await guarded.permissionsFor(principal('doctor', 'u-1', 1));
+    roles.overrides.set('u-1', { granted: [], revoked: ['patients.view'] });
+    await expect(guarded.forget('u-1')).resolves.toBeUndefined();
+
+    expect(await guarded.can(principal('doctor', 'u-1', 2), 'patients.view')).toBe(false);
+  });
+
+  it('a failed re-resolution on a version mismatch is refused, not served from cache', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 1));
+    roles.overridesError = new Error('database down');
+
+    await expect(resolver.can(principal('doctor', 'u-1', 2), 'patients.view')).rejects.toThrow(
+      'database down',
+    );
   });
 });
 

@@ -22,15 +22,24 @@ import { PolicyService } from '../../../config';
  * quotes the public id) and a route that queries by user (which needs
  * the uuid) both work from the token alone.
  *
- * ## The claims are trusted; the session is not (PRE-01)
+ * ## The claims are checked; the session is not trusted (PRE-01)
  *
  * `verify` checks the signature and the claim shapes, and nothing else.
- * The role and permission claims are trusted for the token's life (API
- * §1.11). Whether the *session* behind `sid` is still live is a
- * separate question that `AccessTokenGuard` asks of PostgreSQL on every
- * protected request (`SessionService.isActive`; owner decisions I4,
- * O-13). Before PRE-01 nothing asked it, and a logged-out session's
- * access token stayed valid until it expired — up to fifteen minutes.
+ * Whether the *session* behind `sid` is still live is a separate question
+ * that `AccessTokenGuard` asks of PostgreSQL on every protected request
+ * (`SessionService.activePermissionVersion`; owner decisions I4, O-13).
+ * The same read checks the `role` claim (ADR-046) and returns the
+ * account's permission version, against which the `pv` claim is compared:
+ * a mismatch means the `permissions` claim is stale and the guard replaces
+ * it with a fresh resolution (G4, ADR-047). So neither claim is trusted
+ * past the change that made it stale.
+ *
+ * ## `pv`
+ *
+ * `users.permission_version` as read *before* the permission claim was
+ * resolved, so the claim is at least that new. Optional on the way in: a
+ * token minted before the claim existed verifies, and the guard treats it
+ * as stale (a re-resolution, not a 401).
  */
 export interface AccessTokenClaims {
   readonly sub: string;
@@ -38,6 +47,8 @@ export interface AccessTokenClaims {
   readonly role: string;
   readonly permissions: readonly string[];
   readonly sid: string;
+  /** `users.permission_version` the `permissions` claim was resolved at (G4). */
+  readonly pv?: number;
 }
 
 export interface IssuedAccessToken {
@@ -62,6 +73,7 @@ export class AccessTokenService {
       role: user.role,
       permissions: user.permissions,
       sid: user.sessionId,
+      ...(user.permissionVersion === undefined ? {} : { pv: user.permissionVersion }),
     };
 
     return {
@@ -115,11 +127,19 @@ function toPrincipal(claims: unknown): AuthenticatedUser | null {
     return null;
   }
 
+  // A `pv` that is not a non-negative integer is dropped rather than
+  // refused: the guard treats an absent version as stale and re-resolves,
+  // which is the safe reading of a claim it cannot compare.
+  const pv = record['pv'];
+  const permissionVersion =
+    typeof pv === 'number' && Number.isSafeInteger(pv) && pv >= 0 ? pv : undefined;
+
   return {
     id: sub,
     publicId: pid,
     role,
     permissions: permissions as string[],
     sessionId: sid,
+    ...(permissionVersion === undefined ? {} : { permissionVersion }),
   };
 }

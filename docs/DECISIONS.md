@@ -69,13 +69,16 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 | [ADR-044](#adr-044--discarding-an-unsigned-prescription-draft-is-a-soft-delete) | Discarding an Unsigned Prescription Draft Is a Soft Delete | **Accepted** (BR-DEC-002) |
 | [ADR-045](#adr-045--refresh-rotation-is-idempotent-for-30-seconds) | Refresh Rotation Is Idempotent for 30 Seconds | **Accepted** — owner decision, 2026-11-21 (amends ADR-026) |
 | [ADR-046](#adr-046--an-access-token-is-refused-once-its-role-claim-is-stale) | An Access Token Is Refused Once Its Role Claim Is Stale | **Proposed** (Backend, 2026-11-23) — implemented with audit F3 (#23); accepted when its pull request is approved |
+| [ADR-047](#adr-047--permission-changes-apply-on-the-next-request) | Permission Changes Apply on the Next Request | **Proposed** (Backend, 2026-11-23) — G4; contract owner-approved; accepted when its pull request is approved; amends ADR-046 §5 |
 
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044, ADR-045 and ADR-046 are registered.
+ADR-044, ADR-045, ADR-046 and ADR-047 are registered.
 
-The next unallocated number is **ADR-047** (ADR-046 was allocated 2026-11-23 to the stale role
+The next unallocated number is **ADR-048** (ADR-047 was allocated 2026-11-23 to the permission
+version, G4, after the sweep below found it free on `main` and every remote branch; ADR-046 was
+allocated 2026-11-23 to the stale role
 claim, audit F3, after the sweep below found it free on every remote branch; ADR-045 was allocated
 2026-11-21 to the refresh grace window the same way; ADR-044 was allocated 2026-10-24 to BR-DEC-002
 the same way). Before using it, run the `CLAUDE.md` sweep **and**
@@ -4840,6 +4843,97 @@ the next refresh was open.
 | Revoke every session on a role change | Signs the user out for an administrative change. Rule 2 gets the same security property with one refresh |
 | Resolve context from the token role and report the token role | Keeps the 15-minute stale-privilege window open, which is the real defect |
 | Re-resolve permissions per request | Contradicts API §1.11. The guards and `useCan()` would then disagree within one token's life |
+
+## ADR-047 — Permission Changes Apply on the Next Request
+
+**Status:** Proposed (Backend, 2026-11-23) — the contract is owner-approved (G4); implemented on
+`claude/multi-hospital-implementation` · **Amends:** ADR-046 §5 (the "out of scope" paragraph) and
+API §1.11 ("permissions are static per session (changes apply at next issue)") · **Preserves:**
+ADR-013, ADR-046 §1–§4, PRE-01 (I4, O-13)
+
+### Context
+
+`BACKEND_ENFORCEMENT_INVENTORY.md` gap G4: a change to a role's permission set (`role_permissions`,
+API §15.3) or to a user's overrides (`user_permissions`, API §15.5) reached a signed-in user only at
+the next token issue, up to `JWT_ACCESS_TTL` (900 s). Two things carried the stale set: the access
+token's `permissions` claim, read directly by some handlers (`files`, `dashboard`, `/auth/session`),
+and the Redis permission cache behind `@Can`, whose invalidation runs after the change commits and
+was allowed to fail (logged, entry left to expire on its 5-minute TTL). ADR-046 closed the same
+window for a role change and named this one as needing "a permission version on the token or the
+session".
+
+The approved contract: permission changes apply on the **next request**; the affected users' caches
+are invalidated **after** persistence, and an invalidation failure **fails closed** (no request is
+authorized from a possibly stale cache); ordinary permission changes do **not** revoke sessions;
+role changes keep ADR-046's behaviour.
+
+### Decision
+
+1. **`users.permission_version`** (`INTEGER NOT NULL DEFAULT 1`) is the authoritative version of an
+   account's effective permissions. It is bumped **by database triggers**, in the same transaction
+   as the change (migration `20261123140000_permission_version`):
+   `user_permissions` insert/update/delete → that user; `role_permissions` insert/update/delete →
+   every user of the role; a `permissions.code` rename → every holder; a `users.role_id` change →
+   that user. Statement-level triggers with transition tables, so a matrix save (delete + re-insert
+   of ~100 rows) updates each affected user once. Updates that change no authorization column
+   (`granted_by`, a description) bump nobody. The version may never decrease.
+   *Why triggers and not the application:* no write path — the API, a seed, a script, a cascade —
+   can forget the bump, and it commits or rolls back with the change it versions.
+2. **The guard reads the version on every request, in the read it already does.**
+   `SessionService.activePermissionVersion` is `isActive` (session live, account `ACTIVE`, role claim
+   current — ADR-046) rooted at `users` and returning `permission_version`: one SQL statement, no
+   extra round trip. The version is attached to the principal.
+3. **A cached permission set is used only at exactly that version.** Cache entries are
+   `{v, p}`; `PermissionResolver.permissionsFor` re-resolves from PostgreSQL whenever `v` differs
+   (and re-stamps the entry), and does not read the cache at all for a principal with no version.
+   A fresh resolution is stamped with the version read *before* it, which is safe because the
+   version and the rows it versions commit together. Pre-G4 entries (bare arrays) parse as misses.
+4. **The token's permission claim is checked, not trusted.** Tokens carry `pv`, the version the
+   `permissions` claim was resolved at (read first, then the rows). When `pv` differs from the
+   current version — or is absent, on a token minted before this decision — the guard replaces
+   `permissions` with a fresh resolution through the resolver. Handlers that read
+   `user.permissions` therefore see the current set. On `@AllowEndedSession()` (logout) no version
+   is read, so the principal carries no version and an empty permission list.
+5. **Invalidation still runs after persistence and is fail-closed.** `RolesService` keeps calling
+   `forgetAll()`/`forget()` after its transaction; a failure is logged and the write still answers
+   200, but the entry left behind carries the old version and is never used (point 3). A failure to
+   read the version or to re-resolve propagates and the request is refused (5xx); a failed cache
+   *read* is a miss, answered from PostgreSQL.
+6. **No session is revoked and no 401 is answered for an ordinary permission change.** The same
+   token is authorized against the new set on its next request.
+7. **Role changes are unchanged** (ADR-046): the old token is refused 401 through the role check;
+   sessions are revoked only by deactivation. The trigger also bumps the version on a role change,
+   which changes nothing observable because the role check refuses first.
+
+### Consequences
+
+- API §1.11's "changes apply at next issue" no longer holds for permissions; they apply on the next
+  request. ADR-046's rejected alternative "re-resolve permissions per request" is now taken, but only
+  on a version mismatch: in the steady state the token claim and the cache are used as before. The
+  frontend's `useCan()` still reads the session payload and catches up at its next `/auth/session`
+  or refresh; the server is authoritative in between.
+- Cost: one more column in the guard's existing read; one extra resolution (cache write) per
+  affected user after a change; a matrix save bumps every member of each changed role in its
+  transaction.
+- The permission-cache TTL no longer bounds staleness; it only bounds residency.
+- Out of scope: Phase 22 hospital role assignments do not feed `PermissionResolver` today, so they
+  are not versioned here; a custom (non-matrix) role's `role_permissions` rows bump versions but the
+  resolver still reads only the catalogue bundle for such roles (ADR-027, unchanged).
+- Tests: `test/permission-version.e2e-spec.ts` (every write path bumps the right users),
+  `test/permission-changes.e2e-spec.ts` (real Postgres and Redis: grant and revoke on the next request,
+  matrix edit reaching every member, stale and planted cache entries ignored, failing invalidation,
+  sessions not revoked, role change still 401), `access-token.guard.spec.ts`,
+  `permission-resolver.service.spec.ts`, `redis-permission-cache.spec.ts`.
+
+### Alternatives rejected
+
+| Alternative | Why not |
+|---|---|
+| Bump the version in application code | One forgotten write path (seed, script, a future endpoint) re-opens the gap silently |
+| Revoke sessions (or answer 401) on a permission change | Signs users out for an administrative change; the contract says ordinary changes do not revoke |
+| Throw when invalidation fails | The change has committed; a 500 invites a retry of a write that happened, and the version already makes the stale entry unusable |
+| Re-resolve on every request | Adds a cache read per request to every route for no correctness gain once the version is compared |
+| Version in the cache key | Leaves stale keys resident and turns `forget` into a pattern scan |
 
 ---
 

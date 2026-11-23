@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { Permission } from './authz.types';
+import type { CachedPermissions } from './authz.types';
 import { PERMISSION_CACHE_KEY_PREFIX, RedisPermissionCache } from './redis-permission-cache';
 
 /**
@@ -20,7 +20,10 @@ import { PERMISSION_CACHE_KEY_PREFIX, RedisPermissionCache } from './redis-permi
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const TTL_MS = 60_000;
 
-const DOCTOR: readonly Permission[] = ['patients.view', 'appointments.manageOwn'];
+const DOCTOR: CachedPermissions = {
+  version: 3,
+  permissions: ['patients.view', 'appointments.manageOwn'],
+};
 
 let first: RedisPermissionCache;
 let second: RedisPermissionCache;
@@ -77,6 +80,37 @@ describe('read-through storage', () => {
 
     await raw.set(`${PERMISSION_CACHE_KEY_PREFIX}${id}`, 'not json');
     expect(await first.get(id)).toBeUndefined();
+  });
+
+  it('stores the permission version with the set (G4, ADR-047)', async () => {
+    const id = user();
+    await first.set(id, DOCTOR);
+
+    expect(JSON.parse((await raw.get(`${PERMISSION_CACHE_KEY_PREFIX}${id}`)) ?? 'null')).toEqual({
+      v: 3,
+      p: ['patients.view', 'appointments.manageOwn'],
+    });
+  });
+
+  it('treats an unversioned (pre-G4) or badly versioned entry as a miss', async () => {
+    const id = user();
+    const key = `${PERMISSION_CACHE_KEY_PREFIX}${id}`;
+
+    // The bare array written before G4: no version, so never trusted.
+    await raw.set(key, '["patients.view"]');
+    expect(await first.get(id)).toBeUndefined();
+
+    for (const bad of [
+      '{"p":["patients.view"]}',
+      '{"v":"3","p":[]}',
+      '{"v":1.5,"p":[]}',
+      '{"v":-1,"p":[]}',
+      '{"v":3,"p":[1]}',
+      '{"v":3}',
+    ]) {
+      await raw.set(key, bad);
+      expect(await first.get(id)).toBeUndefined();
+    }
   });
 });
 

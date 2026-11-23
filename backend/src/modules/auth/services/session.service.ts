@@ -601,24 +601,46 @@ export class SessionService {
    * answer it with a cast error, which must be a 401, not a 500.
    */
   async isActive(sessionId: string, userId: string, roleCode?: string): Promise<boolean> {
-    if (!UUID.test(sessionId) || !UUID.test(userId)) return false;
+    return (await this.activePermissionVersion(sessionId, userId, roleCode)) !== null;
+  }
 
-    const session = await this.prisma.db.session.findFirst({
+  /**
+   * `isActive`, answering with the account's `users.permission_version`
+   * instead of `true` — or `null` wherever `isActive` answers `false`.
+   *
+   * G4 (ADR-047): the access-token guard needs the authoritative permission
+   * version on every request, and it already reads the account on every
+   * request. This is that read, extended rather than repeated: **one SQL
+   * statement**, rooted at `users` (so the version is a column of the row
+   * selected) with the session and the role as `EXISTS` filters. Rooting it
+   * at `sessions` and selecting `user.permissionVersion` would be a second
+   * query for the relation.
+   *
+   * The conditions are exactly `isActive`'s: the token's own session, not
+   * revoked, not expired; the account `ACTIVE`, not soft-deleted, and —
+   * when `roleCode` is given — still holding that role (ADR-046).
+   */
+  async activePermissionVersion(
+    sessionId: string,
+    userId: string,
+    roleCode?: string,
+  ): Promise<number | null> {
+    if (!UUID.test(sessionId) || !UUID.test(userId)) return null;
+
+    const user = await this.prisma.db.user.findFirst({
       where: {
-        id: sessionId,
-        userId,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-        user: {
-          status: UserStatus.ACTIVE,
-          deletedAt: null,
-          ...(roleCode === undefined ? {} : { role: { is: { code: roleCode } } }),
+        id: userId,
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+        ...(roleCode === undefined ? {} : { role: { is: { code: roleCode } } }),
+        sessions: {
+          some: { id: sessionId, revokedAt: null, expiresAt: { gt: new Date() } },
         },
       },
-      select: { id: true },
+      select: { permissionVersion: true },
     });
 
-    return session !== null;
+    return user?.permissionVersion ?? null;
   }
 
   /**

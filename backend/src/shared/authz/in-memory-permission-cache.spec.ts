@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { InMemoryPermissionCache, PERMISSION_CACHE_TTL_MS } from './in-memory-permission-cache';
-import type { Permission } from './authz.types';
+import type { CachedPermissions } from './authz.types';
 
-const HELD: readonly Permission[] = ['patients.view', 'records.view'];
+const HELD: CachedPermissions = { version: 1, permissions: ['patients.view', 'records.view'] };
 
 /** A cache whose clock the test drives. */
 function cacheWithClock(ttlMs = 1_000): {
@@ -93,11 +93,11 @@ describe('InMemoryPermissionCache', () => {
     const { cache, advance } = cacheWithClock(1_000);
     await cache.set('u-1', HELD);
     advance(900);
-    await cache.set('u-1', ['ai.use']);
+    await cache.set('u-1', { version: 2, permissions: ['ai.use'] });
     advance(900);
 
     // Re-dated by the second write, so it is still live at t=1800.
-    expect(await cache.get('u-1')).toEqual(['ai.use']);
+    expect(await cache.get('u-1')).toEqual({ version: 2, permissions: ['ai.use'] });
   });
 
   it('defaults to a TTL inside the access-token life of API §1.2', () => {

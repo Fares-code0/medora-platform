@@ -13,6 +13,7 @@ import { bundleFor, isPlatformRole } from './permission-catalogue';
 import {
   PERMISSION_CACHE,
   ROLE_REPOSITORY,
+  type CachedPermissions,
   type EffectivePermissions,
   type Permission,
   type PermissionCache,
@@ -65,15 +66,39 @@ export class PermissionResolver {
   }
 
   /**
-   * The hot path. Reads through the cache; a cache that is down is a
-   * miss, never a denial (see `PermissionCache`).
+   * The hot path. Reads through the cache, **at the request's permission
+   * version only** (G4, ADR-047).
+   *
+   * `principal.permissionVersion` is `users.permission_version` as
+   * `AccessTokenGuard` read it for this request; the database bumps it in
+   * the same transaction as any permission change. So:
+   *
+   * - an entry stamped with that version is current and is used;
+   * - an entry stamped with any other version — a change committed since it
+   *   was written, whether or not its invalidation reached the cache — is
+   *   **never used**: the set is re-resolved from PostgreSQL and re-stamped;
+   * - a principal with no version (no guard read it) never reads the cache
+   *   at all: there is nothing to compare an entry against.
+   *
+   * Stamping a fresh resolution with the version read *before* it is safe:
+   * the version and the rows it versions commit together, so rows read
+   * after the version are at least that new. At worst an entry is newer
+   * than its stamp, which costs one extra miss and never a stale grant.
+   *
+   * A failed cache read is a miss (PostgreSQL is authoritative); a failed
+   * re-resolution throws, and the request is refused — fail closed.
    */
   async permissionsFor(principal: Principal): Promise<readonly Permission[]> {
+    const version = principal.permissionVersion;
+    if (version === undefined) {
+      return (await this.effectivePermissions(principal)).permissions;
+    }
+
     const cached = await this.readCache(principal.userId);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && cached.version === version) return cached.permissions;
 
     const { permissions } = await this.effectivePermissions(principal);
-    await this.writeCache(principal.userId, permissions);
+    await this.writeCache(principal.userId, { version, permissions });
 
     return permissions;
   }
@@ -99,10 +124,10 @@ export class PermissionResolver {
    * The matrix changed for a role (API §15.3), so every member's
    * effective set changed at once.
    *
-   * §5 rule 4 says changes take effect at next session issue, which is
-   * about the *token*; this is about the cache behind it, and the cache
-   * must not be the thing that makes a revocation outlive the session it
-   * was supposed to end.
+   * Since G4 (ADR-047) a permission change applies on the next request:
+   * the members' permission versions were bumped by the database with the
+   * change, so their entries are already unusable. Dropping them here is
+   * hygiene — it frees the keys — not what makes the change take.
    */
   async forgetRole(roleCode: string): Promise<void> {
     const userIds = await this.roles.userIdsWithRole(roleCode);
@@ -127,7 +152,7 @@ export class PermissionResolver {
     }
   }
 
-  private async readCache(userId: string): Promise<readonly Permission[] | undefined> {
+  private async readCache(userId: string): Promise<CachedPermissions | undefined> {
     try {
       return await this.cache.get(userId);
     } catch (error) {
@@ -136,9 +161,9 @@ export class PermissionResolver {
     }
   }
 
-  private async writeCache(userId: string, permissions: readonly Permission[]): Promise<void> {
+  private async writeCache(userId: string, entry: CachedPermissions): Promise<void> {
     try {
-      await this.cache.set(userId, permissions);
+      await this.cache.set(userId, entry);
     } catch (error) {
       this.logger.warn({ authz: 'cache-write-failed', userId }, asMessage(error));
     }
@@ -148,7 +173,11 @@ export class PermissionResolver {
    * An invalidation that throws would fail the request that changed the
    * permission — but the change itself already committed, so the caller
    * would retry a write that has happened. Logging loudly and continuing
-   * leaves a stale cache entry that expires on its own TTL.
+   * is safe since G4 (ADR-047), and only since then: the entry left behind
+   * is stamped with the old permission version, and `permissionsFor` never
+   * uses an entry whose version differs from the one the request read. A
+   * failed invalidation therefore fails closed — it costs a database read on
+   * the next request, never a stale grant.
    */
   private async guardCache(operation: () => Promise<void>, name: string): Promise<void> {
     try {
