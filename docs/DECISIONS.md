@@ -72,9 +72,13 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044 is registered (BR-DEC-002, 2026-10-24). ADR-045 is registered (refresh grace window,
-2026-11-21). The next unallocated number is **ADR-046**. Before using it, run the `CLAUDE.md`
-register sweep and inspect all available `PENDING_ADRS.md` files.
+ADR-044 and ADR-045 are registered.
+
+The next unallocated number is **ADR-046** (ADR-045 was allocated 2026-11-21 to the refresh grace
+window, after the sweep below found it free on every remote branch; ADR-044 was allocated 2026-10-24
+to BR-DEC-002 the same way). Before using it, run the `CLAUDE.md` sweep **and**
+`git grep -l 'ADR-04[2-9]' origin/frontend origin/backend origin/patient-app -- docs backend/docs`,
+and inspect all available `PENDING_ADRS.md` files.
 
 **Schema-freeze note.** ADR-001 through ADR-005 are prerequisites of RM M5 (Prisma schema). MG §18.4 — "Freeze enums and status machines before the Prisma schema. Schema churn after data exists is the second-biggest risk."
 

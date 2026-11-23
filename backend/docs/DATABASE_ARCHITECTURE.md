@@ -228,6 +228,22 @@ APP_ENV=development MEDORA_DISPOSABLE_DB=true npm run db:seed:multihospital
 - **Consolidating the corrective migration** is possible only if every persistent environment is
   verified never to have applied `20261122170000`.
 
+## Intentionally excluded from this change
+
+Carried from neither `Database` (PR #5, PR #6) nor PR #9, on purpose. Nothing here is enabled or
+disabled by this change; `.github/workflows/ci.yml` and `CLAUDE.md` are exactly `main`'s.
+
+| Excluded item | Source | Reason | Status |
+|---|---|---|---|
+| CI health check `pg_isready -U medora -d medora_test` (instead of `-U medora`) | `Database` `05f3b64` (PR #5) | CI changes need owner approval; `main`'s health check gates the service | Not applied; available for a separate CI change |
+| CI step "Focused ADR-010 scope test" (`npm run test -- test/schema-adr010.e2e-spec.ts` before the full suite) | `Database` `e52219b` (PR #5) | Same; the spec still runs in the full suite on every backend CI run | Not applied |
+| CI step "Seed multi-hospital fixtures twice" | PR #9 | Seeding the test database breaks existing assertions (see *Development seed*); running it on a separate database needs a CI and seed-guard change | Owner decision 3 (open) |
+| CI step "Show migration drift SQL" and moving `db:check` after `db:deploy`; removal of the shadow-database step | PR #9 | `main`'s shadow-database drift check passes with no difference, so it is kept unchanged | Not applied |
+| `backend/prisma/check-drift.ts` and the `db:check` script change | PR #9 | Its allowlist is unnecessary once partial-index predicates are declared in normalized form | Not carried |
+| `CLAUDE.md` ADR-numbering paragraph rewrite | `Database` (PR #5/#6) | `CLAUDE.md` is outside database scope and its rules forbid rewriting existing text; `docs/DECISIONS.md` carries the current numbering | Not carried; `main`'s paragraph (which names ADR-044 as highest) is stale |
+| `patient-app/PATIENT_FRONTEND_CHECKLIST.md` note that ADR-042 is Accepted | `Database` (PR #5/#6) | Outside the database tree (and would trigger the patient-app suite) | Not carried; `main`'s copy still says ADR-042 is Proposed |
+| Phase 22 application code, its specs and its documentation updates | PR #9, PR #12 | Backend work | Listed in `docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md` |
+
 ## Deferred implementation
 
 - Backend tenant context, scoped queries, and hospital-level authorization (Phase 22 handoff).
