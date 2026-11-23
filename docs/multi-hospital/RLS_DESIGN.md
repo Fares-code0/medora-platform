@@ -1,6 +1,8 @@
 # Phase 22 — PostgreSQL Row-Level Security: Design, Coverage and Readiness
 
-**Status:** DESIGN — **not activated.** No migration enables RLS or creates a policy. The proposed
+**Status:** DESIGN — **not activated.** No migration enables RLS or creates a policy. Companion documents:
+[`DATABASE_ROLES.md`](DATABASE_ROLES.md) (runtime role, verified) and
+[`RLS_BACKEND_CONTRACT.md`](RLS_BACKEND_CONTRACT.md) (tenant-context contract for #20). The proposed
 policies live in `backend/prisma/rls-proposal/phase22-rls-proposal.sql` (not a migration) and are
 exercised only by `backend/test/rls-proposal.e2e-spec.ts`, inside transactions that are always rolled
 back. **Owner:** database engineering. **As of:** 2026-11-23, `main` `ae63773`.
@@ -36,6 +38,10 @@ placeholder. Whatever is chosen must satisfy, and the tests prove why:
    ambiguous. Hospital Admins with more than one hospital are unresolved by design.
 
 ## 3. Coverage inventory (124 tables, from the catalog)
+
+The authoritative per-table list — class, primary key, ownership path, foreign-key parents, sensitivity,
+expected behaviour and whether a policy is required — is **Appendix A**, generated from the catalog and
+guarded by a test. The groupings below explain the patterns.
 
 Legend — **H** `hospital_id` column, **R** `hospital_medical_record_id`, **P** `patient_id`, **D** doctor/employment.
 
@@ -91,9 +97,9 @@ Legend — **H** `hospital_id` column, **R** `hospital_medical_record_id`, **P**
 
 - `patients` and the first three are part of the global identity (DR-03) — visible to any hospital that
   holds a record for the patient; a policy needs `EXISTS hospital_medical_records(patient, context)`.
-- **Schema gap:** `queue_entries` and `waiting_room_entries` are hospital operations with **no
-  `hospital_id`**. They cannot be isolated until an ownership column is added and backfilled — which
-  needs an owner-approved mapping for existing rows (tracked as a database issue).
+- `queue_entries` and `waiting_room_entries` lacked a hospital column; PR #28 (#21) adds a direct,
+  nullable `hospital_id`, so Appendix A classifies them as **Direct**. Existing rows stay unowned until
+  an approved mapping (#17).
 - `patient_access_grants` and `satisfaction_surveys` need a decision on whether they are hospital- or
   patient-owned.
 
@@ -115,6 +121,10 @@ platform operations (`backups`, `saved_reports`, `scheduled_reports`, `scheduled
 
 ## 4. Proposed policy shapes (proven in tests)
 
+The proposal now creates a policy for **every Direct and Indirect table of Appendix A (68 tables)**;
+a test asserts RLS is enabled with at least one policy on each. Behaviour is proven per pattern on
+representative tables (below), not on each of the 68 individually.
+
 | Pattern | Shape | Test |
 |---|---|---|
 | Direct | `USING / WITH CHECK (hospital_id = app_rls.current_hospital_id())` | 1, 2, 3, 9 |
@@ -122,6 +132,10 @@ platform operations (`backups`, `saved_reports`, `scheduled_reports`, `scheduled
 | Effective employment (DB-1 / F4) | `app_rls.effective_doctor_hospital(user)` — active employment, doctor not soft-deleted and practice not suspended, hospital ACTIVE and not deleted | 4–6 |
 | Context accessor | transaction-local GUC; empty / malformed → NULL → no match | 8, 9 |
 | Privileged access | none — only the owner/superuser bypass exists; an explicit policy needs OD-07 | 10 |
+| Two-level indirect (`message_attachments`, `message_flags` → `messages` → `conversations`) | `EXISTS` join through both parents | coverage |
+| Patient identity (`patients` + 3 children) | SELECT/UPDATE where an HMR exists for the context hospital; **no INSERT policy** (B8) | patient identity |
+| Queue records (PR #28) | direct `hospital_id` | queue |
+| Concurrency / pooling | transaction-local context on two connections | concurrency suite |
 
 ## 5. Operational paths that must keep working
 
@@ -143,6 +157,8 @@ platform operations (`backups`, `saved_reports`, `scheduled_reports`, `scheduled
 | B4 | OD-07 — Platform Admin / Hospital Admin access, incl. audit reads — #16 | Owner decision |
 | B5 | Patient-role and discovery policies (§3.1, §3.3) — #19 | Database, after B1 |
 | B6 | Hospital ownership for `queue_entries`, `waiting_room_entries` — #21 | Database, needs B3-style mapping |
+| B8 | Creating a patient under RLS: a new patient has no HospitalMedicalRecord at insert time, so no identity policy can admit the INSERT; the flow (create patient + HMR, or a dedicated insert policy) needs a decision | Owner + Backend |
+| B9 | The audit partition job needs DDL and cannot run as the runtime role (`DATABASE_ROLES.md` §4) | Database + Backend (decision) |
 | B7 | Open policy questions in the effective-employment rule: does VACATION, or an unverified doctor (`verification_status`), yield clinical context? The proposal allows VACATION and ignores verification — #18 | Owner decision |
 
 ## 7. Rollout plan (once B1–B4 are resolved)
@@ -159,6 +175,12 @@ platform operations (`backups`, `saved_reports`, `scheduled_reports`, `scheduled
 
 ## 8. Test plan
 
+Implemented (PostgreSQL 16, disposable): `rls-proposal.e2e-spec.ts` (16 tests, incl. coverage of all 68
+tables, INSERT/DELETE both directions, FK boundary, queue, patient identity, two concurrent connections,
+connection reuse), `rls-inventory.e2e-spec.ts` (inventory = catalog), `database-roles.e2e-spec.ts`
+(runtime role), `database-statement-timeout.e2e-spec.ts` (7). Removing `ENABLE ROW LEVEL SECURITY` from
+the proposal fails the 10 policy-dependent tests (verified). Original plan:
+
 `backend/test/rls-proposal.e2e-spec.ts` (PostgreSQL 16, disposable `medora_test` only):
 1 cross-hospital reads; 2 cross-hospital writes refused (`rowCount 0`, `42501`); 3 appointments;
 4–6 effective employment with ended employment, suspended/deleted doctor, suspended/deleted hospital,
@@ -166,3 +188,134 @@ history retained; 7 no ambiguous resolution (`23505`); 8 pooled-connection conte
 vs session-level); 9 missing/empty/malformed context; legacy rows invisible; 10 no privileged policy,
 owner/superuser bypass even with FORCE. Removing `ENABLE ROW LEVEL SECURITY` from the proposal makes the six
 policy-dependent tests fail (verified), so they test PostgreSQL behaviour, not their own fixtures.
+
+## Appendix A — Per-table RLS coverage (generated from the PostgreSQL catalog)
+
+Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue_hospital_ownership`, PR #28). **124 tables**, each listed once: Direct 35, Global/reference 36, Indirect 33, Internal/system 18, Unresolved 2. `backend/test/rls-inventory.e2e-spec.ts` fails if a table is added, removed or listed twice.
+
+| Table | Class | PK | Ownership path | FK parents | Sensitivity | Expected RLS behaviour | Policy |
+|---|---|---|---|---|---|---|---|
+| `_conventions_reference` | Internal/system | id | — | — | Operational | No hospital policy; per-user or system access | No |
+| `admin_invitations` | Internal/system | id | — | roles, users | Operational | No hospital policy; per-user or system access | No |
+| `admin_profiles` | Global/reference | id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `ai_conversations` | Direct | id | hospital_id | hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17; plus a patient/participant policy for the patient app | Yes |
+| `ai_messages` | Indirect | id | ai_conversations | ai_conversations | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `ai_prompt_templates` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `ai_user_settings` | Global/reference | user_id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `announcements` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
+| `api_keys` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `appointment_events` | Indirect | id | appointments | appointments, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `appointment_reschedule_proposals` | Indirect | id | appointments | appointments, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `appointments` | Direct | id | hospital_id | departments, doctor_employments, doctors, hospital_departments, hospital_medical_records, patients, published_slots, users, visit_types | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `audit_events` | Internal/system | id,occurred_at | hospital_id (nullable attribution) | — | Audit | Never block INSERT (ADR-024 §4); cross-hospital reads need OD-07 (#16) | Later (OD-07) |
+| `backups` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `chronic_conditions` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `clinic_operating_hours` | Indirect | id | clinics | clinics, users | Operational | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `clinic_working_days` | Global/reference | day | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `clinics` | Direct | id | hospital_id | hospitals | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `communication_access_requests` | Indirect | id | conversations | conversations, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `conversation_participants` | Indirect | conversation_id,user_id | conversations | conversations, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `conversation_shared_links` | Indirect | id | conversations | conversations, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `conversations` | Direct | id | hospital_id | hospital_medical_records, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17; plus a patient/participant policy for the patient app | Yes |
+| `departments` | Global/reference | id | — | staff_members | Reference | No policy; read-only reference for the runtime role | No |
+| `doctor_availability` | Direct | id | hospital_id | doctor_employments, doctors | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `doctor_employments` | Direct | id | hospital_id | doctors, hospital_departments, hospitals | Operational | ALL: hospital_id = context | Yes |
+| `doctor_specialties` | Global/reference | doctor_id,specialty_id | — | doctors, specialties | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `doctor_time_off` | Direct | id | hospital_id | doctor_employments, doctors | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `doctor_verification_documents` | Global/reference | id | — | doctors, files, users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `doctors` | Global/reference | id | — | departments, users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `document_templates` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
+| `domain_events` | Internal/system | id | hospital_id (nullable attribution) | hospitals | Audit | Outbox read by workers outside a request; worker role/policy decision (#24) | Worker decision |
+| `drug_interactions` | Global/reference | id | — | medications | Reference | No policy; read-only reference for the runtime role | No |
+| `files` | Direct | id | hospital_id | hospitals, users | Operational | ALL: hospital_id = context; legacy NULL files need a policy decision (#17) | Yes |
+| `holidays` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `hospital_departments` | Direct | id | hospital_id | departments, hospitals | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `hospital_insurance_coverage` | Direct | id | hospital_id | hospitals, insurance_providers | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `hospital_locations` | Direct | id | hospital_id | hospitals | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `hospital_medical_record_conditions` | Direct | id | hospital_id | chronic_conditions, hospital_medical_records, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `hospital_medical_records` | Direct | id | hospital_id | hospitals, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `hospital_role_assignments` | Direct | id | hospital_id | doctor_employments, hospital_staff_affiliations, hospitals, roles, users | Operational | ALL: hospital_id = context | Yes |
+| `hospital_staff_affiliations` | Direct | id | hospital_id | hospital_departments, hospitals, staff_members | Operational | ALL: hospital_id = context | Yes |
+| `hospitals` | Direct | id | id (tenant table) | — | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `icd_codes` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `idempotency_records` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
+| `incident_bookmarks` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
+| `insurance_providers` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `lab_analyte_specs` | Global/reference | id | — | lab_test_catalogue | Reference | No policy; read-only reference for the runtime role | No |
+| `lab_attachments` | Indirect | id | lab_orders | files, lab_orders, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `lab_orders` | Direct | id | hospital_id | departments, doctor_employments, doctors, hospital_departments, hospital_medical_records, lab_test_catalogue, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `lab_results` | Indirect | id | lab_orders | lab_analyte_specs, lab_orders, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `lab_specimens` | Indirect | lab_order_id | lab_orders | lab_orders, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `lab_test_catalogue` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `lab_timeline_events` | Indirect | id | lab_orders | lab_orders, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `login_events` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
+| `medical_records` | Direct | id | hospital_id | appointments, departments, doctor_employments, doctors, hospital_departments, hospital_medical_records, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `medication_monographs` | Global/reference | medication_id | — | medications | Reference | No policy; read-only reference for the runtime role | No |
+| `medication_strengths` | Global/reference | id | — | medications | Reference | No policy; read-only reference for the runtime role | No |
+| `medications` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `message_attachments` | Indirect | id | messages → conversations | files, messages | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `message_flags` | Indirect | id | messages → conversations | messages, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `messages` | Indirect | id | conversations | conversations, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `notification_deliveries` | Indirect | id | notifications | notifications | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `notification_preferences` | Global/reference | user_id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `notifications` | Direct | id | hospital_id | appointments, hospital_medical_records, lab_orders, medical_records, patients, prescriptions, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17; plus a patient/participant policy for the patient app | Yes |
+| `otp_codes` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `patient_access_grants` | Unresolved | id | hospital- or patient-owned? (decision with #16/#17) | patients, roles, users | PHI | Undecided — no policy until ownership is decided | Decision first |
+| `patient_allergies` | Direct | id | hospital_id | hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_chronic_conditions` | Indirect | patient_id,condition_id | patients → hospital_medical_records (legacy, global) | chronic_conditions, patients, users | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
+| `patient_clinical_alerts` | Direct | id | hospital_id | hospital_medical_records, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_doctor_assignments` | Direct | id | hospital_id | doctor_employments, doctors, hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_documents` | Direct | id | hospital_id | files, hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_emergency_contacts` | Indirect | id | patients → hospital_medical_records | patients | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
+| `patient_insurance` | Indirect | id | patients → hospital_medical_records | insurance_providers, patients | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
+| `patient_medical_history` | Direct | id | hospital_id | hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_medications` | Direct | id | hospital_id | doctors, hospital_medical_records, patients, prescriptions | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_notes` | Direct | id | hospital_id | hospital_medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_studies` | Direct | id | hospital_id | hospital_medical_records, lab_orders, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patient_vital_signs` | Direct | id | hospital_id | hospital_medical_records, medical_records, patients, users | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `patients` | Indirect | id | hospital_medical_records (patient_id) — visible where the hospital holds a record | doctors, users | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
+| `permission_matrix_state` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
+| `permissions` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `platform_integrations` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `platform_settings` | Internal/system | key | — | users | Operational | No hospital policy; per-user or system access | No |
+| `policies` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
+| `prescription_history_entries` | Indirect | id | prescriptions | prescriptions | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `prescription_notes` | Indirect | id | prescriptions | prescriptions, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `prescription_safety_warnings` | Indirect | id | prescriptions | prescriptions, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `prescription_timeline_events` | Indirect | id | prescriptions | prescriptions, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `prescriptions` | Direct | id | hospital_id | departments, doctor_employments, doctors, hospital_departments, hospital_medical_records, medical_records, medications, patients | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `published_slots` | Direct | id | hospital_id | doctor_employments, hospitals | Operational | ALL for staff: hospital_id = context; plus patient discovery SELECT (active hospitals only) | Yes |
+| `queue_entries` | Direct | id | hospital_id | hospitals, patients, rooms | PII/PHI | ALL: hospital_id = context; legacy NULL rows per #17 | Yes |
+| `record_allergies` | Indirect | id | medical_records | medical_records | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_attachments` | Indirect | id | medical_records | files, medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_diagnoses` | Indirect | id | medical_records | icd_codes, medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_issue_reports` | Indirect | id | medical_records | medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_medications` | Indirect | id | medical_records | medical_records, prescriptions | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_notes` | Indirect | id | medical_records | medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_timeline_events` | Indirect | id | medical_records | medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_treatment_plan_items` | Indirect | id | medical_records | medical_records | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `record_versions` | Indirect | id | medical_records | medical_records, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `report_exports` | Indirect | id | files | files, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `resources` | Direct | id | hospital_id | departments, hospital_departments, hospitals | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `role_permissions` | Global/reference | role_id,permission_id | — | permissions, roles, users | Reference | No policy; read-only reference for the runtime role | No |
+| `roles` | Global/reference | id | — | roles | Reference | No policy; read-only reference for the runtime role | No |
+| `rooms` | Direct | id | hospital_id | departments, hospital_departments, hospitals | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `satisfaction_surveys` | Unresolved | id | hospital- or patient-owned? (decision) | appointments, doctors, patients | PHI | Undecided — no policy until ownership is decided | Decision first |
+| `saved_reports` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
+| `scheduled_report_runs` | Internal/system | id | — | scheduled_reports | Operational | No hospital policy; per-user or system access | No |
+| `scheduled_reports` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |
+| `sessions` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `specialties` | Global/reference | id | — | specialties | Reference | No policy; read-only reference for the runtime role | No |
+| `staff_members` | Global/reference | id | — | departments, users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `staff_shift_assignments` | Direct | id | hospital_id | hospital_staff_affiliations, staff_members | Operational | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
+| `trusted_devices` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `user_activity_log` | Global/reference | id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `user_credentials` | Internal/system | user_id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `user_integrations` | Global/reference | user_id,integration | — | users | Secret | No hospital policy (user-scoped design later where per-user) | No |
+| `user_interface_preferences` | Global/reference | user_id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `user_permissions` | Global/reference | user_id,permission_id | — | permissions, users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `user_settings` | Global/reference | user_id | — | users | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `users` | Global/reference | id | — | roles | PII | No hospital policy (user-scoped design later where per-user) | No |
+| `verification_tokens` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
+| `visit_types` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `waiting_room_entries` | Direct | id | hospital_id | appointments, hospitals, patients | PII/PHI | ALL: hospital_id = context; legacy NULL rows per #17 | Yes |

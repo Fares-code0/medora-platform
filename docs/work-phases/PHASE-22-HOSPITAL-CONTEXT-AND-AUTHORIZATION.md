@@ -88,6 +88,15 @@ shadow queries and/or an in-flight cap that skips comparisons — without changi
 - DB-3: RLS design and full 124-table coverage inventory (`docs/multi-hospital/RLS_DESIGN.md`); proposed policies in `backend/prisma/rls-proposal/` (never applied).
 - DB-4: behavioural isolation tests of the proposed policies (`backend/test/rls-proposal.e2e-spec.ts`).
 
+**Completion package (2026-11-23, PR #15 + PR #28):** queue ownership implemented (#21, PR #28);
+Appendix A inventory of all 124 tables with a catalog guard test; proposal policies for all 68
+Direct/Indirect tables with coverage and behaviour tests (incl. two concurrent connections); runtime role
+template verified (`docs/multi-hospital/DATABASE_ROLES.md`; full suite run as the runtime role: 3,759 tests
+pass, failures classified); migration safety audit (`backend/docs/MIGRATION_SAFETY_AUDIT.md`); timeout
+behaviour incl. `lock_timeout` and idle-in-transaction; Backend contract
+(`docs/multi-hospital/RLS_BACKEND_CONTRACT.md`). New blockers: B8 (patient creation under RLS), B9 (audit
+partition job needs DDL).
+
 **RLS readiness: NOT READY.** No table has RLS; the application connects as the superuser table owner (bypasses RLS). Blockers: #20 (tenant-context contract), #19 B2 (non-owner application role), #17 (legacy rows), #16 (OD-07), #18 (VACATION / verification), #21 (queue tables lack ownership).
 
 **Backlog (GitHub):**
