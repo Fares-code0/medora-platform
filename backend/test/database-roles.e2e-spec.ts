@@ -14,6 +14,8 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 if (new URL(rawDatabaseUrl).pathname !== '/medora_test' || process.env['APP_ENV'] !== 'test') {
   throw new Error('Refusing role-separation tests outside the disposable medora_test database.');
@@ -27,15 +29,29 @@ const PROPOSAL = readFileSync(
   resolve(__dirname, '../prisma/rls-proposal/phase22-rls-proposal.sql'),
   'utf8',
 );
-const client = new Client({ connectionString: rawDatabaseUrl });
+// The template and the RLS proposal take ACCESS EXCLUSIVE locks on real
+// tables until rollback. They run in a throwaway database of their own
+// (test/support/isolated-database.ts), never on the shared medora_test that
+// parallel spec files use.
+let isolated: IsolatedDatabase | undefined;
+let client: Client;
+let connected = false;
 
 beforeAll(async () => {
+  isolated = await createIsolatedDatabase(rawDatabaseUrl, 'roles');
+  client = new Client({ connectionString: isolated.url });
   await client.connect();
-});
+  connected = true;
+  const identity = await client.query<{ db: string }>('SELECT current_database() AS db');
+  if (identity.rows[0]?.db !== isolated.name) {
+    throw new Error('Refusing role-separation tests: not connected to the isolated database.');
+  }
+}, 120_000);
 
 afterAll(async () => {
-  await client.end();
-});
+  if (connected) await client.end();
+  await isolated?.drop();
+}, 30_000);
 
 const tag = (): string => randomUUID().replaceAll('-', '').slice(0, 10);
 
