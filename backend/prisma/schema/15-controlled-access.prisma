@@ -1,0 +1,109 @@
+// Multi-hospital controlled PHI access and data-ownership evidence
+// (multi-hospital implementation §2.11, §2.12, §2.14). Migration
+// 20261124100000_multi_hospital_enforcement adds the CHECK constraints,
+// partial indexes and enum-like checks that Prisma cannot express.
+
+/// Break-Glass / Exceptional Access and Emergency Override (§2.11).
+/// One row is one narrowly scoped, time-limited grant: one requester, one
+/// patient Medical Record at one hospital, an explicit list of data
+/// categories. Status moves PENDING → ACTIVE (or REJECTED); ACTIVE ends by
+/// expiry or revocation. Every actual read under a grant is audited with
+/// the grant id (`exceptional_access.read`).
+model ExceptionalAccessGrant {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// EXCEPTIONAL (approval per hospital policy) or EMERGENCY (override,
+  /// starts at once, always reviewed retrospectively).
+  kind                    String    @db.VarChar(20)
+  requesterUserId         String    @map("requester_user_id") @db.Uuid
+  hospitalId              String    @map("hospital_id") @db.Uuid
+  patientId               String    @map("patient_id") @db.Uuid
+  hospitalMedicalRecordId String    @map("hospital_medical_record_id") @db.Uuid
+  /// Data categories in scope (identity, records, labs, prescriptions, …).
+  categories              String[]  @db.VarChar(40)
+  reason                  String
+  status                  String    @default("PENDING") @db.VarChar(20)
+  requiresApproval        Boolean   @map("requires_approval")
+  approverUserId          String?   @map("approver_user_id") @db.Uuid
+  decidedAt               DateTime? @map("decided_at") @db.Timestamptz(3)
+  decisionNote            String?   @map("decision_note")
+  /// When the requester last proved their credentials (re-authentication).
+  reauthenticatedAt       DateTime  @map("reauthenticated_at") @db.Timestamptz(3)
+  durationMinutes         Int       @map("duration_minutes")
+  startsAt                DateTime? @map("starts_at") @db.Timestamptz(3)
+  expiresAt               DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedBy               String?   @map("revoked_by") @db.Uuid
+  reviewedBy              String?   @map("reviewed_by") @db.Uuid
+  reviewedAt              DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  reviewOutcome           String?   @map("review_outcome") @db.VarChar(20)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  requester     User                  @relation("ExceptionalAccessRequester", fields: [requesterUserId], references: [id], onDelete: Restrict)
+  approver      User?                 @relation("ExceptionalAccessApprover", fields: [approverUserId], references: [id], onDelete: Restrict)
+  reviewer      User?                 @relation("ExceptionalAccessReviewer", fields: [reviewedBy], references: [id], onDelete: Restrict)
+  hospital      Hospital              @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  patient       Patient               @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  /// Composite: the record must be this patient's, at this hospital.
+  medicalRecord HospitalMedicalRecord @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "exceptional_access_grants_record_scope_fkey")
+
+  @@index([requesterUserId, status], map: "exceptional_access_grants_requester_status_idx")
+  @@index([hospitalId, status], map: "exceptional_access_grants_hospital_status_idx")
+  @@index([patientId], map: "exceptional_access_grants_patient_idx")
+  @@map("exceptional_access_grants")
+}
+
+/// Cross-hospital medical information request (§2.12). Not record access:
+/// the owning hospital's Hospital Admin approves specific items, and only
+/// those items are readable, by the requester, until `share_expires_at`.
+model InformationRequest {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterUserId         String    @map("requester_user_id") @db.Uuid
+  /// The requester's own hospital; NULL for a Platform Admin requester.
+  requesterHospitalId     String?   @map("requester_hospital_id") @db.Uuid
+  targetHospitalId        String    @map("target_hospital_id") @db.Uuid
+  patientId               String    @map("patient_id") @db.Uuid
+  hospitalMedicalRecordId String    @map("hospital_medical_record_id") @db.Uuid
+  requestedItems          String[]  @map("requested_items") @db.VarChar(40)
+  reason                  String
+  status                  String    @default("PENDING") @db.VarChar(20)
+  approvedItems           String[]  @default([]) @map("approved_items") @db.VarChar(40)
+  decidedBy               String?   @map("decided_by") @db.Uuid
+  decidedAt               DateTime? @map("decided_at") @db.Timestamptz(3)
+  decisionNote            String?   @map("decision_note")
+  shareExpiresAt          DateTime? @map("share_expires_at") @db.Timestamptz(3)
+  revokedAt               DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  requester         User                  @relation("InformationRequester", fields: [requesterUserId], references: [id], onDelete: Restrict)
+  decider           User?                 @relation("InformationDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+  requesterHospital Hospital?             @relation("InformationRequesterHospital", fields: [requesterHospitalId], references: [id], onDelete: Restrict)
+  targetHospital    Hospital              @relation("InformationTargetHospital", fields: [targetHospitalId], references: [id], onDelete: Restrict)
+  patient           Patient               @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  /// Composite: the record must be this patient's, at the target hospital.
+  medicalRecord     HospitalMedicalRecord @relation(fields: [hospitalMedicalRecordId, targetHospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "information_requests_record_scope_fkey")
+
+  @@index([targetHospitalId, status], map: "information_requests_target_status_idx")
+  @@index([requesterUserId, status], map: "information_requests_requester_status_idx")
+  @@map("information_requests")
+}
+
+/// Evidence log for legacy ownership backfill (§2.14). Append-only: one
+/// row per row whose NULL hospital was set, naming the rule and evidence.
+model OwnershipAssignment {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tableName    String   @map("table_name") @db.VarChar(63)
+  rowId        String   @map("row_id") @db.Uuid
+  hospitalId   String   @map("hospital_id") @db.Uuid
+  evidenceRule String   @map("evidence_rule") @db.VarChar(60)
+  evidence     Json
+  actorId      String?  @map("actor_id") @db.Uuid
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  actor    User?    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([tableName, rowId], map: "ownership_assignments_table_row_key")
+  @@map("ownership_assignments")
+}

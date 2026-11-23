@@ -149,6 +149,9 @@ model Patient {
   @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin, map: "patients_phone_trgm_idx")
   hospitalMedicalRecords HospitalMedicalRecord[]
 
+  exceptionalAccessGrants ExceptionalAccessGrant[]
+  informationRequests     InformationRequest[]
+
   @@map("patients")
 }
 
