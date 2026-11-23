@@ -78,7 +78,7 @@ export class PatientScopeService {
     // still propagates from here, before any shadow work starts.
     const allowed =
       principal.roleCode === 'doctor'
-        ? await this.assignments.isAssigned(principal.userId, patientId)
+        ? await this.assignments.reachesPatient(principal.userId, patientId)
         : false;
 
     // Started, never awaited: the decision above is returned at once, however

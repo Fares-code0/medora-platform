@@ -328,16 +328,132 @@ async function removeStaffingOf(prisma: PrismaService, domain: string): Promise<
   });
 }
 
-/** The ACTIVE hospital e2e fixtures employ clinicians at, created once. */
-export async function fixtureHospital(prisma: PrismaService): Promise<string> {
+/**
+ * An ACTIVE hospital e2e fixtures employ clinicians at, created once per
+ * key. `a` is the default; a suite that proves isolation puts its second
+ * clinician at `b` (DR-05: a colleague at the same hospital *does* reach
+ * the chart, so "another doctor's patient" means another hospital's).
+ */
+export async function fixtureHospital(prisma: PrismaService, key = 'a'): Promise<string> {
+  const publicId = key === 'a' ? 'hsp_e2e_fixture' : `hsp_e2e_fixture_${key}`;
   const row = await prisma.hospital.upsert({
-    where: { publicId: 'hsp_e2e_fixture' },
-    create: { publicId: 'hsp_e2e_fixture', name: 'E2E Fixture Hospital' },
+    where: { publicId },
+    create: { publicId, name: `E2E Fixture Hospital ${key.toUpperCase()}` },
+    update: { status: 'ACTIVE', deletedAt: null },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Opens `patientId`'s Hospital Medical Record at a fixture hospital
+ * (DR-05). A patient registered through the API by a clinical doctor gets
+ * one automatically; a patient written straight to the database does not.
+ */
+export async function recordPatientAt(
+  prisma: PrismaService,
+  patientId: string,
+  hospitalId?: string,
+): Promise<string> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const row = await prisma.hospitalMedicalRecord.upsert({
+    where: { patientId_hospitalId: { patientId, hospitalId: at } },
+    create: { patientId, hospitalId: at },
     update: {},
     select: { id: true },
   });
   return row.id;
 }
+
+/**
+ * Puts the staff account behind `email` (reception, laboratory, pharmacy,
+ * nurse) in clinical standing: a `staff_members` row and one active
+ * affiliation at `hospitalId` (fixture hospital `a` by default).
+ */
+export async function makeClinicalStaff(
+  prisma: PrismaService,
+  email: string,
+  hospitalId?: string,
+): Promise<{ staffId: string; hospitalId: string }> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { email },
+    select: { id: true, displayName: true, phone: true, role: { select: { code: true } } },
+  });
+  const roleOf: Record<string, 'RECEPTIONIST' | 'LABORATORY' | 'PHARMACY' | 'NURSE'> = {
+    reception: 'RECEPTIONIST',
+    laboratory: 'LABORATORY',
+    pharmacy: 'PHARMACY',
+    nurse: 'NURSE',
+  };
+  const departmentId = (await prisma.department.findFirstOrThrow({ select: { id: true } })).id;
+  const staff =
+    (await prisma.staffMember.findFirst({ where: { userId: user.id }, select: { id: true } })) ??
+    (await prisma.staffMember.create({
+      data: {
+        userId: user.id,
+        name: user.displayName,
+        role: roleOf[user.role.code] ?? 'NURSE',
+        title: 'Fixture staff',
+        departmentId,
+        phone: user.phone,
+        email,
+        workingHours: '09:00-17:00',
+      },
+      select: { id: true },
+    }));
+  const active = await prisma.hospitalStaffAffiliation.findFirst({
+    where: { staffId: staff.id, endedAt: null },
+    select: { id: true },
+  });
+  if (active === null) {
+    await prisma.hospitalStaffAffiliation.create({ data: { staffId: staff.id, hospitalId: at } });
+  }
+  await prisma.user.update({ where: { id: user.id }, data: { authzVersion: { increment: 1 } } });
+  return { staffId: staff.id, hospitalId: at };
+}
+
+/**
+ * Test cleanup only: removes the Hospital Medical Records of `patientIds`,
+ * first deleting every row that references them (discovered from the
+ * foreign-key catalogue, so it stays correct as stamping spreads). Call it
+ * before deleting the patients themselves — HMRs restrict their patient.
+ */
+export async function purgeHospitalRecords(
+  prisma: PrismaService,
+  patientIds: readonly string[],
+): Promise<void> {
+  if (patientIds.length === 0) return;
+  const records = await prisma.hospitalMedicalRecord.findMany({
+    where: { patientId: { in: [...patientIds] } },
+    select: { id: true },
+  });
+  const ids = records.map((row) => row.id);
+  if (ids.length === 0) return;
+  const referencing = await prisma.$queryRaw<{ table_name: string; column_name: string }[]>`
+    SELECT kcu.table_name, kcu.column_name
+      FROM information_schema.referential_constraints rc
+      JOIN information_schema.key_column_usage kcu
+        ON kcu.constraint_name = rc.constraint_name AND kcu.constraint_schema = rc.constraint_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON ccu.constraint_name = rc.unique_constraint_name
+       AND ccu.constraint_schema = rc.unique_constraint_schema
+     WHERE ccu.table_name = 'hospital_medical_records' AND ccu.column_name = 'id'
+       AND kcu.table_schema = current_schema()`;
+  const seen = new Set<string>();
+  for (const { table_name: table, column_name: column } of referencing) {
+    const key = `${table}.${column}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "${table}" WHERE "${column}" = ANY($1::uuid[])`,
+      ids,
+    );
+  }
+  await prisma.hospitalMedicalRecord.deleteMany({ where: { id: { in: ids } } });
+}
+
+
 
 /**
  * Puts the doctor behind `email` in clinical standing (multi-hospital §2.6,

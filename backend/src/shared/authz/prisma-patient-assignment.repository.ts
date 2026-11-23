@@ -32,28 +32,44 @@
 
 import { Injectable } from '@nestjs/common';
 
+import { DoctorVerificationStatus } from '../../generated/prisma/enums';
 import { PrismaService } from '../database';
+import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
 import type { PatientAssignmentRepository } from './authz.types';
 
 @Injectable()
 export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async isAssigned(doctorUserId: string, patientId: string): Promise<boolean> {
-    const assignment = await this.prisma.db.patientDoctorAssignment.findFirst({
+  async reachesPatient(doctorUserId: string, patientId: string): Promise<boolean> {
+    // One indexed read: the patient's record at the hospital where the
+    // doctor is actively and clinically employed (DR-05).
+    const record = await this.prisma.db.hospitalMedicalRecord.findFirst({
       where: {
-        revokedAt: null,
-        doctor: { userId: doctorUserId },
-        // Accepts either the public `PT-…` handle or the raw uuid, so a
-        // caller that already resolved the patient does not pay for a
-        // second lookup. Both columns are unique, so the disjunction
-        // cannot match two different patients.
         patient: { OR: [{ publicId: patientId }, ...uuidClause(patientId)] },
+        hospital: {
+          is: {
+            ...ACTIVE_HOSPITAL_FILTER,
+            doctorEmployments: {
+              some: {
+                endedAt: null,
+                doctor: {
+                  is: {
+                    userId: doctorUserId,
+                    deletedAt: null,
+                    verificationStatus: DoctorVerificationStatus.VERIFIED,
+                    practiceStatus: { in: [...CLINICAL_PRACTICE_STATUSES] },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
       select: { id: true },
     });
 
-    return assignment !== null;
+    return record !== null;
   }
 }
 

@@ -258,6 +258,9 @@ export class PatientRepository {
     readonly address?: string | undefined;
     readonly medicalNotes?: string | undefined;
     readonly doctorId: string;
+    /** Where the patient is registered (DR-05): the registering doctor's hospital. */
+    readonly hospitalId: string;
+    readonly doctorEmploymentId: string;
     readonly actorId: string;
     readonly allergies: readonly {
       readonly allergen: string;
@@ -315,12 +318,24 @@ export class PatientRepository {
         });
       }
 
+      // DR-05 / §2.7: registration opens the patient's Hospital Medical
+      // Record at the registering doctor's hospital, in the same
+      // transaction — the record is what makes the chart reachable there.
+      const record = await tx.hospitalMedicalRecord.create({
+        data: { patientId: patient.id, hospitalId: input.hospitalId },
+        select: { id: true },
+      });
+
       // `role: 'primary'` — the clinician who registered the patient is
-      // their primary care relationship until someone changes it.
+      // their primary care relationship until someone changes it. Stamped
+      // with the hospital, record and employment it was made under.
       await tx.patientDoctorAssignment.create({
         data: {
           patientId: patient.id,
           doctorId: input.doctorId,
+          hospitalId: input.hospitalId,
+          hospitalMedicalRecordId: record.id,
+          doctorEmploymentId: input.doctorEmploymentId,
           role: 'primary',
           ...(UUID.test(input.actorId) ? { grantedBy: input.actorId } : {}),
         },
@@ -623,6 +638,28 @@ export class PatientRepository {
   }
 
   /** The `doctors.id` behind a user, for care scoping on the list. */
+  /**
+   * The doctor's active employment at an ACTIVE hospital: where a patient
+   * they register is recorded (DR-05, §2.7). `null` when the account has no
+   * doctor row or no such employment.
+   */
+  async clinicalEmploymentForUser(
+    userId: string,
+  ): Promise<{ doctorId: string; employmentId: string; hospitalId: string } | null> {
+    if (!UUID.test(userId)) return null;
+    const employment = await this.prisma.db.doctorEmployment.findFirst({
+      where: {
+        endedAt: null,
+        doctor: { is: { userId, deletedAt: null } },
+        hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+      },
+      select: { id: true, doctorId: true, hospitalId: true },
+    });
+    return employment === null
+      ? null
+      : { doctorId: employment.doctorId, employmentId: employment.id, hospitalId: employment.hospitalId };
+  }
+
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 

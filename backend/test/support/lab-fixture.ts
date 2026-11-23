@@ -7,6 +7,9 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  fixtureHospital,
+  makeClinicalDoctor,
+  purgeHospitalRecords,
 } from './auth-app';
 
 /**
@@ -98,10 +101,21 @@ export interface Page<T> {
  * who does not — because the care-scope assertions are only meaningful
  * against a real second clinician.
  */
-export async function seedDoctor(harness: AuthHarness, local: string): Promise<string> {
+export async function seedDoctor(
+  harness: AuthHarness,
+  local: string,
+  hospital = 'a',
+): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05). A suite's
+  // "clinician who does not own the chart" is seeded at hospital `b`.
+  await makeClinicalDoctor(
+    harness.prisma,
+    email,
+    await fixtureHospital(harness.prisma, hospital),
+  );
 
   return dataOf<SessionPayload>(
     await request(harness.server)
@@ -250,6 +264,12 @@ export async function destroyLabFixtures(
   await harness.prisma.labAttachment.deleteMany({ where: { order: owned } });
   await harness.prisma.labOrder.deleteMany({ where: owned });
   await harness.prisma.medicalRecord.deleteMany({ where: owned });
+  await purgeHospitalRecords(
+    harness.prisma,
+    (await harness.prisma.patient.findMany({ where: patients, select: { id: true } })).map(
+      (row) => row.id,
+    ),
+  );
   await harness.prisma.patient.deleteMany({ where: patients });
 
   const fileIds = [...new Set([...labFiles, ...recordFiles].map((row) => row.fileId))];

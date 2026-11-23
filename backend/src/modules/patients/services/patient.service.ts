@@ -365,13 +365,15 @@ export class PatientService {
    * last-4 protect nothing.
    */
   async create(user: AuthenticatedUser, input: CreatePatientInput): Promise<PatientView> {
-    const doctorId = await this.patients.doctorIdForUser(user.id);
-    // A patient must be registered *by* a practitioner, because
-    // registration creates the care relationship that makes the chart
-    // reachable. An account with no `doctors` row has nobody to assign.
-    if (doctorId === null) {
+    const employment = await this.patients.clinicalEmploymentForUser(user.id);
+    // A patient must be registered *by* a practitioner employed at a
+    // hospital, because registration opens the Hospital Medical Record
+    // that makes the chart reachable there (DR-05). An account with no
+    // `doctors` row, or no active employment, has nowhere to record it.
+    if (employment === null) {
       throw AppException.forbidden('Only a practitioner can register a patient');
     }
+    const { doctorId } = employment;
 
     const { ids, unknown } = await this.patients.conditionIdsByName(input.chronicConditions);
     if (unknown.length > 0) {
@@ -391,6 +393,8 @@ export class PatientService {
       publicId,
       input,
       doctorId,
+      hospitalId: employment.hospitalId,
+      doctorEmploymentId: employment.employmentId,
       actorId: user.id,
       conditionIds: ids,
     });
@@ -400,6 +404,7 @@ export class PatientService {
       actor: { userId: user.id, role: user.role },
       entityType: 'patient',
       entityId: row.publicId,
+      hospitalId: employment.hospitalId,
       // Counts and flags, never the name, the MRN or the birth date —
       // `AuditMetadata` forbids clinical values and these are the
       // identifiers the whole masking apparatus exists to protect.
@@ -700,6 +705,8 @@ export class PatientService {
     readonly publicId: string;
     readonly input: CreatePatientInput;
     readonly doctorId: string;
+    readonly hospitalId: string;
+    readonly doctorEmploymentId: string;
     readonly actorId: string;
     readonly conditionIds: readonly string[];
   }): Promise<PatientRow> {
@@ -717,6 +724,8 @@ export class PatientService {
           address: input.input.address,
           medicalNotes: input.input.medicalNotes,
           doctorId: input.doctorId,
+          hospitalId: input.hospitalId,
+          doctorEmploymentId: input.doctorEmploymentId,
           actorId: input.actorId,
           allergies: input.input.allergies.map((allergy) => ({
             allergen: allergy.allergen,

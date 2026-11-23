@@ -139,6 +139,8 @@ export async function destroyTestDoctor(prisma: PrismaService, tag: string): Pro
   if (doctor === null) return;
 
   await prisma.appointment.deleteMany({ where: { doctorId: doctor.id } });
+  // Employments restrict their doctor (history is never cascaded away).
+  await prisma.doctorEmployment.deleteMany({ where: { doctorId: doctor.id } });
   await prisma.doctor.deleteMany({ where: { id: doctor.id } });
   await prisma.user.deleteMany({ where: { id: doctor.userId } });
 }

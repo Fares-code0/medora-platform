@@ -156,7 +156,16 @@ export const PERMISSION_CACHE = Symbol('PERMISSION_CACHE');
  * eventually meet.
  */
 export interface PatientAssignmentRepository {
-  isAssigned(doctorUserId: string, patientId: string): Promise<boolean>;
+  /**
+   * DR-05 (multi-hospital, approved): whether the doctor may reach the
+   * patient's clinical data. All of: the doctor holds clinical standing
+   * (verified, ACTIVE or VACATION practice, not deleted) through an active
+   * employment at an ACTIVE hospital H, and the patient has a Hospital
+   * Medical Record at H. No care assignment is required — assignment only
+   * shapes "My Patients"-type lists. The capability is checked by the route
+   * (`@Can`), and each resource is checked against H by its repository.
+   */
+  reachesPatient(doctorUserId: string, patientId: string): Promise<boolean>;
 }
 
 export const PATIENT_ASSIGNMENT_REPOSITORY = Symbol('PATIENT_ASSIGNMENT_REPOSITORY');

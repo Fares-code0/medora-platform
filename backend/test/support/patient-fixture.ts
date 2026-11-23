@@ -1,3 +1,4 @@
+import { purgeHospitalRecords } from './auth-app';
 import type { PrismaService } from '../../src/shared/database';
 
 /**
@@ -131,5 +132,7 @@ export async function destroyPatientRecords(prisma: PrismaService, tag: string):
   if (ids.length === 0) return;
 
   await prisma.appointment.deleteMany({ where: { patientId: { in: ids } } });
+  // Hospital Medical Records restrict their patient (DR-05 fixtures make them).
+  await purgeHospitalRecords(prisma, ids);
   await prisma.patient.deleteMany({ where: { id: { in: ids } } });
 }
