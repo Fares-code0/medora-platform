@@ -10,6 +10,10 @@ The API service for the Medora healthcare platform. NestJS 10 · TypeScript stri
 
 ## Running it
 
+Database ownership, migration, seed, and isolation guidance is in
+[`docs/DATABASE_ARCHITECTURE.md`](docs/DATABASE_ARCHITECTURE.md). The full ERD is
+[`docs/DATABASE_ERD.md`](docs/DATABASE_ERD.md).
+
 ```bash
 npm --prefix backend install
 cp backend/.env.example backend/.env                 # required since M3 — see below
@@ -284,14 +288,20 @@ Measured by probe during M5, not assumed. `prisma migrate diff` compares what th
 |---|---|
 | CHECK constraints | tables, columns, types |
 | triggers and functions | ordinary indexes, including unique |
-| **partial** indexes (`WHERE …`) | **BRIN**, GIN and other access methods |
-| expression indexes | defaults — *including a generated column's expression* |
-| table partitioning | |
+| expression indexes | **BRIN**, GIN and other access methods |
+| table partitioning | defaults — *including a generated column's expression* |
+| | **partial** indexes (`WHERE …`), since Phase 21 enabled the `partialIndexes` preview feature |
+
+**Partial indexes are now seen.** With `partialIndexes` on, Prisma compares each partial index's
+predicate with the text PostgreSQL stores (`pg_get_expr(indpred)`), so a predicate must be declared
+in that normalized form — `(status)::text <> 'resolved'::text`, not `"status" <> 'resolved'` —
+or `db:check` reports a DROP/CREATE pair. A partial index created by a migration and not declared
+in the schema is reported as drift and fails the check.
 
 Two consequences follow, and both are load-bearing:
 
 1. **Raw SQL is for what Prisma cannot represent, and nothing else.** The `audit_events` BRIN index was first hand-written and `migrate dev` immediately generated a migration dropping it.
-2. **Every CHECK, trigger and partial index is covered by a failing-insert test.** That is not thoroughness — `db:check` cannot see them, so the tests are the only thing holding them.
+2. **Every CHECK, trigger and partial index is covered by a failing-insert test.** For CHECKs and triggers that is not thoroughness — `db:check` cannot see them, so the tests are the only thing holding them. For partial indexes `db:check` now holds the definition, and the tests hold the behaviour.
 
 ### Enum values are the API vocabulary
 

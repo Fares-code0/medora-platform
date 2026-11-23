@@ -47,6 +47,7 @@ model Role {
   accessGrants PatientAccessGrant[] @relation("GrantGranteeRole")
   /// ADR-035 — invitations that confer this role.
   invitations  AdminInvitation[]
+  hospitalAssignments HospitalRoleAssignment[]
 
   @@map("roles")
 }
@@ -190,6 +191,8 @@ model Department {
   prescriptions  Prescription[]
 
   @@index([deletedAt])
+  hospitalDepartments HospitalDepartment[]
+
   @@map("departments")
 }
 
@@ -242,6 +245,7 @@ model ChronicCondition {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   patients PatientChronicCondition[]
+  hospitalMedicalRecordConditions HospitalMedicalRecordCondition[]
 
   @@map("chronic_conditions")
 }
@@ -295,6 +299,7 @@ model InsuranceProvider {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   policies PatientInsurance[]
+  hospitalCoverage HospitalInsuranceCoverage[]
 
   @@map("insurance_providers")
 }
@@ -344,6 +349,7 @@ model File {
   /// One of the eight DB §11 values, closed by CHECK rather than by an
   /// enum: §6's complete enum inventory does not list this vocabulary.
   kind           String @db.VarChar(30)
+  hospitalId     String? @map("hospital_id") @db.Uuid
   /// FK added by the M5.2 migration — see `role_permissions.granted_by`.
   uploadedBy     String? @map("uploaded_by") @db.Uuid
   /// The malware-scan gate — UX 2.8: "attachments are scanned before
@@ -356,6 +362,7 @@ model File {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
 
   /// SET NULL (DB §9): the file outlives the account that uploaded it.
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
   uploadedByUser User? @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
 
   patientDocuments      PatientDocument[]
@@ -365,6 +372,7 @@ model File {
   messageAttachments    MessageAttachment[]
   reportExports         ReportExport[]
 
+  @@index([hospitalId], map: "files_hospital_id_idx")
   @@index([deletedAt])
   @@map("files")
 }

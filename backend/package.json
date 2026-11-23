@@ -27,6 +27,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:status": "prisma migrate status",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:multihospital": "tsx prisma/seed-multihospital.ts",
+    "db:erd": "tsx prisma/generate-erd.ts",
     "db:seed:production": "tsx prisma/seed-production.ts",
     "demo:totp": "tsx prisma/demo-totp.ts",
     "admin:bootstrap": "node dist/cli/bootstrap-admin.js",

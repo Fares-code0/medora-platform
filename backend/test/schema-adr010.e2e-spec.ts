@@ -43,7 +43,7 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     'report_exports', //             group 15 — here
   ];
 
-  /** ADR-010's eight OUT groups. Absence is the assertion. */
+  /** ADR-010's remaining OUT groups. ADR-042 supersedes group 16 for clinics. */
   const OUT_TABLES = [
     'countries', //         group 3  — no contract endpoint
     'cities', //            group 3
@@ -56,7 +56,6 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     'immunizations', //     group 11 — already a HistoryEventKind
     'consents', //          group 12 — consent timestamps + files
     'saved_views', //       group 13 — documented contract gap
-    'clinics', //           group 16 — ADR-018 §1, single clinic
     'facilities', //        group 16
     'message_templates', // group 17 — no contract endpoint
     'snippets', //          group 17
@@ -99,10 +98,13 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
     });
 
     it('has none of the tables ADR-010 marked OUT', async () => {
-      // "Out" means not in v1, never rejected forever — each carries the
-      // trigger that would bring it back. What this asserts is that their
-      // absence is intentional rather than forgotten.
+      // ADR-042 supersedes group 16 for clinics. The other deferred tables
+      // remain absent until their documented product triggers are met.
       expect(await tablesPresent(OUT_TABLES)).toEqual([]);
+    });
+
+    it('includes the Hospital-owned Clinic brought into scope by ADR-042', async () => {
+      expect(await tablesPresent(['clinics'])).toEqual(['clinics']);
     });
 
     it('does not create saved_views, where the roadmap and the ADR disagree', async () => {
@@ -114,16 +116,18 @@ describe('the ADR-010 scope decision (RM M5.11)', () => {
       expect(await tablesPresent(['saved_views'])).toEqual([]);
     });
 
-    it('has no clinic_id anywhere (ADR-018 §1)', async () => {
-      // MG §17-10: "keep clinic FK out of v1". An unused column on ~100
-      // tables plus scoping code with one tenant that cannot be
-      // meaningfully tested.
+    it('limits clinic_id to clinic-owned data and has no generic tenant_id', async () => {
+      // ADR-042 supersedes ADR-018 §1's blanket clinic_id prohibition.
+      // ClinicOperatingHour is a normal child of Clinic, while Hospital
+      // remains the isolation boundary. No other model may use clinic_id
+      // as a competing tenant scope, and tenant_id is never used.
       const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
         SELECT table_name FROM information_schema.columns
         WHERE table_schema = 'public' AND column_name IN ('clinic_id', 'tenant_id')
+        ORDER BY table_name
       `;
 
-      expect(rows).toEqual([]);
+      expect(rows).toEqual([{ table_name: 'clinic_operating_hours' }]);
     });
   });
 
