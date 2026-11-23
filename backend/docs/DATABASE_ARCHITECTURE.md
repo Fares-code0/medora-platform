@@ -50,6 +50,14 @@ The primary ownership paths are:
 - `PublishedSlot` is owned by an active doctor employment. An appointment can book a slot only in the
   same hospital and for the matching doctor employment. A partial unique index limits active bookings
   to one per slot; cancelled, rescheduled, completed and no-show appointments release that key.
+- `QueueEntry` and `WaitingRoomEntry` carry a nullable `hospital_id` (#21, migration
+  `20261123130000_queue_hospital_ownership`): their only parents (room, appointment) are optional and
+  may be unowned, so ownership is direct. Legacy rows stay NULL until an approved mapping (#17); an
+  owned row is immutable in place and its room or appointment must belong to the same hospital
+  (`validate_queue_entry_hospital`, `validate_waiting_room_entry_hospital`; legacy rows unchecked). The
+  daily ticket uniqueness (`queue_entries_ticket_per_day`) is still **global**, so two hospitals cannot
+  issue the same ticket on the same day; making it per-hospital means replacing an existing index and
+  is left as a follow-up on #21.
 - `PatientInsurance` remains the patient's actual policy. `HospitalInsuranceCoverage` is separate
   metadata describing a provider and plan accepted by a hospital.
 - `PatientEmergencyContact` and legacy `PatientChronicCondition` remain unchanged.
