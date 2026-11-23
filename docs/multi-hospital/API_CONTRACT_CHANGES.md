@@ -1,6 +1,6 @@
 # Multi-Hospital — API Contract Changes (Proposal)
 
-**Status:** proposal for the Backend team. Nothing is implemented. Paths and shapes are **TECHNICAL
+**Status:** proposal for the Backend team. Implemented so far: only the shadow-only `GET /auth/session` fields `activeHospital` and `adminScope` (Phase 22); everything else is not implemented. Paths and shapes are **TECHNICAL
 RECOMMENDATIONS**; the rules in §0 follow the FINAL owner decisions.
 **Base path:** `/api/v1` (ADR-011). Errors use the machine `code` envelope (ADR-012).
 **Supersedes:** the 2026-10-06 proposals API-W01…W14 (`origin/frontend:frontend/FRONTEND_CHECKLIST.md`

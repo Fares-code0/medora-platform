@@ -84,6 +84,22 @@ TECHNICAL RECOMMENDATION unless noted.
 9. Client-side checks are display rules only. The fail-open `useClinicScope` (AF-17) is never a
    hospital-isolation mechanism.
 
+### 2.1 Phase 22 shadow mode — implementation status
+
+Phase 22 computes hospital-aware decisions **without enforcing them**. Nothing below grants, widens
+or refuses access; the legacy care-assignment rule (ADR-022) still makes every real decision.
+
+| Piece | What it does | Where |
+|---|---|---|
+| Hospital context | Server-derived, resolved lazily and at most once per request (an `AsyncLocalStorage` memo opened by middleware; no global interceptor, so routes that never read it pay nothing). Doctor → the one active `DoctorEmployment`; Hospital Admin → the one active hospital `admin` role assignment; patient → unresolved until a resource is known. Only a hospital with `status = 'ACTIVE'` and `deleted_at IS NULL` yields context: a suspended, inactive or soft-deleted hospital reads as missing context. Missing, ambiguous or unmapped scope stays `unresolved`; a lookup failure is `resolution_unavailable` and is not cached. Platform scope is never inferred (OD-07 mapping pending). | `backend/src/shared/authz/hospital-context.service.ts`, `request-scope.ts` |
+| Patient scope comparison | `PatientScopeService.canReach` decides with the legacy rule first, then hands that verdict to `HospitalPatientScopeShadow`, whose result is discarded and whose failures are swallowed. A legacy repository failure still propagates before any shadow work runs. With `HOSPITAL_SCOPE_SHADOW_COMPARISON=false` no shadow exists and the pre-Phase-22 path runs unchanged. | `backend/src/shared/authz/patient-scope.service.ts`, `hospital-patient-scope.shadow.ts` |
+| Shadow rule (fail closed) | Allow only when the doctor's context is one active employment **and** exactly one live care assignment links doctor and patient **and** that assignment is owned by the same `ACTIVE`, non-deleted hospital, bound to the active employment and to the patient's `HospitalMedicalRecord` there. Legacy assignments without a hospital are never assigned one by guesswork. Every non-doctor role — Hospital Admin and Platform Admin included — gets no clinical access. | `hospital-patient-scope.shadow.ts` |
+| Observation | Divergence is logged with role, outcome and reason only — no patient identifier or hospital name. `legacy_allow_shadow_deny` is expected while legacy rows are unowned; `legacy_deny_shadow_allow` is logged as a warning and must not occur. | same |
+
+Still not in place: enforcement in the data-access layer, Platform Admin vs Hospital Admin guards, RLS,
+grants, Break-Glass and termination-driven session invalidation. The tenant-context gate in §0 is
+therefore still open.
+
 ## 3. Path 1 — Cross-Hospital Access Grant controls
 
 - A grant carries:
