@@ -23,7 +23,11 @@ import {
   classifyAssignment,
   runLegacyAssignmentBackfill,
 } from '../prisma/backfill/legacy-assignment-ownership';
-import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import {
+  closeThenDrop,
+  createIsolatedDatabase,
+  type IsolatedDatabase,
+} from './support/isolated-database';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 let databaseUrl: URL;
@@ -305,8 +309,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (connected) await client.end();
-  await isolated?.drop();
+  // The drop is attempted even if closing the client throws (closeThenDrop).
+  await closeThenDrop(connected ? client : undefined, isolated);
 }, 30_000);
 
 describe('classifyAssignment (pure rule)', () => {
