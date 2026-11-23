@@ -40,13 +40,34 @@ that belongs to the same backend PR is listed here by name. None of them is in t
 | `backend/src/shared/authz/hospital-context-shadow.interceptor.spec.ts` | PR #9 (`8282af2`, `b3020e8`) | Context attached after guards; no principal; lookup failure → `resolution_unavailable`; handler errors not swallowed | Carry over; update if the interceptor becomes lazy (correction 2 below) |
 | `backend/src/modules/auth/services/session-user.service.spec.ts` | PR #9 (`b3020e8`) | `activeHospital` / `adminScope` mapping in `GET /auth/session` | Carry over unchanged |
 | `backend/src/shared/authz/prisma-hospital-context.repository.spec.ts` | PR #9 (`8282af2`, `b3020e8`), changed by PR #12 (`063abc1`) | Query shape, including the `status = 'ACTIVE' AND deleted_at IS NULL` filter | Carry over at PR #12's version |
-| `backend/src/shared/authz/hospital-patient-scope.shadow.spec.ts` | PR #12 (`8baec77`, `063abc1`) | Fail-closed hospital-aware rule, comparison outcomes, log fields without PHI | Carry over at PR #12's version |
+| `backend/src/shared/authz/hospital-patient-scope.shadow.spec.ts` | PR #12 (`8baec77`, `063abc1`) | Fail-closed hospital-aware rule, comparison outcomes, the logged fields (role, outcome, reason; the request logger may still add the URL path, see SECURITY §2.1) | Carry over at PR #12's version |
 | `backend/src/shared/authz/patient-scope.service.spec.ts` | Exists on `main`; extended by PR #12 (`8baec77`, `063abc1`) | Regression matrix proving `canReach` / `assertCanReach` are unchanged with no shadow and with shadows that allow, deny or throw | Merge PR #12's additions into `main`'s file; do not drop the existing cases |
 
 | Documentation update | Origin | Content | Backend responsibility |
 |---|---|---|---|
 | `docs/work-phases/PHASE-22-HOSPITAL-CONTEXT-AND-AUTHORIZATION.md` | PR #9 (`8282af2`, `515e301`, `b3020e8`) and PR #12 (`5bb5ec5`, `8baec77`, `063abc1`) | "Implementation progress" paragraph (shadow context, session fields, resolver tests, ACTIVE-hospital rule, `PatientScopeService` shadow) and the ticked shadow sub-deliverables | Apply to `main`'s copy (which still reads NOT STARTED) in the backend PR |
 | `docs/multi-hospital/SECURITY_AND_DATA_ISOLATION.md` §2.1 "Phase 22 shadow mode — implementation status" | PR #12 (`8baec77`, `063abc1`) | What is computed but not enforced, the fail-closed shadow rule, the ACTIVE-hospital rule, log content | Add §2.1 to `main`'s copy in the backend PR |
+
+## Status — backend PR from `claude/phase22-backend-hospital-authorization` (2026-11-23)
+
+Cut from `main` `0a331e9` (PR #13 merge). PR #9 and PR #12 are untouched and remain history.
+
+| Handoff item | Disposition |
+|---|---|
+| `hospital-context.ts` (type) | Implemented; the request symbol and interface are dropped (no interceptor) |
+| `current-hospital-context.decorator.ts`, `hospital-context-shadow.interceptor.ts` and its spec | **Superseded** by correction 1–2: lazy, per-request memo (`request-scope.ts` + `HospitalContextService.forRequest`). No global interceptor, so routes that never read the context pay nothing |
+| `hospital-context.service.ts`, `prisma-hospital-context.repository.ts` and specs, ACTIVE-hospital rule | Implemented (PR #12 version) plus `forRequest` and its specs |
+| `GET /auth/session` fields (`auth.controller.ts`, `session-user.service.ts` and spec) | Implemented; the context is resolved inside `SessionUserService` after the account check, so an inactive account costs no extra lookup |
+| `PatientScopeService` shadow, `hospital-patient-scope.shadow.ts`, its repository and specs | Implemented; context and assignment-scope lookups memoized per request |
+| `patient-scope.service.spec.ts` additions | Implemented on top of `main`'s cases (additive only) |
+| `hospital-context.e2e`, `hospital-patient-scope.e2e`, `account-security` additions | Implemented; `main`'s `successorTokenCt` assertion kept (PR #12's base predated ADR-045) |
+| Correction 1 — duplicate context queries | Done: one lookup per request, shared |
+| Correction 2 — query on every authenticated request | Done: no lookup unless read (HTTP test asserts zero on `GET /me/sessions`, one on `GET /auth/session`) |
+| Correction 3 — shadow switch | Done: `HOSPITAL_SCOPE_SHADOW_COMPARISON`, **opt-in (default `false`)** after the resource-safety audit; off creates no shadow provider and runs no shadow query (tests). Enabling it under real load requires condition C1 (bounded shadow queries) |
+| Correction 4 — strict session parity | Done: session payload equals the login payload plus exactly the two fields |
+| Correction 5 — Prettier on `account-security.e2e-spec.ts` | Not reformatted wholesale (unrelated lines); new lines follow the file's style |
+| Correction 6 — OD-07 Platform Admin mapping | **Blocked — owner decision.** Platform scope is still never produced |
+| PHASE-22 progress notes, SECURITY §2.1 | Implemented, rewritten for the lazy design and the switch |
 
 ## Required backend corrections before that PR is merge-ready
 

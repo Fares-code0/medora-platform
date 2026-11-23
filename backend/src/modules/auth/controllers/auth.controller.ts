@@ -31,10 +31,12 @@ import {
   type AuthenticatedPayload,
   LoginService,
   type RequestContext,
-  type SessionUserPayload,
 } from '../services/login.service';
 import { RegistrationService, type RegisterResult } from '../services/registration.service';
-import { SessionUserService } from '../services/session-user.service';
+import {
+  SessionUserService,
+  type CurrentSessionUserPayload,
+} from '../services/session-user.service';
 
 /**
  * The authentication lifecycle (RM M6, API §1).
@@ -62,7 +64,8 @@ export class AuthController {
   ) {}
 
   /**
-   * API §1.11 / RM M8.1 — **200** `{ data: SessionUser }`.
+   * API §1.11 / RM M8.1 — **200** `{ data: CurrentSessionUserPayload }` (the
+   * session user plus Phase 22's shadow `activeHospital` / `adminScope`).
    *
    * The "who am I" route. `AuthProvider` calls it after a silent refresh
    * to fill the shell's header and to seed `useCan()`, and the mobile
@@ -75,7 +78,7 @@ export class AuthController {
    */
   @Authenticated()
   @Get('session')
-  session(@CurrentUser() user: AuthenticatedUser): Promise<SessionUserPayload> {
+  session(@CurrentUser() user: AuthenticatedUser): Promise<CurrentSessionUserPayload> {
     return this.sessionUser.current(user);
   }
 
