@@ -67,20 +67,49 @@ comparison is detached from `canReach`/`assertCanReach`. F2 (log wording) is cor
 
 | # | Finding | Location | Must be resolved before |
 |---|---|---|---|
-| F3 | Context is resolved from the token's role while the session payload's `role` is read from the database; after a role change within the access-token lifetime they can disagree (display only) | `backend/src/modules/auth/services/session-user.service.ts` | Any use of the context beyond display |
-| F4 | A doctor whose practice is suspended, or whose profile is soft-deleted, still resolves an active-employment context (display and shadow logging only today) | `backend/src/shared/authz/prisma-hospital-context.repository.ts` | **Authorization enforcement** |
-| F5 | Background work started inside a request (e.g. an inline-queue timer) inherits that request's memo store | `backend/src/shared/authz/request-scope.ts`; `backend/src/shared/jobs/inline-job-queue.ts` | **Authorization enforcement** |
-| F6 | The assignment-scope memo can be stale within a request that changes an assignment and then checks it (shadow logging only) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | **Shadow results becoming authoritative** |
-| F7 | The same patient looked up by public id and by internal id gets two memo entries (one extra query; no correctness impact) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | Optional optimisation |
+| F3 (#23) | Context is resolved from the token's role while the session payload's `role` is read from the database; after a role change within the access-token lifetime they can disagree (display only) | `backend/src/modules/auth/services/session-user.service.ts` | Any use of the context beyond display |
+| F4 (#22) | A doctor whose practice is suspended, or whose profile is soft-deleted, still resolves an active-employment context (display and shadow logging only today) | `backend/src/shared/authz/prisma-hospital-context.repository.ts` | **Authorization enforcement** |
+| F5 (#24) | Background work started inside a request (e.g. an inline-queue timer) inherits that request's memo store | `backend/src/shared/authz/request-scope.ts`; `backend/src/shared/jobs/inline-job-queue.ts` | **Authorization enforcement** |
+| F6 (#25) | The assignment-scope memo can be stale within a request that changes an assignment and then checks it (shadow logging only) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | **Shadow results becoming authoritative** |
+| F7 (in #25) | The same patient looked up by public id and by internal id gets two memo entries (one extra query; no correctness impact) | `backend/src/shared/authz/hospital-patient-scope.shadow.ts` | Optional optimisation |
 
 **Resource-safety audit (2026-11-23).** Shadow queries share the application's Prisma pool (10
 connections per process by default), with no enforced statement timeout and an unbounded
 connection-wait queue; because the comparison is detached, a slow database lets them accumulate.
-`HOSPITAL_SCOPE_SHADOW_COMPARISON` therefore defaults to **off**. **Condition C1 (open):** before the
+`HOSPITAL_SCOPE_SHADOW_COMPARISON` therefore defaults to **off**. **Condition C1 (open, #26):** before the
 shadow is enabled in any environment with real load, bound its execution — a statement timeout on the
 shadow queries and/or an in-flight cap that skips comparisons — without changing authorization.
 
-## Blocking conditions
+## Database work package after PR #14 (2026-11-23, PR #15)
+
+**Completed (database, no activation):**
+- DB-1 (F4): the status model is sufficient — no schema change; effective-employment rule written and proven (`backend/docs/DATABASE_ARCHITECTURE.md`).
+- DB-2 (C1, database side): no timeout bounds application queries today; a transaction-local `statement_timeout` is proven to cancel slow and lock-waiting statements without leaking on a pooled connection (`backend/test/database-statement-timeout.e2e-spec.ts`).
+- DB-3: RLS design and full 124-table coverage inventory (`docs/multi-hospital/RLS_DESIGN.md`); proposed policies in `backend/prisma/rls-proposal/` (never applied).
+- DB-4: behavioural isolation tests of the proposed policies (`backend/test/rls-proposal.e2e-spec.ts`).
+
+**RLS readiness: NOT READY.** No table has RLS; the application connects as the superuser table owner (bypasses RLS). Blockers: #20 (tenant-context contract), #19 B2 (non-owner application role), #17 (legacy rows), #16 (OD-07), #18 (VACATION / verification), #21 (queue tables lack ownership).
+
+**Backlog (GitHub):**
+
+| Issue | Owner | Depends on |
+|---|---|---|
+| #16 OD-07 Platform Admin vs Hospital Admin | Owner decision | — |
+| #17 Legacy row ownership (B3) | Owner decision | — |
+| #18 VACATION / unverified doctor context (B7) | Owner decision | — |
+| #19 Activate RLS | Database | #16, #17, #18, #20, PR #15 |
+| #20 Tenant-context propagation for RLS | Backend (+ Database) | PR #15 |
+| #21 Hospital ownership for queue tables | Database | ownership decision |
+| #22 F4 exclude suspended / deleted doctors | Backend | #18, PR #15 |
+| #23 F3 role consistency | Backend | — |
+| #24 F5 background-job context isolation | Backend | — |
+| #25 F6 (+F7) shadow cache invalidation | Backend | — |
+| #26 C1 shadow resource bounds | Backend | PR #15 (evidence) |
+| #27 Authorization enforcement | Backend | #16, #22, #24 (#23, #25) |
+
+**Remaining security blockers:** enforcement (#27) is not implemented; multi-hospital isolation is **not** enforced by the application or the database.
+
+
 
 Phases 20 and 21.
 
