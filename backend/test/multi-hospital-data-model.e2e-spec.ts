@@ -407,7 +407,7 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       [hospitalId, employmentId, startsAt],
     )).rows[0]!.id;
     const appointmentIds = [randomUUID(), randomUUID()];
-    const publicIds = ['APT-p21-' + suffix + 'a', 'APT-p21-' + suffix + 'b'];
+    const publicIds = ['APT-' + suffix + 'a', 'APT-' + suffix + 'b'];
     const contenders = [new Client({ connectionString: rawDatabaseUrl }), new Client({ connectionString: rawDatabaseUrl })];
     let contendersConnected = false;
     try {
