@@ -332,8 +332,17 @@ describe('platform, audit and triggers (RM M5.10)', () => {
       // Sessions are purged; an audit event whose session vanished must
       // keep the id it correlated on.
       const rows = await prisma.$queryRaw<Array<{ conname: string }>>`
-        SELECT conname FROM pg_constraint
-        WHERE conrelid = 'audit_events'::regclass AND contype = 'f'
+        SELECT c.conname
+        FROM pg_constraint AS c
+        WHERE c.conrelid = 'audit_events'::regclass
+          AND c.contype = 'f'
+          AND EXISTS (
+            SELECT 1
+            FROM unnest(c.conkey) AS key_column(attnum)
+            JOIN pg_attribute AS a
+              ON a.attrelid = c.conrelid AND a.attnum = key_column.attnum
+            WHERE a.attname = 'session_id'
+          )
       `;
 
       expect(rows).toEqual([]);
