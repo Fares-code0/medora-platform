@@ -65,12 +65,16 @@ export interface VerificationDocumentRow {
 export class DoctorVerificationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** `doctors.id` for this account, or null when it is not a practitioner. */
+  /**
+   * Live `doctors.id` for this account, or null when it is not a
+   * practitioner. `findFirst`, not `findUnique`, so a soft-deleted
+   * doctor files no documents.
+   */
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 
