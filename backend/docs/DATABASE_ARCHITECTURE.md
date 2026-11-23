@@ -216,6 +216,11 @@ value is the Backend's choice. A timeout alone does not bound *how many* compari
 connection: the Backend also needs an in-flight cap that skips comparisons when it is reached. Both are
 Backend work (issue linked from the Phase 22 plan); the shadow stays off until then.
 
+Also proven: `set_config('lock_timeout', …, true)` cancels only a lock wait (`55P03`) and does not leak;
+`idle_in_transaction_session_timeout` ends a session left idle inside a transaction (`25P03`); a global
+`statement_timeout` would cut legitimate long statements the same way (why it is not recommended). The
+Backend contract is `docs/multi-hospital/RLS_BACKEND_CONTRACT.md` §5.
+
 Hygiene for operations (not applied here; environment configuration is outside the repository):
 `idle_in_transaction_session_timeout` at the server or role level protects against a leaked open
 transaction pinning a connection, and is safe for this application because no code path holds a

@@ -101,4 +101,57 @@ describe('transaction-local statement_timeout (C1, database side)', () => {
     }
     expect(await setting(pooled)).toBe('0');
   });
+
+  it('lock_timeout set locally cancels only the lock wait (55P03) and does not leak', async () => {
+    await locker.query('BEGIN');
+    await locker.query('LOCK TABLE public.hospitals IN ACCESS EXCLUSIVE MODE');
+    try {
+      await pooled.query('BEGIN');
+      try {
+        await pooled.query("SELECT set_config('lock_timeout', '150ms', true)");
+        await expect(pooled.query('SELECT id FROM public.hospitals LIMIT 1')).rejects.toMatchObject(
+          {
+            code: '55P03',
+          },
+        );
+      } finally {
+        await pooled.query('ROLLBACK');
+      }
+    } finally {
+      await locker.query('ROLLBACK');
+    }
+    const after = await pooled.query<{ lock_timeout: string }>('SHOW lock_timeout');
+    expect(after.rows[0]!.lock_timeout).toBe('0');
+  });
+
+  it('idle_in_transaction_session_timeout ends a session left idle inside a transaction (25P03)', async () => {
+    const idle = new Client({ connectionString: rawDatabaseUrl });
+    idle.on('error', () => undefined); // the server closes this connection on purpose
+    await idle.connect();
+    try {
+      await idle.query('BEGIN');
+      await idle.query("SELECT set_config('idle_in_transaction_session_timeout', '150ms', true)");
+      await new Promise((done) => setTimeout(done, 600));
+      await expect(idle.query('SELECT 1')).rejects.toBeDefined();
+      const terminated = await pooled.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid = $1',
+        [(idle as unknown as { processID: number }).processID],
+      );
+      expect(terminated.rows[0]!.n).toBe(0);
+    } finally {
+      await idle.end().catch(() => undefined);
+    }
+  });
+
+  it('a global statement_timeout would also cut legitimate long work (why it is not recommended)', async () => {
+    await pooled.query('BEGIN');
+    try {
+      await pooled.query("SELECT set_config('statement_timeout', '100ms', true)");
+      // Stands in for a long migration step, export or report: any statement
+      // longer than the global limit fails the same way.
+      await expect(pooled.query('SELECT pg_sleep(0.5)')).rejects.toMatchObject({ code: '57014' });
+    } finally {
+      await pooled.query('ROLLBACK');
+    }
+  });
 });

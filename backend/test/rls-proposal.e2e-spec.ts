@@ -85,6 +85,12 @@ interface World {
   readonly doctorUserA: string;
   readonly doctorA: string;
   readonly employmentA: string;
+  readonly hmrA: string;
+  readonly hmrB: string;
+  readonly patientOnlyAtB: string;
+  readonly queueA: string;
+  readonly queueB: string;
+  readonly prescriptionB: string;
 }
 
 async function hospital(name: string): Promise<string> {
@@ -214,15 +220,41 @@ async function buildWorld(): Promise<World> {
     );
   }
 
+  const s2 = suffix();
+  const patientOnlyAtB = (
+    await one<{ id: string }>(
+      "INSERT INTO public.patients (public_id, mrn, full_name, date_of_birth, gender, blood_type, phone, updated_at) VALUES ($1, $2, 'RLS Patient B', DATE '1985-02-02', 'male', 'A+', '5550199', CURRENT_TIMESTAMP) RETURNING id",
+      ['PT-RB' + s2, 'rlsb_' + s2],
+    )
+  ).id;
+  await client.query(
+    'INSERT INTO public.hospital_medical_records (patient_id, hospital_id, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)',
+    [patientOnlyAtB, hospitalB],
+  );
+  const queue = async (hospitalId: string): Promise<string> =>
+    (
+      await one<{ id: string }>(
+        "INSERT INTO public.queue_entries (ticket, patient_name, reason, estimated_minutes, updated_at, hospital_id) VALUES ($1, 'Queue', 'reason', 5, CURRENT_TIMESTAMP, $2) RETURNING id",
+        ['R' + suffix().slice(0, 8), hospitalId],
+      )
+    ).id;
+  const queueA = await queue(hospitalA);
+  const queueB = await queue(hospitalB);
+  const medicationId = (await one<{ id: string }>('SELECT id FROM public.medications LIMIT 1')).id;
+  const prescriptionB = (
+    await one<{ id: string }>(
+      "INSERT INTO public.prescriptions (public_id, patient_id, medication_id, prescribing_doctor_id, strength, dosage, frequency, route, duration_days, quantity, instructions, start_date, end_date, updated_at, hospital_id, hospital_medical_record_id, doctor_employment_id) VALUES ($1, $2, $3, $4, '10 mg', '1 tab', 'daily', 'Oral', 7, 7, 'x', CURRENT_DATE, CURRENT_DATE + 7, CURRENT_TIMESTAMP, $5, $6, $7) RETURNING id",
+      ['RX-RB' + s, patient, medicationId, b.doctorId, hospitalB, hmrB, employmentB],
+    )
+  ).id;
+
   await client.query(PROPOSAL);
   const role = 'medora_rls_probe_' + suffix();
   await client.query(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
+  // The proposed runtime grants: data access on every table, nothing else.
   await client.query(`GRANT USAGE ON SCHEMA public, app_rls TO ${role}`);
   await client.query(
-    `GRANT SELECT, INSERT, UPDATE, DELETE ON public.hospital_medical_records, public.patient_allergies, public.appointments, public.medical_records, public.record_notes TO ${role}`,
-  );
-  await client.query(
-    `GRANT SELECT ON public.doctor_employments, public.doctors, public.hospitals TO ${role}`,
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`,
   );
   await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app_rls TO ${role}`);
 
@@ -241,6 +273,12 @@ async function buildWorld(): Promise<World> {
     doctorUserA: a.userId,
     doctorA: a.doctorId,
     employmentA,
+    hmrA,
+    hmrB,
+    patientOnlyAtB,
+    queueA,
+    queueB,
+    prescriptionB,
   };
 }
 
@@ -510,5 +548,228 @@ describe('proposed RLS policies (never applied; rolled back)', () => {
         expect(seenByOwner).toEqual([]);
       }
     });
+  });
+
+  it('covers every Direct and Indirect table of the inventory with RLS and at least one policy', async () => {
+    const doc = readFileSync(resolve(__dirname, '../../docs/multi-hospital/RLS_DESIGN.md'), 'utf8');
+    const required = doc
+      .slice(doc.indexOf('## Appendix A'))
+      .split('\n')
+      .filter((line) => line.startsWith('| `'))
+      .map((line) => line.split(' | '))
+      .filter((cells) => cells[1] === 'Direct' || cells[1] === 'Indirect')
+      .map((cells) => cells[0]!.replace(/^\| `|`$/g, ''));
+    expect(required.length).toBeGreaterThan(60);
+    await inProposal(async () => {
+      const covered = await client.query<{ relname: string; enabled: boolean; policies: string }>(
+        "SELECT c.relname, c.relrowsecurity AS enabled, (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname) AS policies FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY($1::text[])",
+        [required],
+      );
+      const gaps = covered.rows
+        .filter((r) => !r.enabled || Number(r.policies) === 0)
+        .map((r) => r.relname);
+      expect(gaps).toEqual([]);
+      expect(covered.rows).toHaveLength(required.length);
+    });
+  });
+
+  it('INSERT and DELETE: allowed in the own hospital, refused or no-op for another', async () => {
+    await inProposal(async (w) => {
+      await asTenant(w, w.hospitalA);
+      const own = await client.query(
+        "INSERT INTO public.patient_allergies (patient_id, allergen, severity, reaction, updated_at, hospital_id, hospital_medical_record_id) VALUES ($1, 'A-own', 'mild', 'rash', CURRENT_TIMESTAMP, $2, $3) RETURNING id",
+        [w.patient, w.hospitalA, w.hmrA],
+      );
+      expect(own.rowCount).toBe(1);
+      await rejects(
+        "INSERT INTO public.patient_allergies (patient_id, allergen, severity, reaction, updated_at, hospital_id, hospital_medical_record_id) VALUES ($1, 'B-forged', 'mild', 'rash', CURRENT_TIMESTAMP, $2, $3)",
+        [w.patient, w.hospitalB, w.hmrB],
+        '42501',
+      );
+      expect(
+        (await client.query('DELETE FROM public.patient_allergies WHERE id = $1', [w.allergyB]))
+          .rowCount,
+      ).toBe(0);
+      expect(
+        (await client.query('DELETE FROM public.patient_allergies WHERE id = $1', [w.allergyA]))
+          .rowCount,
+      ).toBe(1);
+    });
+  });
+
+  it('foreign-key boundary: an own-hospital row cannot point at another hospital record', async () => {
+    await inProposal(async (w) => {
+      await asTenant(w, w.hospitalA);
+      // Passes WITH CHECK (hospital A) but the composite FK has no (HMR of B, hospital A) row.
+      await rejects(
+        "INSERT INTO public.patient_allergies (patient_id, allergen, severity, reaction, updated_at, hospital_id, hospital_medical_record_id) VALUES ($1, 'A-mixed', 'mild', 'rash', CURRENT_TIMESTAMP, $2, $3)",
+        [w.patient, w.hospitalA, w.hmrB],
+        '23503',
+      );
+      // A trigger runs as the invoker and sees only the tenant's parents: B's
+      // prescription is invisible, so the scoped link is refused.
+      await rejects(
+        "INSERT INTO public.patient_medications (patient_id, name, dosage, frequency, start_date, updated_at, prescription_id, hospital_id, hospital_medical_record_id) VALUES ($1, 'x', '1', 'daily', CURRENT_DATE, CURRENT_TIMESTAMP, $2, $3, $4)",
+        [w.patient, w.prescriptionB, w.hospitalA, w.hmrA],
+        '23514',
+      );
+    });
+  });
+
+  it('queue records: each hospital sees and changes only its own (#21)', async () => {
+    await inProposal(async (w) => {
+      await asTenant(w, w.hospitalA);
+      expect(
+        await ids('SELECT id FROM public.queue_entries WHERE id = ANY($1::uuid[])', [
+          [w.queueA, w.queueB],
+        ]),
+      ).toEqual([w.queueA]);
+      expect(
+        (
+          await client.query("UPDATE public.queue_entries SET reason = 'x' WHERE id = $1", [
+            w.queueB,
+          ])
+        ).rowCount,
+      ).toBe(0);
+      await rejects(
+        "INSERT INTO public.queue_entries (ticket, patient_name, reason, estimated_minutes, updated_at, hospital_id) VALUES ('RX1', 'Q', 'r', 1, CURRENT_TIMESTAMP, $1)",
+        [w.hospitalB],
+        '42501',
+      );
+    });
+  });
+
+  it('patient identity: visible only where the hospital holds a record; creating a patient is denied until B8 is decided', async () => {
+    await inProposal(async (w) => {
+      await asTenant(w, w.hospitalA);
+      expect(
+        await ids('SELECT id FROM public.patients WHERE id = ANY($1::uuid[])', [
+          [w.patient, w.patientOnlyAtB],
+        ]),
+      ).toEqual([w.patient]);
+      expect(
+        (
+          await client.query("UPDATE public.patients SET phone = '1' WHERE id = $1", [
+            w.patientOnlyAtB,
+          ])
+        ).rowCount,
+      ).toBe(0);
+      await rejects(
+        "INSERT INTO public.patients (public_id, mrn, full_name, date_of_birth, gender, blood_type, phone, updated_at) VALUES ('PT-RNEW1', 'rlsnew1', 'New', DATE '2000-01-01', 'female', 'O+', '1', CURRENT_TIMESTAMP)",
+        [],
+        '42501',
+      );
+      await asTenant(w, w.hospitalB);
+      expect(
+        await ids('SELECT id FROM public.patients WHERE id = ANY($1::uuid[])', [
+          [w.patient, w.patientOnlyAtB],
+        ]),
+      ).toEqual([w.patient, w.patientOnlyAtB].sort());
+    });
+  });
+});
+
+describe('concurrent transactions on separate connections (committed scratch objects, dropped afterwards)', () => {
+  // Policies must be visible to two sessions at once, so this suite commits —
+  // but only a dedicated scratch schema and role, never the real tables.
+  const tag = suffix();
+  const schema = 'rls_conc_' + tag;
+  const role = 'medora_rls_conc_' + tag;
+  const a = randomUUID();
+  const b = randomUUID();
+  const sessionA = new Client({ connectionString: rawDatabaseUrl });
+  const sessionB = new Client({ connectionString: rawDatabaseUrl });
+
+  async function dropLeftovers(): Promise<void> {
+    const stale = await client.query<{ nspname: string }>(
+      "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'rls\\_conc\\_%'",
+    );
+    for (const row of stale.rows) await client.query(`DROP SCHEMA ${row.nspname} CASCADE`);
+    const staleRoles = await client.query<{ rolname: string }>(
+      "SELECT rolname FROM pg_roles WHERE rolname LIKE 'medora\\_rls\\_conc\\_%'",
+    );
+    for (const row of staleRoles.rows) await client.query(`DROP ROLE ${row.rolname}`);
+  }
+
+  beforeAll(async () => {
+    await dropLeftovers();
+    await client.query(`CREATE SCHEMA ${schema}`);
+    await client.query(
+      `CREATE TABLE ${schema}.owned (id serial PRIMARY KEY, hospital_id uuid NOT NULL, note text)`,
+    );
+    await client.query(
+      `INSERT INTO ${schema}.owned (hospital_id, note) VALUES ($1, 'a'), ($2, 'b')`,
+      [a, b],
+    );
+    await client.query(`ALTER TABLE ${schema}.owned ENABLE ROW LEVEL SECURITY`);
+    await client.query(
+      `CREATE POLICY owned_tenant ON ${schema}.owned FOR ALL USING (hospital_id = NULLIF(current_setting('app.hospital_id', true), '')::uuid) WITH CHECK (hospital_id = NULLIF(current_setting('app.hospital_id', true), '')::uuid)`,
+    );
+    await client.query(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
+    await client.query(`GRANT USAGE ON SCHEMA ${schema} TO ${role}`);
+    await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ${schema}.owned TO ${role}`);
+    await client.query(`GRANT USAGE ON SEQUENCE ${schema}.owned_id_seq TO ${role}`);
+    await Promise.all([sessionA.connect(), sessionB.connect()]);
+  }, 15_000);
+
+  afterAll(async () => {
+    await Promise.allSettled([sessionA.end(), sessionB.end()]);
+    await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await client.query(`DROP ROLE IF EXISTS ${role}`);
+    const residue = await client.query(
+      'SELECT 1 FROM pg_namespace WHERE nspname = $1 UNION ALL SELECT 1 FROM pg_roles WHERE rolname = $2',
+      [schema, role],
+    );
+    expect(residue.rowCount).toBe(0);
+  });
+
+  async function begin(session: Client, hospital: string): Promise<void> {
+    await session.query('BEGIN');
+    await session.query("SELECT set_config('app.hospital_id', $1, true)", [hospital]);
+    await session.query(`SET LOCAL ROLE ${role}`);
+  }
+
+  it('two interleaved transactions with different hospitals each see and write only their own rows', async () => {
+    await begin(sessionA, a);
+    await begin(sessionB, b);
+    try {
+      const seenA = await sessionA.query<{ note: string }>(
+        `SELECT note FROM ${schema}.owned ORDER BY note`,
+      );
+      const seenB = await sessionB.query<{ note: string }>(
+        `SELECT note FROM ${schema}.owned ORDER BY note`,
+      );
+      expect(seenA.rows.map((r) => r.note)).toEqual(['a']);
+      expect(seenB.rows.map((r) => r.note)).toEqual(['b']);
+      await sessionA.query(`INSERT INTO ${schema}.owned (hospital_id, note) VALUES ($1, 'a2')`, [
+        a,
+      ]);
+      const updatedByB = await sessionB.query(
+        `UPDATE ${schema}.owned SET note = 'x' WHERE hospital_id = $1`,
+        [a],
+      );
+      expect(updatedByB.rowCount).toBe(0);
+      // Last: the refusal aborts session B's transaction.
+      await expect(
+        sessionB.query(`INSERT INTO ${schema}.owned (hospital_id, note) VALUES ($1, 'forged')`, [
+          a,
+        ]),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await Promise.all([sessionA.query('ROLLBACK'), sessionB.query('ROLLBACK')]);
+    }
+  });
+
+  it('a reused connection starts the next transaction with no context and sees nothing', async () => {
+    await begin(sessionA, a);
+    await sessionA.query('COMMIT');
+    await sessionA.query('BEGIN');
+    await sessionA.query(`SET LOCAL ROLE ${role}`);
+    try {
+      const seen = await sessionA.query(`SELECT note FROM ${schema}.owned`);
+      expect(seen.rowCount).toBe(0);
+    } finally {
+      await sessionA.query('ROLLBACK');
+    }
   });
 });
