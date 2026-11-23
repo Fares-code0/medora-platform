@@ -93,16 +93,29 @@ export function optimisticUpdate<TVariables, TQueryData, TData = unknown, TError
       // mutation and undo it.
       await queryClient.cancelQueries({ queryKey });
 
-      // Step 2. Snapshot every matching query, then rewrite it.
-      const snapshot = queryClient.getQueriesData<TQueryData>({ queryKey });
+      // Step 2. Snapshot every matching query, then rewrite it. The
+      // snapshot holds the Query instances themselves, not only their keys:
+      // see the restore below.
+      const snapshot = queryClient
+        .getQueryCache()
+        .findAll({ queryKey })
+        .map((query) => ({ query, data: query.state.data as TQueryData | undefined }));
       queryClient.setQueriesData<TQueryData>({ queryKey }, (current) =>
         current === undefined ? current : apply(current, variables),
       );
 
       return {
         restore: () => {
-          for (const [key, data] of snapshot) {
-            queryClient.setQueryData(key, data);
+          // Only into the very query that was snapshotted. A sign-out
+          // clears the cache while a request can still be on the wire, and
+          // TanStack runs `onError` after `clear()`: writing by key would
+          // re-create the previous account's data, or overwrite the next
+          // account's query that has since taken the same key.
+          const cache = queryClient.getQueryCache();
+          for (const { query, data } of snapshot) {
+            if (cache.get(query.queryHash) === query) {
+              queryClient.setQueryData(query.queryKey, data);
+            }
           }
         },
       };

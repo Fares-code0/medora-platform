@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/api/client';
+import { clearSessionMemory } from '@/api/session-memory';
 import { sessionPolicy } from '@/configs/session';
 import { authService } from '@/features/auth/service';
 import {
@@ -132,6 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // cached lists are another session's patient data, never this one's.
       queryClient.clear();
       clearAiSessionData();
+      // Unsaved drafts survive a lock for the user who locked, and no one else.
+      if (!opts?.resumingLock || session.user.id !== userIdRef.current) clearSessionMemory();
       if (opts?.resumingLock) {
         // An unlock through the `/auth/login` fallback: the user who locked
         // gets their own mock messaging back; anyone else starts fresh.
@@ -158,6 +161,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryClient.clear();
     // The assistant's conversations are PHI held in memory too (S1).
     clearAiSessionData();
+    // So are the live adapters' unsaved drafts.
+    clearSessionMemory();
     clearConversationsSession();
     pendingRef.current = null;
     setUser(null);

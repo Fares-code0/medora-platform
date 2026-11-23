@@ -123,6 +123,8 @@ model Doctor {
   @@index([departmentId])
   @@index([verificationStatus])
   @@index([practiceStatus])
+  employments DoctorEmployment[]
+
   @@map("doctors")
 }
 
@@ -145,6 +147,7 @@ model DoctorSpecialty {
 
   @@id([doctorId, specialtyId])
   @@index([specialtyId])
+  @@unique([doctorId], where: raw("is_primary"), map: "doctor_specialties_one_primary")
   @@map("doctor_specialties")
 }
 
@@ -230,9 +233,11 @@ model StaffMember {
   /// The other half of the DB §14.2 cycle — departments this member heads.
   headedDepartments Department[] @relation("DepartmentHead")
   shifts     StaffShiftAssignment[]
+  hospitalAffiliations HospitalStaffAffiliation[]
 
   @@index([deletedAt])
   @@index([departmentId])
+
   @@map("staff_members")
 }
 
@@ -256,20 +261,28 @@ model StaffShiftAssignment {
 
   staff StaffMember @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
-  @@unique([staffId, kind])
+  @@unique([staffId, kind], where: raw("hospital_staff_affiliation_id IS NULL"), map: "staff_shift_assignments_legacy_unique")
+  @@unique([staffId, hospitalId, kind], where: raw("hospital_staff_affiliation_id IS NOT NULL"), map: "staff_shift_assignments_hospital_unique")
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalStaffAffiliationId String? @map("hospital_staff_affiliation_id") @db.Uuid
+  hospitalAffiliation HospitalStaffAffiliation? @relation(fields: [hospitalStaffAffiliationId, hospitalId, staffId], references: [id, hospitalId, staffId], onDelete: Restrict, map: "staff_shift_assignments_affiliation_fkey")
+  @@index([hospitalStaffAffiliationId], map: "staff_shift_assignments_affiliation_idx")
+
   @@map("staff_shift_assignments")
 }
 
 /// A physical room (DB §K4).
 model Room {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String     @unique @db.VarChar(80)
+  name         String     @db.VarChar(80)
   kind         RoomKind
   status       RoomStatus @default(AVAILABLE)
   capacity     Int        @db.SmallInt
   note         String?    @db.VarChar(300)
   departmentId String     @map("department_id") @db.Uuid
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -278,8 +291,13 @@ model Room {
   updatedBy String?   @map("updated_by") @db.Uuid
 
   department   Department   @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "rooms_hospital_department_fkey")
   queueEntries QueueEntry[]
 
+  @@unique([name], where: raw("hospital_id IS NULL"), map: "rooms_legacy_name_key")
+  @@unique([hospitalId, name], where: raw("hospital_id IS NOT NULL"), map: "rooms_hospital_name_key")
+  @@index([hospitalId, hospitalDepartmentId], map: "rooms_hospital_department_idx")
   @@index([deletedAt])
   @@index([departmentId])
   @@map("rooms")
@@ -302,6 +320,8 @@ model Resource {
   /// The owning department, from `database/medora.dbml`. Optional: DB §K5
   /// has no such link, so every existing resource is unassigned.
   departmentId String?        @map("department_id") @db.Uuid
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -312,7 +332,10 @@ model Resource {
   /// SET NULL, DB §9's rule for an optional link: a department going
   /// away leaves its stock on the books.
   department Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  hospitalDepartment HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "resources_hospital_department_fkey")
 
+  @@index([hospitalId, hospitalDepartmentId], map: "resources_hospital_department_idx")
   @@index([departmentId])
   @@index([deletedAt])
   @@map("resources")

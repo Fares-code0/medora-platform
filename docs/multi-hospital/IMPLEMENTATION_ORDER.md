@@ -8,7 +8,7 @@ blocks only the record-claim sub-feature.
 | # | Step | Work phase | Primary team | Decisions it implements | Exit gate |
 |---|---|---|---|---|---|
 | 1 | **Owner decisions — FINAL** | — | Owner | DR-01…DR-13, OD-01…OD-14, OQ-01 | Done 2026-10-07 |
-| 2 | Replacement / supersession **ADR-042** (draft: `ADR-042-DRAFT.md`) | 20 | Architecture | All | Owner approves the draft; appended to the register after a fresh number sweep; ADR-018 §1, ADR-010 clause, ADR-022 anchor marked superseded |
+| 2 | Replacement / supersession **ADR-042** (draft: `ADR-042-DRAFT.md`) | 20 | Architecture | All | Accepted and registered 2026-11-22 after fresh numbering sweep; ADR-018 §1, ADR-010 clause, ADR-022 anchor marked superseded |
 | 3 | Data model | 21 (stage 1) | Database | DR-01…04, 06, 07, 10, 11; OD-03, 06, 07, 08, 09, 13, 14 | Schema reviewed; `db:check` green |
 | 4 | Migration | 21 (stage 2) | Database + Backend | OD-07 (admin mapping), OD-09 | Default-hospital backfill rehearsed with rollback; admin mapping list approved; **G-1** |
 | 5 | Hospital authorization / context | 22 | Backend + Security | DR-05, 07, 08; OD-07, OD-12 | Shadow-mode diff reviewed; **G-2** (partial), **G-4** |

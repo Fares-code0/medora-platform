@@ -40,6 +40,11 @@ model Conversation {
   @@index([lastActivityAt(sort: Desc)])
   @@index([patientId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "conversations_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "conversations_hospital_scope_idx")
+
   @@map("conversations")
 }
 
@@ -263,6 +268,12 @@ model Notification {
 
   /// DB §8 — the feed, newest first.
   @@index([recipientId, createdAt(sort: Desc)])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "notifications_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "notifications_hospital_scope_idx")
+
+  @@index([recipientId, createdAt(sort: Desc)], where: raw("read_at IS NULL AND NOT archived"), map: "notifications_unread_idx")
   @@map("notifications")
 }
 
@@ -334,6 +345,11 @@ model AiConversation {
   @@index([ownerId, updatedAt(sort: Desc)])
   @@index([patientId])
   @@index([deletedAt])
+  hospitalId String? @map("hospital_id") @db.Uuid
+  hospitalMedicalRecordId String? @map("hospital_medical_record_id") @db.Uuid
+  hospitalMedicalRecord HospitalMedicalRecord? @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "ai_conversations_hospital_medical_record_fkey")
+  @@index([hospitalId, hospitalMedicalRecordId], where: raw("hospital_id IS NOT NULL"), map: "ai_conversations_hospital_scope_idx")
+
   @@map("ai_conversations")
 }
 

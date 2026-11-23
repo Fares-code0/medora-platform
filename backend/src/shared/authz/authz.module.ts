@@ -1,14 +1,23 @@
-import { Module } from '@nestjs/common';
+import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
 
 import { ConfigService } from '../../config';
 import { DatabaseModule } from '../database';
 
 import { AuthorizationGuard } from './authorization.guard';
+import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
+import {
+  HOSPITAL_PATIENT_SCOPE_REPOSITORY,
+  HospitalPatientScopeShadow,
+  type HospitalPatientScopeRepository,
+} from './hospital-patient-scope.shadow';
 import { PatientScopeService } from './patient-scope.service';
 import { PatientSelfScopeService } from './patient-self-scope.service';
 import { PermissionResolver } from './permission-resolver.service';
 import { PrismaPatientAssignmentRepository } from './prisma-patient-assignment.repository';
 import { PrismaPatientSelfRepository } from './prisma-patient-self.repository';
+import { PrismaHospitalContextRepository } from './prisma-hospital-context.repository';
+import { PrismaHospitalPatientScopeRepository } from './prisma-hospital-patient-scope.repository';
+import { RequestScopeMiddleware } from './request-scope';
 import { PrismaRoleRepository } from './prisma-role.repository';
 import { RedisPermissionCache } from './redis-permission-cache';
 import {
@@ -78,6 +87,28 @@ import {
     },
     { provide: PATIENT_ASSIGNMENT_REPOSITORY, useClass: PrismaPatientAssignmentRepository },
     { provide: PATIENT_SELF_REPOSITORY, useClass: PrismaPatientSelfRepository },
+    // Phase 22 (shadow mode). Hospital context is resolved lazily and at most
+    // once per request (request-scope.ts); there is no global interceptor.
+    { provide: HOSPITAL_CONTEXT_REPOSITORY, useClass: PrismaHospitalContextRepository },
+    { provide: HOSPITAL_PATIENT_SCOPE_REPOSITORY, useClass: PrismaHospitalPatientScopeRepository },
+    HospitalContextService,
+    // The comparison exists only while HOSPITAL_SCOPE_SHADOW_COMPARISON is on.
+    // Off, PatientScopeService receives no shadow and runs exactly the
+    // pre-Phase-22 path with no extra query.
+    {
+      provide: HospitalPatientScopeShadow,
+      inject: [ConfigService, HospitalContextService, HOSPITAL_PATIENT_SCOPE_REPOSITORY],
+      useFactory: (
+        config: ConfigService,
+        contexts: HospitalContextService,
+        repository: HospitalPatientScopeRepository,
+      ): HospitalPatientScopeShadow | undefined =>
+        config.hospitalScopeShadowComparison
+          ? new HospitalPatientScopeShadow(contexts, repository, {
+              maxInFlight: config.hospitalScopeShadowLimits.maxInFlight,
+            })
+          : undefined,
+    },
     PermissionResolver,
     PatientScopeService,
     PatientSelfScopeService,
@@ -87,6 +118,7 @@ import {
     PermissionResolver,
     PatientScopeService,
     PatientSelfScopeService,
+    HospitalContextService,
     AuthorizationGuard,
     ROLE_REPOSITORY,
     PERMISSION_CACHE,
@@ -94,4 +126,9 @@ import {
     PATIENT_SELF_REPOSITORY,
   ],
 })
-export class AuthzKernelModule {}
+export class AuthzKernelModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // Opens the per-request memo before guards and handlers; no I/O.
+    consumer.apply(RequestScopeMiddleware).forRoutes('*');
+  }
+}

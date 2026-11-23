@@ -1,15 +1,18 @@
 # Medora Multi-Hospital Documentation
 
-This folder is the single authoritative specification for turning Medora from a single-clinic system
-into a **multi-hospital** platform. It is **documentation only**. Nothing here is implemented, and the
-current code is still single-clinic (`AUDIT_FINDINGS.md`).
+This folder is the authoritative architecture specification for Medora as a multi-hospital platform.
+The repository implementation remains partial. PR #5 merged the Hospital/Location/Clinic foundation;
+Phase 21's additive data model is under review in the database-only PR from
+`fix/phase21-database-main-integration`. Backend tenant-context and authorization
+integration remain incomplete, so the schema does not enable real multi-hospital access
+(AUDIT_FINDINGS.md and `backend/docs/DATABASE_ARCHITECTURE.md`).
 
 - **Owner:** Fares Al-Almashharawi
 - **Decisions:** `OWNER_DECISIONS.md`. All of DR-01…DR-13, OD-01…OD-14 and **OQ-01** are **FINAL**
   (2026-10-07). Only **OQ-02** (record-claim identity proofing, RA-030.1) is open, and it is deferred to
   implementation.
-- **ADR:** [`ADR-042-DRAFT.md`](ADR-042-DRAFT.md), Proposed and pending owner approval; not yet in
-  `docs/DECISIONS.md`.
+- **ADR:** ADR-042 is Accepted (2026-11-22) and registered in docs/DECISIONS.md; ADR-042-DRAFT.md is retained as the source copy.
+
 - **Roadmap:** `docs/work-phases/` (Phases 20–31 and 22A)
 
 ## Read in this order
@@ -17,7 +20,7 @@ current code is still single-clinic (`AUDIT_FINDINGS.md`).
 | # | File | For |
 |---|---|---|
 | 1 | [`OWNER_DECISIONS.md`](OWNER_DECISIONS.md) | Everyone. All final decisions; OQ-02 deferred |
-| 1a | [`ADR-042-DRAFT.md`](ADR-042-DRAFT.md) | Architecture. The draft ADR that formalizes them |
+| 1a | [`ADR-042-DRAFT.md`](ADR-042-DRAFT.md) | Accepted ADR source copy; canonical entry is in docs/DECISIONS.md |
 | 2 | [`AUDIT_FINDINGS.md`](AUDIT_FINDINGS.md) | Everyone. Current code (AF-01…AF-40) and the terminology audit |
 | 3 | [`MASTER_PLAN.md`](MASTER_PLAN.md) | Everyone. Target architecture, glossary, target vs current |
 | 4 | [`IMPLEMENTATION_ORDER.md`](IMPLEMENTATION_ORDER.md) | Leads |
@@ -29,6 +32,7 @@ current code is still single-clinic (`AUDIT_FINDINGS.md`).
 | 10 | [`CLIENTS_CHECKLIST.md`](CLIENTS_CHECKLIST.md) | Frontend, Patient App |
 | 11 | [`AI_CHECKLIST.md`](AI_CHECKLIST.md) | AI, Backend |
 | 12 | [`SECURITY_AND_DATA_ISOLATION.md`](SECURITY_AND_DATA_ISOLATION.md) | Security, Testing, everyone |
+| 12a | [`BACKEND_ENFORCEMENT_INVENTORY.md`](BACKEND_ENFORCEMENT_INVENTORY.md) | Backend, Security. Where isolation must be enforced; staged plan (2026-11-23) |
 | 13 | [`MIGRATION_AND_COMPATIBILITY.md`](MIGRATION_AND_COMPATIBILITY.md) | Database, Backend, Architecture |
 
 ## The architecture in one screen
@@ -86,5 +90,5 @@ current code is still single-clinic (`AUDIT_FINDINGS.md`).
 
 ## What this folder does not change
 
-Application code, Prisma, migrations, SQL, tests, dependencies, deployment and `docs/DECISIONS.md`
-are all unchanged. ADR-018 is untouched. **ADR-042** exists only as a Proposed draft in this folder.
+This documentation does not itself implement application code, schema changes, migrations, tests, or deployment.
+ADR-042 is accepted and registered; ADR-018 source text is retained, with its supersession recorded in ADR-042.

@@ -574,13 +574,23 @@ describe('PATCH /admin/users/{id} (§2.10)', () => {
     expect(response.status).toBe(200);
     expect(dataOf<PlatformUserView>(response).role).toBe('nurse');
 
-    const feed = await request(harness.server)
+    // ADR-046: the subject's token was minted for the old role and is now
+    // refused; their next token (here a fresh sign-in) carries `nurse`.
+    const stale = await request(harness.server)
       .get(ACTIVITY)
       .set('Authorization', `Bearer ${subject.token}`);
+    expect(stale.status).toBe(401);
 
+    const feed = await request(harness.server)
+      .get(ACTIVITY)
+      .set('Authorization', `Bearer ${await tokenFor(subject.email)}`);
+
+    // Newest first: the sign-in that minted the new token, then the role
+    // change it follows.
     const entries = dataOf<Page<ActivityEntryView>>(feed).items;
-    expect(entries[0]?.kind).toBe('security');
-    expect(entries[0]?.summary).toContain('role');
+    expect(entries[0]?.kind).toBe('login');
+    expect(entries[1]?.kind).toBe('security');
+    expect(entries[1]?.summary).toContain('role');
   });
 
   it('refuses to promote anyone to admin through this route', async () => {
