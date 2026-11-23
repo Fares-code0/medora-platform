@@ -26,11 +26,19 @@ export interface AuthenticatedUser {
   /** Role **code** (`doctor`, `admin`), not the role row's uuid. */
   readonly role: string;
   /**
-   * The permission codes resolved when the token was issued. Static for
-   * the life of the access token by contract (API §1.11: "permissions
-   * are static per session (changes apply at next issue)").
+   * The account's current permission codes. Minted into the token at
+   * issue; `AccessTokenGuard` replaces them with a fresh resolution when
+   * the token's `pv` claim no longer matches `users.permission_version`,
+   * so a permission change applies on the next request (G4, ADR-047).
    */
   readonly permissions: readonly string[];
+  /**
+   * `users.permission_version` (G4, ADR-047). From the token's `pv` claim
+   * until `AccessTokenGuard` overwrites it with the value it read from the
+   * database for this request; absent on a token minted before the claim
+   * existed, which the guard treats as stale.
+   */
+  readonly permissionVersion?: number;
   /** `sessions.id` — ties the request to the session that minted it. */
   readonly sessionId: string;
 }

@@ -22,6 +22,7 @@ import {
 } from '../../../common/auth/authenticated-user';
 import { Public } from '../../../common/auth/public.decorator';
 import { AppException } from '../../../common/errors/app.exception';
+import type { PermissionResolver, Principal } from '../../../shared/authz';
 import type { AccessTokenService } from '../services/access-token.service';
 import type { SessionService } from '../services/session.service';
 
@@ -49,7 +50,11 @@ const PRINCIPAL: AuthenticatedUser = {
   role: 'doctor',
   permissions: ['patients.view'],
   sessionId: '22222222-2222-4222-8222-222222222222',
+  permissionVersion: 4,
 };
+
+/** What the database answers as the account's permission version by default. */
+const CURRENT_VERSION = 4;
 
 type Handler = keyof FixtureController;
 
@@ -74,8 +79,9 @@ function contextFor(
 
 let verify: ReturnType<typeof vi.fn<(token: string) => Promise<AuthenticatedUser | null>>>;
 let isActive: ReturnType<
-  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>
+  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>
 >;
+let permissionsFor: ReturnType<typeof vi.fn<(principal: Principal) => Promise<readonly string[]>>>;
 let belongsTo: ReturnType<typeof vi.fn<(sid: string, sub: string) => Promise<boolean>>>;
 let guard: AccessTokenGuard;
 
@@ -83,14 +89,20 @@ beforeEach(() => {
   verify = vi.fn<(token: string) => Promise<AuthenticatedUser | null>>(() =>
     Promise.resolve(PRINCIPAL),
   );
-  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<boolean>>(() =>
-    Promise.resolve(true),
+  // `isActive` here is `SessionService.activePermissionVersion`: the same
+  // read, answering the account's permission version or `null` (G4).
+  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>(() =>
+    Promise.resolve(CURRENT_VERSION),
+  );
+  permissionsFor = vi.fn<(principal: Principal) => Promise<readonly string[]>>(() =>
+    Promise.resolve(['records.view', 'patients.view']),
   );
   belongsTo = vi.fn<(sid: string, sub: string) => Promise<boolean>>(() => Promise.resolve(true));
   guard = new AccessTokenGuard(
     new Reflector(),
     { verify } as unknown as AccessTokenService,
-    { isActive, belongsTo } as unknown as SessionService,
+    { activePermissionVersion: isActive, belongsTo } as unknown as SessionService,
+    { permissionsFor } as unknown as PermissionResolver,
   );
 });
 
@@ -139,7 +151,7 @@ describe('AccessTokenGuard', () => {
   });
 
   it('refuses a validly signed token whose session is no longer live — 401 unauthorized', async () => {
-    isActive.mockResolvedValueOnce(false);
+    isActive.mockResolvedValueOnce(null);
     const { context, request } = contextFor('guarded', 'Bearer good');
 
     const error = await refusal(guard.canActivate(context));
@@ -151,14 +163,17 @@ describe('AccessTokenGuard', () => {
   });
 
   it('lets @AllowEndedSession() through an ended session, waiving liveness only', async () => {
-    isActive.mockResolvedValue(false);
+    isActive.mockResolvedValue(null);
     const { context, request } = contextFor('logout', 'Bearer good');
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(isActive).not.toHaveBeenCalled();
     // Identity is still checked: the token's session, for the token's user.
     expect(belongsTo).toHaveBeenCalledWith(PRINCIPAL.sessionId, PRINCIPAL.id);
-    expect(request[AUTHENTICATED_USER]).toEqual(PRINCIPAL);
+    // No version was read, so neither the version nor the permission claim
+    // is carried (G4): nothing on this path is authorized by a stale claim.
+    const { permissionVersion: _version, ...identity } = PRINCIPAL;
+    expect(request[AUTHENTICATED_USER]).toEqual({ ...identity, permissions: [] });
   });
 
   it('refuses @AllowEndedSession() when the session is not the subject’s — 401', async () => {
@@ -173,7 +188,7 @@ describe('AccessTokenGuard', () => {
   });
 
   it('ignores the marker on a controller: its routes still need a live session', async () => {
-    isActive.mockResolvedValueOnce(false);
+    isActive.mockResolvedValueOnce(null);
     const { context } = contextFor('ordinary', 'Bearer good', MarkedController);
 
     const error = await refusal(guard.canActivate(context));
@@ -213,6 +228,71 @@ describe('AccessTokenGuard', () => {
 
     await expect(guard.canActivate(contextFor('guarded', 'Bearer good').context)).rejects.toThrow(
       'connection refused',
+    );
+  });
+});
+
+describe('AccessTokenGuard — permission version (G4, ADR-047)', () => {
+  it('trusts the permission claim when the token was minted at the current version', async () => {
+    const { context, request } = contextFor('guarded', 'Bearer good');
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    expect(permissionsFor).not.toHaveBeenCalled();
+    expect(request[AUTHENTICATED_USER]).toEqual(PRINCIPAL);
+  });
+
+  it('replaces a stale permission claim with a fresh resolution at the current version', async () => {
+    isActive.mockResolvedValueOnce(CURRENT_VERSION + 1);
+    const { context, request } = contextFor('guarded', 'Bearer good');
+
+    // Not a 401: an ordinary permission change applies on the same token.
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    expect(permissionsFor).toHaveBeenCalledWith({
+      userId: PRINCIPAL.id,
+      roleCode: PRINCIPAL.role,
+      sessionId: PRINCIPAL.sessionId,
+      permissionVersion: CURRENT_VERSION + 1,
+    });
+    expect(request[AUTHENTICATED_USER]).toEqual({
+      ...PRINCIPAL,
+      // Sorted, as the token's claim is.
+      permissions: ['patients.view', 'records.view'],
+      permissionVersion: CURRENT_VERSION + 1,
+    });
+  });
+
+  it('treats a token minted before the pv claim existed as stale', async () => {
+    const { permissionVersion: _version, ...legacy } = PRINCIPAL;
+    verify.mockResolvedValueOnce(legacy);
+    const { context, request } = contextFor('guarded', 'Bearer legacy');
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    expect(permissionsFor).toHaveBeenCalledTimes(1);
+    expect((request[AUTHENTICATED_USER] as AuthenticatedUser | undefined)?.permissionVersion).toBe(
+      CURRENT_VERSION,
+    );
+  });
+
+  it('fails closed when a stale claim cannot be re-resolved', async () => {
+    isActive.mockResolvedValueOnce(CURRENT_VERSION + 1);
+    permissionsFor.mockRejectedValueOnce(new Error('database down'));
+    const { context, request } = contextFor('guarded', 'Bearer good');
+
+    await expect(guard.canActivate(context)).rejects.toThrow('database down');
+    expect(request[AUTHENTICATED_USER]).toBeUndefined();
+  });
+
+  it('attaches the version it read, whatever the token claimed', async () => {
+    verify.mockResolvedValueOnce({ ...PRINCIPAL, permissionVersion: 99 });
+    const { context, request } = contextFor('guarded', 'Bearer good');
+
+    await guard.canActivate(context);
+
+    expect((request[AUTHENTICATED_USER] as AuthenticatedUser | undefined)?.permissionVersion).toBe(
+      CURRENT_VERSION,
     );
   });
 });

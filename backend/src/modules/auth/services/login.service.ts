@@ -248,7 +248,11 @@ export class LoginService {
     rememberMe: boolean,
     context: RequestContext = {},
   ): Promise<LoginSuccess> {
-    const permissions = await this.permissions.resolve(user.id, user.roleId, user.role.code);
+    const { permissions, permissionVersion } = await this.permissions.resolveVersioned(
+      user.id,
+      user.roleId,
+      user.role.code,
+    );
     const issued = await this.sessions.start(user.id, rememberMe, context);
 
     const principal: AuthenticatedUser = {
@@ -256,6 +260,7 @@ export class LoginService {
       publicId: user.publicId,
       role: user.role.code,
       permissions,
+      permissionVersion,
       sessionId: issued.session.id,
     };
 

@@ -29,16 +29,42 @@ import { applyLocks, isPermission } from '../../../shared/authz';
  * ## What M6 deliberately leaves to M7
  *
  * The Redis cache and its invalidation. This runs **once per token
- * issue** — login, refresh, step-up — and not per request, because the
- * resolved list is copied into the access token and API §1.11 fixes it
- * for that token's life: "permissions are static per session (changes
- * apply at next issue)". A cache would save a query on an endpoint that
- * already hashes a password with Argon2id, and would need an
- * invalidation story that belongs with M7.4's matrix writes.
+ * issue** — login, refresh, step-up — and not per request: the resolved
+ * list is copied into the access token with the permission version it was
+ * resolved at (`pv`). Since G4 (ADR-047) the claim is not trusted past a
+ * change — `AccessTokenGuard` compares `pv` with the account's current
+ * version on every request and re-resolves through `PermissionResolver`
+ * when they differ — so permission changes apply on the next request, not
+ * at the next issue.
  */
 @Injectable()
 export class PermissionService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * `resolve`, plus the `users.permission_version` it was resolved at — the
+   * token's `pv` claim (G4, ADR-047).
+   *
+   * The version is read **first**, in its own statement, and the rows after
+   * it. The database bumps the version in the same transaction as any
+   * permission change, so rows read after the version are at least as new
+   * as it: the claim can be newer than its `pv`, never older. Reading them
+   * the other way round could stamp an old set with a new version, and the
+   * guard would then trust a stale claim.
+   */
+  async resolveVersioned(
+    userId: string,
+    roleId: string,
+    roleCode: string,
+  ): Promise<{ permissions: string[]; permissionVersion: number }> {
+    const { permissionVersion } = await this.prisma.db.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { permissionVersion: true },
+    });
+    const permissions = await this.resolve(userId, roleId, roleCode);
+
+    return { permissions, permissionVersion };
+  }
 
   /** Permission **codes**, sorted, so a token diff is readable. */
   async resolve(userId: string, roleId: string, roleCode: string): Promise<string[]> {

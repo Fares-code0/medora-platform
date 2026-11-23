@@ -15,21 +15,20 @@
 
 import { Injectable } from '@nestjs/common';
 
-import type { Permission, PermissionCache } from './authz.types';
+import type { CachedPermissions, PermissionCache } from './authz.types';
 
 /**
- * Deliberately well under the 15-minute access-token life of API §1.2.
+ * How long an entry lives (ms).
  *
- * §5 rule 4 says permission changes take effect at next session issue.
- * A cache entry outliving the token would push that boundary out past
- * the one the contract states — a revoked capability would survive a
- * re-login. Five minutes keeps the cache strictly inside the window the
- * token already defines.
+ * Since G4 (ADR-047) the TTL is not what bounds staleness — an entry is
+ * used only at the permission version it was stamped with, so a change
+ * applies on the next request whatever the TTL. Five minutes now only
+ * bounds how long an idle account's entry stays resident.
  */
 export const PERMISSION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface CacheEntry {
-  readonly permissions: readonly Permission[];
+  readonly entry: CachedPermissions;
   readonly expiresAt: number;
 }
 
@@ -42,7 +41,7 @@ export class InMemoryPermissionCache implements PermissionCache {
     private readonly now: () => number = Date.now,
   ) {}
 
-  get(userId: string): Promise<readonly Permission[] | undefined> {
+  get(userId: string): Promise<CachedPermissions | undefined> {
     const entry = this.entries.get(userId);
     if (entry === undefined) return Promise.resolve(undefined);
 
@@ -53,12 +52,12 @@ export class InMemoryPermissionCache implements PermissionCache {
       return Promise.resolve(undefined);
     }
 
-    return Promise.resolve(entry.permissions);
+    return Promise.resolve(entry.entry);
   }
 
-  set(userId: string, permissions: readonly Permission[]): Promise<void> {
+  set(userId: string, entry: CachedPermissions): Promise<void> {
     this.entries.set(userId, {
-      permissions,
+      entry: { version: entry.version, permissions: [...entry.permissions] },
       expiresAt: this.now() + this.ttlMs,
     });
 

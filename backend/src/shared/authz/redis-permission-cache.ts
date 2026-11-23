@@ -33,15 +33,20 @@
  * ## What a cached entry is trusted to be
  *
  * The value comes back from a network store, so it is checked before it
- * is used: anything other than a JSON array of strings is treated as a
- * miss and read through. A corrupt entry can therefore cost a database
- * read, never an authorization decision.
+ * is used: anything other than `{"v": <non-negative integer>, "p": [<string>…]}`
+ * is treated as a miss and read through. A corrupt entry can therefore cost
+ * a database read, never an authorization decision.
+ *
+ * `v` is the `users.permission_version` the set was resolved under (G4,
+ * ADR-047); the resolver uses the entry only when it equals the version the
+ * request read. The bare-array entries written before G4 carry no version
+ * and so parse as a miss — a rolling deploy cannot serve one.
  */
 import type { OnModuleDestroy } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { Redis } from 'ioredis';
 
-import type { Permission, PermissionCache } from './authz.types';
+import type { CachedPermissions, Permission, PermissionCache } from './authz.types';
 import { PERMISSION_CACHE_TTL_MS } from './in-memory-permission-cache';
 
 /**
@@ -93,14 +98,19 @@ export class RedisPermissionCache implements PermissionCache, OnModuleDestroy {
     });
   }
 
-  async get(userId: string): Promise<readonly Permission[] | undefined> {
+  async get(userId: string): Promise<CachedPermissions | undefined> {
     const raw = await this.client.get(keyFor(userId));
     if (raw === null) return undefined;
     return parseEntry(raw);
   }
 
-  async set(userId: string, permissions: readonly Permission[]): Promise<void> {
-    await this.client.set(keyFor(userId), JSON.stringify(permissions), 'PX', this.ttlMs);
+  async set(userId: string, entry: CachedPermissions): Promise<void> {
+    await this.client.set(
+      keyFor(userId),
+      JSON.stringify({ v: entry.version, p: entry.permissions }),
+      'PX',
+      this.ttlMs,
+    );
   }
 
   async forget(userId: string): Promise<void> {
@@ -166,14 +176,17 @@ function keyFor(userId: string): string {
 }
 
 /** A stored entry, or `undefined` when it is not the shape `set` writes. */
-function parseEntry(raw: string): readonly Permission[] | undefined {
+function parseEntry(raw: string): CachedPermissions | undefined {
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
     return undefined;
   }
-  if (!Array.isArray(value)) return undefined;
-  if (!value.every((entry): entry is string => typeof entry === 'string')) return undefined;
-  return value as readonly Permission[];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const { v, p } = value as { v?: unknown; p?: unknown };
+  if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 0) return undefined;
+  if (!Array.isArray(p)) return undefined;
+  if (!p.every((entry): entry is string => typeof entry === 'string')) return undefined;
+  return { version: v, permissions: p as readonly Permission[] };
 }

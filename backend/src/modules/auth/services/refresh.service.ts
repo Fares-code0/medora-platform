@@ -144,12 +144,17 @@ export class RefreshService {
       throw expiredSession();
     }
 
-    const permissions = await this.permissions.resolve(user.id, user.roleId, user.role.code);
+    const { permissions, permissionVersion } = await this.permissions.resolveVersioned(
+      user.id,
+      user.roleId,
+      user.role.code,
+    );
     const principal: AuthenticatedUser = {
       id: user.id,
       publicId: user.publicId,
       role: user.role.code,
       permissions,
+      permissionVersion,
       sessionId: live.sessionId,
     };
 

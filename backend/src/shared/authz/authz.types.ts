@@ -40,6 +40,13 @@ export interface Principal {
   readonly roleCode: string;
   /** The `sid` claim, for cache scoping and audit correlation. */
   readonly sessionId?: string;
+  /**
+   * `users.permission_version` as `AccessTokenGuard` read it for this
+   * request (G4, ADR-047). A cached permission set is used only when it was
+   * stamped with exactly this value; when it is absent the resolver does
+   * not read the cache at all and resolves from the database.
+   */
+  readonly permissionVersion?: number;
 }
 
 /**
@@ -53,7 +60,12 @@ export interface Principal {
  * gone.
  */
 export function principalOf(user: AuthenticatedUser): Principal {
-  return { userId: user.id, roleCode: user.role, sessionId: user.sessionId };
+  return {
+    userId: user.id,
+    roleCode: user.role,
+    sessionId: user.sessionId,
+    ...(user.permissionVersion === undefined ? {} : { permissionVersion: user.permissionVersion }),
+  };
 }
 
 /**
@@ -89,6 +101,15 @@ export interface RoleRepository {
 export const ROLE_REPOSITORY = Symbol('ROLE_REPOSITORY');
 
 /**
+ * One cached effective set, stamped with the `users.permission_version`
+ * it was resolved under (G4, ADR-047).
+ */
+export interface CachedPermissions {
+  readonly version: number;
+  readonly permissions: readonly Permission[];
+}
+
+/**
  * The effective-permission cache (RM M7.1 — "Redis-cached, invalidated
  * on change").
  *
@@ -96,15 +117,25 @@ export const ROLE_REPOSITORY = Symbol('ROLE_REPOSITORY');
  * per-user overrides, so it would be wrong the first time anyone used
  * API §15.5.
  *
- * Every method may fail, and failing is not the same as denying. The
- * resolver treats an unavailable cache as a miss and reads through —
- * an authorization system that denies on an *infrastructure* fault locks
- * clinicians out of charts during an incident, which is a worse outcome
- * than a slow request.
+ * ## An entry is trusted only at its own version (G4, ADR-047)
+ *
+ * Every entry carries the permission version it was resolved under, and
+ * the resolver uses it only when that equals the version the request read
+ * from `users` — which the database bumps in the same transaction as any
+ * permission change. Invalidation (`forget*`) still runs after every
+ * change, but correctness does not depend on it: an entry that survives a
+ * failed invalidation has the old version and is never used, so a failure
+ * there fails closed.
+ *
+ * Every method may fail, and a failed *read* is a miss, not a denial: the
+ * resolver reads through to PostgreSQL, which is authoritative. An
+ * authorization system that denies on a cache outage locks clinicians out
+ * of charts during an incident; one that reads through does not, and loses
+ * nothing in correctness.
  */
 export interface PermissionCache {
-  get(userId: string): Promise<readonly Permission[] | undefined>;
-  set(userId: string, permissions: readonly Permission[]): Promise<void>;
+  get(userId: string): Promise<CachedPermissions | undefined>;
+  set(userId: string, entry: CachedPermissions): Promise<void>;
   /** Invalidate one user — an override changed (API §15.5). */
   forget(userId: string): Promise<void>;
   /** Invalidate many — the matrix changed for a whole role (API §15.3). */

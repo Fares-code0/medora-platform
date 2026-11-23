@@ -39,6 +39,14 @@
  * that happened and skip its audit write. The resolver logs the failure
  * and carries on (its `guardCache`), which is the behaviour its other
  * invalidations already had.
+ *
+ * Since G4 (ADR-047) that is also fail-closed. Both writes bump
+ * `users.permission_version` for every affected account in the same
+ * transaction (database triggers), and the resolver uses a cached set only
+ * at the version the request read — so a change applies on each affected
+ * user's next request even if the invalidation below never reaches Redis.
+ * Sessions are not revoked: an ordinary permission change does not end
+ * anyone's sign-in.
  */
 
 import { Inject, Injectable } from '@nestjs/common';
