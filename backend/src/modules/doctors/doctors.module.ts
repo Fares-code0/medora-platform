@@ -4,9 +4,11 @@ import { DatabaseModule } from '../../shared/database';
 
 import { AdminDoctorController } from './controllers/admin-doctor.controller';
 import { AvailabilityController } from './controllers/availability.controller';
+import { DoctorEmploymentController } from './controllers/doctor-employment.controller';
 import { DoctorVerificationController } from './controllers/doctor-verification.controller';
 import { PatientDoctorController } from './controllers/patient-doctor.controller';
 import { AdminDoctorRepository } from './repositories/admin-doctor.repository';
+import { DoctorEmploymentRepository } from './repositories/doctor-employment.repository';
 import { LicenseExpiryRepository } from './repositories/license-expiry.repository';
 import { DoctorsJobs } from './services/doctors.jobs';
 import { LicenseExpiryService } from './services/license-expiry.service';
@@ -15,6 +17,7 @@ import { DoctorVerificationRepository } from './repositories/doctor-verification
 import { PatientDoctorRepository } from './repositories/patient-doctor.repository';
 import { AdminDoctorService } from './services/admin-doctor.service';
 import { AvailabilityService } from './services/availability.service';
+import { DoctorEmploymentService } from './services/doctor-employment.service';
 import { DoctorVerificationService } from './services/doctor-verification.service';
 import { PatientDoctorService } from './services/patient-doctor.service';
 
@@ -49,6 +52,13 @@ import { PatientDoctorService } from './services/patient-doctor.service';
  * projections, built column by column, with `FORBIDDEN_DOCTOR_FIELDS`
  * naming exactly what separates them.
  *
+ * **The employment lifecycle is built** (OD-12, gap G3, stage S6 —
+ * GitHub #54): `GET/POST /doctors/{id}/employments` and
+ * `POST /doctors/{id}/employments/{employmentId}/end`, under
+ * `doctors.manage`. Ending an employment revokes its care assignments
+ * and every session of the doctor's account in one transaction, so the
+ * doctor's next request answers 401 (no grace period).
+ *
  * Still M9's own work: `GET/PATCH /me/profile` (§3.1–3.2) and the photo
  * upload (§3.3). `/me/profile` is currently owned by
  * `PatientsModule`'s `PatientProfileController` (ADR-030), and two
@@ -63,6 +73,7 @@ import { PatientDoctorService } from './services/patient-doctor.service';
     AvailabilityController,
     AdminDoctorController,
     DoctorVerificationController,
+    DoctorEmploymentController,
   ],
   providers: [
     PatientDoctorService,
@@ -73,6 +84,8 @@ import { PatientDoctorService } from './services/patient-doctor.service';
     AdminDoctorRepository,
     DoctorVerificationService,
     DoctorVerificationRepository,
+    DoctorEmploymentService,
+    DoctorEmploymentRepository,
     LicenseExpiryService,
     LicenseExpiryRepository,
     DoctorsJobs,
