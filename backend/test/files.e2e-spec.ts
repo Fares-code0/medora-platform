@@ -18,6 +18,9 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  fixtureHospital,
+  makeClinicalDoctor,
+  recordPatientAt,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -174,6 +177,19 @@ beforeAll(async () => {
 
   const [record] = await createPatientRecords(harness.prisma, 'f25', 1);
   patientId = record?.id ?? '';
+
+  // DR-05: reach is a record at the doctor's hospital. The carer (and the
+  // owner) work at hospital A, where the patient is recorded; the stranger
+  // works at hospital B — a colleague at A would reach the chart.
+  const hospitalA = await fixtureHospital(harness.prisma, 'a');
+  await makeClinicalDoctor(harness.prisma, testEmail('files-owner'), hospitalA);
+  await makeClinicalDoctor(harness.prisma, testEmail('files-carer'), hospitalA);
+  await makeClinicalDoctor(
+    harness.prisma,
+    testEmail('files-stranger'),
+    await fixtureHospital(harness.prisma, 'b'),
+  );
+  await recordPatientAt(harness.prisma, patientId, hospitalA);
 
   await harness.prisma.patientDoctorAssignment.create({
     data: { patientId, doctorId: carerDoctorId, role: 'primary' },

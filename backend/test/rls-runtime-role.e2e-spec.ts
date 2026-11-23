@@ -328,3 +328,25 @@ describe('the audit ledger', () => {
     ).rejects.toThrow(/permission denied/);
   });
 });
+
+describe('coverage of the enforced migration', () => {
+  it('enables RLS with at least one policy on every Direct and Indirect table of the inventory', async () => {
+    const doc = readFileSync(join(__dirname, '../../docs/multi-hospital/RLS_DESIGN.md'), 'utf8');
+    const required = doc
+      .slice(doc.indexOf('## Appendix A'))
+      .split('\n')
+      .filter((line) => line.startsWith('| `'))
+      .map((line) => line.split(' | '))
+      .filter((cells) => cells[1] === 'Direct' || cells[1] === 'Indirect')
+      .map((cells) => (cells[0] ?? '').replace(/^\| `|`$/g, ''));
+    expect(required.length).toBeGreaterThan(60);
+    const covered = await owner.query<{ relname: string; enabled: boolean; policies: string }>(
+      `SELECT c.relname, c.relrowsecurity AS enabled,
+              (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname)::text AS policies
+         FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY($1::text[])`,
+      [required],
+    );
+    expect(covered.rows.filter((row) => !row.enabled || row.policies === '0').map((row) => row.relname)).toEqual([]);
+    expect(covered.rows).toHaveLength(required.length);
+  });
+});

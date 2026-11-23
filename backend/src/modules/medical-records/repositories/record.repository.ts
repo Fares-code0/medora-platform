@@ -690,9 +690,23 @@ export class RecordRepository {
           // Emptied by M25.5's sweep once the object is collected.
           storageKey: { not: '' },
         },
-        select: { originalName: true, sizeBytes: true },
+        select: { originalName: true, sizeBytes: true, hospitalId: true },
       });
       if (file === null) throw new UploadUnavailable();
+
+      // The upload joins the record's hospital on attach (§2.7; a Phase 22
+      // trigger requires an attachment's file to share its record's
+      // hospital). An unassigned file is adopted once; a file already owned
+      // by another hospital is not attachable here.
+      const owner = await tx.medicalRecord.findUniqueOrThrow({
+        where: { id: input.recordId },
+        select: { hospitalId: true },
+      });
+      if (owner.hospitalId !== null && file.hospitalId === null) {
+        await tx.file.update({ where: { id: input.fileId }, data: { hospitalId: owner.hospitalId } });
+      } else if (owner.hospitalId !== null && file.hospitalId !== owner.hospitalId) {
+        throw new UploadUnavailable();
+      }
 
       const linked = await tx.recordAttachment.findFirst({
         where: { fileId: input.fileId, deletedAt: null },
