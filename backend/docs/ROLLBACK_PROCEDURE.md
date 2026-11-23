@@ -224,3 +224,113 @@ The rotation and its rollback are not rehearsed on staging either.
 - **Prisma 7 behaviour** described in §5.1 (no down migrations, checksum of applied migrations) is Prisma's
   documented design. It is not covered by a test in this repository.
 - **Production.** Nothing has been run against a production database.
+- **Phase 21 recovery (§9).** The Prisma 7 transaction behaviour in §9.1 was measured on a disposable
+  PostgreSQL 16 database. The restore and index-restoration steps in §9.4–§9.5 have **not** been rehearsed.
+
+---
+
+## 9. Phase 21 — multi-hospital data model: recovery strategy
+
+Applies to `20261122150000_hospital_core`, `20261122160000_facility_foundation`,
+`20261122170000_phase21_data_model` and `20261123100000_fix_scoped_clinical_link_trigger`. Their
+persistent-environment status is **unknown** (`docs/multi-hospital/PR5_MIGRATION_STATUS_AND_RECOVERY.md`);
+verify it per environment, read-only, before any step below. Locking and duration are analysed in
+`DATABASE_ARCHITECTURE.md` (*Migration safety and locking*).
+
+### 9.1 Before deploying
+
+- **Backup.** Take a full backup immediately before `db:deploy` and confirm it restores (§4 — no tooling
+  exists here, so this is an operator step). It is the only complete way back from §9.3's irreversible items.
+- **Deploy all four together**, in order. `20261122170000` alone leaves `validate_scoped_clinical_links()`
+  broken: every INSERT or watched UPDATE on `medical_records`, `patient_vital_signs`, `prescriptions`,
+  `patient_medications`, `patient_studies` and `notifications` fails until `20261123100000` is applied.
+- **Prisma 7 does not add a transaction around a migration file** (measured: without `BEGIN`, a failing
+  statement left the earlier ones committed and the migration recorded as failed, P3018). `facility_foundation`
+  and `phase21_data_model` carry their own `BEGIN; … COMMIT;`, so a failure rolls each back completely
+  (measured with a wrapped probe); `hospital_core` does not, and can be left partially applied. In every case
+  the failed migration stays recorded in `_prisma_migrations` and blocks later deploys until resolved.
+- Set `lock_timeout` for the deploy session so a blocked DDL statement fails instead of stalling traffic.
+
+### 9.2 Reversible (additive) changes
+
+These add structure only and can be dropped by a reviewed corrective migration **as long as no row uses
+them**:
+
+- New tables: `hospitals`, `hospital_locations`, `clinics`, `hospital_departments`, `clinic_operating_hours`,
+  `doctor_employments`, `hospital_staff_affiliations`, `hospital_role_assignments`, `hospital_medical_records`,
+  `hospital_medical_record_conditions`, `published_slots`, `hospital_insurance_coverage`.
+- New nullable columns (`hospital_id`, `hospital_medical_record_id`, `doctor_employment_id`,
+  `published_slot_id`, department/affiliation references) on 24 existing tables, with their CHECKs,
+  composite foreign keys, indexes and triggers, and the trigger functions.
+
+Order for removal, if ever required: triggers → functions → foreign keys and CHECKs on existing tables →
+added columns → new tables, children before parents (`hospital_medical_record_conditions`,
+`hospital_role_assignments`, `published_slots` … before `hospital_medical_records`, `doctor_employments`,
+`hospital_departments`, `clinics`, `hospital_locations`, `hospitals`). Every foreign key here is
+`ON DELETE RESTRICT`, so a remaining row blocks the drop instead of cascading — that is intended.
+
+### 9.3 Irreversible or data-sensitive changes
+
+- **Hospital-scoped rows written after deploy.** Any row with a non-NULL `hospital_id`,
+  `hospital_medical_record_id` or `doctor_employment_id`, and every row in the new tables, is real data.
+  Dropping the columns or tables destroys it. **Never contract while such rows exist**; export them and
+  get owner approval first.
+- **Unique-index swaps.** `20261122170000` drops four global unique indexes and replaces each with a pair of
+  partial indexes (legacy rows / hospital-scoped rows):
+
+  | Dropped | Replaced by |
+  |---|---|
+  | `patient_allergies_patient_id_allergen_key (patient_id, allergen)` | `patient_allergies_legacy_unique`, `patient_allergies_hospital_unique (hospital_medical_record_id, allergen)` |
+  | `staff_shift_assignments_staff_id_kind_key (staff_id, kind)` | `staff_shift_assignments_legacy_unique`, `staff_shift_assignments_hospital_unique (staff_id, hospital_id, kind)` |
+  | `doctor_availability_doctor_id_weekday_start_time_key` | `doctor_availability_legacy_unique`, `doctor_availability_employment_unique (doctor_employment_id, …)` |
+  | `rooms_name_key (name)` | `rooms_legacy_name_key`, `rooms_hospital_name_key (hospital_id, name)` |
+
+  After deploy, the same patient may legitimately hold the same allergen once per hospital record, a staff
+  member the same shift kind at two hospitals, and two hospitals a room with the same name. **Recreating an
+  original global index fails on those duplicates**, and resolving them means deleting or merging clinical
+  and operational rows. See §9.5.
+- **Trigger side effects.** Ending an employment or affiliation revoked the role assignments it sourced
+  (`revoke_ended_hospital_affiliation_roles`). Removing the trigger does not un-revoke them; revocations are
+  history and must not be reversed by a schema rollback.
+- **`audit_events.hospital_id`.** The ledger has no DELETE path (ADR-024); a dropped column cannot be
+  re-populated. Treat it as contract-only, after owner review.
+- **Ownership keys are immutable in place** (`prevent_tenant_scope_reassignment`,
+  `prevent_attached_file_reassignment`). A wrongly assigned hospital cannot be corrected by `UPDATE`; it
+  needs a separately reviewed correction process. Do not disable the triggers to "fix" data.
+- **Legacy rows were not assigned a hospital** by these migrations, and must not be assigned one by guessing
+  during recovery.
+
+### 9.4 Recovery sequencing
+
+1. **Stop and classify.** `npm run db:status` (read-only) on the affected environment. Record which of the
+   four migrations are applied, failed, or absent. Take a backup of the current state (§4) before changing
+   anything.
+2. **Failed (`P3018`).** For `facility_foundation` or `phase21_data_model`, confirm none of the file's
+   objects exist (its own transaction rolled back), fix the cause, then mark it rolled back
+   (`prisma migrate resolve --rolled-back <name>`) and deploy again. For `hospital_core`, which is not
+   wrapped, compare the database with the SQL to find which statements committed, then either complete the
+   rest by hand under review and `resolve --applied`, or reverse what committed and `resolve --rolled-back`.
+   None of these files is idempotent, so never re-run one over a partial state. All of this is a database
+   change: owner authorisation and an incident record first.
+3. **Applied, application must roll back.** Phase 21 is expand-only for existing code: existing columns,
+   identifiers and legacy uniqueness for unscoped rows are preserved. Roll back the **application** (§3)
+   and leave the schema in place. Do not drop anything.
+4. **Applied, schema must be removed (exceptional).** Only with no hospital-scoped data (§9.3), owner
+   approval and a tested backup. Write a corrective forward migration (§5.2) in the §9.2 order, restoring
+   the original unique indexes last (§9.5).
+5. **Data damaged.** Restore from the pre-deploy backup into a separate database, verify it, then plan the
+   cut-over. A restore discards everything written since the backup.
+
+### 9.5 Restoring an original unique index
+
+Before recreating any index from the §9.3 table, check for duplicates read-only, for example:
+
+```sql
+SELECT patient_id, allergen, count(*) FROM public.patient_allergies
+GROUP BY patient_id, allergen HAVING count(*) > 1;
+```
+
+If any row comes back, stop: the duplicates are hospital-owned clinical or operational records, and which
+one survives is an owner and clinical decision, not a recovery step. Only with zero duplicates, recreate the
+original index (prefer `CREATE UNIQUE INDEX CONCURRENTLY` as its own top-level statement), then drop the two
+partial indexes. Recreating it first and dropping the partials second keeps uniqueness enforced throughout.
