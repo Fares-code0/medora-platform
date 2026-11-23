@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -349,8 +351,23 @@ describe('GET /me/appointments/:id', () => {
     // the actor would make the assertion below pass for the wrong
     // reason. An administrator who touched the booking appears nowhere
     // else, so their name is a clean probe for the leak.
-    const actor = await harness.prisma.user.findFirstOrThrow({
-      where: { role: { code: 'admin' } },
+    // This suite's own administrator, with a name no other row carries:
+    // "any admin" raced other suites' fixtures, some of which share the
+    // treating doctor's display name and made the probe meaningless.
+    const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
+    const tag = randomUUID().slice(0, 8);
+    const actor = await harness.prisma.user.create({
+      data: {
+        publicId: `usr_apptprobe_${tag}`,
+        firstName: 'Probe',
+        lastName: `Admin ${tag}`,
+        displayName: `Probe Admin ${tag}`,
+        email: testEmail(`appt-probe-admin-${tag}`),
+        phone: '+1 555 000 0003',
+        roleId: adminRole.id,
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+      },
     });
 
     await harness.prisma.db.appointmentEvent.create({

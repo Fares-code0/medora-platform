@@ -428,9 +428,11 @@ describe('provisioned accounts sign in through the real API', () => {
   });
 
   afterAll(async () => {
-    await harness.prisma.staffMember.deleteMany({
-      where: { email: { in: accounts.map((account) => account.email) } },
-    });
+    // Demo provisioning gives never-staffed staff accounts an affiliation
+    // (§2.5), which restricts deleting the staff row.
+    const emails = { in: accounts.map((account) => account.email) };
+    await harness.prisma.hospitalStaffAffiliation.deleteMany({ where: { staff: { is: { email: emails } } } });
+    await harness.prisma.staffMember.deleteMany({ where: { email: emails } });
     await destroyPatientRecords(harness.prisma, 'DA');
     await destroyTestDoctor(harness.prisma, TAG);
   });
