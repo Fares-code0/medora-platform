@@ -218,6 +218,51 @@ describe('GET /auth/session (M8.1)', () => {
       await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
     }
   });
+  it('drops activeHospital on the next request once the employment ends', async () => {
+    // Phase 22 / OD-12: no grace period. The same access token, read
+    // again right after the employment ends, must carry no hospital —
+    // the context is derived per request, never cached on the token.
+    const session = await seedAndSignIn('employment-ended');
+    const user = await harness.prisma.db.user.findUniqueOrThrow({
+      where: { email: session.email },
+      select: { id: true },
+    });
+    const doctor = await harness.prisma.db.doctor.findUniqueOrThrow({
+      where: { userId: user.id },
+      select: { id: true },
+    });
+    const hospital = await harness.prisma.db.hospital.create({
+      data: { publicId: 'hsp_' + randomUUID(), name: 'Ended Employment Test Hospital' },
+    });
+
+    try {
+      const employment = await harness.prisma.db.doctorEmployment.create({
+        data: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      const before = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(dataOf<SessionUser>(before).activeHospital?.id).toBe(hospital.id);
+
+      await harness.prisma.db.doctorEmployment.update({
+        where: { id: employment.id },
+        data: { endedAt: new Date() },
+      });
+
+      const after = await request(harness.server)
+        .get(SESSION)
+        .set('Authorization', 'Bearer ' + session.accessToken);
+      expect(after.status).toBe(200);
+      expect(dataOf<SessionUser>(after).activeHospital).toBeNull();
+      expect(dataOf<SessionUser>(after).adminScope).toBeNull();
+    } finally {
+      await harness.prisma.db.doctorEmployment.deleteMany({
+        where: { doctorId: doctor.id, hospitalId: hospital.id },
+      });
+      await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
+    }
+  });
+
   it('matches the payload the login response carried', async () => {
     const email = await seedAccount('parity');
     const login = await request(harness.server)
