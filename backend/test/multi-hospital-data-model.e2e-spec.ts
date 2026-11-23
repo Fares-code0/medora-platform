@@ -420,7 +420,8 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
       const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
       expect(rejected).toHaveLength(1);
-      expect(rejected[0]?.reason).toMatchObject({ code: '23505' });
+      // The pre-existing doctor-overlap exclusion constraint rejects this race first.
+      expect(rejected[0]?.reason).toMatchObject({ code: '23P01' });
       const winnerIndex = results.findIndex((result) => result.status === 'fulfilled');
       const loserIndex = 1 - winnerIndex;
       await client.query(
