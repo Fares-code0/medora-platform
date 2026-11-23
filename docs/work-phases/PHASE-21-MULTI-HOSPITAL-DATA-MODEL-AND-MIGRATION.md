@@ -43,7 +43,7 @@ OD-09, OD-12, OD-13, OD-14, OQ-01, all FINAL. OQ-02 (open, deferred) affects rec
 **Stage 1 — model** (implementation complete; CI validation pending)
 - [x] [DATABASE] Hospital, HospitalLocation and Clinic foundation from merged PR #5; new per-clinic operating hours leave the legacy global weekday schedule unchanged.
 - [x] [DATABASE] HospitalDepartment linked to the global Department catalogue; same-hospital local department references cover employment, staff affiliations, encounters, appointments, labs, prescriptions, rooms and resources. Legacy department IDs remain intact.
-- [x] [DATABASE] DoctorEmployment history with one active employment per doctor globally; HospitalStaffAffiliation supports multiple hospitals and alone grants no access.
+- [x] [DATABASE] DoctorEmployment history with one active employment per doctor globally; HospitalStaffAffiliation history with one active affiliation per staff member globally (MRD-05 (a), owner-approved 2026-11-23; enforced by migration 20261123120100) and alone grants no access.
 - [x] [DATABASE] HospitalRoleAssignment stores hospital role provenance; termination revokes only assignments sourced from the ended affiliation/employment. Runtime authorization remains deferred.
 - [x] [DATABASE] Global Patient plus one HospitalMedicalRecord per patient/hospital; nullable HMR ownership for eight patient clinical tables and related encounters, appointments, labs, prescriptions, conversations, notifications and AI conversations. No legacy ownership backfill.
 - [x] [DATABASE] HospitalMedicalRecordCondition association; existing PatientChronicCondition composite key and PatientEmergencyContact remain unchanged.
@@ -73,7 +73,7 @@ HospitalRoleAssignment is structural data, not an authorization engine. Employme
 
 ## Blocking conditions
 
-Owner decisions on the audit-ledger foreign key (ADR-024) and MRD-05 (a). Verified status of all four hospital migrations in every persistent environment remains a deployment prerequisite.
+Owner decisions 3 and 4 (seed in CI; consolidating the corrective migration). Verified status of all hospital migrations in every persistent environment remains a deployment prerequisite.
 
 ## Security requirements
 
@@ -115,11 +115,16 @@ code is handed off in `docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md`.
 - **No CI change.** `.github/workflows/ci.yml` is `main`'s.
 - **Test guarantees restored.** `authz-repositories` and `administration-center` keep `main`'s strict
   assertions; the multi-hospital seed is kept off the test database instead. `schema-platform`'s
-  audit-ledger foreign-key assertion is kept strict.
-- **Open owner decisions.** (1) `audit_events_hospital_id_fkey` contradicts ADR-024 §3 — the strict test
-  fails until decided. (2) MRD-05 (a) (one active employment for non-doctor staff) vs the schema's
-  multiple active hospital affiliations. (3) Whether CI should exercise the multi-hospital seed on a
-  separate disposable database.
+  audit-ledger foreign-key assertion is kept strict and passes unchanged.
+- **Owner decisions applied (2026-11-23).** Decision 1 (option A): new migration
+  `20261123120000_drop_audit_events_hospital_fkey` drops only `audit_events_hospital_id_fkey` (ADR-024 §3);
+  column, index and immutability trigger kept. Decision 2 (option A): new migration
+  `20261123120100_one_active_staff_affiliation` enforces MRD-05 (a) with
+  `hospital_staff_affiliations_one_active_per_staff_key`, failing with a clear message — never ending an
+  affiliation — if duplicates exist. Seed fixtures now hold one hospital each; the two affected tests assert
+  `23505` on a second active affiliation and role revocation when one ends and another starts.
+- **Open owner decisions.** (3) Whether CI should exercise the multi-hospital seed on a separate disposable
+  database. (4) Consolidating the corrective trigger migration, only after every environment is verified.
 
 ## Source / evidence
 

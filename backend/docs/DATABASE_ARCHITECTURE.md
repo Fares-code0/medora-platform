@@ -8,12 +8,14 @@ repository has no standalone `database/` SQL or DBML package (see the root `CLAU
 
 The multi-hospital foundation (`20261122150000_hospital_core`, `20261122160000_facility_foundation`)
 and the Phase 21 data model (`20261122170000_phase21_data_model` plus its corrective migration
-`20261123100000_fix_scoped_clinical_link_trigger`) are proposed against `main` from the
+`20261123100000_fix_scoped_clinical_link_trigger`), and the two owner-approved corrections
+`20261123120000_drop_audit_events_hospital_fkey` and `20261123120100_one_active_staff_affiliation`
+(2026-11-23), are proposed against `main` from the
 database-only branch `fix/phase21-database-main-integration`. They were first written on the
 `Database` integration branch (PR #5, PR #6) and PR #9; PR #9's Phase 22 application code is **not**
 part of this change (see [`docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md`](../../docs/multi-hospital/PHASE22_BACKEND_HANDOFF.md)).
 
-**Persistent-environment status of all four migrations is unknown.** No evidence in the repository
+**Persistent-environment status of the four hospital migrations is unknown.** No evidence in the repository
 shows whether any local, development, staging or production database has applied them
 ([`PR5_MIGRATION_STATUS_AND_RECOVERY.md`](../../docs/multi-hospital/PR5_MIGRATION_STATUS_AND_RECOVERY.md)).
 They are therefore treated as possibly applied: none is edited, renamed or consolidated.
@@ -33,8 +35,10 @@ The primary ownership paths are:
   only thing holding that vocabulary and `test/facility-foundation.e2e-spec.ts` pins it.
 - `User` is a global account. `Doctor` is the professional profile. `DoctorEmployment` records
   hospital employment history; a partial unique index allows one active hospital employment per
-  doctor. `HospitalStaffAffiliation` allows one active affiliation per staff member **per hospital**
-  (see *Open decisions*, MRD-05) and grants no access by itself. `HospitalRoleAssignment` is the
+  doctor. `HospitalStaffAffiliation` allows **one active affiliation per staff member** across all
+  hospitals (MRD-05 (a), owner-approved 2026-11-23; `hospital_staff_affiliations_one_active_per_staff_key`
+  from `20261123120100_one_active_staff_affiliation`), keeps ended affiliations as history, and grants
+  no access by itself. The older per-hospital key is kept. `HospitalRoleAssignment` is the
   explicit hospital-scoped role grant and stores its employment or affiliation source; ending that
   source revokes only the roles it sourced (trigger `revoke_ended_hospital_affiliation_roles`).
 - `Patient` remains the single global identity. `HospitalMedicalRecord` gives each patient a separate
@@ -201,15 +205,26 @@ npm run db:seed
 APP_ENV=development MEDORA_DISPOSABLE_DB=true npm run db:seed:multihospital
 ```
 
+## Owner decisions applied (2026-11-23)
+
+- **Decision 1 — audit ledger foreign key (option A).** `20261123120000_drop_audit_events_hospital_fkey`
+  drops only `audit_events_hospital_id_fkey`, restoring ADR-024 §3: nothing references the ledger by
+  foreign key. `audit_events.hospital_id`, `audit_events_hospital_occurred_idx` and the immutability
+  trigger stay; no row is read or changed. `test/schema-platform.e2e-spec.ts` passes unchanged.
+  `domain_events_hospital_id_fkey` is outside ADR-024 and is unchanged.
+- **Decision 2 — MRD-05 (a) (option A).** `20261123120100_one_active_staff_affiliation` first counts
+  staff with more than one active affiliation and, if any exist, stops with an `MRD-05 (a)` error and a
+  query hint, creating nothing; it never ends or changes an affiliation. Otherwise it creates
+  `hospital_staff_affiliations_one_active_per_staff_key (staff_id) WHERE ended_at IS NULL`. Verified on
+  a disposable database seeded with the old fixtures: the migration failed with the message and no
+  affiliation, role assignment or index changed. Before deploying to any environment, run the hint's
+  query read-only; any rows are an owner decision. The development seed now gives each staff fixture
+  one hospital.
+
 ## Open decisions (owner)
 
-- **`audit_events.hospital_id` foreign key vs ADR-024 §3.** Phase 21 added
-  `audit_events_hospital_id_fkey → hospitals`. ADR-024 §3 (accepted) says nothing references the
-  ledger by foreign key "in either direction", and `test/schema-platform.e2e-spec.ts` asserts no
-  foreign key on `audit_events`. That test is kept strict and fails until this is decided.
-- **MRD-05 (a) vs staff affiliations.** MRD-05 (a) (approved) says one active employment for
-  non-doctor staff; the schema allows active affiliations at several hospitals at once, and the
-  Phase 21 tests assert that.
+- **Seed in CI.** Whether CI should run the multi-hospital seed on a separate disposable database
+  (needs a CI change and a seed-guard change).
 - **Consolidating the corrective migration** is possible only if every persistent environment is
   verified never to have applied `20261122170000`.
 

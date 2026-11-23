@@ -232,7 +232,8 @@ The rotation and its rollback are not rehearsed on staging either.
 ## 9. Phase 21 — multi-hospital data model: recovery strategy
 
 Applies to `20261122150000_hospital_core`, `20261122160000_facility_foundation`,
-`20261122170000_phase21_data_model` and `20261123100000_fix_scoped_clinical_link_trigger`. Their
+`20261122170000_phase21_data_model`, `20261123100000_fix_scoped_clinical_link_trigger`,
+`20261123120000_drop_audit_events_hospital_fkey` and `20261123120100_one_active_staff_affiliation`. Their
 persistent-environment status is **unknown** (`docs/multi-hospital/PR5_MIGRATION_STATUS_AND_RECOVERY.md`);
 verify it per environment, read-only, before any step below. Locking and duration are analysed in
 `DATABASE_ARCHITECTURE.md` (*Migration safety and locking*).
@@ -293,7 +294,14 @@ added columns → new tables, children before parents (`hospital_medical_record_
   (`revoke_ended_hospital_affiliation_roles`). Removing the trigger does not un-revoke them; revocations are
   history and must not be reversed by a schema rollback.
 - **`audit_events.hospital_id`.** The ledger has no DELETE path (ADR-024); a dropped column cannot be
-  re-populated. Treat it as contract-only, after owner review.
+  re-populated. Treat it as contract-only, after owner review. Its foreign key was removed by owner
+  decision (`20261123120000`, ADR-024 §3) and must not be re-added as a recovery step.
+- **One active staff affiliation (`20261123120100`).** Dropping
+  `hospital_staff_affiliations_one_active_per_staff_key` is structurally reversible but re-opens a rule
+  the owner approved (MRD-05 (a)); re-creating it fails while any staff member has two active
+  affiliations. If the migration itself fails with the `MRD-05 (a)` error, nothing was created: resolve
+  the listed staff by owner decision, `prisma migrate resolve --rolled-back` it, and deploy again. Never
+  end an affiliation to make it pass; ending one revokes the roles it sourced.
 - **Ownership keys are immutable in place** (`prevent_tenant_scope_reassignment`,
   `prevent_attached_file_reassignment`). A wrongly assigned hospital cannot be corrected by `UPDATE`; it
   needs a separately reviewed correction process. Do not disable the triggers to "fix" data.

@@ -217,7 +217,7 @@ erDiagram
     String sessionId
     Json payload
     String incidentRef
-    String hospitalId FK
+    String hospitalId
   }
   %% Prisma index: AuditEvent @@index([occurredAt(sort: Desc)])
   %% Prisma index: AuditEvent @@index([occurredAt], type: Brin, map: "audit_events_occurred_at_brin_idx")
@@ -688,6 +688,7 @@ erDiagram
   %% Prisma constraint: HospitalStaffAffiliation @@unique([id, hospitalId], map: "hospital_staff_affiliations_id_hospital_id_key")
   %% Prisma constraint: HospitalStaffAffiliation @@unique([id, hospitalId, staffId], map: "hospital_staff_affiliations_id_hospital_staff_key")
   %% Prisma constraint: HospitalStaffAffiliation @@unique([staffId, hospitalId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_hospital_key")
+  %% Prisma constraint: HospitalStaffAffiliation @@unique([staffId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_staff_key")
   %% Prisma index: HospitalStaffAffiliation @@index([hospitalId, endedAt], map: "hospital_staff_affiliations_hospital_ended_idx")
   %% Prisma index: HospitalStaffAffiliation @@index([staffId, startedAt(sort: Desc)], map: "hospital_staff_affiliations_staff_started_idx")
   IcdCode {
@@ -2001,7 +2002,6 @@ erDiagram
   Appointment ||--o{ AppointmentEvent : "appointment"
   Appointment ||--o{ AppointmentRescheduleProposal : "appointment"
   User o|--o{ AppointmentRescheduleProposal : "proposer"
-  Hospital o|--o{ AuditEvent : "hospital"
   User o|--o{ Backup : "creator"
   Hospital ||--o{ Clinic : "hospital"
   Clinic ||--o{ ClinicOperatingHour : "clinic"
