@@ -16,9 +16,24 @@ import type { Messages } from './index';
  * before that happens. Recording the caveat here rather than in a commit
  * message is deliberate: this file is where the next person looks.
  *
- * No clinical content is translated here. Emergency guidance is
- * clinically reviewed material (N-07, W-10) and is not in this
- * catalogue.
+ * Emergency and clinical copy IS translated here since the W-10 owner
+ * approved localizing all application-controlled copy on 2026-11-23
+ * (`emergency.*`, `crash.*`, `support.urgent.*`, `upgrade.emergency`,
+ * `messages.urgencyNotice`, and the clinical vocabulary under
+ * `health.allergy.severity.*`, `health.medication.status.*`,
+ * `health.history.kind.*`, `health.labs.flag.*`,
+ * `health.prescriptions.status.*`). ⚠ That approval covers translating
+ * only: the W-10 clinical sign-off is NOT given, and this Arabic is an
+ * ENGINEERING DRAFT awaiting the named clinical reviewer in
+ * `docs/SIGNOFF.md`. It must preserve the English clinical meaning
+ * exactly; a reviewer who finds it does not should change it here.
+ *
+ * Phone numbers inside Arabic sentences are wrapped in LRI…PDI
+ * (⁦…⁩) and free-text labels (a contact's name, an operator
+ * label) in FSI…PDI (⁨…⁩), so they keep their own direction.
+ * Digits are Western (0-9) wherever a number is interpolated, matching
+ * the dates `Intl` formats for `ar` in current CLDR; see
+ * `docs/A11Y_AUDIT.md` §6.
  */
 
 export const ar: Messages = {
@@ -75,7 +90,6 @@ export const ar: Messages = {
   'capability.reschedule': 'تغيير موعد',
   'capability.acceptProposal': 'قبول وقت مقترح',
 
-
   'state.error.unavailable.body':
     'ما زال {capability} قيد الإنشاء. سيظهر هنا بمجرد أن يصبح جاهزًا.',
 
@@ -105,6 +119,8 @@ export const ar: Messages = {
   'action.close': 'إغلاق',
   'action.back': 'رجوع',
 
+  'a11y.readOnly': '{value}، للقراءة فقط',
+  'a11y.listSeparator': '{title}، {value}',
   'a11y.loading': 'جارٍ التحميل، يرجى الانتظار',
   'a11y.password.show': 'إظهار كلمة المرور',
   'a11y.password.hide': 'إخفاء كلمة المرور',
@@ -331,7 +347,7 @@ export const ar: Messages = {
   'home.action.messages': 'الرسائل',
   'home.action.records': 'السجلات',
   'home.disclaimer':
-    'لا يقدّم ميدورا استشارات طبية. لأي أمر عاجل اتصل بعيادتك. وفي حالة الطوارئ استخدم Emergency help.',
+    'لا يقدّم ميدورا استشارات طبية. لأي أمر عاجل اتصل بعيادتك. وفي حالة الطوارئ استخدم «مساعدة طارئة».',
   'home.activity.title': 'النشاط الأخير',
   'home.announcements.title': 'من عيادتك',
   'home.activity.empty.title': 'لم يحدث شيء بعد',
@@ -354,7 +370,7 @@ export const ar: Messages = {
     'اطّلع على ما هو محجوز ومتى ومع مَن، دون الحاجة للاتصال بالعيادة للسؤال.',
   'onboarding.slide.clinic.title': 'اعثر على الطبيب المناسب',
   'onboarding.slide.clinic.body': 'تصفّح أطباء العيادة حسب التخصص، واقرأ عنهم قبل الحجز.',
-  'onboarding.slide.emergency.title': 'مساعدة الطوارئ متاحة دائمًا',
+  'onboarding.slide.emergency.title': '«مساعدة طارئة» متاحة دائمًا',
   'onboarding.slide.emergency.body':
     'تعمل دون تسجيل الدخول ودون اتصال بالإنترنت. وهي على الشاشة الأولى وداخل التطبيق وقتما تحتاجها.',
   'onboarding.skip': 'تخطٍّ',
@@ -453,7 +469,7 @@ export const ar: Messages = {
   'profile.signOut': 'تسجيل الخروج',
   'profile.signOut.confirmTitle': 'تسجيل الخروج من ميدورا؟',
   'profile.signOut.confirmDetail':
-    'ستحتاج إلى كلمة المرور لتسجيل الدخول مجددًا. وتبقى مساعدة الطوارئ متاحة أثناء تسجيل خروجك.',
+    'ستحتاج إلى كلمة المرور لتسجيل الدخول مجددًا. وتبقى «مساعدة طارئة» متاحة أثناء تسجيل خروجك.',
 
   // ── Privacy requests (P-09, P-10) ─────────────────────────────────
   'privacy.title': 'بياناتك',
@@ -747,8 +763,8 @@ export const ar: Messages = {
   'health.documents.empty.body': 'ستظهر هنا الخطابات والنماذج من عيادتك.',
   'health.documents.open': 'فتح',
   'health.documents.notAvailable': 'فتح المستندات غير متاح بعد.',
-  'health.release.pending.title': 'بانتظار مراجعة طبيب',
-  'health.release.pending.body': 'وصلت نتائجك ويطّلع عليها طبيب الآن. ستظهر لك هنا بعد انتهائه.',
+  'health.release.pending.title': 'بانتظار مراجعة الفريق الطبي',
+  'health.release.pending.body': 'وصلت نتائجك ويطّلع عليها أحد أفراد الفريق الطبي الآن. ستظهر لك هنا بعد انتهائه.',
   'health.release.withheld.title': 'غير مشاركة معك',
   'health.release.withheld.body':
     'لم تشارك العيادة هذا في ميدورا. اسأل في موعدك القادم أو راسل العيادة.',
@@ -787,14 +803,14 @@ export const ar: Messages = {
 
   'health.visits.title': 'ملخصات الزيارات',
   'health.visits.notice':
-    'ملخص قصير لكل زيارة، مكتوب لك. وهو ليس الملاحظة الكاملة التي يحتفظ بها طبيبك، ولا يفسّر لك نتائجك — اسأل عيادتك عن أي شيء هنا.',
+    'ملخص قصير لكل زيارة، مكتوب لك. وهو ليس الملاحظة الكاملة التي يحتفظ بها فريقك الطبي، ولا يفسّر لك نتائجك — اسأل عيادتك عن أي شيء هنا.',
   'health.visits.empty.title': 'لا توجد ملخصات زيارات بعد',
-  'health.visits.empty.body': 'يظهر الملخص هنا بعد الزيارة، متى شاركه طبيبك معك.',
+  'health.visits.empty.body': 'يظهر الملخص هنا بعد الزيارة، متى شاركه فريقك الطبي معك.',
   'health.visits.with': 'مع {doctor}',
   'health.visits.on': 'زيارة بتاريخ {date}',
   'health.visits.hint': 'يفتح الملخص',
   'health.visits.a11y': '{title}، {date}',
-  'health.visits.noSummary': 'لم يكتب طبيبك ملخصًا لهذه الزيارة.',
+  'health.visits.noSummary': 'لم يكتب فريقك الطبي ملخصًا لهذه الزيارة.',
   'health.visits.notFound.title': 'هذا الملخص ليس في سجلك',
   'health.visits.notFound.body': 'ارجع إلى ملخصات الزيارات وافتحه من القائمة.',
 
@@ -826,7 +842,7 @@ export const ar: Messages = {
   'session.unconfirmed.signOut': 'تسجيل الخروج من هذا الهاتف',
   'session.unconfirmed.signOut.confirmTitle': 'تسجيل الخروج من هذا الهاتف؟',
   'session.unconfirmed.signOut.confirmDetail':
-    'تعذّر الوصول إلى ميدورا، لذلك سيُسجَّل الخروج من هذا الهاتف فقط. سينتهي تسجيل دخولك لدى ميدورا من تلقاء نفسه عند انتهاء صلاحيته. ستحتاج إلى كلمة المرور لتسجيل الدخول مرة أخرى. تبقى المساعدة الطارئة متاحة.',
+    'تعذّر الوصول إلى ميدورا، لذلك سيُسجَّل الخروج من هذا الهاتف فقط. سينتهي تسجيل دخولك لدى ميدورا من تلقاء نفسه عند انتهاء صلاحيته. ستحتاج إلى كلمة المرور لتسجيل الدخول مرة أخرى. وتبقى «مساعدة طارئة» متاحة.',
 
   'nav.title.signIn': 'تسجيل الدخول',
   'nav.title.sessionCheck': 'التحقق من تسجيل دخولك',
@@ -847,7 +863,7 @@ export const ar: Messages = {
   'biometric.unlock': 'فتح القفل',
   'biometric.usePassword': 'استخدام كلمة المرور بدلًا من ذلك',
   'biometric.setting.fallbackName': 'القياسات الحيوية',
-  'biometric.setting.toggle': 'فتح القفل بواسطة {method}',
+  'biometric.setting.toggle': 'فتح القفل بواسطة \u2068{method}\u2069',
   'biometric.setting.body':
     'بعد إغلاق ميدورا لبضع دقائق، سيطلب {method} قبل عرض معلوماتك مجددًا. هذا يمنع مَن يمسك هاتفك المفتوح من قراءة سجلاتك. وهو لا يشفّر شيئًا ولا يغني عن تسجيل الخروج.',
   'biometric.setting.password': 'يمكنك دائمًا تسجيل الدخول بكلمة المرور بدلًا من ذلك.',
@@ -869,7 +885,7 @@ export const ar: Messages = {
   'ai.home.safety': 'قبل أن تستخدمه',
   'ai.home.scope.title': 'ما الغرض منه',
   'ai.home.scope.body':
-    'إيجاد التخصص المناسب، ووصف العَرَض حتى تستطيع إخبار الطبيب، والمساعدة في الحجز، ومعلومات عامة عن دواء.',
+    'إيجاد التخصص المناسب، ووصف العَرَض حتى تستطيع إخبار أحد أفراد الفريق الطبي، والمساعدة في الحجز، ومعلومات عامة عن دواء.',
   'ai.home.scope.excluded':
     'لن يقرأ سجلاتك ولا نتائج فحوصك ولا وصفاتك، ولن يخبرك بما تعاني منه.',
 
@@ -899,10 +915,10 @@ export const ar: Messages = {
     'لا يستطيع فحصك، ولا تشخيصك، ولن يطلب منك أبدًا بدء دواء أو إيقافه أو تغييره.',
   'ai.safety.limits.title': 'قد يكون مخطئًا',
   'ai.safety.limits.body':
-    'كل ما يكتبه معلومات عامة لم يقرأها أي طبيب قبلك. اعتبره بداية لحديث، لا إجابة.',
+    'كل ما يكتبه معلومات عامة لم يقرأها أي فرد من الفريق الطبي قبلك. اعتبره بداية لحديث، ولا تعتبره إجابة أبدًا.',
   'ai.safety.escalate.title': 'القرار لشخص، لا لبرنامج',
   'ai.safety.escalate.body':
-    'كل ما يخص جسدك أو نتائجك أو علاجك يعود إلى طبيب يستطيع الاطلاع على سجلك.',
+    'كل ما يخص جسدك أو نتائجك أو علاجك يعود إلى أحد أفراد الفريق الطبي ممن يستطيعون الاطلاع على سجلك.',
   'ai.safety.findCare': 'ابحث عن طبيب',
 
   'ai.chat.title': 'اطرح سؤالًا',
@@ -998,4 +1014,153 @@ export const ar: Messages = {
   'nav.title.assistantSymptoms': 'صِف عَرَضًا',
   'nav.title.assistantImage': 'اعرض صورة',
   'security.section.unlock': 'قفل هذا التطبيق',
+  // ── الطوارئ (N-07, W-10) ──────────────────────────────────────────
+  //
+  // ⚠ Engineering draft. Translation approved by the owner 2026-11-23;
+  // clinical sign-off NOT given. Awaiting the named clinical reviewer
+  // (docs/SIGNOFF.md). Phone numbers are wrapped in LRI…PDI (U+2066/
+  // U+2069) and free-text labels in FSI…PDI (U+2068/U+2069) so a Latin
+  // name or a "+966 …" number keeps its own direction inside Arabic.
+  'emergency.help': 'مساعدة طارئة',
+  'emergency.short': 'الطوارئ',
+  'emergency.entry.hint': 'يفتح إرشادات الطوارئ. ولا يُجري مكالمة.',
+  'emergency.entry.welcomeDetail': 'متاحة دون تسجيل الدخول، ودون اتصال بالإنترنت.',
+  'emergency.entry.homeDetail': 'ما يجب فعله، وبمن تتصل. تعمل دون اتصال بالإنترنت.',
+  'emergency.entry.threadHint': 'الرسائل ليست رعاية عاجلة',
+  'emergency.disclaimer':
+    'ميدورا ليس خدمة طوارئ. لا أحد يراقب هذا التطبيق الآن. إذا كانت هذه حالة طارئة تهدد الحياة، فاتصل برقم الطوارئ المحلي فورًا.',
+  'emergency.numbers.title': 'اتصل لطلب المساعدة',
+  'emergency.numbers.subtitle': 'أرقام قدّمتها عيادتك لهذه المنطقة',
+  'emergency.unconfigured.title': 'اتصل برقم الطوارئ المحلي',
+  'emergency.unconfigured.body':
+    'لم تُزوَّد هذه النسخة من ميدورا بأرقام طوارئ لمنطقتك، لذلك لن تعرض أي رقم. استخدم رقم الطوارئ الخاص بالبلد الذي تُوجد فيه — وغالبًا ما يكون مكتوبًا على ظهر شريحة الاتصال في هاتفك، ويستطيع أي هاتف محمول الاتصال به حتى وهو مقفل أو بلا رصيد.',
+  'emergency.redFlags.title': 'اتصل فورًا إذا لاحظت أيًّا مما يلي',
+  'emergency.redFlag.breathing.title': 'صعوبة في التنفس',
+  'emergency.redFlag.breathing.detail':
+    'صعوبة في التقاط النفس، أو اختناق، أو عدم القدرة على قول جملة كاملة.',
+  'emergency.redFlag.chest.title': 'ألم أو ضغط في الصدر',
+  'emergency.redFlag.chest.detail': 'ألم أو ضيق أو ثقل في الصدر، خاصةً إذا صاحبه تعرّق أو غثيان.',
+  'emergency.redFlag.stroke.title': 'علامات السكتة الدماغية',
+  'emergency.redFlag.stroke.detail':
+    'تدلّي الوجه، أو ضعف في أحد جانبي الجسم، أو صعوبة مفاجئة في الكلام أو الفهم.',
+  'emergency.redFlag.consciousness.title': 'فقدان الوعي أو عدم الاستجابة',
+  'emergency.redFlag.consciousness.detail': 'شخص لا يمكن إيقاظه، أو أصابته نوبة تشنّج لا تتوقف.',
+  'emergency.redFlag.bleeding.title': 'نزيف شديد',
+  'emergency.redFlag.bleeding.detail': 'نزيف لا يخفّ، أو إصابة خطيرة بعد سقوط أو حادث.',
+  'emergency.redFlag.allergy.title': 'رد فعل تحسّسي شديد',
+  'emergency.redFlag.allergy.detail':
+    'تورّم الوجه أو الشفتين أو الحلق، أو طفح جلدي ينتشر، أو صعوبة مفاجئة في التنفس.',
+  'emergency.redFlag.selfharm.title': 'أفكار عن إيذاء نفسك',
+  'emergency.redFlag.selfharm.detail':
+    'لست وحدك، وهذه حالة طارئة. اتصل الآن، أو اطلب من شخص قريب منك أن يتصل.',
+  'emergency.contacts.title': 'جهات اتصالك في الطوارئ',
+  'emergency.contacts.subtitle': 'سجّلتها عيادتك',
+  'emergency.contacts.primary': 'أول من يُتصل به',
+  'emergency.contacts.other': 'جهة اتصال في الطوارئ',
+  'emergency.contacts.relationshipPrimary': '\u2068{relationship}\u2069 · أول من يُتصل به',
+  'emergency.clinic.title': 'عيادتك',
+  'emergency.clinic.subtitle': 'للمشكلات العاجلة التي ليست حالات طارئة',
+  'emergency.clinic.target': 'العيادة',
+  'emergency.clinic.openMaps': 'افتح في الخرائط',
+  'emergency.when.title': 'متى تتصل، ومتى تحجز موعدًا',
+  'emergency.when.callNow.label': 'اتصل برقم الطوارئ',
+  'emergency.when.callNow.body':
+    'أيٌّ من العلامات المذكورة أعلاه، أو أي شيء تعتقد أنه يهدد الحياة.',
+  'emergency.when.callClinic.label': 'اتصل بالعيادة',
+  'emergency.when.callClinic.body':
+    'أعراض تزداد سوءًا، أو رد فعل تجاه دواء، أو جرح يحتاج إلى فحص اليوم.',
+  'emergency.when.book.label': 'احجز موعدًا',
+  'emergency.when.book.body':
+    'عَرَض جديد لا يزداد سوءًا، أو موعد متابعة، أو تجديد وصفة طبية، أو فحص روتيني.',
+  'emergency.when.neverMessage':
+    'لا تستخدم رسائل ميدورا لأي أمر عاجل. قد لا يقرأ أحد أفراد الفريق الطبي الرسالة قبل يوم أو أكثر.',
+  'emergency.source.unconfigured': 'لم تُضبط أي أرقام طوارئ لهذه النسخة من التطبيق.',
+  'emergency.source.operator': 'أرقام الطوارئ مقدّمة من عيادتك.',
+  'emergency.call.label': 'اتصل بـ\u2068{label}\u2069',
+  'emergency.call.hint': 'يفتح تأكيدًا قبل الاتصال بالرقم \u2066{number}\u2069',
+  'emergency.call.failedAnnouncement': 'تعذّر فتح تطبيق الهاتف. الرقم هو \u2066{number}\u2069.',
+  'emergency.call.failedA11y':
+    'لا يستطيع هذا الجهاز إجراء مكالمات. اطلب الرقم \u2066{number}\u2069 من هاتف آخر.',
+  'emergency.call.failedText': 'لا يستطيع هذا الجهاز إجراء مكالمات. اطلب هذا الرقم من هاتف آخر:',
+  'emergency.call.confirmTitle': 'الاتصال بـ\u2068{label}\u2069؟',
+  'emergency.call.confirmDetail':
+    'سيفتح ميدورا تطبيق الهاتف على الرقم \u2066{number}\u2069. لا تتابع إلا إذا كنت بحاجة إلى مساعدة طارئة الآن.',
+  'emergency.call.confirmAction': 'اتصل بالرقم \u2066{number}\u2069',
+  'emergency.call.notNow': 'ليس الآن',
+
+  'crash.title': 'واجه ميدورا مشكلة',
+  'crash.body':
+    'توقفت هذه الشاشة عن العمل. لم يُرسَل أي شيء أدخلته. إذا كنت بحاجة إلى مساعدة عاجلة، فاتصل برقم الطوارئ المحلي.',
+  'support.urgent.title': 'إذا كنت بحاجة إلى مساعدة طبية عاجلة',
+  'support.urgent.body':
+    'اتصل برقم الطوارئ المحلي من تطبيق الهاتف. لا تنتظر ردًا هنا — صندوق الرسائل هذا غير مراقَب لحالات الطوارئ الطبية.',
+  'upgrade.emergency': 'إذا كنت بحاجة إلى مساعدة عاجلة، فاتصل برقم الطوارئ المحلي من تطبيق الهاتف.',
+
+  // ── المفردات السريرية (W-10، بانتظار المراجعة السريرية) ───────────
+  'health.allergy.severity.mild': 'خفيفة',
+  'health.allergy.severity.moderate': 'متوسطة',
+  'health.allergy.severity.severe': 'شديدة',
+  'health.medication.status.active': 'قيد الاستخدام',
+  'health.medication.status.completed': 'مكتمل',
+  'health.medication.status.discontinued': 'أُوقِف',
+  'health.history.kind.diagnosis': 'تشخيص',
+  'health.history.kind.surgery': 'عملية جراحية',
+  'health.history.kind.procedure': 'إجراء طبي',
+  'health.history.kind.hospitalization': 'دخول المستشفى',
+  'health.history.kind.vaccination': 'تطعيم',
+  'health.labs.flag.normal': 'طبيعي',
+  'health.labs.flag.low': 'منخفض',
+  'health.labs.flag.high': 'مرتفع',
+  'health.labs.flag.criticalLow': 'منخفض بدرجة حرجة',
+  'health.labs.flag.criticalHigh': 'مرتفع بدرجة حرجة',
+  'health.labs.flag.abnormal': 'غير طبيعي',
+  'health.prescriptions.status.draft': 'مسودة',
+  'health.prescriptions.status.pendingApproval': 'بانتظار الموافقة',
+  'health.prescriptions.status.active': 'سارية',
+  'health.prescriptions.status.dispensed': 'صُرفت',
+  'health.prescriptions.status.completed': 'مكتملة',
+  'health.prescriptions.status.discontinued': 'أُوقفت',
+  'health.prescriptions.status.expired': 'منتهية الصلاحية',
+
+  'validation.password.length': 'استخدم {count} أحرف على الأقل',
+  'validation.password.lower': 'أضف حرفًا لاتينيًا صغيرًا',
+  'validation.password.upper': 'أضف حرفًا لاتينيًا كبيرًا',
+  'validation.password.digit': 'أضف رقمًا',
+  'validation.password.symbol': 'أضف رمزًا',
+  'validation.password.required': 'أدخل كلمة المرور',
+  'validation.password.mismatch': 'كلمتا المرور غير متطابقتين',
+  'validation.password.reused': 'اختر كلمة مرور لم تستخدمها هنا من قبل',
+  'validation.confirmPassword.required': 'أعد إدخال كلمة المرور',
+  'validation.currentPassword.required': 'أدخل كلمة المرور الحالية',
+  'validation.confirmNewPassword.required': 'أعد إدخال كلمة المرور الجديدة',
+  'validation.email.required': 'أدخل بريدك الإلكتروني',
+  'validation.email.invalid': 'أدخل عنوان بريد إلكتروني صالحًا',
+  'validation.code.length': 'أدخل الرمز المكوّن من ٦ أرقام',
+  'validation.code.digits': 'يجب أن يتكوّن الرمز من أرقام فقط',
+  'validation.firstName.required': 'أدخل اسمك الأول',
+  'validation.lastName.required': 'أدخل اسم العائلة',
+  'validation.name.max': 'استخدم {count} حرفًا أو أقل',
+  'validation.phone.required': 'أدخل رقم هاتفك',
+  'validation.phone.invalid': 'أدخل رقم هاتف صالحًا',
+  'validation.terms.required': 'يجب أن توافق على الشروط والأحكام',
+  'validation.privacy.required': 'يجب أن توافق على سياسة الخصوصية',
+  'validation.token.required': 'الصق الرمز الوارد في بريدك الإلكتروني',
+
+  'profile.field.fullName': 'الاسم الكامل',
+  'profile.field.dateOfBirth': 'تاريخ الميلاد',
+  'profile.field.bloodType': 'فصيلة الدم',
+  'profile.field.email': 'البريد الإلكتروني',
+  'profile.field.phone': 'الهاتف',
+  'profile.field.address': 'العنوان',
+  'profile.field.owner.clinic': 'عيادتك',
+  'profile.field.keptInAccount': 'محفوظ في حسابك',
+  'profile.field.keptByYou': 'محفوظ لديك',
+
+  'biometric.prompt': 'افتح قفل ميدورا',
+  'biometric.method.fingerprint': 'بصمة الإصبع',
+
+  'privacy.cover': 'ميدورا مخفي أثناء وجودك في تطبيق آخر.',
+
+  'messages.urgencyNotice':
+    'الرسائل ليست رعاية عاجلة. قد لا يقرأ أحد أفراد الفريق الطبي هذه الرسالة قبل يوم أو أكثر. إذا كان الأمر عاجلًا فاتصل بالعيادة؛ وإذا كانت حالة طارئة فاستخدم «مساعدة طارئة».',
 };

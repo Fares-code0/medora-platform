@@ -1,10 +1,11 @@
 import { fireEvent, waitFor } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
+import { catalogues } from '@/i18n';
 import { renderWithProviders } from '@/test/render';
 
 import { EmergencyCallButton } from './components/EmergencyCallButton';
-import { EMERGENCY_DISCLAIMER, RED_FLAGS } from './content/guidance';
+import { EMERGENCY_CONTENT_KEYS, EMERGENCY_DISCLAIMER_KEY, RED_FLAGS } from './content/guidance';
 import { dial, isDialable, openMap } from './dial';
 import { UNCONFIGURED_EMERGENCY } from './model/types';
 import { EmergencyScreen } from './screens/EmergencyScreen';
@@ -34,7 +35,14 @@ describe('the screen renders with nothing available', () => {
   it('shows the disclaimer, and it is not dismissible', () => {
     const { getByTestId, queryByLabelText } = renderWithProviders(<EmergencyScreen />);
 
-    expect(getByTestId('emergency-disclaimer').props.accessibilityLabel).toBe(EMERGENCY_DISCLAIMER);
+    // The English the screen showed before the copy became a key, verbatim.
+    expect(getByTestId('emergency-disclaimer').props.accessibilityLabel).toBe(
+      'Medora is not an emergency service. Nobody is monitoring this app right now. ' +
+        'If this is a life-threatening emergency, call your local emergency number immediately.',
+    );
+    expect(catalogues.en[EMERGENCY_DISCLAIMER_KEY]).toBe(
+      getByTestId('emergency-disclaimer').props.accessibilityLabel,
+    );
     // There is no control that could hide it.
     expect(queryByLabelText('Dismiss')).toBeNull();
     expect(queryByLabelText('Close')).toBeNull();
@@ -48,8 +56,10 @@ describe('the screen renders with nothing available', () => {
   it('renders every red flag from bundled content', () => {
     const { getByText } = renderWithProviders(<EmergencyScreen />);
     for (const flag of RED_FLAGS) {
-      expect(getByText(flag.title)).toBeTruthy();
+      expect(getByText(catalogues.en[flag.titleKey])).toBeTruthy();
     }
+    expect(getByText('Trouble breathing')).toBeTruthy();
+    expect(getByText('Thoughts of harming yourself')).toBeTruthy();
   });
 
   it('renders in the dark theme', () => {
@@ -80,11 +90,13 @@ describe('no number is invented', () => {
   it('contains no dialable digit sequence anywhere in the bundled content', () => {
     // The guard against somebody "just adding 911 for now": a bare
     // 3-to-4 digit number in emergency copy is almost certainly one.
-    const content = [
-      EMERGENCY_DISCLAIMER,
-      ...RED_FLAGS.flatMap((flag) => [flag.title, flag.detail]),
-    ].join(' ');
+    // Both languages, Western and Arabic-Indic digits alike.
+    const content = EMERGENCY_CONTENT_KEYS.flatMap((key) => [
+      catalogues.en[key],
+      catalogues.ar[key],
+    ]).join(' ');
     expect(content).not.toMatch(/\b\d{3,4}\b/);
+    expect(content).not.toMatch(/[٠-٩]{3,4}/);
   });
 });
 
@@ -204,5 +216,79 @@ describe('openMap()', () => {
   it('reports failure rather than throwing when there is no maps app', async () => {
     jest.spyOn(Linking, 'openURL').mockRejectedValue(new Error('no handler'));
     await expect(openMap('somewhere')).resolves.toBe(false);
+  });
+});
+
+/**
+ * The same guarantees in Arabic — W-10 translation approval, 2026-11-23.
+ *
+ * The English assertions above stay exactly as they were. These are
+ * their twins: the screen and the two-step dial read the `emergency.*`
+ * keys in Arabic, the number stays the number (isolated left-to-right
+ * inside the sentence), and no English is left on the screen. The Arabic
+ * is an engineering draft awaiting the clinical reviewer (docs/SIGNOFF.md).
+ */
+describe('in Arabic', () => {
+  beforeEach(() => {
+    jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('shows the disclaimer in Arabic, still as an undismissable alert', () => {
+    const { getByTestId } = renderWithProviders(<EmergencyScreen />, { locale: 'ar' });
+    const disclaimer = getByTestId('emergency-disclaimer');
+
+    expect(disclaimer.props.accessibilityRole).toBe('alert');
+    expect(disclaimer.props.accessibilityLabel).toBe(catalogues.ar[EMERGENCY_DISCLAIMER_KEY]);
+    expect(disclaimer.props.accessibilityLabel).toMatch(/^ميدورا ليس خدمة طوارئ\./);
+  });
+
+  it('renders every red flag, the heading and the unconfigured instruction in Arabic', async () => {
+    const { getByText, findByText } = renderWithProviders(<EmergencyScreen />, { locale: 'ar' });
+
+    expect(getByText('مساعدة طارئة')).toBeTruthy();
+    for (const flag of RED_FLAGS) {
+      expect(getByText(catalogues.ar[flag.titleKey])).toBeTruthy();
+    }
+    expect(getByText('ألم أو ضغط في الصدر')).toBeTruthy();
+    expect(await findByText('اتصل برقم الطوارئ المحلي')).toBeTruthy();
+  });
+
+  it('names the number in the Arabic confirmation, isolated left-to-right', () => {
+    const { getByTestId, getByText } = renderWithProviders(
+      <EmergencyCallButton label="خدمة الإسعاف" number="112" testID="call" />,
+      { locale: 'ar' },
+    );
+
+    expect(getByTestId('call').props.accessibilityHint).toBe(
+      'يفتح تأكيدًا قبل الاتصال بالرقم \u2066112\u2069',
+    );
+    fireEvent.press(getByTestId('call'));
+    expect(getByText('الاتصال بـ\u2068خدمة الإسعاف\u2069؟')).toBeTruthy();
+    expect(getByText('اتصل بالرقم \u2066112\u2069')).toBeTruthy();
+    expect(getByText(/على الرقم \u2066112\u2069/)).toBeTruthy();
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  });
+
+  it('still dials only after the Arabic confirmation is accepted, and cancels in Arabic', async () => {
+    const { getByTestId, getByText, queryByText } = renderWithProviders(
+      <EmergencyCallButton label="خدمة الإسعاف" number="112" testID="call" />,
+      { locale: 'ar' },
+    );
+
+    fireEvent.press(getByTestId('call'));
+    expect(getByText('ليس الآن')).toBeTruthy();
+    fireEvent.press(getByTestId('call-confirm-sheet-cancel'));
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    expect(queryByText(/الاتصال بـ/)).toBeNull();
+
+    fireEvent.press(getByTestId('call'));
+    fireEvent.press(getByTestId('call-confirm-sheet-confirm'));
+    await waitFor(() => {
+      expect(Linking.openURL).toHaveBeenCalledWith('tel:112');
+    });
   });
 });

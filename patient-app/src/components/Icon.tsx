@@ -112,6 +112,26 @@ const DIRECTIONAL = {
 
 export type IconName = keyof typeof GLYPHS | keyof typeof DIRECTIONAL;
 
+/**
+ * Glyphs that keep their name but are drawn MIRRORED in a right-to-left
+ * layout — S-08.
+ *
+ * Feather's `send` is a paper plane flying up and to the right: "away
+ * from me, in the reading direction". In Arabic the reading direction is
+ * leftward, so the plane flies the wrong way unless it is flipped. There
+ * is no left-pointing twin to swap to, as there is for a chevron, so the
+ * glyph is mirrored with a horizontal flip instead. Same `I18nManager`
+ * rule as `DIRECTIONAL`: it follows the layout, not the chosen language.
+ */
+const MIRRORED_IN_RTL: ReadonlySet<IconName> = new Set<IconName>(['send']);
+
+/** Exported for `rtl.test.tsx`. */
+export function mirrorsInRtl(name: IconName, isRtl: boolean): boolean {
+  return isRtl && MIRRORED_IN_RTL.has(name);
+}
+
+const MIRROR_STYLE = { transform: [{ scaleX: -1 }] } as const;
+
 /** Exported for `rtl.test.tsx`, which asserts both directions. */
 export function resolveGlyph(name: IconName, isRtl: boolean): string {
   if (name in DIRECTIONAL) {
@@ -136,6 +156,7 @@ export function Icon({ name, size = 20, color = 'textSecondary', label }: IconPr
       name={resolveGlyph(name, I18nManager.isRTL) as keyof typeof Feather.glyphMap}
       size={size}
       color={theme.colors[color]}
+      {...(mirrorsInRtl(name, I18nManager.isRTL) ? { style: MIRROR_STYLE } : {})}
       {...(label === undefined
         ? decorative
         : { accessible: true, accessibilityRole: 'image' as const, accessibilityLabel: label })}

@@ -107,7 +107,9 @@ function stubAuthService(): AuthService {
   } as unknown as AuthService;
 }
 
-async function renderProfile(options: { profile?: PatientProfile; reject?: unknown } = {}) {
+async function renderProfile(
+  options: { profile?: PatientProfile; reject?: unknown; locale?: 'en' | 'ar' } = {},
+) {
   if (options.reject === undefined) stubProfile(options.profile);
   else {
     const spy = jest.spyOn(profileService, 'get').mockRejectedValue(options.reject);
@@ -130,6 +132,7 @@ async function renderProfile(options: { profile?: PatientProfile; reject?: unkno
     <SessionProvider authService={authService} tokenStorage={tokenStorage}>
       <ProfileScreen {...props} />
     </SessionProvider>,
+    { locale: options.locale ?? 'en' },
   );
 
   // `SessionProvider` boots by reading the keychain, and that read
@@ -267,5 +270,16 @@ describe('the section list (P-02)', () => {
     const { getByTestId } = await renderProfile();
 
     expect(getByTestId('profile-to-records')).toBeTruthy();
+  });
+});
+
+describe('the sign-out confirmation in Arabic (W-10 translation approval, 2026-11-23)', () => {
+  it('says Emergency stays reachable, in Arabic', async () => {
+    const { getByTestId, getByText, queryByText } = await renderProfile({ locale: 'ar' });
+
+    fireEvent.press(getByTestId('profile-logout'));
+
+    expect(getByText(/وتبقى «مساعدة طارئة» متاحة أثناء تسجيل خروجك/)).toBeTruthy();
+    expect(queryByText(/Emergency help stays available/i)).toBeNull();
   });
 });

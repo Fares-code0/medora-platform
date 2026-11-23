@@ -45,7 +45,7 @@ export function SessionCheckStack() {
         name="Emergency"
         component={EmergencyScreen}
         options={{
-          title: 'Emergency',
+          title: t('emergency.short'),
           headerTintColor: theme.colors.error,
           // No affordance pointing at the screen it is already on.
           headerRight: () => null,

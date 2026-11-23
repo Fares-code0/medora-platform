@@ -21,17 +21,13 @@ type Props = NativeStackScreenProps<AuthStackParamList, 'Welcome'>;
  * app is behind the two-step confirmation (R-6), and a one-tap dial on
  * the launch screen would be the worst possible place to break that.
  *
- * ── Why the Emergency card is still in English (C-09) ────────────────
+ * ── The Emergency card's language (C-09, W-10) ──────────────────────
  *
- * Everything else on this screen reads the catalogue. The three strings
- * on the Emergency card do not, and that is a decision rather than an
- * omission: `messages/en.ts` excludes emergency copy because it is
- * clinically reviewed material (N-07, W-10), and the label on the way in
- * is what a person in crisis is scanning for. Whether the *affordance*
- * is in scope of that review — as opposed to the guidance behind it — is
- * a question for the W-10 owner, and an unreviewed Arabic label on the
- * emergency entry point is not the kind of thing to decide in a commit.
- * `docs/A11Y_AUDIT.md` §6 carries it as an open question.
+ * The card was English-only until the W-10 owner approved translating
+ * the emergency affordances on 2026-11-23. Its three strings are now
+ * `emergency.*` keys. The Arabic is an engineering draft awaiting the
+ * named clinical reviewer; the W-10 sign-off is still not given
+ * (`docs/A11Y_AUDIT.md` §6, `docs/SIGNOFF.md`).
  *
  * "Medora" is not translated either, for the ordinary reason: it is a
  * name.
@@ -56,17 +52,17 @@ export function WelcomeScreen({ navigation }: Props) {
         tone="error"
         testID="welcome-emergency-card"
         onPress={() => navigation.navigate('Emergency')}
-        accessibilityLabel="Emergency help"
-        accessibilityHint="Opens emergency guidance. It does not place a call."
+        accessibilityLabel={t('emergency.help')}
+        accessibilityHint={t('emergency.entry.hint')}
       >
         <View style={[styles.row, { columnGap: theme.space[3] }]}>
           <Icon name="alert" size={24} color="error" />
           <View style={styles.grow}>
             <Text variant="h3" color="error">
-              Emergency help
+              {t('emergency.help')}
             </Text>
             <Text variant="bodySm" color="textSecondary">
-              Available without signing in, and without a connection.
+              {t('emergency.entry.welcomeDetail')}
             </Text>
           </View>
           <Icon name="forward" size={20} color="error" />

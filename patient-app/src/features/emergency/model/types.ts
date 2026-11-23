@@ -24,7 +24,16 @@
  * should read this paragraph and stop.
  */
 
-/** One operator-approved number a patient may dial. */
+/**
+ * One operator-approved number a patient may dial.
+ *
+ * `label` and `whenToUse` are **operator data**, not application copy:
+ * they are rendered exactly as configured, in every app language, and
+ * this client never translates them (W-10 translation approval,
+ * 2026-11-23, covers application-controlled copy only). A deployment
+ * serving Arabic-speaking patients configures them in Arabic; a
+ * per-locale field would be a BE-11 contract change and is an open item.
+ */
 export interface EmergencyNumber {
   /** Stable key for lists and tests. Not shown to the patient. */
   readonly id: string;

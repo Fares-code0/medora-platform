@@ -167,6 +167,20 @@ describe('the Expo adapter', () => {
       expect.objectContaining({ disableDeviceFallback: true }),
     );
   });
+
+  it('hands the OS sheet the prompt and cancel label it was given, English by default', async () => {
+    sdk.authenticateAsync.mockResolvedValueOnce({ success: true });
+    await expoBiometricGate.authenticate('Unlock Medora');
+    expect(sdk.authenticateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ promptMessage: 'Unlock Medora', cancelLabel: 'Cancel' }),
+    );
+
+    sdk.authenticateAsync.mockResolvedValueOnce({ success: true });
+    await expoBiometricGate.authenticate('افتح قفل ميدورا', 'إلغاء');
+    expect(sdk.authenticateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ promptMessage: 'افتح قفل ميدورا', cancelLabel: 'إلغاء' }),
+    );
+  });
 });
 
 describe('the setting on the Security screen', () => {
@@ -189,6 +203,32 @@ describe('the setting on the Security screen', () => {
     expect(toggle.props.accessibilityLabel).toBe('Unlock with Face ID');
     expect(toggle.props.accessibilityRole).toBe('checkbox');
     expect(isBiometricUnlockEnabled()).toBe(false);
+  });
+
+  it('names a fingerprint sensor in Arabic, and keeps "Face ID" as Apple names it', async () => {
+    const fingerprint = jest.fn(() =>
+      Promise.resolve({ usable: true, label: 'Fingerprint' as const }),
+    );
+    const arabic = renderWithProviders(
+      <BiometricUnlockSetting gate={stubGate({ check: fingerprint })} />,
+      { locale: 'ar' },
+    );
+    const toggle = await waitFor(() => arabic.getByTestId('biometric-unlock-toggle'));
+    expect(toggle.props.accessibilityLabel).toBe('فتح القفل بواسطة \u2068بصمة الإصبع\u2069');
+    arabic.unmount();
+
+    const english = renderWithProviders(
+      <BiometricUnlockSetting gate={stubGate({ check: fingerprint })} />,
+    );
+    const englishToggle = await waitFor(() => english.getByTestId('biometric-unlock-toggle'));
+    expect(englishToggle.props.accessibilityLabel).toBe('Unlock with Fingerprint');
+    english.unmount();
+
+    const faceId = renderWithProviders(<BiometricUnlockSetting gate={stubGate()} />, {
+      locale: 'ar',
+    });
+    const faceToggle = await waitFor(() => faceId.getByTestId('biometric-unlock-toggle'));
+    expect(faceToggle.props.accessibilityLabel).toBe('فتح القفل بواسطة \u2068Face ID\u2069');
   });
 
   it('persists the choice', async () => {
@@ -261,7 +301,11 @@ describe('the lock screen, over a real backgrounding', () => {
 
   async function backgroundedApp(
     gate: BiometricGate,
-    options: { readonly enabled?: boolean; readonly awayMs?: number } = {},
+    options: {
+      readonly enabled?: boolean;
+      readonly awayMs?: number;
+      readonly locale?: 'en' | 'ar';
+    } = {},
   ) {
     const emit = captureAppState();
     const logout = jest.fn(() => Promise.resolve());
@@ -285,6 +329,7 @@ describe('the lock screen, over a real backgrounding', () => {
           <Text testID="navigator">records</Text>
         </BiometricLockGate>
       </SessionProvider>,
+      { locale: options.locale ?? 'en' },
     );
 
     // The foreground handler ignores an absence while the status is
@@ -363,9 +408,17 @@ describe('the lock screen, over a real backgrounding', () => {
 
     // Prompted without the patient pressing anything: someone returning
     // to a locked app expects the sensor, not a button that summons it.
-    expect(gate.authenticate).toHaveBeenCalledWith('Unlock Medora');
+    // The OS sheet's prompt and cancel button are this app's words.
+    expect(gate.authenticate).toHaveBeenCalledWith('Unlock Medora', 'Cancel');
     await waitFor(() => expect(view.getByTestId('navigator')).toBeTruthy());
     expect(view.queryByTestId('biometric-lock-screen')).toBeNull();
+  });
+
+  it('prompts in Arabic when the app is in Arabic (C-09)', async () => {
+    const gate = stubGate();
+    await backgroundedApp(gate, { locale: 'ar' });
+
+    expect(gate.authenticate).toHaveBeenCalledWith('افتح قفل ميدورا', 'إلغاء');
   });
 
   it('names nobody', async () => {

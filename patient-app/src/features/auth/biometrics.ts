@@ -89,7 +89,11 @@ export type BiometricOutcome =
  */
 export interface BiometricGate {
   check(): Promise<BiometricAvailability>;
-  authenticate(prompt: string): Promise<BiometricOutcome>;
+  /**
+   * `prompt` and `cancelLabel` are shown inside the OS sheet but are this
+   * app's words, so the caller passes them translated (C-09).
+   */
+  authenticate(prompt: string, cancelLabel?: string): Promise<BiometricOutcome>;
 }
 
 function labelFor(
@@ -119,7 +123,7 @@ export const expoBiometricGate: BiometricGate = {
     }
   },
 
-  async authenticate(prompt) {
+  async authenticate(prompt, cancelLabel = 'Cancel') {
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: prompt,
@@ -130,7 +134,7 @@ export const expoBiometricGate: BiometricGate = {
         disableDeviceFallback: true,
         // The prompt's own cancel button, so the patient is never stuck
         // inside a system dialog with no way back to the password path.
-        cancelLabel: 'Cancel',
+        cancelLabel,
       });
       if (result.success) return 'success';
       // `error` is an SDK code string, not free text and not PHI.

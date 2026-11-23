@@ -136,11 +136,11 @@ export function OnboardingScreen({ navigation }: Props) {
         ]}
       >
         <Button
-          label="Emergency"
+          label={t('emergency.short')}
           tone="ghost"
           size="sm"
           testID="onboarding-emergency"
-          hint="Opens emergency guidance. It does not place a call."
+          hint={t('emergency.entry.hint')}
           onPress={() => navigation.navigate('Emergency')}
         />
         <Button

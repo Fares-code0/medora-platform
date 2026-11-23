@@ -6,10 +6,12 @@ import { StyleSheet, View } from 'react-native';
 import { headingA11y } from '@/accessibility/a11y';
 import { isStaleDataSafeError } from '@/api/errors';
 import { AsyncBoundary, Badge, Button, Card, Divider, Screen, Section, Text } from '@/components';
-import { useT, type MessageKey, useDateFormat } from '@/i18n';
+import { useLocale, useT, type MessageKey, useDateFormat } from '@/i18n';
+import { arabicResultCount } from '@/i18n/duration';
 import { useTheme } from '@/theme';
 import type { LabResultFlag, LabStatus } from '@/types/vocabularies';
 
+import { LAB_FLAG_KEY } from '../clinical-word';
 import { ReleaseNotice } from '../components/ReleaseNotice';
 import { labKeys, useLabOrder, useLabOrders } from '../hooks';
 
@@ -55,24 +57,6 @@ const FLAG_TONE: Record<LabResultFlag, 'neutral' | 'warning' | 'error'> = {
   'critical-low': 'error',
   'critical-high': 'error',
   abnormal: 'warning',
-};
-
-/**
- * The lab's flags stay in English, deliberately.
- *
- * `messages/en.ts` draws the line and names this case: "Critically high"
- * is clinical vocabulary the record is written in, it is the word a
- * paramedic reads off a phone, and an unreviewed Arabic rendering of it
- * is W-10's to sign off rather than a translator's. The surrounding
- * screen IS translated; the flag is not.
- */
-const FLAG_LABEL: Record<LabResultFlag, string> = {
-  normal: 'Normal',
-  low: 'Low',
-  high: 'High',
-  'critical-low': 'Critically low',
-  'critical-high': 'Critically high',
-  abnormal: 'Abnormal',
 };
 
 /**
@@ -155,7 +139,7 @@ function LabOrderCard({
                       flag:
                         result.flag === null
                           ? t('health.labs.result.unflagged')
-                          : FLAG_LABEL[result.flag],
+                          : t(LAB_FLAG_KEY[result.flag]),
                     })}
                     style={{ paddingVertical: theme.space[2], rowGap: theme.space[1] }}
                   >
@@ -175,7 +159,7 @@ function LabOrderCard({
                         </Text>
                       )}
                       {result.flag === null ? null : (
-                        <Badge label={FLAG_LABEL[result.flag]} tone={FLAG_TONE[result.flag]} />
+                        <Badge label={t(LAB_FLAG_KEY[result.flag])} tone={FLAG_TONE[result.flag]} />
                       )}
                     </View>
                   </View>
@@ -202,6 +186,7 @@ export function LabResultsScreen() {
   const theme = useTheme();
   const { formatLongDate } = useDateFormat();
   const t = useT();
+  const { locale } = useLocale();
   const orders = useLabOrders();
   const [expanded, setExpanded] = useState<readonly string[]>([]);
   const queryClient = useQueryClient();
@@ -284,7 +269,11 @@ export function LabResultsScreen() {
                       */}
                       {order.resultCount === 0
                         ? ''
-                        : ` · ${t('health.labs.resultCount', { count: order.resultCount })}`}
+                        : ` · ${
+                            locale === 'ar'
+                              ? arabicResultCount(order.resultCount)
+                              : t('health.labs.resultCount', { count: order.resultCount })
+                          }`}
                     </Text>
                     <ReleaseNotice state={order.release} />
                   </Card>

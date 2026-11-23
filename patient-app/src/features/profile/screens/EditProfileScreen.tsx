@@ -17,12 +17,44 @@ import {
 } from '@/components';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
 import { useFieldChain } from '@/components/form/useFieldChain';
-import { useT } from '@/i18n';
+import { useT, type MessageKey, type TranslateFn } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { profileKeys } from '../keys';
 import type { ProfileFieldId } from '../model/types';
 import { profileService } from '../service';
+
+/**
+ * What each field is called, by its id (C-09).
+ *
+ * The services still carry an English `label` and `ownedBy` — the
+ * adapter's description of the row — but those are this app's words, not
+ * the server's, so the screen renders the catalogue's instead. `ownedBy`
+ * is matched on the three values the adapters write; anything else is
+ * shown as given (lower-cased, as before).
+ */
+const FIELD_LABEL: Record<ProfileFieldId, MessageKey> = {
+  fullName: 'profile.field.fullName',
+  dateOfBirth: 'profile.field.dateOfBirth',
+  bloodType: 'profile.field.bloodType',
+  email: 'profile.field.email',
+  phone: 'profile.field.phone',
+  address: 'profile.field.address',
+};
+
+/**
+ * "Kept by …" for a read-only field. The clinic fills the shared sentence;
+ * the account and the patient get whole sentences of their own, because
+ * Arabic cannot put «أنت» after «لدى» ("محفوظ لدى أنت") — it is «محفوظ لديك».
+ */
+function keptByLine(t: TranslateFn, ownedBy: string): string {
+  if (ownedBy === 'Your clinic') {
+    return t('profile.edit.keptBy', { owner: t('profile.field.owner.clinic') });
+  }
+  if (ownedBy === 'Your account') return t('profile.field.keptInAccount');
+  if (ownedBy === 'You') return t('profile.field.keptByYou');
+  return t('profile.edit.keptBy', { owner: ownedBy.toLowerCase() });
+}
 
 /**
  * Keyboard, autofill and capitalisation per field.
@@ -136,7 +168,7 @@ export function EditProfileScreen() {
                     <Input
                       key={field.id}
                       testID={`edit-profile-${field.id}`}
-                      label={field.label}
+                      label={t(FIELD_LABEL[field.id])}
                       value={draft[field.id] ?? ''}
                       onChangeText={(value) =>
                         setDraft((current) => ({ ...current, [field.id]: value }))
@@ -185,11 +217,9 @@ export function EditProfileScreen() {
                       <ListItem
                         key={field.id}
                         testID={`edit-profile-readonly-${field.id}`}
-                        title={field.label}
+                        title={t(FIELD_LABEL[field.id])}
                         value={field.value ?? '—'}
-                        subtitle={t('profile.edit.keptBy', {
-                          owner: field.ownedBy.toLowerCase(),
-                        })}
+                        subtitle={keptByLine(t, field.ownedBy)}
                         readOnly
                       />
                     ))}

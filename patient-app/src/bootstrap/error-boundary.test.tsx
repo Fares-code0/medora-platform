@@ -52,12 +52,12 @@ function captureConsoleError() {
 
 function renderBoundary(
   child: ReactNode,
-  options: { mode?: 'light' | 'dark'; onReset?: () => void } = {},
+  options: { mode?: 'light' | 'dark'; onReset?: () => void; locale?: 'en' | 'ar' } = {},
 ) {
-  const { mode = 'light', onReset } = options;
+  const { mode = 'light', onReset, locale = 'en' } = options;
   return renderWithProviders(
     <ErrorBoundary {...(onReset === undefined ? {} : { onReset })}>{child}</ErrorBoundary>,
-    { mode },
+    { mode, locale },
   );
 }
 
@@ -233,5 +233,45 @@ describe('the fallback under a screen reader (S-02, S-07)', () => {
     const retry = getByTestId('error-boundary-retry');
     expect(retry.props.accessibilityRole).toBe('button');
     expect(retry.props.accessibilityLabel).toBe('Try again');
+  });
+});
+
+/**
+ * The crash screen in Arabic — W-10 translation approval, 2026-11-23.
+ *
+ * It reads the provider's locale when there is one and the stored
+ * preference when there is not (`useOptionalT`), so it still renders with
+ * no provider above it. Its body is an urgent-help line, and the Arabic
+ * of it awaits the clinical reviewer (docs/SIGNOFF.md).
+ */
+describe('the fallback in Arabic', () => {
+  it('says the same two sentences in Arabic, and Try again in Arabic', () => {
+    captureConsoleError();
+
+    const { getByTestId, getByText, queryByText } = renderBoundary(
+      <Crasher throwing={() => true} message="boom" />,
+      { locale: 'ar' },
+    );
+
+    expect(getByText('واجه ميدورا مشكلة')).toBeTruthy();
+    expect(getByTestId('error-boundary-message').props.accessibilityLabel).toMatch(
+      /رقم الطوارئ المحلي/,
+    );
+    expect(getByTestId('error-boundary-retry').props.accessibilityLabel).toBe('حاول مرة أخرى');
+    expect(queryByText(/ran into a problem/i)).toBeNull();
+  });
+
+  it('keeps the English fallback word for word', () => {
+    captureConsoleError();
+
+    const { getByText } = renderBoundary(<Crasher throwing={() => true} message="boom" />);
+
+    expect(getByText('Medora ran into a problem')).toBeTruthy();
+    expect(
+      getByText(
+        'This screen stopped working. Nothing you entered was sent. If you need urgent help, call your local emergency number.',
+      ),
+    ).toBeTruthy();
+    expect(getByText('Try again')).toBeTruthy();
   });
 });

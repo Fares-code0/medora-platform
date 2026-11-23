@@ -116,7 +116,7 @@ export function UpgradeRequiredScreen({
       )}
 
       <Text variant="caption" color="textTertiary" align="center">
-        If you need urgent help, call your local emergency number from your phone&apos;s dialler.
+        {t('upgrade.emergency')}
       </Text>
     </View>
   );

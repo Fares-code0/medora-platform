@@ -35,13 +35,17 @@ function captureAppState() {
   };
 }
 
-function renderShield(options: { protecting: boolean; mode?: 'light' | 'dark' }) {
+function renderShield(options: {
+  protecting: boolean;
+  mode?: 'light' | 'dark';
+  locale?: 'en' | 'ar';
+}) {
   const emit = captureAppState();
   const view = renderWithProviders(
     <PhiPrivacyShield protecting={options.protecting}>
       <RNText testID="protected-content">Lab results</RNText>
     </PhiPrivacyShield>,
-    { mode: options.mode ?? 'light' },
+    { mode: options.mode ?? 'light', locale: options.locale ?? 'en' },
   );
 
   // The cover is deliberately hidden from assistive technology, and
@@ -141,5 +145,29 @@ describe('while signed out (T-09)', () => {
     emit('background');
 
     expect(cover()).toBeNull();
+  });
+});
+
+describe('the cover in Arabic (review M-5)', () => {
+  it('reads the catalogue, in both languages', () => {
+    const english = renderShield({ protecting: true });
+    english.emit('background');
+    expect(
+      english.getByText('Medora is hidden while you are in another app.', {
+        includeHiddenElements: true,
+      }),
+    ).toBeTruthy();
+    english.unmount();
+
+    const arabic = renderShield({ protecting: true, locale: 'ar' });
+    arabic.emit('background');
+    expect(
+      arabic.getByText('ميدورا مخفي أثناء وجودك في تطبيق آخر.', { includeHiddenElements: true }),
+    ).toBeTruthy();
+    expect(
+      arabic.queryByText('Medora is hidden while you are in another app.', {
+        includeHiddenElements: true,
+      }),
+    ).toBeNull();
   });
 });

@@ -235,3 +235,13 @@ describe('the store URL is validated configuration, not a free string', () => {
     },
   );
 });
+
+describe('the emergency line in Arabic (W-10 translation approval, 2026-11-23)', () => {
+  it('points at the phone dialler in Arabic too', () => {
+    const { getByText, queryByText } = renderWithProviders(<UpgradeRequiredScreen />, {
+      locale: 'ar',
+    });
+    expect(getByText(/رقم الطوارئ المحلي/)).toBeTruthy();
+    expect(queryByText(/local emergency number/)).toBeNull();
+  });
+});

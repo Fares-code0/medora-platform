@@ -3,11 +3,7 @@ import { act, waitFor } from '@testing-library/react-native';
 
 import type { ProfileStackParamList } from '@/navigation/routes';
 import { renderWithProviders } from '@/test/render';
-import {
-  ALLERGY_SEVERITIES,
-  HISTORY_EVENT_KINDS,
-  MEDICATION_STATUSES,
-} from '@/types/vocabularies';
+import { ALLERGY_SEVERITIES, HISTORY_EVENT_KINDS, MEDICATION_STATUSES } from '@/types/vocabularies';
 
 import type { Allergy, ChronicCondition, HistoryEvent, Medication } from './model/types';
 import { HealthRecordsScreen } from './screens/HealthRecordsScreen';
@@ -84,6 +80,7 @@ async function renderRecords(
     medications?: readonly Medication[];
     history?: readonly HistoryEvent[];
   } = {},
+  locale: 'en' | 'ar' = 'en',
 ) {
   const spies = [
     jest.spyOn(healthService, 'listAllergies').mockResolvedValue(data.allergies ?? []),
@@ -100,6 +97,7 @@ async function renderRecords(
         route: { key: 'hr-1', name: 'HealthRecords', params: undefined },
       } as unknown as NativeStackScreenProps<ProfileStackParamList, 'HealthRecords'>)}
     />,
+    { locale },
   );
   await act(async () => undefined);
   /**
@@ -413,9 +411,7 @@ describe('medical history (J-05)', () => {
     // value never reaches the screen and the vocabulary stays the one the
     // record is written in, which is W-10's to sign off rather than this
     // screen's to paraphrase.
-    const labels = HISTORY_EVENT_KINDS.map(
-      (kind) => kind.charAt(0).toUpperCase() + kind.slice(1),
-    );
+    const labels = HISTORY_EVENT_KINDS.map((kind) => kind.charAt(0).toUpperCase() + kind.slice(1));
     expect(new Set(labels).size).toBe(HISTORY_EVENT_KINDS.length);
     for (const label of labels) expect(view.getByText(label)).toBeTruthy();
   });
@@ -505,8 +501,30 @@ describe('a medicine says when it was started', () => {
   });
 
   it('says nothing rather than "Started null" when it did not', async () => {
-    const view = await renderRecords({ medications: [medication({ id: 'MD-1', startedOn: null })] });
+    const view = await renderRecords({
+      medications: [medication({ id: 'MD-1', startedOn: null })],
+    });
 
     expect(view.queryByText(/Started/)).toBeNull();
+  });
+});
+
+/**
+ * The clinical vocabulary in Arabic — W-10 translation approval,
+ * 2026-11-23. The word is still there (J-02: colour is never the only
+ * signal); it is the Arabic word. The Arabic is an engineering draft
+ * awaiting the clinical reviewer (docs/SIGNOFF.md). The allergen is
+ * clinical record data and stays as recorded.
+ */
+describe('a severe allergy is unmistakable in Arabic too', () => {
+  it('says the Arabic word, and leaves the allergen as recorded', async () => {
+    const view = await renderRecords(
+      { allergies: [allergy({ id: 'AL-1', severity: 'severe', allergen: 'Penicillin' })] },
+      'ar',
+    );
+
+    expect(view.getByText('شديدة')).toBeTruthy();
+    expect(view.getByText('Penicillin')).toBeTruthy();
+    expect(view.queryByText('Severe')).toBeNull();
   });
 });

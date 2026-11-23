@@ -2,6 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
 import { Button, Card, Divider, Icon, Screen, Section, Text } from '@/components';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { EmergencyCallButton } from '../components/EmergencyCallButton';
@@ -34,9 +35,20 @@ import { useEmergencyConfiguration } from '../hooks/useEmergencyConfiguration';
  * The unconfigured branch is not a placeholder to be replaced later. It is
  * the correct behaviour for a deployment whose operator has not supplied
  * numbers, and it must survive BE-11 landing.
+ *
+ * ── Language ─────────────────────────────────────────────────────────
+ *
+ * Every sentence is an `emergency.*` catalogue key (W-10 translation
+ * approval, 2026-11-23; Arabic awaiting the named clinical reviewer). The
+ * bundled catalogue keeps guarantee 2: nothing here is fetched. What the
+ * OPERATOR supplies — a number's `label` and `whenToUse`, the clinic's
+ * name and address — is data, rendered exactly as configured and never
+ * translated by this app; a deployment that wants it in Arabic configures
+ * it in Arabic (see `model/types.ts`).
  */
 export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
   const theme = useTheme();
+  const t = useT();
   const configuration = useEmergencyConfiguration();
 
   return (
@@ -47,12 +59,12 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
       </View>
 
       <Screen testID="emergency-screen">
-        <Text critical variant="h1" {...headingA11y('Emergency help')}>
-          Emergency help
+        <Text critical variant="h1" {...headingA11y(t('emergency.help'))}>
+          {t('emergency.help')}
         </Text>
 
         {configuration.numbers.length > 0 ? (
-          <Section title="Call for help" subtitle="Numbers provided by your clinic for this region">
+          <Section title={t('emergency.numbers.title')} subtitle={t('emergency.numbers.subtitle')}>
             <View style={{ rowGap: theme.space[4] }}>
               {configuration.numbers.map((entry) => (
                 <EmergencyCallButton
@@ -72,36 +84,33 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
             <View style={[styles.row, { columnGap: theme.space[2] }]}>
               <Icon name="phone" size={20} color="warning" />
               <Text critical variant="h3" color="warning" style={styles.grow}>
-                Call your local emergency number
+                {t('emergency.unconfigured.title')}
               </Text>
             </View>
             <Text critical variant="bodySm" color="textSecondary">
-              This copy of Medora has not been given emergency numbers for your region, so it will
-              not show one. Use the emergency number for the country you are in — it is usually on
-              the back of your phone&apos;s SIM card, and every mobile phone can dial it even when
-              locked or out of credit.
+              {t('emergency.unconfigured.body')}
             </Text>
           </Card>
         )}
 
-        <Section title="Call immediately if you see any of these">
+        <Section title={t('emergency.redFlags.title')}>
           <Card padded={false}>
             {RED_FLAGS.map((flag, index) => (
               <View key={flag.id}>
                 {index === 0 ? null : <Divider />}
                 <View
                   accessible
-                  accessibilityLabel={`${flag.title}. ${flag.detail}`}
+                  accessibilityLabel={`${t(flag.titleKey)}. ${t(flag.detailKey)}`}
                   style={{ padding: theme.space[4], rowGap: theme.space[1] }}
                 >
                   <View style={[styles.row, { columnGap: theme.space[2] }]}>
                     <Icon name="alertCircle" size={16} color="error" />
                     <Text critical variant="bodyStrong" style={styles.grow}>
-                      {flag.title}
+                      {t(flag.titleKey)}
                     </Text>
                   </View>
                   <Text critical variant="bodySm" color="textTertiary">
-                    {flag.detail}
+                    {t(flag.detailKey)}
                   </Text>
                 </View>
               </View>
@@ -122,20 +131,22 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
         <EmergencyContacts />
 
         {configuration.clinic === null ? null : (
-          <Section title="Your clinic" subtitle="For urgent problems that are not emergencies">
+          <Section title={t('emergency.clinic.title')} subtitle={t('emergency.clinic.subtitle')}>
             <Card>
-              <Text critical variant="bodyStrong">{configuration.clinic.name}</Text>
+              <Text critical variant="bodyStrong">
+                {configuration.clinic.name}
+              </Text>
               <Text critical variant="bodySm" color="textTertiary">
                 {configuration.clinic.addressLine}
               </Text>
               <View style={{ rowGap: theme.space[2] }}>
                 <EmergencyCallButton
                   testID="emergency-call-clinic"
-                  label="the clinic"
+                  label={t('emergency.clinic.target')}
                   number={configuration.clinic.phone}
                 />
                 <Button
-                  label="Open in maps"
+                  label={t('emergency.clinic.openMaps')}
                   tone="secondary"
                   icon="mapPin"
                   fullWidth
@@ -149,31 +160,31 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
           </Section>
         )}
 
-        <Section title="When to call, and when to book">
+        <Section title={t('emergency.when.title')}>
           <Card tone="sunken">
             <Text critical variant="label" color="error">
-              Call the emergency number
+              {t('emergency.when.callNow.label')}
             </Text>
             <Text critical variant="bodySm" color="textSecondary">
-              {WHEN_TO_CALL_VS_BOOK.callNow}
+              {t(WHEN_TO_CALL_VS_BOOK.callNow)}
             </Text>
             <Divider />
             <Text critical variant="label" color="warning">
-              Call the clinic
+              {t('emergency.when.callClinic.label')}
             </Text>
             <Text critical variant="bodySm" color="textSecondary">
-              {WHEN_TO_CALL_VS_BOOK.callClinic}
+              {t(WHEN_TO_CALL_VS_BOOK.callClinic)}
             </Text>
             <Divider />
             <Text critical variant="label" color="primary">
-              Book an appointment
+              {t('emergency.when.book.label')}
             </Text>
             <Text critical variant="bodySm" color="textSecondary">
-              {WHEN_TO_CALL_VS_BOOK.bookAppointment}
+              {t(WHEN_TO_CALL_VS_BOOK.bookAppointment)}
             </Text>
             {onBook === undefined ? null : (
               <Button
-                label="Book an appointment"
+                label={t('emergency.when.book.label')}
                 tone="secondary"
                 testID="emergency-book"
                 onPress={onBook}
@@ -181,7 +192,7 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
             )}
             <Divider />
             <Text critical variant="bodySm" color="textTertiary">
-              {WHEN_TO_CALL_VS_BOOK.neverMessage}
+              {t(WHEN_TO_CALL_VS_BOOK.neverMessage)}
             </Text>
           </Card>
         </Section>
@@ -189,8 +200,8 @@ export function EmergencyScreen({ onBook }: { onBook?: () => void }) {
         {/* Provenance, so nobody has to guess where a number came from. */}
         <Text critical variant="caption" color="textDisabled" align="center">
           {configuration.source === 'unconfigured'
-            ? 'No emergency numbers are configured for this deployment.'
-            : 'Emergency numbers are supplied by your clinic.'}
+            ? t('emergency.source.unconfigured')
+            : t('emergency.source.operator')}
         </Text>
       </Screen>
     </View>

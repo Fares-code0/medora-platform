@@ -24,17 +24,17 @@ import path from 'node:path';
  * decision recorded elsewhere, and adding one has to be as deliberate as
  * the decision was:
  *
- * - **The whole emergency feature**, and the affordances that lead to it.
- *   Clinically reviewed material (N-07, W-10); `messages/en.ts` states
- *   the rule and `docs/A11Y_AUDIT.md` §6 carries it as an open question
- *   for the owner.
- * - **The crash screen.** `ErrorBoundary` is a class component and, more
- *   to the point, the one screen that has to render when the rest of the
- *   tree has just failed. Giving it a context dependency to read its own
- *   copy is the wrong trade, and its body is an emergency instruction
- *   besides.
+ * - **The product name.** "Medora" is a name; a name is not translated.
  * - **Development-only controls.** `__DEV__`-gated, absent from a release
  *   build, and read by developers.
+ *
+ * Until 2026-11-23 the list also exempted the whole emergency feature,
+ * the affordances leading to it and the crash screen. The W-10 owner
+ * approved translating all application-controlled copy that day, so
+ * those exemptions are gone and the emergency directory is scanned like
+ * every other (`EXEMPT_DIRECTORIES` no longer exists). The clinical
+ * sign-off on the Arabic is still not given — that is a review, not an
+ * exemption, and `docs/SIGNOFF.md` holds it.
  *
  * A file that is not a screen or a component — a service, a schema, a
  * fixture — is out of scope: this asks about rendered copy. A fixture's
@@ -75,7 +75,19 @@ function keyPath(file: string): string {
 }
 
 /** The directories whose files put words on a screen. */
-const SCANNED = ['components', 'navigation', 'bootstrap', 'features'];
+const SCANNED = [
+  'components',
+  'navigation',
+  'bootstrap',
+  'features',
+  // Rendering files outside the four above. `privacy/PhiPrivacyShield.tsx`
+  // put an English app-switcher cover on an Arabic phone until 2026-11-23
+  // because this list did not include it.
+  'privacy',
+  'network',
+  'theme',
+  'accessibility',
+];
 
 /**
  * Only `.tsx`, which is the whole of the old `features/` narrowing.
@@ -135,6 +147,13 @@ const COPY_PATTERNS = [
   new RegExp(`\\b(${COPY_PROPS.join('|')})="([A-Z0-9][^"]{2,})"`, 'g'),
   new RegExp(`\\b(${COPY_PROPS.join('|')}):\\s*'([A-Z0-9][^']{2,})'`, 'g'),
   new RegExp(`\\b(${COPY_PROPS.join('|')})\\s*=\\s*'([A-Z0-9][^']{2,})'`, 'g'),
+  // A template literal as a prop: `label={\`Call \${label}\`}`. The emergency
+  // call button carried five of these, and none of the shapes above can
+  // see one. A template that STARTS with an interpolation (`\${a}. \${b}`)
+  // is punctuation around translated values and is not matched.
+  new RegExp(`\\b(${COPY_PROPS.join('|')})=\\{\`([A-Z0-9][^\`]{2,})\`\\}`, 'g'),
+  // A heading's accessible name: `headingA11y('Emergency help')`.
+  /\b(headingA11y)\(\s*'([A-Z0-9][^']{2,})'/g,
 ];
 
 function copyLiterals(source: string): { prop: string; text: string }[] {
@@ -154,40 +173,12 @@ function copyLiterals(source: string): { prop: string; text: string }[] {
  * else, which is what an exemption should mean.
  */
 const EXPECTED: Readonly<Record<string, string>> = {
-  // Emergency affordances — W-10 owns whether these are translated.
-  'features/auth/screens/WelcomeScreen.tsx → Emergency help': 'emergency affordance (N-07, W-10)',
-  'features/auth/screens/WelcomeScreen.tsx → Opens emergency guidance. It does not place a call.':
-    'emergency affordance (N-07, W-10)',
-  'features/auth/screens/LoginScreen.tsx → Emergency help': 'emergency affordance (N-07, W-10)',
-  'features/home/screens/HomeScreen.tsx → Emergency help': 'emergency affordance (N-07, W-10)',
-  'features/home/screens/HomeScreen.tsx → Opens emergency guidance. It does not place a call.':
-    'emergency affordance (N-07, W-10)',
-  'features/onboarding/screens/OnboardingScreen.tsx → Emergency':
-    'emergency affordance (N-07, W-10)',
-  'features/onboarding/screens/OnboardingScreen.tsx → Opens emergency guidance. It does not place a call.':
-    'emergency affordance (N-07, W-10)',
-  'features/messages/screens/ThreadScreen.tsx → Emergency': 'emergency affordance (N-07, W-10)',
-  'features/messages/screens/ThreadScreen.tsx → Messages are not urgent care':
-    'emergency affordance (N-07, W-10)',
-  'navigation/AuthStack.tsx → Emergency': 'emergency affordance (N-07, W-10)',
-  'navigation/RootNavigator.tsx → Emergency': 'emergency affordance (N-07, W-10)',
-  'navigation/SessionCheckStack.tsx → Emergency': 'emergency affordance (N-07, W-10)',
   // A name is not translated.
   'navigation/AppTabs.tsx → Medora': 'the product name',
-  // The crash screen renders with no context; see the note above.
-  'bootstrap/ErrorBoundary.tsx → Try again': 'ErrorBoundary renders without any provider',
+  'features/auth/screens/WelcomeScreen.tsx → Medora': 'the product name',
   // Development-only, `__DEV__`-gated, never in a release build.
   'features/auth/screens/LoginScreen.tsx → Continue as Demo Patient': 'development build only',
 };
-
-/**
- * The emergency feature, whole.
- *
- * Every string on those screens is either clinically reviewed guidance or
- * the frame around it, and listing them individually would turn one
- * decision into a dozen exemptions nobody reads.
- */
-const EXEMPT_DIRECTORIES = [path.join('features', 'emergency')];
 
 /**
  * Text a patient reads that is not a prop: `<Text>Security</Text>`.
@@ -201,13 +192,30 @@ const EXEMPT_DIRECTORIES = [path.join('features', 'emergency')];
 const TYPESCRIPT =
   /\b(export|interface|function|extends|const|type|readonly|return|import|typeof|implements)\b/;
 const CODE_PUNCTUATION = /[=:;(){}|[\]]/;
+
+/**
+ * The three entities JSX prose uses, decoded before the punctuation test.
+ * `&apos;` ends in a semicolon, so a sentence with an apostrophe in it —
+ * "your phone&apos;s dialler" — used to read as code and was skipped:
+ * that is how the urgent-help lines on the Support and Upgrade screens
+ * stayed English without ever being reported.
+ */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
+}
 const TWO_WORDS = /^[A-Za-z][A-Za-z\u2019'-]*(\s+[A-Za-z\u2019'-]+)+/;
 
 function textNodes(source: string): string[] {
   const collapsed = source.replace(/\{[^{}]*\}/g, '{}');
   const found: string[] = [];
   for (const match of collapsed.matchAll(/>([^<>]+)</g)) {
-    const text = (match[1] ?? '').replace(/\{\}/g, '').split(/\s+/).join(' ').trim();
+    const text = decodeEntities((match[1] ?? '').replace(/\{\}/g, ''))
+      .split(/\s+/)
+      .join(' ')
+      .trim();
     if (text.length < 6) continue;
     if (CODE_PUNCTUATION.test(text) || TYPESCRIPT.test(text)) continue;
     if (!TWO_WORDS.test(text)) continue;
@@ -221,14 +229,6 @@ function textNodes(source: string): string[] {
  * The same three decisions as `EXPECTED` above, in the same shape.
  */
 const EXPECTED_TEXT: Readonly<Record<string, string>> = {
-  'features/auth/screens/WelcomeScreen.tsx → Emergency help': 'emergency affordance (N-07, W-10)',
-  'features/auth/screens/WelcomeScreen.tsx → Available without signing in, and without a connection.':
-    'emergency affordance (N-07, W-10)',
-  'features/home/screens/HomeScreen.tsx → Emergency help': 'emergency affordance (N-07, W-10)',
-  'features/home/screens/HomeScreen.tsx → What to do, and who to call. Works offline.':
-    'emergency affordance (N-07, W-10)',
-  'features/support/screens/SupportScreen.tsx → If you need urgent medical help':
-    'clinically reviewed emergency copy (N-07, W-10)',
   'features/auth/screens/LoginScreen.tsx → Local development session for . Not available in a release build.':
     'development build only',
   'features/auth/screens/LoginScreen.tsx → Development build — fixture data':
@@ -245,11 +245,9 @@ function allFiles(dir: string): string[] {
 }
 
 function sourceFiles(): string[] {
-  return SCANNED.flatMap((top) => allFiles(path.join(SRC, top))).filter((file) => {
-    const relative = path.relative(SRC, file);
-    if (EXEMPT_DIRECTORIES.some((dir) => relative.startsWith(dir))) return false;
-    return rendersCopy(relative);
-  });
+  return SCANNED.flatMap((top) => allFiles(path.join(SRC, top))).filter((file) =>
+    rendersCopy(path.relative(SRC, file)),
+  );
 }
 
 /**
@@ -270,6 +268,9 @@ function sourceFiles(): string[] {
  * screen are few.
  */
 const TEXT_SETTERS = [
+  // Screen-reader announcements are copy a patient hears. The emergency
+  // call button announced its dialler failure in English this way.
+  'announce',
   'toast.show',
   'show',
   'setNotice',
@@ -358,9 +359,43 @@ describe('screens read the catalogue (C-09)', () => {
     expect(setterLiterals("setNotice(t('security.twoFactor.enabled'))")).toEqual([]);
     expect(setterLiterals("logger.warn('No dialler is available on this device')")).toEqual([]);
     expect(setterLiterals("navigation.navigate('DoctorProfile', { id })")).toEqual([]);
-    expect(setterLiterals("new EndpointNotImplementedError('BE-10 / M8', 'Your sessions')")).toEqual(
-      [],
+    expect(
+      setterLiterals("new EndpointNotImplementedError('BE-10 / M8', 'Your sessions')"),
+    ).toEqual([]);
+  });
+
+  it('sees the shapes it was blind to before the emergency copy moved', () => {
+    // The scan's regression test for the three shapes added with the
+    // W-10 translation approval (2026-11-23).
+    expect(copyLiterals('label={`Call ${label}`}')).toEqual([
+      { prop: 'label', text: 'Call ${label}' },
+    ]);
+    expect(copyLiterals('accessibilityLabel={`${a}. ${b}`}')).toEqual([]);
+    expect(copyLiterals("headingA11y('Emergency help')")).toEqual([
+      { prop: 'headingA11y', text: 'Emergency help' },
+    ]);
+    expect(setterLiterals("announce('Could not open the dialler.')")).toEqual([
+      { setter: 'announce', text: 'Could not open the dialler.' },
+    ]);
+    expect(textNodes('<Text>Call your phone&apos;s dialler now</Text>')).toEqual([
+      "Call your phone's dialler now",
+    ]);
+  });
+
+  it('keeps the bundled emergency content as keys, not prose', () => {
+    // `content/guidance.ts` is a `.ts` module, so the render scans above
+    // never read it. It holds the red flags and the call-or-book guidance
+    // by KEY since the W-10 translation approval; a sentence written back
+    // into it would reach the screen in English in every language.
+    const source = withoutComments(
+      fs.readFileSync(path.join(SRC, 'features', 'emergency', 'content', 'guidance.ts'), 'utf8'),
     );
+    const literals = [...source.matchAll(/'([^'\n]*)'/g)].map((match) => match[1] ?? '');
+    const prose = literals.filter(
+      (literal) => !/^emergency\.[a-zA-Z.]+$/.test(literal) && !/^[a-z]+$/.test(literal),
+    );
+    // `@/i18n` is the one import; ids are single lower-case words.
+    expect(prose).toEqual(['@/i18n']);
   });
 
   /**

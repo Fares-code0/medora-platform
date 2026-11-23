@@ -111,6 +111,7 @@ async function renderHome(
     appointments?: readonly Appointment[];
     reject?: unknown;
     signedIn?: boolean;
+    locale?: 'en' | 'ar';
   } = {},
 ) {
   const list = spyOnList();
@@ -136,6 +137,7 @@ async function renderHome(
         </Stack.Navigator>
       </NavigationContainer>
     </SessionProvider>,
+    { locale: options.locale ?? 'en' },
   );
 
   // Session boot and the first query both settle after render returns.
@@ -449,9 +451,9 @@ describe('the assistant entry point is honest about itself (F-05, audit R-5)', (
     // the emergency card's own ordering test uses.
     const view = await renderHome();
 
-    const ids = view.UNSAFE_root
-      .findAll((node: { props: Record<string, unknown> }) => typeof node.props.testID === 'string')
-      .map((node: { props: Record<string, unknown> }) => node.props.testID as string);
+    const ids = view.UNSAFE_root.findAll(
+      (node: { props: Record<string, unknown> }) => typeof node.props.testID === 'string',
+    ).map((node: { props: Record<string, unknown> }) => node.props.testID as string);
 
     expect(ids).toContain('home-assistant-card');
     expect(ids.indexOf('home-emergency-card')).toBeLessThan(ids.indexOf('home-assistant-card'));
@@ -517,5 +519,17 @@ describe('an account with no clinical record (F-09)', () => {
 
     expect(await view.findByText(en['home.empty.title'])).toBeTruthy();
     expect(view.queryByText(en['profile.unlinked.title'])).toBeNull();
+  });
+});
+
+describe('the emergency card in Arabic (W-10 translation approval, 2026-11-23)', () => {
+  it('labels, hints and describes the card in Arabic', async () => {
+    const { getByTestId, findByText, queryByText } = await renderHome({ locale: 'ar' });
+
+    const card = getByTestId('home-emergency-card');
+    expect(card.props.accessibilityLabel).toBe('مساعدة طارئة');
+    expect(card.props.accessibilityHint).toBe('يفتح إرشادات الطوارئ. ولا يُجري مكالمة.');
+    expect(await findByText('ما يجب فعله، وبمن تتصل. تعمل دون اتصال بالإنترنت.')).toBeTruthy();
+    expect(queryByText(/Works offline/i)).toBeNull();
   });
 });
