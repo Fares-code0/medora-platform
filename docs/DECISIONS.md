@@ -73,9 +73,10 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044, ADR-045 and ADR-046 are registered.
+ADR-044, ADR-045, ADR-046 and ADR-047 are registered.
 
-The next unallocated number is **ADR-047** (ADR-046 was allocated 2026-11-23 to the stale role
+The next unallocated number is **ADR-048** (ADR-047 was allocated 2026-11-23 to multi-hospital
+authorization enforcement after the sweep below found it free on every remote branch; ADR-046 was allocated 2026-11-23 to the stale role
 claim, audit F3, after the sweep below found it free on every remote branch; ADR-045 was allocated
 2026-11-21 to the refresh grace window the same way; ADR-044 was allocated 2026-10-24 to BR-DEC-002
 the same way). Before using it, run the `CLAUDE.md` sweep **and**
@@ -4858,6 +4859,53 @@ the next refresh was open.
 | Revoke sessions on an ordinary permission edit | The owner's decision applies those on the next request instead; rule 5 makes that safe without a sign-out |
 | Resolve context from the token role and report the token role | Keeps the 15-minute stale-privilege window open, which is the real defect |
 | Trust the token's `permissions` claim until the next issue | Not adopted (rule 5). The guard already resolved from the database; the claim is display-only, and `useCan()` may briefly show a control the server then refuses, which fails safe |
+
+---
+
+## ADR-047 — Multi-Hospital Authorization Is Enforced: Standing, Scope, DR-05, Controlled Access and RLS
+
+**Status:** Proposed (Backend + Database, 2026-11-23); accepted when its pull request is approved ·
+**Implements:** the owner's approved multi-hospital decisions (#16, comment 7105706963) and audit
+findings A-1..A-22 · **Builds on:** ADR-046 (as corrected), RLS_DESIGN.md, RLS_BACKEND_CONTRACT.md ·
+**Resolves:** OD-07 (Platform Admin mapping), DR-05
+
+### Decision
+
+1. **Effective authorization is server-derived, never claimed.** `PermissionResolver` combines matrix,
+   custom-role bundle and overrides, re-applies locks, then the server policy overlay
+   (`shared/authz/authz-policy.ts`): admin holds no standing PHI; platform administration is
+   admin-only; each staff category has a ceiling; a custom role is capped by its base category, and
+   one derived from `admin` holds nothing. The cache is keyed `user|role|authz_version` (ADR-046).
+2. **Organizational standing gates every doctor and staff capability.** A doctor needs VERIFIED,
+   ACTIVE or VACATION practice and one active employment at an ACTIVE hospital; staff need one active
+   affiliation. Unverified, suspended or never-employed doctors sign in but hold nothing (self-service
+   routes need no capability). Terminated accounts (employment/affiliation ended, none active) are
+   refused at login and refresh; termination revokes every session in the same transaction.
+3. **Platform Admin is explicit (OD-07).** `platform_admin_grants` holds it, exclusive with a Hospital
+   Admin assignment (triggers), never self-granted, never the last one revoked. An administrator with
+   neither — including the legacy dev/test accounts, left unchanged — has no administrative reach.
+   `@PlatformScope()` routes refuse Hospital Admins; Hospital Admins act for exactly one hospital.
+4. **DR-05.** A doctor reaches a patient iff the patient has a Hospital Medical Record at the doctor's
+   clinical hospital; assignment shapes "My Patients" lists only. Registration opens the HMR. New
+   records, lab orders, prescriptions (and derived rows) are stamped with hospital, HMR and employment.
+5. **Controlled cross-hospital access.** Exceptional Access / Emergency Override
+   (`exceptional_access_grants`) and information requests (`information_requests`) replace the unused
+   `patient_access_grants`; rules in `controlled-access.service.ts`. Every read under them is audited.
+6. **RLS is enforced** for a non-owner, NOBYPASSRLS runtime role, with transaction-local context
+   (`app.scope`, `app.hospital_id`, `app.user_id`, `app.patient_id`), fail-closed; the service refuses
+   to start in production on a role that would bypass it.
+7. **Legacy rows stay isolated** until an evidence-based backfill; the dry-run tool proposes owners
+   from evidence only and never writes.
+
+### Consequences and limits
+
+- Custom roles are hospital-scoped; the permission matrix and per-user overrides are platform-tier.
+- Break-Glass eligibility is a server rule, not a matrix capability: adding a catalogue capability
+  needs a coordinated frontend change (parity specs), out of this change's scope.
+- Appointment stamping is deferred: Phase 22 makes an appointment's employment key immutable, which
+  conflicts with in-place reassignment; it lands with the slot-based booking flow.
+- Production steps (not run here): provision the runtime role and point the service at it; delete
+  the dev/test administrator accounts; review and apply the ownership backfill.
 
 ---
 
