@@ -101,7 +101,23 @@ export interface RoleRepository {
    * for a system role or an unknown code.
    */
   baseRoleCodeOf(roleCode: string): Promise<string | null>;
+  /**
+   * The account's organizational standing for its category (multi-hospital
+   * §2.4–§2.6, DR-05):
+   *
+   * - `clinical` — a doctor who is verified, in ACTIVE or VACATION practice
+   *   and holds an active employment at an ACTIVE hospital; a staff member
+   *   with an active affiliation at an ACTIVE hospital.
+   * - `restricted` — signed in, but no clinical context: unverified,
+   *   suspended, never employed or affiliated, or the hospital is inactive.
+   * - `terminated` — employment or affiliation ended and none is active: no
+   *   login and no clinical access (history is preserved).
+   */
+  standingOf(userId: string, kind: StandingKind): Promise<Standing>;
 }
+
+export type Standing = 'clinical' | 'restricted' | 'terminated';
+export type StandingKind = 'doctor' | 'staff';
 
 export const ROLE_REPOSITORY = Symbol('ROLE_REPOSITORY');
 

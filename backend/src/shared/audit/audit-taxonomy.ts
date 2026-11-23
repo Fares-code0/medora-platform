@@ -68,6 +68,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // M30.1 — running a background job outside its schedule is one
   // account acting on the platform, which is §14.1's `admin_activity`.
   job: 'admin_activity',
+  // Multi-hospital §2.2–§2.6: staffing lifecycle and administrative scope.
+  hospital: 'admin_activity',
+  platform: 'admin_activity',
 
   account: 'user_action',
   settings: 'user_action',
@@ -123,6 +126,14 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   'patient_identity.reveal': 'warning',
   'roles.user_overrides': 'warning',
   'roles.create': 'warning',
+  // Changing who may act at which hospital, or across all of them.
+  'hospital.doctor_employment_ended': 'warning',
+  'hospital.doctor_transferred': 'warning',
+  'hospital.staff_affiliation_ended': 'warning',
+  'hospital.admin_assigned': 'warning',
+  'hospital.admin_revoked': 'warning',
+  'platform.admin_granted': 'critical',
+  'platform.admin_revoked': 'warning',
   'user.administer': 'warning',
   'device.trust': 'warning',
   'session.revoke': 'warning',

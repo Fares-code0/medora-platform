@@ -10,6 +10,7 @@ import {
   patientRegistrationBody,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 import {
   PASSWORD,
@@ -167,6 +168,7 @@ async function adminToken(): Promise<string> {
     .send({ code: currentCode(secret) });
   const role = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: role.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const { otpToken } = await login(email);
   return dataOf<{ accessToken: string }>(

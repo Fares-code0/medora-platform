@@ -12,6 +12,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 import { body as mailBody, header } from './support/smtp-sink';
 
@@ -140,6 +141,7 @@ async function adminToken(email: string): Promise<string> {
   // Now make it an administrator and sign in properly, through the
   // step-up its enrolled factor now requires.
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)

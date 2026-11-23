@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PlatformScope } from '../../../shared/authz';
 import type {
   CapabilityCatalogueView,
   MatrixPreviewView,
@@ -70,6 +70,7 @@ export class RolesController {
    * there is no capture to worry about here — unlike the
    * `:notificationId` case at M19, which genuinely needed the ordering.
    */
+  @PlatformScope()
   @Get('roles/matrix')
   matrix(): Promise<MatrixView> {
     return this.roles.matrix();
@@ -82,6 +83,7 @@ export class RolesController {
    * here: the grid is the input and it does not fit in a query string.
    * 200 rather than 201 — nothing was created.
    */
+  @PlatformScope()
   @Post('roles/matrix/preview')
   @HttpCode(HttpStatus.OK)
   preview(
@@ -91,6 +93,7 @@ export class RolesController {
   }
 
   /** API §15.3 — the save. 409 on a stale revision, a lock or an orphan. */
+  @PlatformScope()
   @Put('roles/matrix')
   updateMatrix(
     @CurrentUser() actor: AuthenticatedUser,
@@ -110,12 +113,14 @@ export class RolesController {
   }
 
   /** API §15.5 — read one account's overrides and its effective set. */
+  @PlatformScope()
   @Get('users/:userId/permissions')
   userPermissions(@Param('userId') userId: string): Promise<UserPermissionsView> {
     return this.roles.userPermissions(userId);
   }
 
   /** API §15.5 — replace them. The response is what the guard will see. */
+  @PlatformScope()
   @Put('users/:userId/permissions')
   setUserPermissions(
     @CurrentUser() actor: AuthenticatedUser,

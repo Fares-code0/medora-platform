@@ -9,6 +9,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -396,6 +397,7 @@ describe('sign-in', () => {
         where: { code: 'admin' },
       });
       await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+      await grantPlatformAdmin(harness.prisma, email);
       return email;
     }
 

@@ -52,6 +52,12 @@ export interface AuditEvent {
   readonly entityId: string;
   /** Ties the audit row to the request's log lines (API §0.1). */
   readonly correlationId?: string;
+  /**
+   * The hospital the event belongs to (multi-hospital §2.13): the tenant
+   * whose data or staff the action touched. `null`/absent for platform-wide
+   * events. Persisted to `audit_events.hospital_id`.
+   */
+  readonly hospitalId?: string | null;
   readonly metadata?: AuditMetadata;
   /** Defaults to now at write time; set it when replaying. */
   readonly occurredAt?: Date;

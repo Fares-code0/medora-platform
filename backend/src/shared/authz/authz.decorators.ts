@@ -41,6 +41,7 @@ import type { Permission, PlatformRole } from './permission-catalogue';
 export const CAN_METADATA = 'medora:authz:can';
 export const ROLES_METADATA = 'medora:authz:roles';
 export const AUTHENTICATED_METADATA = 'medora:authz:authenticated';
+export const PLATFORM_SCOPE_METADATA = 'medora:authz:platform-scope';
 
 /**
  * API §0.4's `✓` — any authenticated user, no capability required.
@@ -73,6 +74,16 @@ export function Can(...capabilities: readonly Permission[]): CustomDecorator<str
  */
 export function Roles(...roles: readonly PlatformRole[]): CustomDecorator<string> {
   return SetMetadata(ROLES_METADATA, roles);
+}
+
+/**
+ * Platform-tier route (§2.2, §2.3): only a Platform Admin may call it. A
+ * Hospital Admin holding the same capability is refused, because the route
+ * acts across hospitals (the permission matrix, platform settings,
+ * integrations, the platform audit ledger, platform admin grants).
+ */
+export function PlatformScope(): CustomDecorator<string> {
+  return SetMetadata(PLATFORM_SCOPE_METADATA, true);
 }
 
 export { IS_PUBLIC_KEY, Public } from '../../common/auth/public.decorator';

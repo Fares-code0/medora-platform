@@ -57,6 +57,7 @@ import {
   PERMISSION_GROUPS,
   PERMISSIONS,
   PLATFORM_ROLES,
+  AdminScopeService,
   PermissionResolver,
   isPlatformRole,
   type MatrixChange,
@@ -93,6 +94,7 @@ export class RolesService {
     private readonly permissions: PermissionResolver,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
+    private readonly scopes: AdminScopeService,
   ) {}
 
   /** API §15.1 — roles with member counts. */
@@ -268,6 +270,36 @@ export class RolesService {
     if (base === null) {
       throw AppException.validation({ baseRole: ['Unknown base role'] }, 'Unknown base role');
     }
+    // §2.8: no role can carry Platform Admin privileges. A role derived from
+    // `admin` would hold nothing under the server policy; refusing it here
+    // keeps the catalogue honest about that.
+    if (base.code === 'admin' || base.code === 'patient') {
+      throw AppException.validation(
+        { baseRole: ['A custom role must derive from a staff or clinical role'] },
+        'Invalid base role',
+      );
+    }
+
+    // Custom roles are hospital-scoped (§2.8). A Hospital Admin's role is its
+    // own hospital's; naming another is refused. A Platform Admin names one.
+    const scope = await this.scopes.scopeOf(actor);
+    let hospitalId: string;
+    if (scope.kind === 'hospital') {
+      if (input.hospitalId !== undefined && input.hospitalId !== scope.hospitalId) {
+        throw AppException.forbidden();
+      }
+      hospitalId = scope.hospitalId;
+    } else if (scope.kind === 'platform') {
+      if (input.hospitalId === undefined) {
+        throw AppException.validation({ hospitalId: ['Choose the hospital this role belongs to'] });
+      }
+      if (!(await this.roles.hospitalIsActive(input.hospitalId))) {
+        throw AppException.validation({ hospitalId: ['Unknown hospital'] });
+      }
+      hospitalId = input.hospitalId;
+    } else {
+      throw AppException.forbidden();
+    }
 
     let created;
     try {
@@ -275,6 +307,7 @@ export class RolesService {
         code: input.code,
         label: input.label,
         baseRoleId: base.id,
+        hospitalId,
         actorId: actor.id,
       });
     } catch (error) {
@@ -292,7 +325,8 @@ export class RolesService {
       actor: { userId: actor.id, role: actor.role },
       entityType: 'role',
       entityId: created.id,
-      metadata: { code: created.code, baseRole: base.code },
+      hospitalId,
+      metadata: { code: created.code, baseRole: base.code, hospitalId },
     });
 
     return {

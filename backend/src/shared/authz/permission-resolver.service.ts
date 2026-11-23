@@ -8,7 +8,7 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { applyServerPolicy } from './authz-policy';
+import { applyServerPolicy, categoryOf, standingKindOf } from './authz-policy';
 import { applyLocks, normalizeMatrix } from './permission-matrix';
 import { bundleFor, isPermission, isPlatformRole, orderCapabilities } from './permission-catalogue';
 import {
@@ -20,6 +20,7 @@ import {
   type PermissionOverrides,
   type Principal,
   type RoleRepository,
+  type Standing,
 } from './authz.types';
 
 @Injectable()
@@ -67,11 +68,19 @@ export class PermissionResolver {
     // platform administration. Applied last, so nothing re-adds a capability.
     const locked = applyLocks(principal.roleCode, held);
 
+    // Organizational standing (§2.4–§2.6, DR-05): a doctor or staff member
+    // without a clinical context — unverified, suspended, never employed,
+    // terminated, or at an inactive hospital — holds no capability at all.
+    // Self-service routes (`@Authenticated()`: own profile, password,
+    // verification documents) need none, so "login allowed, clinical
+    // denied" and "own profile only" both fall out of this one rule.
+    const kind = standingKindOf(categoryOf(principal.roleCode, baseRoleCode));
+    const standing = kind === null ? 'clinical' : await this.roles.standingOf(principal.userId, kind);
+    const policed = standing === 'clinical' ? applyServerPolicy(principal.roleCode, baseRoleCode, locked) : [];
+
     return {
       principal,
-      permissions: orderCapabilities(
-        applyServerPolicy(principal.roleCode, baseRoleCode, locked),
-      ),
+      permissions: orderCapabilities(policed),
       fromRole,
       overrides,
     };
@@ -109,6 +118,17 @@ export class PermissionResolver {
     const held = await this.permissionsFor(principal);
 
     return capabilities.every((capability) => held.includes(capability));
+  }
+
+  /**
+   * The account's organizational standing for its role (§2.4–§2.6), with
+   * `clinical` for roles that are not standing-gated (admin, patient).
+   * Login and refresh refuse `terminated`.
+   */
+  async standingFor(userId: string, roleCode: string): Promise<Standing> {
+    const baseRoleCode = isPlatformRole(roleCode) ? null : await this.roles.baseRoleCodeOf(roleCode);
+    const kind = standingKindOf(categoryOf(roleCode, baseRoleCode));
+    return kind === null ? 'clinical' : this.roles.standingOf(userId, kind);
   }
 
   /** One user's overrides changed (API §15.5). */

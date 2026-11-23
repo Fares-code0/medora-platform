@@ -190,6 +190,10 @@ export async function createAuthHarness(
       await sink.stop();
     },
     async reset(): Promise<void> {
+      // Staffing rows restrict their doctor / user (history is never
+      // cascaded away in production), so a suite's own employments,
+      // affiliations and hospital assignments go first.
+      await removeStaffingOf(prisma, domain);
       // `deleteMany` on the base client, not `db`: a soft-deleted row is
       // still a row holding the unique email, and leaving it behind
       // would make the next run's registration a 409.
@@ -312,6 +316,80 @@ export function professionalNumberFor(email: string): string {
  */
 export async function markVerified(prisma: PrismaService, email: string): Promise<void> {
   await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
+}
+
+/** Deletes the staffing rows of every account in `domain` (test cleanup only). */
+async function removeStaffingOf(prisma: PrismaService, domain: string): Promise<void> {
+  const users = { email: { endsWith: `@${domain}` } };
+  await prisma.hospitalRoleAssignment.deleteMany({ where: { user: { is: users } } });
+  await prisma.doctorEmployment.deleteMany({ where: { doctor: { is: { user: { is: users } } } } });
+  await prisma.hospitalStaffAffiliation.deleteMany({
+    where: { staff: { is: { user: { is: users } } } },
+  });
+}
+
+/** The ACTIVE hospital e2e fixtures employ clinicians at, created once. */
+export async function fixtureHospital(prisma: PrismaService): Promise<string> {
+  const row = await prisma.hospital.upsert({
+    where: { publicId: 'hsp_e2e_fixture' },
+    create: { publicId: 'hsp_e2e_fixture', name: 'E2E Fixture Hospital' },
+    update: {},
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Puts the doctor behind `email` in clinical standing (multi-hospital §2.6,
+ * DR-05): verified, ACTIVE practice, and one active employment at
+ * `hospitalId` (the shared fixture hospital by default). A registered doctor
+ * is otherwise unverified and unemployed, and holds no clinical capability.
+ */
+export async function makeClinicalDoctor(
+  prisma: PrismaService,
+  email: string,
+  hospitalId?: string,
+): Promise<{ doctorId: string; hospitalId: string }> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const doctor = await prisma.doctor.findFirstOrThrow({
+    where: { user: { is: { email } } },
+    select: { id: true, userId: true },
+  });
+  await prisma.doctor.update({
+    where: { id: doctor.id },
+    data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
+  });
+  const active = await prisma.doctorEmployment.findFirst({
+    where: { doctorId: doctor.id, endedAt: null },
+    select: { id: true },
+  });
+  if (active === null) {
+    await prisma.doctorEmployment.create({ data: { doctorId: doctor.id, hospitalId: at } });
+  }
+  await prisma.user.update({
+    where: { id: doctor.userId },
+    data: { authzVersion: { increment: 1 } },
+  });
+  return { doctorId: doctor.id, hospitalId: at };
+}
+
+/**
+ * Makes `email` (already holding the `admin` role) a Platform Admin through
+ * an explicit `platform_admin_grants` row (OD-07). Platform scope is never
+ * inferred from a missing hospital assignment, so a fixture administrator
+ * that exercises platform-wide routes needs the grant a real one would hold.
+ * Idempotent.
+ */
+export async function grantPlatformAdmin(prisma: PrismaService, email: string): Promise<void> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+  const active = await prisma.platformAdminGrant.findFirst({
+    where: { userId: user.id, revokedAt: null },
+    select: { id: true },
+  });
+  if (active !== null) return;
+  await prisma.platformAdminGrant.create({
+    data: { userId: user.id, reason: 'Test fixture platform administrator' },
+  });
 }
 
 /**

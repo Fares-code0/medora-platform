@@ -53,4 +53,12 @@ export class PermissionService {
     const { permissions } = await this.resolver.effectivePermissions({ userId, roleCode });
     return [...permissions].sort();
   }
+
+  /**
+   * Whether an account whose employment or affiliation has ended may still
+   * sign in: it may not (§2.6). History is preserved; only access ends.
+   */
+  async isTerminated(userId: string, roleCode: string): Promise<boolean> {
+    return (await this.resolver.standingFor(userId, roleCode)) === 'terminated';
+  }
 }

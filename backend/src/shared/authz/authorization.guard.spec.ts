@@ -16,7 +16,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { AppException } from '../../common/errors/app.exception';
 import { AuthorizationGuard } from './authorization.guard';
-import { Can, Public, Roles } from './authz.decorators';
+import type { AdminScope, AdminScopeService } from './admin-scope.service';
+import { Can, PlatformScope, Public, Roles } from './authz.decorators';
 import { InMemoryPermissionCache } from './in-memory-permission-cache';
 import { PermissionResolver } from './permission-resolver.service';
 import { AUTHENTICATED_USER } from '../../common/auth/authenticated-user';
@@ -52,6 +53,10 @@ class FixtureController {
   /** Degenerate: the author meant to name a capability and did not. */
   @Can()
   emptyCan(): void {}
+
+  @Can('roles.manage')
+  @PlatformScope()
+  platformTier(): void {}
 }
 
 @Roles('admin')
@@ -78,7 +83,14 @@ const SEEDED_ROLES: RoleRepository = {
   overridesFor: () => Promise.resolve(NO_OVERRIDES),
   userIdsWithRole: () => Promise.resolve([]),
   baseRoleCodeOf: () => Promise.resolve(null),
+  standingOf: () => Promise.resolve('clinical'),
 };
+
+/** Administrative scope the test controls; platform unless set. */
+let adminScope: AdminScope = { kind: 'platform' };
+const SCOPES = {
+  scopeOf: () => Promise.resolve(adminScope),
+} as unknown as AdminScopeService;
 
 function contextFor(target: object, method: string, principal?: Principal): ExecutionContext {
   // Written into M6's slot, because that is the only slot now — the
@@ -124,7 +136,8 @@ describe('AuthorizationGuard', () => {
 
   beforeEach(() => {
     const resolver = new PermissionResolver(SEEDED_ROLES, new InMemoryPermissionCache());
-    guard = new AuthorizationGuard(new Reflector(), resolver);
+    adminScope = { kind: 'platform' };
+    guard = new AuthorizationGuard(new Reflector(), resolver, SCOPES);
     fixture = new FixtureController();
     adminController = new AdminController();
   });
@@ -291,5 +304,54 @@ describe('AuthorizationGuard', () => {
         await statusOf(guard, contextFor(adminController, 'doctorOverride', principal('admin'))),
       ).toBe(HttpStatus.FORBIDDEN);
     });
+  });
+});
+
+describe('AuthorizationGuard — administrative tiering (§2.2, §2.3, OD-07)', () => {
+  let guard: AuthorizationGuard;
+  const fixture = new FixtureController();
+
+  beforeEach(() => {
+    guard = new AuthorizationGuard(
+      new Reflector(),
+      new PermissionResolver(SEEDED_ROLES, new InMemoryPermissionCache()),
+      SCOPES,
+    );
+  });
+
+  it('lets a Platform Admin reach a platform-tier route', async () => {
+    adminScope = { kind: 'platform' };
+    expect(await statusOf(guard, contextFor(fixture, 'platformTier', principal('admin')))).toBe(
+      HttpStatus.OK,
+    );
+  });
+
+  it('refuses a Hospital Admin on a platform-tier route, despite the capability', async () => {
+    adminScope = { kind: 'hospital', hospitalId: 'h-1' };
+    expect(await statusOf(guard, contextFor(fixture, 'platformTier', principal('admin')))).toBe(
+      HttpStatus.FORBIDDEN,
+    );
+  });
+
+  it('lets a Hospital Admin reach an ordinary administrative route', async () => {
+    adminScope = { kind: 'hospital', hospitalId: 'h-1' };
+    expect(await statusOf(guard, contextFor(fixture, 'adminOnly', principal('admin')))).toBe(
+      HttpStatus.OK,
+    );
+  });
+
+  it('refuses an unmapped administrator everywhere administrative (no inferred platform scope)', async () => {
+    adminScope = { kind: 'none' };
+    for (const method of ['adminOnly', 'adminExport', 'platformTier', 'viewPatients']) {
+      expect(await statusOf(guard, contextFor(fixture, method, principal('admin')))).toBe(
+        HttpStatus.FORBIDDEN,
+      );
+    }
+  });
+
+  it('refuses a non-administrator on a platform-tier route', async () => {
+    expect(await statusOf(guard, contextFor(fixture, 'platformTier', principal('doctor')))).toBe(
+      HttpStatus.FORBIDDEN,
+    );
   });
 });

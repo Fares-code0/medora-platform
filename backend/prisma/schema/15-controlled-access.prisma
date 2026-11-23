@@ -107,3 +107,28 @@ model OwnershipAssignment {
   @@unique([tableName, rowId], map: "ownership_assignments_table_row_key")
   @@map("ownership_assignments")
 }
+
+/// Explicit Platform Admin scope (OD-07, multi-hospital §2.2).
+/// An `admin` account is a Platform Admin only while it holds an active row
+/// here; it is a Hospital Admin only while it holds one active
+/// `hospital_role_assignments` row for the `admin` role. Platform scope is
+/// never inferred from the absence of a hospital assignment, and an account
+/// holding both is ambiguous and receives no administrative scope. Migration
+/// 20261124110000_platform_admin_grants adds the exclusivity triggers.
+model PlatformAdminGrant {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  /// NULL only for the bootstrap administrator (no actor exists yet).
+  grantedBy String?   @map("granted_by") @db.Uuid
+  reason    String
+  grantedAt DateTime  @default(now()) @map("granted_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedBy String?   @map("revoked_by") @db.Uuid
+  user      User      @relation("PlatformAdminGrantee", fields: [userId], references: [id], onDelete: Cascade)
+  granter   User?     @relation("PlatformAdminGranter", fields: [grantedBy], references: [id], onDelete: SetNull)
+  revoker   User?     @relation("PlatformAdminRevoker", fields: [revokedBy], references: [id], onDelete: SetNull)
+
+  @@unique([userId], where: raw("revoked_at IS NULL"), map: "platform_admin_grants_one_active_per_user_key")
+  @@index([userId, revokedAt], map: "platform_admin_grants_user_revoked_idx")
+  @@map("platform_admin_grants")
+}

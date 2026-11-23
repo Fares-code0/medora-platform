@@ -15,6 +15,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -924,6 +925,8 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
   async function setRole(email: string, code: 'doctor' | 'admin' | 'pharmacy'): Promise<void> {
     const role = await harness.prisma.db.role.findUniqueOrThrow({ where: { code } });
     await harness.prisma.db.user.update({ where: { email }, data: { roleId: role.id } });
+    // A promoted fixture administrator acts at platform scope (OD-07).
+    if (code === 'admin') await grantPlatformAdmin(harness.prisma, email);
   }
 
   async function refresh(

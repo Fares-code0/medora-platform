@@ -186,6 +186,18 @@ export class LoginService {
       });
     }
 
+    // Multi-hospital §2.6: a doctor whose employment ended (or a staff
+    // member whose affiliation ended), with none active, may not sign in.
+    // The same code as a suspended account: the holder learns the reason
+    // from their administrator, not from the login form.
+    if (await this.permissions.isTerminated(user.id, user.role.code)) {
+      await this.fail(email, user.id, 'account_inactive', context);
+      throw new AppException(HttpStatus.FORBIDDEN, {
+        message: 'This account is not active. Contact your administrator.',
+        code: 'account_inactive',
+      });
+    }
+
     // A successful password check clears the counter (on success only;
     // see `CredentialLockoutService.clear`).
     await this.lockout.clear(user.id);

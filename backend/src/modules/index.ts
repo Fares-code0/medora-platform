@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DoctorsModule } from './doctors/doctors.module';
 import { FilesModule } from './files/files.module';
+import { HospitalsModule } from './hospitals/hospitals.module';
 import { LabsModule } from './labs/labs.module';
 import { MedicalRecordsModule } from './medical-records/medical-records.module';
 import { MessagingModule } from './messaging/messaging.module';
@@ -52,4 +53,5 @@ export const DOMAIN_MODULES: readonly Type[] = [
   FilesModule,
   SearchModule,
   DashboardModule,
+  HospitalsModule,
 ];

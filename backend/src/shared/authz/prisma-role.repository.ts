@@ -26,7 +26,14 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../database';
-import type { PermissionOverrides, RoleRepository } from './authz.types';
+import { DoctorVerificationStatus } from '../../generated/prisma/enums';
+import type {
+  PermissionOverrides,
+  RoleRepository,
+  Standing,
+  StandingKind,
+} from './authz.types';
+import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
 import { isPermission, type Permission } from './permission-catalogue';
 
 /**
@@ -125,5 +132,56 @@ export class PrismaRoleRepository implements RoleRepository {
     });
 
     return rows.map((row) => row.id);
+  }
+
+  /** See `RoleRepository.standingOf`. Two indexed reads at most. */
+  async standingOf(userId: string, kind: StandingKind): Promise<Standing> {
+    return kind === 'doctor' ? this.doctorStanding(userId) : this.staffStanding(userId);
+  }
+
+  private async doctorStanding(userId: string): Promise<Standing> {
+    const doctor = await this.prisma.db.doctor.findUnique({
+      where: { userId },
+      select: {
+        deletedAt: true,
+        verificationStatus: true,
+        practiceStatus: true,
+        employments: {
+          select: { endedAt: true, hospital: { select: { status: true, deletedAt: true } } },
+          orderBy: { startedAt: 'desc' },
+          take: 2,
+        },
+      },
+    });
+    if (doctor === null || doctor.deletedAt !== null) return 'restricted';
+
+    const active = doctor.employments.find((employment) => employment.endedAt === null);
+    // Ever employed and nothing active: terminated (§2.6). Never employed
+    // follows the unverified policy instead — restricted, not terminated.
+    if (active === undefined) return doctor.employments.length > 0 ? 'terminated' : 'restricted';
+
+    const hospitalActive =
+      active.hospital.status === ACTIVE_HOSPITAL_FILTER.status && active.hospital.deletedAt === null;
+    const clinical =
+      hospitalActive &&
+      doctor.verificationStatus === DoctorVerificationStatus.VERIFIED &&
+      CLINICAL_PRACTICE_STATUSES.includes(doctor.practiceStatus);
+
+    return clinical ? 'clinical' : 'restricted';
+  }
+
+  private async staffStanding(userId: string): Promise<Standing> {
+    const affiliations = await this.prisma.db.hospitalStaffAffiliation.findMany({
+      where: { staff: { is: { userId, deletedAt: null } } },
+      select: { endedAt: true, hospital: { select: { status: true, deletedAt: true } } },
+      orderBy: { startedAt: 'desc' },
+      take: 2,
+    });
+    const active = affiliations.find((affiliation) => affiliation.endedAt === null);
+    if (active === undefined) return affiliations.length > 0 ? 'terminated' : 'restricted';
+
+    return active.hospital.status === ACTIVE_HOSPITAL_FILTER.status && active.hospital.deletedAt === null
+      ? 'clinical'
+      : 'restricted';
   }
 }

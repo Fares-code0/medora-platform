@@ -49,7 +49,13 @@ import { AppException } from '../../common/errors/app.exception';
 import { PermissionResolver } from './permission-resolver.service';
 import { AUTHENTICATED_USER, type RequestWithUser } from '../../common/auth/authenticated-user';
 import { IS_PUBLIC_KEY } from '../../common/auth/public.decorator';
-import { AUTHENTICATED_METADATA, CAN_METADATA, ROLES_METADATA } from './authz.decorators';
+import { AdminScopeService } from './admin-scope.service';
+import {
+  AUTHENTICATED_METADATA,
+  CAN_METADATA,
+  PLATFORM_SCOPE_METADATA,
+  ROLES_METADATA,
+} from './authz.decorators';
 import { principalOf } from './authz.types';
 import type { Permission, PlatformRole } from './authz.types';
 
@@ -58,6 +64,7 @@ export class AuthorizationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly resolver: PermissionResolver,
+    private readonly scopes: AdminScopeService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -115,6 +122,23 @@ export class AuthorizationGuard implements CanActivate {
     }
 
     if (!(await this.resolver.canAll(principal, requiredCapabilities))) {
+      throw AppException.forbidden();
+    }
+
+    const platformOnly =
+      this.reflector.getAllAndOverride<boolean>(PLATFORM_SCOPE_METADATA, targets) === true;
+
+    // Administrative tiering (§2.2, §2.3, OD-07). An administrator acting
+    // through a capability or role rule needs a resolved scope: platform
+    // (explicit grant) or exactly one hospital. An unmapped or ambiguous
+    // administrator is refused rather than inferred to be platform-wide;
+    // self-service `@Authenticated()` routes are unaffected. A platform-tier
+    // route additionally refuses a Hospital Admin.
+    if (principal.roleCode === 'admin' && !authenticatedOnly) {
+      const scope = await this.scopes.scopeOf(user);
+      if (scope.kind === 'none') throw AppException.forbidden();
+      if (platformOnly && scope.kind !== 'platform') throw AppException.forbidden();
+    } else if (platformOnly) {
       throw AppException.forbidden();
     }
 

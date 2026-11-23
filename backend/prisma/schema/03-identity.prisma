@@ -196,6 +196,9 @@ model User {
   informationRequestsMade    InformationRequest[]     @relation("InformationRequester")
   informationRequestsDecided InformationRequest[]     @relation("InformationDecider")
   ownershipAssignments       OwnershipAssignment[]
+  platformAdminGrants        PlatformAdminGrant[]     @relation("PlatformAdminGrantee")
+  platformAdminGrantsGiven   PlatformAdminGrant[]     @relation("PlatformAdminGranter")
+  platformAdminGrantsRevoked PlatformAdminGrant[]     @relation("PlatformAdminRevoker")
 
   @@map("users")
 }

@@ -20,6 +20,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 import { createGate, scheduleLockWaiters, waitUntil } from './support/barrier';
 
@@ -746,6 +747,7 @@ async function seedAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
 
   const login = await request(harness.server)

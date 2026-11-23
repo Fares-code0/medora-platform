@@ -11,6 +11,8 @@ import {
   type PlatformRole,
   type Principal,
   type RoleRepository,
+  type Standing,
+  type StandingKind,
 } from './authz.types';
 
 function principal(roleCode: PlatformRole, userId = 'u-1', authzVersion = 0): Principal {
@@ -47,6 +49,15 @@ class StubRoleRepository implements RoleRepository {
 
   baseRoleCodeOf(): Promise<string | null> {
     return Promise.resolve(null);
+  }
+
+  /** Every account is in good standing unless a test says otherwise. */
+  standings = new Map<string, Standing>();
+  standingCalls: [string, StandingKind][] = [];
+
+  standingOf(userId: string, kind: StandingKind): Promise<Standing> {
+    this.standingCalls.push([userId, kind]);
+    return Promise.resolve(this.standings.get(userId) ?? 'clinical');
   }
 }
 
@@ -391,5 +402,48 @@ describe('PermissionResolver — a role with no matrix column', () => {
     expect(await resolver.permissionsFor({ userId: 'u-n', roleCode: 'nurse' })).toEqual([
       'patients.view',
     ]);
+  });
+});
+
+describe('PermissionResolver — organizational standing (§2.4–§2.6, DR-05)', () => {
+  let roles: StubRoleRepository;
+  let resolver: PermissionResolver;
+
+  beforeEach(() => {
+    roles = new StubRoleRepository();
+    resolver = new PermissionResolver(roles, new InMemoryPermissionCache());
+  });
+
+  const as = (userId: string, roleCode: string) =>
+    resolver.effectivePermissions({ userId, roleCode });
+
+  it('gives a doctor in clinical standing the doctor bundle', async () => {
+    const { permissions } = await as('doc', 'doctor');
+    expect(permissions).toContain('records.view');
+    expect(roles.standingCalls).toEqual([['doc', 'doctor']]);
+  });
+
+  it.each<Standing>(['restricted', 'terminated'])(
+    'gives a %s doctor no capability at all, overrides included',
+    async (standing) => {
+      roles.standings.set('doc', standing);
+      roles.overrides.set('doc', { granted: ['appointments.reassign'], revoked: [] });
+      expect((await as('doc', 'doctor')).permissions).toEqual([]);
+    },
+  );
+
+  it.each(['reception', 'laboratory', 'pharmacy', 'nurse'])(
+    'gates %s on staff standing',
+    async (role) => {
+      roles.standings.set('staff', 'restricted');
+      expect((await as('staff', role)).permissions).toEqual([]);
+      expect(roles.standingCalls).toEqual([['staff', 'staff']]);
+    },
+  );
+
+  it('does not consult standing for admin or patient', async () => {
+    await as('a', 'admin');
+    await as('p', 'patient');
+    expect(roles.standingCalls).toEqual([]);
   });
 });

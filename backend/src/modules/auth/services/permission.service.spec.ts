@@ -35,6 +35,7 @@ function serviceWith(
     overridesFor: () => Promise.resolve(overrides),
     userIdsWithRole: () => Promise.resolve([]),
     baseRoleCodeOf: (code) => Promise.resolve(baseRoles[code] ?? null),
+    standingOf: () => Promise.resolve('clinical'),
   };
   // No caching: every call reads through, which is what the set algebra
   // under test needs.

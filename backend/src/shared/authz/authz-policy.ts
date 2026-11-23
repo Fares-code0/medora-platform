@@ -147,3 +147,20 @@ export function applyServerPolicy(
   const ceiling = ceilingFor(categoryOf(roleCode, baseRoleCode));
   return [...new Set(held)].filter((capability) => ceiling.has(capability));
 }
+
+/**
+ * Which standing a category is gated on (§2.4–§2.6). `admin` scope is
+ * resolved separately (`AdminScopeService`); `patient` holds nothing.
+ */
+export function standingKindOf(category: RoleCategory | null): 'doctor' | 'staff' | null {
+  if (category === 'doctor') return 'doctor';
+  if (
+    category === 'reception' ||
+    category === 'laboratory' ||
+    category === 'pharmacy' ||
+    category === 'nurse'
+  ) {
+    return 'staff';
+  }
+  return null;
+}

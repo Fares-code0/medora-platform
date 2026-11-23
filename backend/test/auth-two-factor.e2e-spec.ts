@@ -10,6 +10,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -310,6 +311,7 @@ describe('disabling', () => {
 
     const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+    await grantPlatformAdmin(harness.prisma, email);
 
     // ADR-046: the token minted for the old role is refused outright, and
     // the session's one refresh mints the administrator token this case is

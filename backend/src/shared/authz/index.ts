@@ -55,6 +55,8 @@ export {
   type PermissionOverrides,
   type Principal,
   type RoleRepository,
+  type Standing,
+  type StandingKind,
 } from './authz.types';
 
 export {
@@ -62,6 +64,8 @@ export {
   Authenticated,
   CAN_METADATA,
   Can,
+  PlatformScope,
+  PLATFORM_SCOPE_METADATA,
   IS_PUBLIC_KEY,
   Public,
   ROLES_METADATA,
@@ -89,3 +93,5 @@ export {
   isRoleCategory,
   type RoleCategory,
 } from './authz-policy';
+
+export { AdminScopeService, type AdminScope } from './admin-scope.service';

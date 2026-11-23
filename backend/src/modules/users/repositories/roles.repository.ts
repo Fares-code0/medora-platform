@@ -300,11 +300,20 @@ export class RolesRepository {
     });
   }
 
+  async hospitalIsActive(hospitalId: string): Promise<boolean> {
+    const row = await this.prisma.db.hospital.findFirst({
+      where: { id: hospitalId, status: 'ACTIVE', deletedAt: null },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
   /** Creates a custom role carrying a copy of the template's bundle. */
   async createFromTemplate(input: {
     readonly code: string;
     readonly label: string;
     readonly baseRoleId: string;
+    readonly hospitalId: string;
     readonly actorId: string;
   }): Promise<RoleRow> {
     return this.prisma.$transaction(async (tx) => {
@@ -313,6 +322,7 @@ export class RolesRepository {
           code: input.code,
           label: input.label,
           baseRoleId: input.baseRoleId,
+          hospitalId: input.hospitalId,
           // `is_system` false is what marks a role an administrator made,
           // and it is what a later "delete this role" would check.
           isSystem: false,

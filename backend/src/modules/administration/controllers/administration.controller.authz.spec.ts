@@ -27,6 +27,7 @@ import { IS_PUBLIC_KEY } from '../../../common/auth/public.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import {
   AuthorizationGuard,
+  type AdminScopeService,
   NO_OVERRIDES,
   PermissionResolver,
   SEEDED_MATRIX,
@@ -41,6 +42,7 @@ const SEEDED_ROLES: RoleRepository = {
   overridesFor: () => Promise.resolve(NO_OVERRIDES),
   userIdsWithRole: () => Promise.resolve([]),
   baseRoleCodeOf: () => Promise.resolve(null),
+  standingOf: () => Promise.resolve('clinical'),
 };
 
 /** Never holds anything, so every decision is resolved afresh from the matrix. */
@@ -101,7 +103,15 @@ describe('AdministrationController authorization', () => {
   let guard: AuthorizationGuard;
 
   beforeEach(() => {
-    guard = new AuthorizationGuard(new Reflector(), new PermissionResolver(SEEDED_ROLES, NO_CACHE));
+    // A Platform Admin: what is under test is the capability rule per route.
+    const scopes = {
+      scopeOf: () => Promise.resolve({ kind: 'platform' }),
+    } as unknown as AdminScopeService;
+    guard = new AuthorizationGuard(
+      new Reflector(),
+      new PermissionResolver(SEEDED_ROLES, NO_CACHE),
+      scopes,
+    );
   });
 
   async function statusOf(handler: string, roleCode?: string): Promise<HttpStatus> {

@@ -12,6 +12,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 
@@ -105,6 +106,7 @@ async function signUpAdmin(local: string, h: AuthHarness = harness): Promise<Ses
 
   const adminRole = await h.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await h.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(h.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(h.server).post(LOGIN).send({ email, password: PASSWORD }),
