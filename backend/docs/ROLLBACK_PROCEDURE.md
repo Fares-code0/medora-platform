@@ -233,7 +233,8 @@ The rotation and its rollback are not rehearsed on staging either.
 
 Applies to `20261122150000_hospital_core`, `20261122160000_facility_foundation`,
 `20261122170000_phase21_data_model`, `20261123100000_fix_scoped_clinical_link_trigger`,
-`20261123120000_drop_audit_events_hospital_fkey` and `20261123120100_one_active_staff_affiliation`. Their
+`20261123120000_drop_audit_events_hospital_fkey`, `20261123120100_one_active_staff_affiliation` and
+`20261123130000_queue_hospital_ownership`. Their
 persistent-environment status is **unknown** (`docs/multi-hospital/PR5_MIGRATION_STATUS_AND_RECOVERY.md`);
 verify it per environment, read-only, before any step below. Locking and duration are analysed in
 `DATABASE_ARCHITECTURE.md` (*Migration safety and locking*).
@@ -261,7 +262,8 @@ them**:
   `doctor_employments`, `hospital_staff_affiliations`, `hospital_role_assignments`, `hospital_medical_records`,
   `hospital_medical_record_conditions`, `published_slots`, `hospital_insurance_coverage`.
 - New nullable columns (`hospital_id`, `hospital_medical_record_id`, `doctor_employment_id`,
-  `published_slot_id`, department/affiliation references) on 24 existing tables, with their CHECKs,
+  `published_slot_id`, department/affiliation references) on 24 existing tables (plus `hospital_id` on
+  `queue_entries` and `waiting_room_entries`, `20261123130000`, with its two validation functions and four triggers), with their CHECKs,
   composite foreign keys, indexes and triggers, and the trigger functions.
 
 Order for removal, if ever required: triggers → functions → foreign keys and CHECKs on existing tables →

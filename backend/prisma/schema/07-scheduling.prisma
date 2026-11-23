@@ -287,8 +287,15 @@ model QueueEntry {
   patient Patient? @relation(fields: [patientId], references: [id], onDelete: SetNull)
   room    Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
+  /// Owning hospital (#21; migration 20261123130000). Nullable: legacy rows
+  /// keep NULL until an approved mapping (#17). Immutable once assigned; a
+  /// hospital-owned entry's room must belong to the same hospital (trigger).
+  hospitalId String?   @map("hospital_id") @db.Uuid
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+
   @@index([enqueuedAt])
   @@index([deletedAt])
+  @@index([hospitalId, enqueuedAt], map: "queue_entries_hospital_enqueued_idx")
   @@map("queue_entries")
 }
 
@@ -313,7 +320,14 @@ model WaitingRoomEntry {
   patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
   appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 
+  /// Owning hospital (#21; migration 20261123130000). Nullable: legacy rows
+  /// keep NULL until an approved mapping (#17). Immutable once assigned; a
+  /// hospital-owned entry's appointment must belong to the same hospital.
+  hospitalId String?   @map("hospital_id") @db.Uuid
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+
   @@index([status, checkedInAt])
   @@index([deletedAt])
+  @@index([hospitalId, status, checkedInAt], map: "waiting_room_entries_hospital_status_idx")
   @@map("waiting_room_entries")
 }

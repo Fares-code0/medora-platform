@@ -29,6 +29,8 @@ model Hospital {
   insuranceCoverage HospitalInsuranceCoverage[]
   domainEvents DomainEvent[]
   rooms Room[]
+  queueEntries QueueEntry[]
+  waitingRoomEntries WaitingRoomEntry[]
   resources Resource[]
 
   @@map("hospitals")
