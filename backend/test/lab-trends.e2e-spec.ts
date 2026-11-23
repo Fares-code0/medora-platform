@@ -101,7 +101,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('lab-trends');
 
   doctorToken = await seedDoctor(harness, 'trends-doctor');
-  strangerToken = await seedDoctor(harness, 'trends-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  strangerToken = await seedDoctor(harness, 'trends-stranger', 'b');
 
   const patient = await seedPatient(harness, doctorToken);
   patientId = patient.id;

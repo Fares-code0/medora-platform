@@ -6,7 +6,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -75,10 +78,12 @@ let lipitorId = '';
 let eltroxinId = '';
 let glucophageId = '';
 
-async function seedDoctor(local: string): Promise<Doctor> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -211,6 +216,14 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    const patients = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      patients.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -391,7 +404,8 @@ describe('duplicate therapy', () => {
 describe('the screen is a scoped clinical read', () => {
   it('refuses a patient outside the caller’s care with 404, disclosing nothing', async () => {
     const owner = await seedDoctor('scope-owner');
-    const stranger = await seedDoctor('scope-stranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const stranger = await seedDoctor('scope-stranger', 'b');
     const patientId = await seedPatient(owner.token, [
       { allergen: 'Penicillin', severity: 'severe', reaction: 'Anaphylaxis' },
     ]);

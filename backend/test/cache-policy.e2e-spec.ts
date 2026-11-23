@@ -6,6 +6,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
@@ -51,6 +52,8 @@ beforeAll(async () => {
   const email = testEmail('cache-policy');
   await request(harness.server).post(`${API}/auth/register`).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing (§2.6): an unemployed doctor is refused every route.
+  await makeClinicalDoctor(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(`${API}/auth/login`)

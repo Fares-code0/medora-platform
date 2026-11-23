@@ -9,7 +9,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  recordPatientAt,
   registrationBody,
   testEmail,
   grantPlatformAdmin,
@@ -81,16 +84,22 @@ async function userIdOf(email: string, h: AuthHarness = harness): Promise<string
   return (await h.prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } })).id;
 }
 
-async function signUpDoctor(local: string): Promise<{ token: string; userId: string }> {
+async function signUpDoctor(
+  local: string,
+  hospital = 'a',
+  h: AuthHarness = harness,
+): Promise<{ token: string; userId: string }> {
   const email = testEmail(local);
-  await request(harness.server).post(REGISTER).send(registrationBody({ email }));
-  await markVerified(harness.prisma, email);
+  await request(h.server).post(REGISTER).send(registrationBody({ email }));
+  await markVerified(h.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(h.prisma, email, await fixtureHospital(h.prisma, hospital));
 
   const token = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(h.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
-  return { token, userId: await userIdOf(email) };
+  return { token, userId: await userIdOf(email, h) };
 }
 
 /** An administrator, which since ADR-035 means one with an enrolled second factor. */
@@ -145,11 +154,15 @@ beforeAll(async () => {
   ({ token: adminToken, userId: adminUserId } = await signUpAdmin('reveal-admin'));
   ({ token: deniedToken, userId: deniedUserId } = await signUpAdmin('reveal-denied'));
   ({ token: doctorToken, userId: doctorUserId } = await signUpDoctor('reveal-doctor'));
-  ({ token: strangerToken, userId: strangerUserId } = await signUpDoctor('reveal-stranger'));
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  ({ token: strangerToken, userId: strangerUserId } = await signUpDoctor('reveal-stranger', 'b'));
 
   const [record] = await createPatientRecords(harness.prisma, TAG, 1);
   patientPublicId = record?.publicId ?? '';
   patientId = record?.id ?? '';
+  // Written straight to the database, so its Medical Record at the
+  // treating doctor's hospital is opened by hand (DR-05).
+  await recordPatientAt(harness.prisma, patientId);
 
   const doctor = await harness.prisma.doctor.findFirstOrThrow({
     where: { userId: doctorUserId },
@@ -196,8 +209,19 @@ describe('M7.3 — who may reveal', () => {
     expect(await revealsBy(deniedUserId)).toHaveLength(0);
   });
 
-  it('reveals the clear identity to an administrator holding it, with the row', async () => {
+  it('refuses an administrator even with a Platform Admin grant, and files nothing', async () => {
+    // Multi-hospital policy: an administrator holds no standing
+    // `patients.revealIdentity` — admins hold no PHI by default (PHI only
+    // through an Exceptional Access grant). This was 200 before the policy.
     const response = await reveal(patientPublicId, adminToken);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(403);
+    expect(JSON.stringify(response.body)).not.toContain('Test Patient');
+    expect(await revealsBy(adminUserId)).toHaveLength(0);
+  });
+
+  it('reveals the clear identity to the treating doctor, with the row', async () => {
+    const response = await reveal(patientPublicId, doctorToken);
 
     expect(response.status, JSON.stringify(response.body)).toBe(200);
 
@@ -211,7 +235,7 @@ describe('M7.3 — who may reveal', () => {
       revealed: true,
     });
 
-    const rows = await revealsBy(adminUserId);
+    const rows = await revealsBy(doctorUserId);
     expect(rows).toHaveLength(1);
 
     const [row] = rows;
@@ -224,19 +248,19 @@ describe('M7.3 — who may reveal', () => {
   });
 
   it('keeps the category and never the free-text reason', async () => {
-    const rows = await revealsBy(adminUserId);
+    const rows = await revealsBy(doctorUserId);
     const payload = JSON.stringify(rows.map((row) => row.payload));
 
     expect(payload).toContain('safety-investigation');
     expect(payload).not.toContain(JUSTIFIED.reason);
   });
 
-  it('reveals to the treating doctor', async () => {
+  it('reveals to the treating doctor again, filing one row per reveal', async () => {
     const response = await reveal(patientPublicId, doctorToken);
 
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(dataOf<Revealed>(response).fullName).toBe('Test Patient 1');
-    expect(await revealsBy(doctorUserId)).toHaveLength(1);
+    expect(await revealsBy(doctorUserId)).toHaveLength(2);
   });
 
   it('gives a doctor with no care relationship the same 404 as a missing chart', async () => {
@@ -251,11 +275,11 @@ describe('M7.3 — who may reveal', () => {
   });
 
   it('answers 404 for an unknown patient and files nothing', async () => {
-    const before = (await revealsBy(adminUserId)).length;
-    const response = await reveal('PT-T0000000', adminToken);
+    const before = (await revealsBy(doctorUserId)).length;
+    const response = await reveal('PT-T0000000', doctorToken);
 
     expect(response.status).toBe(404);
-    expect(await revealsBy(adminUserId)).toHaveLength(before);
+    expect(await revealsBy(doctorUserId)).toHaveLength(before);
   });
 });
 
@@ -266,12 +290,14 @@ describe('M7.3 — the justification', () => {
     ['twelve characters only once trimmed', { category: 'clinical-review', reason: '   short    ' }],
     ['a category ADM-10 does not offer', { category: 'curiosity', reason: JUSTIFIED.reason }],
   ])('refuses %s with 422 and files nothing', async (_label, body) => {
-    const before = (await revealsBy(adminUserId)).length;
-    const response = await reveal(patientPublicId, adminToken, body);
+    // The caller is the treating doctor: an administrator is refused
+    // before the body is read (no standing PHI under the multi-hospital policy).
+    const before = (await revealsBy(doctorUserId)).length;
+    const response = await reveal(patientPublicId, doctorToken, body);
 
     expect(response.status, JSON.stringify(response.body)).toBe(422);
     expect(JSON.stringify(response.body)).not.toContain('Test Patient');
-    expect(await revealsBy(adminUserId)).toHaveLength(before);
+    expect(await revealsBy(doctorUserId)).toHaveLength(before);
   });
 });
 
@@ -295,11 +321,13 @@ describe('M7.3 — atomic with the audit write', () => {
     });
 
     try {
-      const admin = await signUpAdmin('reveal-fail-admin', failing);
+      // A clinical doctor at the patient's hospital: an administrator no
+      // longer reaches the reveal at all (multi-hospital policy).
+      const caller = await signUpDoctor('reveal-fail-doctor', 'a', failing);
 
       const response = await request(failing.server)
         .post(`/api/v1/patients/${patientPublicId}/reveal`)
-        .set(as(admin.token))
+        .set(as(caller.token))
         .send(JUSTIFIED);
 
       expect(response.status, JSON.stringify(response.body)).toBe(503);
@@ -312,7 +340,7 @@ describe('M7.3 — atomic with the audit write', () => {
       // And the provider's words did not reach the client.
       expect(body).not.toMatch(/uuid|prisma|postgres/i);
 
-      expect(await revealsBy(admin.userId)).toHaveLength(0);
+      expect(await revealsBy(caller.userId)).toHaveLength(0);
     } finally {
       await failing.reset();
       await failing.close();

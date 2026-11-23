@@ -4,6 +4,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { PrismaClient } from '../../generated/prisma/client';
 import { ConfigService } from '../../config';
 
+import { bypassReasons, ROLE_FACTS_SQL, type RoleFacts } from './runtime-role.check';
 import { type SoftDeletedClient, withSoftDelete } from './soft-delete';
 
 /**
@@ -35,7 +36,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   readonly db: SoftDeletedClient;
 
-  constructor(config: ConfigService) {
+  constructor(private readonly config: ConfigService) {
     super({ adapter: new PrismaPg({ connectionString: config.env.DATABASE_URL }) });
     this.db = withSoftDelete(this);
   }
@@ -48,6 +49,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit(): Promise<void> {
     await this.$connect();
     this.logger.log('Database connected');
+    await this.checkRuntimeRole();
   }
 
   /**
@@ -55,6 +57,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * Without it, in-flight queries are cut off mid-transaction on every
    * deploy.
    */
+  /**
+   * Refuses to serve production on a role that bypasses Row-Level Security
+   * (see `runtime-role.check.ts`).
+   */
+  private async checkRuntimeRole(): Promise<void> {
+    const [facts] = await this.$queryRawUnsafe<RoleFacts[]>(ROLE_FACTS_SQL);
+    if (facts === undefined) throw new Error('Could not read the database role');
+    const reasons = bypassReasons(facts);
+    if (reasons.length === 0) return;
+    const message = `Database role "${facts.role}" bypasses Row-Level Security: it ${reasons.join(', ')}`;
+    if (this.config.isProduction) {
+      throw new Error(`${message}. Connect as the provisioned runtime role (prisma/roles/provision-runtime-role.sql).`);
+    }
+    this.logger.warn(`${message} (allowed outside production)`);
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.$disconnect();
   }

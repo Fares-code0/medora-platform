@@ -7,7 +7,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module';
 import { PLATFORM_POLICY_SOURCE } from '../src/config/policy.types';
 import { AI_GATEWAY, type AiDelta, type AiGatewayPort, type AiGenerationRequest } from '../src/shared/ai';
-import { type AuthHarness, createAuthHarness, dataOf, errorBody } from './support/auth-app';
+import {
+  type AuthHarness,
+  createAuthHarness,
+  dataOf,
+  errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
+  purgeHospitalRecords,
+  testEmail,
+} from './support/auth-app';
 import { orderTest, seedDoctor, seedPatient } from './support/lab-fixture';
 
 /**
@@ -254,7 +263,8 @@ beforeAll(async () => {
   });
 
   doctorToken = await seedDoctor(harness, 'ai-owner');
-  strangerToken = await seedDoctor(harness, 'ai-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  strangerToken = await seedDoctor(harness, 'ai-stranger', 'b');
   patient = await seedPatient(harness, doctorToken);
   charts.push(patient.id);
 }, 60_000);
@@ -268,6 +278,15 @@ afterAll(async () => {
   await harness.prisma.labOrder.deleteMany({
     where: { patient: { publicId: { in: charts } } },
   });
+  await purgeHospitalRecords(
+    harness.prisma,
+    (
+      await harness.prisma.patient.findMany({
+        where: { publicId: { in: charts } },
+        select: { id: true },
+      })
+    ).map((row) => row.id),
+  );
   await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
 
   await fakeApp?.close();
@@ -480,19 +499,38 @@ describe('RM M16.3 verify — context binding is server-authoritative', () => {
     script = { kind: 'stream', deltas: ['Fine.'] };
     expect((await send(doctorToken, thread.id)).status).toBe(200);
 
-    await harness.prisma.patientDoctorAssignment.updateMany({
-      where: { patient: { publicId: patient.id } },
-      data: { revokedAt: new Date() },
+    // DR-05: reach is the patient's record at the doctor's employment
+    // hospital, not a care assignment, so the relationship is withdrawn
+    // by the doctor moving to hospital `b` — still in clinical standing,
+    // no longer reaching a chart that is only recorded at `a`.
+    const owner = { doctor: { is: { user: { is: { email: testEmail('ai-owner') } } } } };
+    const atA = await harness.prisma.doctorEmployment.findFirstOrThrow({
+      where: { ...owner, endedAt: null },
+      select: { id: true },
     });
+    await harness.prisma.doctorEmployment.update({
+      where: { id: atA.id },
+      data: { endedAt: new Date() },
+    });
+    await makeClinicalDoctor(
+      harness.prisma,
+      testEmail('ai-owner'),
+      await fixtureHospital(harness.prisma, 'b'),
+    );
 
     const refused = await send(doctorToken, thread.id);
     expect(refused.status).toBe(404);
 
     // Restored, so the rest of the file is unaffected.
-    await harness.prisma.patientDoctorAssignment.updateMany({
-      where: { patient: { publicId: patient.id } },
-      data: { revokedAt: null },
+    await harness.prisma.doctorEmployment.updateMany({
+      where: { ...owner, endedAt: null },
+      data: { endedAt: new Date() },
     });
+    await harness.prisma.doctorEmployment.update({
+      where: { id: atA.id },
+      data: { endedAt: null },
+    });
+    await makeClinicalDoctor(harness.prisma, testEmail('ai-owner'));
   });
 });
 

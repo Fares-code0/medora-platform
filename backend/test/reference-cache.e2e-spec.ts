@@ -7,7 +7,9 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -45,6 +47,8 @@ beforeAll(async () => {
   const email = testEmail('ref-doctor');
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
   token = dataOf<{ accessToken: string }>(
     await request(harness.server)
       .post(LOGIN)
@@ -73,6 +77,14 @@ afterAll(async () => {
   await harness.prisma.medicalRecord.deleteMany({
     where: { patient: { publicId: { in: charts } } },
   });
+  const patients = await harness.prisma.patient.findMany({
+    where: { publicId: { in: charts } },
+    select: { id: true },
+  });
+  await purgeHospitalRecords(
+    harness.prisma,
+    patients.map((row) => row.id),
+  );
   await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
   await harness.reset();
   await harness.close();

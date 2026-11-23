@@ -38,6 +38,10 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO __RUNTIME_ROLE__;
 
 -- Functions in public are executable by PUBLIC by default; stated explicitly.
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO __RUNTIME_ROLE__;
+-- RLS context helpers (migration 20261124130000_rls_enforcement). The
+-- policies call them as the runtime role.
+GRANT USAGE ON SCHEMA app_rls TO __RUNTIME_ROLE__;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app_rls TO __RUNTIME_ROLE__;
 
 -- Tables, sequences and functions created by later migrations (as the owner)
 -- are granted automatically. Note: the append-only rule above must be

@@ -6,7 +6,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -108,10 +111,12 @@ interface Doctor {
   readonly email: string;
 }
 
-async function seedDoctor(local: string, bufferMin = 0): Promise<Doctor> {
+async function seedDoctor(local: string, bufferMin = 0, hospital = 'a'): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -181,6 +186,14 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    const patients = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      patients.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -297,7 +310,8 @@ describe('POST /appointments (§5.3) — booking and the conflict rules', () => 
 
   it('refuses a booking for a patient the doctor has no care relationship with', async () => {
     const mine = await seedDoctor('scope-owner');
-    const theirs = await seedDoctor('scope-other');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const theirs = await seedDoctor('scope-other', 0, 'b');
     const patientId = await seedPatient(theirs.token);
 
     const response = await book(mine.token, patientId);
@@ -419,13 +433,20 @@ describe('GET /appointments (§5.1) — the book', () => {
 
   it('refuses a caller with no doctor profile', async () => {
     const doctor = await seedDoctor('no-profile');
+    // Employments restrict their doctor, so they go first.
+    await harness.prisma.doctorEmployment.deleteMany({
+      where: { doctor: { is: { user: { is: { email: doctor.email } } } } },
+    });
     await harness.prisma.doctor.deleteMany({ where: { user: { email: doctor.email } } });
 
     const response = await request(harness.server)
       .get(APPOINTMENTS)
       .set('Authorization', `Bearer ${doctor.token}`);
 
-    expect(response.status).toBe(404);
+    // §2.6: a doctor account with no doctor profile has no clinical
+    // standing and so holds no capability — the guard refuses it with 403
+    // before the book is looked up (was 404 from the service).
+    expect(response.status).toBe(403);
   });
 
   it('refuses an unauthenticated caller', async () => {

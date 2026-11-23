@@ -7,6 +7,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
@@ -34,6 +35,8 @@ async function signIn(local: string): Promise<{ token: string; userId: string }>
   const email = testEmail(local);
   await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server)
       .post('/api/v1/auth/login')

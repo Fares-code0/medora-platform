@@ -35,7 +35,10 @@ const NOT_NULL: readonly string[] = [
 const NULLABLE: readonly string[] = [
   'admin_invitations.permissions', // ADR-035; not in the dictionary
   'ai_user_settings.favorite_prompt_ids', // DB §H3 states no nullability
+  'exceptional_access_grants.categories', // multi-hospital §2.11; not in the dictionary
   'incident_bookmarks.event_ids', // DB §13, inferred table
+  'information_requests.approved_items', // multi-hospital §2.12; not in the dictionary
+  'information_requests.requested_items', // multi-hospital §2.12; not in the dictionary
   'lab_analyte_specs.qualitative_options', // DB §E2, "Null: yes"
 ];
 

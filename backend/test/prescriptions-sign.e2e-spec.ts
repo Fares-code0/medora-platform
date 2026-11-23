@@ -7,7 +7,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -82,10 +85,12 @@ let amoxilId = '';
 let coumadinId = '';
 let eltroxinId = '';
 
-async function seedDoctor(local: string): Promise<string> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   return dataOf<SessionPayload>(
     await request(harness.server)
@@ -246,6 +251,14 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    const charts = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      charts.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -329,7 +342,8 @@ describe('POST /prescriptions (§7.6) — the draft', () => {
 
   it('refuses a patient outside the caller’s care with 404', async () => {
     const owner = await seedDoctor('draft-owner');
-    const stranger = await seedDoctor('draft-stranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const stranger = await seedDoctor('draft-stranger', 'b');
     const patientId = await seedPatient(owner);
 
     const response = await request(harness.server)
@@ -595,6 +609,7 @@ describe('409 branch 3 + the chaos test — safety_check_unavailable', () => {
 
       await request(server).post(REGISTER).send(registrationBody({ email }));
       await markVerified(harness.prisma, email);
+      await makeClinicalDoctor(harness.prisma, email);
       const token = dataOf<SessionPayload>(
         await request(server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
       ).accessToken;

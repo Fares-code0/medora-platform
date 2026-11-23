@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
   grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -399,6 +400,8 @@ describe('disabling', () => {
 describe('the login step-up', () => {
   it('completes the round trip with a code from the authenticator', async () => {
     const email = await seedAccount('julian');
+    // Clinical standing (§2.6), so the session carries a doctor's grants.
+    await makeClinicalDoctor(harness.prisma, email);
     const { secret } = await enrol(email);
 
     const challenge = await request(harness.server)

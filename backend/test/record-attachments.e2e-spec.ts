@@ -12,7 +12,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -110,10 +113,12 @@ let patientId = '';
 let recordId = '';
 const createdCharts: string[] = [];
 
-async function seedDoctor(local: string): Promise<Doctor> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -210,7 +215,8 @@ beforeAll(async () => {
   });
 
   owner = await seedDoctor('rec-att-owner');
-  stranger = await seedDoctor('rec-att-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  stranger = await seedDoctor('rec-att-stranger', 'b');
   patientId = await seedPatient(owner.token);
   recordId = await createRecord(owner.token, patientId);
 }, 90_000);
@@ -224,6 +230,14 @@ afterAll(async () => {
     await harness.prisma.medicalRecord.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    const patients = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      patients.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
   await harness.prisma.file.deleteMany({ where: { originalName: { startsWith: NAME_PREFIX } } });

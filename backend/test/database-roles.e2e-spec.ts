@@ -15,6 +15,7 @@ import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 if (new URL(rawDatabaseUrl).pathname !== '/medora_test' || process.env['APP_ENV'] !== 'test') {
@@ -124,6 +125,12 @@ describe('runtime role (provision-runtime-role.sql)', () => {
     await withRuntimeRole(async (runtime) => {
       const h = await hospital();
       await asRuntime(runtime);
+      // RLS is enforced (migration 20261124130000): the runtime role writes
+      // only under transaction-local tenant context, as the application does.
+      await client.query(
+        "SELECT set_config('app.scope', 'hospital', true), set_config('app.hospital_id', $1, true)",
+        [h],
+      );
       const id = (await client.query<{ id: string }>(insertQueue, ['RT' + tag().slice(0, 6), h]))
         .rows[0]!.id;
       expect(
@@ -193,6 +200,7 @@ describe('runtime role (provision-runtime-role.sql)', () => {
         .rows[0]!.id;
       const qb = (await client.query<{ id: string }>(insertQueue, ['RB' + tag().slice(0, 6), b]))
         .rows[0]!.id;
+      await client.query(RESET_TO_PRE_ACTIVATION);
       await client.query(PROPOSAL);
       await client.query(`GRANT USAGE ON SCHEMA app_rls TO ${runtime}`);
       await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app_rls TO ${runtime}`);

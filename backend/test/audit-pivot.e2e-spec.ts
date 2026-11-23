@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
   grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -195,7 +196,10 @@ beforeAll(async () => {
 
   adminToken = await signUpAdmin('pivot-admin');
   auditorToken = await signUpAuditor('pivot-auditor');
-  doctorToken = (await signUp('pivot-doctor')).token;
+  const doctor = await signUp('pivot-doctor');
+  // In clinical standing, so its 403 is the missing `logs.view`, not §2.6.
+  await makeClinicalDoctor(harness.prisma, doctor.email);
+  doctorToken = doctor.token;
 
   for (const [index, event] of SEED.entries()) {
     await harness.prisma.auditEvent.create({

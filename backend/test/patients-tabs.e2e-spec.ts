@@ -6,7 +6,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -74,10 +77,12 @@ interface HistoryView {
   recordedBy: string | null;
 }
 
-async function seedDoctor(local: string): Promise<string> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const response = await request(harness.server)
     .post(LOGIN)
@@ -135,6 +140,14 @@ async function clearCharts(): Promise<void> {
   // `TypeError` and hide it.
   if (harness === undefined || createdCharts.length === 0) return;
 
+  const charts = await harness.prisma.patient.findMany({
+    where: { publicId: { in: createdCharts } },
+    select: { id: true },
+  });
+  await purgeHospitalRecords(
+    harness.prisma,
+    charts.map((row) => row.id),
+  );
   await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   createdCharts.length = 0;
 }
@@ -153,7 +166,8 @@ beforeEach(async () => {
 describe('care scoping across every tab (§4.5)', () => {
   it('refuses each tab to a doctor with no care relationship', async () => {
     const owner = await seedDoctor('tabowner');
-    const stranger = await seedDoctor('tabstranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const stranger = await seedDoctor('tabstranger', 'b');
     const patientId = await createPatient(owner);
 
     for (const tab of [
@@ -393,7 +407,8 @@ describe('BR-DEC-003 — removal reasons', () => {
 
   it('answers a doctor outside the care relationship with 404, reason or not', async () => {
     const owner = await seedDoctor('history-owner');
-    const stranger = await seedDoctor('history-stranger');
+    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    const stranger = await seedDoctor('history-stranger', 'b');
     const patientId = await createPatient(owner);
     const eventId = await addHistory(owner, patientId);
 

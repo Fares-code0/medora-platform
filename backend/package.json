@@ -36,6 +36,7 @@
     "openapi:check": "nest build && node dist/cli/openapi-generate.js --check",
     "crypto:reencrypt": "node dist/cli/reencrypt-envelopes.js",
     "db:reset": "prisma migrate reset --force",
+    "db:backfill:dry-run": "tsx prisma/backfill/ownership-dry-run.ts",
     "db:check": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema --exit-code"
   },
   "comment:overrides": "The stack is fixed at NestJS 10 (roadmap header). Nest 10's transitive express/multer chain carries published advisories whose npm-suggested fix is NestJS 11 — a stack change requiring an ADR. These overrides pull the patched transitives forward while keeping Nest 10. Re-audited at M37.1 (2026-10-24): all five raised to their patched releases and proxy-addr added (critical IPv4-mapped spoofing, GHSA via express 4). Drop any override that upstream has caught up with.",

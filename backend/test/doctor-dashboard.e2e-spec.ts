@@ -6,7 +6,9 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
+  recordPatientAt,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -81,6 +83,8 @@ async function signUpDoctor(local: string): Promise<{ auth: string; doctorId: st
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const auth = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -148,6 +152,8 @@ beforeAll(async () => {
 
   const [record] = await createPatientRecords(harness.prisma, TAG, 1);
   patientId = record?.id ?? '';
+  // Written straight to the database: open its Medical Record (DR-05).
+  await recordPatientAt(harness.prisma, patientId);
 
   await harness.prisma.patientDoctorAssignment.create({
     data: { patientId, doctorId, role: 'primary' },
@@ -508,6 +514,7 @@ describe('M27.3 — the Row-0 banner fails loud', () => {
       const email = `dash-fail@${failing.domain}`;
       await request(failing.server).post(REGISTER).send(registrationBody({ email }));
       await markVerified(failing.prisma, email);
+      await makeClinicalDoctor(failing.prisma, email);
       const auth = dataOf<{ accessToken: string }>(
         await request(failing.server)
           .post(LOGIN)

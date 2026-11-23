@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
   grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -84,6 +85,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6).
+  await makeClinicalDoctor(harness.prisma, email);
 
   return dataOf<{ accessToken: string }>(
     await request(harness.server)

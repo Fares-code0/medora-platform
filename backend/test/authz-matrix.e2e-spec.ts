@@ -62,6 +62,17 @@ import {
 } from '../src/shared/authz';
 import { AUTHENTICATED_USER } from '../src/common/auth/authenticated-user';
 
+import {
+  type AuthHarness,
+  createAuthHarness,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
+  makeClinicalStaff,
+  markVerified,
+  registrationBody,
+  testEmail,
+} from './support/auth-app';
+
 /* ── Fixture routes, one per decorator shape ──────────────────── */
 
 @Controller('fixture')
@@ -130,23 +141,53 @@ class TestPrincipalMiddleware implements NestMiddleware {
 }
 
 /**
- * A stable uuid per role.
+ * One real account per role, in the standing its role needs.
  *
- * It must be a real uuid, not `u-admin`: `user_permissions.user_id` is a
- * `uuid` column, and Postgres answers a malformed literal with a type
- * error rather than an empty result — so a readable fake id turned every
- * capability check into a 500. The resolver was right to surface it
- * (it fails closed when overrides cannot be read); the ids were wrong.
- *
- * These users do not exist, which is the point: a user with no
- * `user_permissions` rows is the ordinary case, and the role bundle
- * alone should decide.
+ * These were fixed fake uuids while the role bundle alone decided. Under
+ * organizational standing (multi-hospital §2.4–§2.6, DR-05) a doctor or
+ * staff member without an active employment or affiliation at an ACTIVE
+ * hospital holds nothing, and an administrator without an explicit grant
+ * has no scope (OD-07) — so each role is now a registered account put in
+ * that standing. None has a `user_permissions` row, which is still the
+ * point: the role bundle (under the server policy) alone decides.
  */
-function userIdFor(role: string): string {
-  const index = Math.max(0, PLATFORM_ROLES.indexOf(role as PlatformRole)) + 1;
+const userIds = new Map<string, string>();
 
-  return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+function userIdFor(role: string): string {
+  const id = userIds.get(role);
+  if (id === undefined) throw new Error(`no fixture account for role ${role}`);
+  return id;
 }
+
+let harness: AuthHarness;
+
+beforeAll(async () => {
+  harness = await createAuthHarness('authz-matrix');
+  for (const role of PLATFORM_ROLES) {
+    const email = testEmail(`matrix-${role}`);
+    await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
+    await markVerified(harness.prisma, email);
+    if (role === 'doctor') {
+      await makeClinicalDoctor(harness.prisma, email);
+    } else {
+      const code = await harness.prisma.role.findUniqueOrThrow({ where: { code: role } });
+      await harness.prisma.user.update({ where: { email }, data: { roleId: code.id } });
+      if (role === 'admin') await grantPlatformAdmin(harness.prisma, email);
+      else await makeClinicalStaff(harness.prisma, email);
+    }
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    });
+    userIds.set(role, user.id);
+  }
+}, 60_000);
+
+afterAll(async () => {
+  if (harness === undefined) return;
+  await harness.reset();
+  await harness.close();
+});
 
 /**
  * `AuthzKernelModule` brings its own `DatabaseModule`, so this suite

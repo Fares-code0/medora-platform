@@ -16,6 +16,7 @@ import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 let databaseUrl: URL;
@@ -259,6 +260,7 @@ async function buildWorld(): Promise<World> {
     )
   ).id;
 
+  await client.query(RESET_TO_PRE_ACTIVATION);
   await client.query(PROPOSAL);
   const role = 'medora_rls_probe_' + suffix();
   await client.query(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);

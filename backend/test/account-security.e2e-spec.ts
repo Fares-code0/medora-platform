@@ -16,6 +16,7 @@ import {
   registrationBody,
   testEmail,
   grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -1023,7 +1024,9 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       const body = dataOf<SessionUser>(await session(refreshed.accessToken));
       expect(body.role).toBe('admin');
       expect(body.activeHospital).toBeNull();
-      expect(body.adminScope).toBeNull();
+      // The promoted fixture holds an explicit Platform Admin grant (OD-07),
+      // so its scope is the platform's — never the doctor employment's hospital.
+      expect(body.adminScope).toEqual({ type: 'platform' });
     } finally {
       await harness.prisma.db.doctorEmployment.deleteMany({ where: { doctorId: doctor.id } });
       await harness.prisma.db.hospital.delete({ where: { id: hospital.id } });
@@ -1082,6 +1085,8 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     const AI = '/api/v1/ai/conversations'; // ai.use: doctor yes, pharmacy no
     const RECORDS = '/api/v1/medical-records'; // records.view: doctor yes, pharmacy no
     const signedIn = await seedAndSignIn('f3-cache');
+    // Clinical standing (§2.6): a registered doctor holds no capability until employed.
+    await makeClinicalDoctor(harness.prisma, signedIn.email);
 
     // Warm the permission cache with the doctor's effective set.
     expect(
