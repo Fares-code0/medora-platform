@@ -24,7 +24,7 @@ is reported to the owner, not added in either app checklist.
 ## Frontend (doctor and admin web)
 
 ### Doctor workspace (Phase 25)
-- [ ] **WEB-1** Show the doctor's **active hospital** (and clinic/location where relevant) from the session — DR-02
+- [ ] **WEB-1** Show the doctor's **active hospital** (and clinic/location where relevant) from the session — DR-02 · *PARTIAL 2026-11-23: hospital name shown read-only for doctors from `GET /auth/session` (issue #31); clinic/location and the admin scope (#16) open*
 - [x] **WEB-2** **No hospital switcher** of any kind — DR-08 (the 2026-10-06 ORG-01 plan is superseded) · *2026-10-26: verified absent and pinned by `frontend/src/app/no-hospital-switcher.test.ts`*
 - [ ] **WEB-3** Hospital-scoped data on every doctor screen, with provenance labels — DR-04, DR-05
 - [ ] **WEB-4** Hospital id in every hospital-scoped query key. Caches cleared when the session's hospital changes or employment ends — OD-12 · *PARTIAL 2026-10-26: the whole query cache now ends with the session (logout, refused refresh, lock); the hospital key waits on Phase 22*
@@ -105,7 +105,7 @@ frontend work.
 
 | ID | Status | Evidence / blocker |
 | --- | --- | --- |
-| WEB-1 | Blocked — Phase 22 | The session (`GET /auth/session`) names no hospital, clinic or location |
+| WEB-1 | **Partial** (2026-11-23) | Was "Blocked — Phase 22: the session names no hospital"; stale since PR #14, after which `GET /auth/session` returns `activeHospital: {id,name} \| null` and `adminScope` (`backend/src/modules/auth/services/session-user.service.ts`). Done: a doctor's sidebar account card shows the active hospital's name, read-only, live mode only, keyed by user id; null, malformed and failed answers show nothing (`frontend/src/layouts/Sidebar/ActiveHospital.tsx`, `ActiveHospital.test.tsx`; issue #31). Open: clinic/location (no field), the admin scope (#16), a reason for a null hospital (none in the API). Phase 22 shadow mode: display only, not a boundary |
 | WEB-2 | **Done** | No switcher, route or session action exists. `frontend/src/app/no-hospital-switcher.test.ts` fails on any route for choosing a hospital/organization/clinic/workspace and on any source file (comments stripped) offering a control worded as one; a third case proves the pattern catches `Switch hospital`, `<HospitalSwitcher />`, `setActiveHospital` |
 | WEB-3 | Blocked — Phases 21, 22 | No hospital-scoped responses or provenance fields |
 | WEB-4 | **Partial** | Done: `AuthProvider` clears the TanStack Query cache on logout, on a refresh the server refuses (the path an ended employment takes, OD-12) and on lock — `FRONTEND_ARCHITECTURE.md` §6.3/§12.5 required it and nothing did it (`FRONTEND_CHECKLIST.md` NEW-31, its own register row because the logout/lock rule predates WEB-4). Open: the hospital id in each query key, and clearing on a hospital change — there is no hospital in the session to key on |

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearSessionMemory } from '@/api/session-memory';
 import { envelope, json, pageOf, stubApi } from '@/test/api-stub';
 
 import { completeDraft, emptyDraft, type PrescriptionDraft } from '../model/authoring';
@@ -741,5 +742,19 @@ describe('medication search (D-18, API §7.1 `q`)', () => {
     await expect(httpPrescriptionService.searchMedications('lipi')).rejects.toMatchObject({
       kind: 'server',
     });
+  });
+});
+
+describe('the session boundary', () => {
+  it('drops the drafts and the formulary, so the next account starts from nothing', async () => {
+    const { requests } = stubApi({ 'GET /medications': () => pageOf([LIPITOR]) });
+    await httpPrescriptionService.saveDraft(draftFor());
+    await httpPrescriptionService.listMedications();
+
+    clearSessionMemory();
+
+    expect(await httpPrescriptionService.listDrafts()).toEqual([]);
+    await httpPrescriptionService.listMedications();
+    expect(requests.filter((request) => request.path === '/medications')).toHaveLength(2);
   });
 });

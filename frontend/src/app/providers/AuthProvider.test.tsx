@@ -12,6 +12,11 @@ import { readConversations, readSettings, writeSettings } from '@/features/docto
 import { DEFAULT_AI_SETTINGS } from '@/features/doctor/ai/model/types';
 import { aiService } from '@/features/doctor/ai/service';
 import {
+  __resetHttpRecordDrafts,
+  httpRecordService,
+} from '@/features/doctor/medical-records/http/http-record-service';
+import { emptyDraft } from '@/features/doctor/medical-records/model/authoring';
+import {
   readStoredConversations,
   writeStoredConversations,
 } from '@/features/shared-domain/conversations/store';
@@ -822,5 +827,106 @@ describe('AuthProvider — mock messaging is per user', () => {
     expect(result.current.user?.id).not.toBe(doctorId);
     expect(readStoredConversations()[0]?.unreadCount).not.toBe(42);
     expect(window.localStorage.getItem(`${LEGACY_KEY}.${doctorId}`)).toBeNull();
+  });
+});
+
+describe('AuthProvider — the live adapters’ unsaved drafts', () => {
+  async function saveDraftOf(id: string) {
+    await httpRecordService.saveDraft(emptyDraft(id, '2026-10-04T09:00:00.000Z'));
+  }
+
+  async function draftIds() {
+    return (await httpRecordService.listDrafts()).map((draft) => draft.id);
+  }
+
+  beforeEach(() => {
+    __resetHttpRecordDrafts();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('hands user B none of user A’s drafts after A logs out', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    await saveDraftOf('draft-of-a');
+
+    await settle(() => result.current.logout());
+    await settle(() => result.current.login('admin@medora.health', PASSWORD));
+
+    expect(result.current.user?.role).toBe('admin');
+    expect(await draftIds()).toEqual([]);
+  });
+
+  it('drops the drafts on a sign-in that no session end preceded', async () => {
+    const { result } = await signedOut();
+    await saveDraftOf('left-in-the-tab');
+
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+
+    expect(await draftIds()).toEqual([]);
+  });
+
+  it('drops the drafts when the refresh answers for an account signed in from another tab', async () => {
+    let handler: (() => Promise<string | null>) | null = null;
+    const register = apiClient.setUnauthorizedHandler.bind(apiClient);
+    vi.spyOn(apiClient, 'setUnauthorizedHandler').mockImplementation((next) => {
+      if (next) handler = next;
+      register(next);
+    });
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const user = result.current.user;
+    if (user === null || handler === null) throw new Error('not signed in');
+    const refresh = handler as () => Promise<string | null>;
+    await saveDraftOf('draft-of-a');
+    vi.spyOn(authService, 'restore').mockResolvedValue({
+      user: { ...user, id: `${user.id}-someone-else`, email: 'colleague@medora.health' },
+      accessToken: 'token-for-the-other-account',
+      expiresIn: 900,
+    });
+
+    await settle(() => refresh());
+
+    expect(result.current.status).toBe('unauthenticated');
+    expect(await draftIds()).toEqual([]);
+  });
+
+  it('keeps the drafts through a lock, for the same user’s unlock', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    await saveDraftOf('draft-of-a');
+
+    act(() => {
+      result.current.lock();
+    });
+    await settle(() => result.current.unlock(PASSWORD));
+
+    expect(result.current.status).toBe('authenticated');
+    expect(await draftIds()).toEqual(['draft-of-a']);
+  });
+
+  it('does not hand locked drafts to a different account the login fallback returns', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    await saveDraftOf('draft-of-a');
+    act(() => {
+      result.current.lock();
+    });
+    vi.spyOn(authService, 'reauthenticate').mockImplementation(async () => {
+      const outcome = await authService.login({
+        email: 'admin@medora.health',
+        password: PASSWORD,
+        rememberMe: false,
+      });
+      if (outcome.kind !== 'session') throw new Error('expected a session');
+      return outcome.session;
+    });
+
+    await settle(() => result.current.unlock(PASSWORD));
+
+    expect(result.current.user?.role).toBe('admin');
+    expect(await draftIds()).toEqual([]);
   });
 });
