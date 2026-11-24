@@ -440,7 +440,7 @@ async function createAccount(role: Role): Promise<Account> {
     // Clinical standing (§2.6): a doctor needs a verified, active
     // employment, a staff role an active affiliation, or it holds nothing.
     if (role === 'doctor') await makeClinicalDoctor(harness.prisma, email);
-    if (role === 'reception' || role === 'laboratory' || role === 'pharmacy') {
+    if (role === 'reception' || role === 'laboratory' || role === 'pharmacy' || role === 'nurse') {
       await makeClinicalStaff(harness.prisma, email);
     }
     token = (await login(email)).accessToken ?? '';

@@ -63,6 +63,8 @@ export {
 export {
   AUTHENTICATED_METADATA,
   Authenticated,
+  OUTSIDE_STANDING_METADATA,
+  OutsideClinicalStanding,
   CAN_METADATA,
   Can,
   HospitalScope,

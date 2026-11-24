@@ -10,6 +10,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -127,6 +128,8 @@ describe('RM M31 exit gate — the cache hit rate is visible', () => {
     const email = testEmail('metrics-cache');
     await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
     await markVerified(harness.prisma, email);
+    // Clinical standing (F-09): outside it, this route is refused.
+    await makeClinicalDoctor(harness.prisma, email);
     const token = dataOf<{ accessToken: string }>(
       await request(harness.server)
         .post('/api/v1/auth/login')

@@ -75,6 +75,11 @@ export class FilesService {
     kind: FileKind,
     file: { readonly originalname: string; readonly mimetype: string; readonly buffer: Buffer },
   ) {
+    // F-09: outside clinical standing, only the documents that restore it.
+    if (kind !== 'verification_document' && !(await this.access.inStanding(user))) {
+      throw AppException.forbidden('Clinical standing is required for this upload', 'clinical_standing_required');
+    }
+
     // Before storage, so a rejected type is a 422 naming the field
     // rather than a 503 from a store that was never going to be asked.
     // The declared type first, then whether the bytes are that type.

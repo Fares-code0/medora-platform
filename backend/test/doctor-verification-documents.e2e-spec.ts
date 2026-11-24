@@ -252,9 +252,36 @@ describe('POST /me/verification-documents — filing an upload', () => {
 
   it('refuses an upload of another kind', async () => {
     const { token } = await seedDoctor('wrongkind');
-    const fileId = await uploadFile(token, 'patient_document');
 
-    const response = await submit(token, { fileId, kind: 'medical_license' });
+    // Outside clinical standing the upload itself is refused (F-09): an
+    // unverified doctor uploads only what restores their standing.
+    const upload = await request(harness.server)
+      .post(FILES)
+      .set(as(token))
+      .field('kind', 'patient_document')
+      .attach('file', PDF, { filename: `${NAME_PREFIX}chart.pdf`, contentType: 'application/pdf' });
+    expect(upload.status).toBe(403);
+
+    // And an upload of another kind the account already holds still cannot
+    // be filed as a verification document.
+    const me = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: testEmail('wrongkind') },
+      select: { id: true },
+    });
+    const other = await harness.prisma.file.create({
+      data: {
+        storageKey: `test/${NAME_PREFIX}other`,
+        originalName: `${NAME_PREFIX}other.pdf`,
+        mimeType: 'application/pdf',
+        sizeBytes: 16n,
+        checksumSha256: '0'.repeat(64),
+        kind: 'patient_document',
+        uploadedBy: me.id,
+      },
+      select: { id: true },
+    });
+
+    const response = await submit(token, { fileId: other.id, kind: 'medical_license' });
 
     expect(response.status).toBe(422);
   });

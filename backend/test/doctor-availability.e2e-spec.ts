@@ -10,6 +10,7 @@ import {
   patientRegistrationBody,
   registrationBody,
   testEmail,
+  makeClinicalDoctor,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -97,6 +98,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing (F-09): outside it, this route is refused.
+  await makeClinicalDoctor(harness.prisma, email);
 
   const response = await request(harness.server)
     .post(LOGIN)

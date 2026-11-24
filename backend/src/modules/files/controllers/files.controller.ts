@@ -15,7 +15,7 @@ import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { FileUpload } from '../../../common/http/file-upload.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated, PhiRead } from '../../../shared/authz';
+import { Authenticated, OutsideClinicalStanding, PhiRead } from '../../../shared/authz';
 import { uploadFileSchema, type UploadFileBody } from '../dto/files.schema';
 import { FilesService } from '../services/files.service';
 
@@ -40,6 +40,8 @@ import { FilesService } from '../services/files.service';
  * the one that matters is the one that decides the size and type rules.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('files')
 export class FilesController {
   constructor(private readonly files: FilesService) {}

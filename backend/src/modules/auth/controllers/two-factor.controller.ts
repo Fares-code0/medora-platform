@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/commo
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Authenticated, NotPhi } from '../../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../../shared/authz';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
 import {
   confirmReenrollmentSchema,
@@ -37,6 +37,8 @@ import {
  * zone 1 would let the users module borrow.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me/2fa')
 export class TwoFactorController {
   constructor(private readonly twoFactor: TwoFactorService) {}

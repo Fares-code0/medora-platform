@@ -53,6 +53,7 @@ import { AdminScopeService } from './admin-scope.service';
 import { TenantContextResolver } from './tenant-context.resolver';
 import {
   AUTHENTICATED_METADATA,
+  OUTSIDE_STANDING_METADATA,
   CAN_METADATA,
   HOSPITAL_SCOPE_METADATA,
   PLATFORM_SCOPE_METADATA,
@@ -116,6 +117,16 @@ export class AuthorizationGuard implements CanActivate {
     }
 
     const principal = principalOf(user);
+
+    // F-09: outside clinical standing, only the allowlist. Checked before
+    // any role or capability rule, so it cannot be bypassed by a route that
+    // asks for neither (`@Authenticated()`). Admin and patient accounts are
+    // not standing-gated (`standingFor` answers `clinical` without a query).
+    const outsideAllowed =
+      this.reflector.getAllAndOverride<boolean>(OUTSIDE_STANDING_METADATA, targets) === true;
+    if (!outsideAllowed && (await this.resolver.standingFor(user.id, principal.roleCode)) !== 'clinical') {
+      throw AppException.forbidden('Clinical standing is required for this route', 'clinical_standing_required');
+    }
 
     // Compared as strings: `roleCode` may be a seeded role with no
     // matrix column, which `PlatformRole` cannot express and which no

@@ -83,11 +83,20 @@ export class FileAccessService {
     const file = await this.files.find(fileId);
 
     if (file === null || file.uploadedBy !== user.id) throw notFound();
+    // F-09: outside clinical standing, only its own verification documents.
+    if (file.kind !== 'verification_document' && !(await this.inStanding(user))) throw notFound();
 
     return file;
   }
 
   private async canRead(user: AuthenticatedUser, file: FileRow): Promise<boolean> {
+    // F-09: outside clinical standing, an account reads only its own
+    // verification documents and the public kinds — not even a clinical
+    // file it uploaded while it still had standing.
+    if (!(await this.inStanding(user))) {
+      return PUBLICLY_READABLE.has(file.kind) || (file.kind === 'verification_document' && file.uploadedBy === user.id);
+    }
+
     // The uploader, always. Checked first because it needs no query.
     if (file.uploadedBy === user.id) return true;
     if (PUBLICLY_READABLE.has(file.kind)) return true;
@@ -119,6 +128,11 @@ export class FileAccessService {
         // kind to guess about, and the guess would be a PHI disclosure.
         return false;
     }
+  }
+
+  /** Whether the account holds clinical standing (always, for roles that are not standing-gated). */
+  async inStanding(user: AuthenticatedUser): Promise<boolean> {
+    return (await this.permissions.standingFor(user.id, user.role)) === 'clinical';
   }
 
   /** Care relationship, or the patient reading their own file. */

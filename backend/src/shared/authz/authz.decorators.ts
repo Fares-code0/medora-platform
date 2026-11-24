@@ -98,3 +98,22 @@ export function HospitalScope(): CustomDecorator<string> {
 }
 
 export { IS_PUBLIC_KEY, Public } from '../../common/auth/public.decorator';
+
+export const OUTSIDE_STANDING_METADATA = 'medora:authz:outside-standing';
+
+/**
+ * The allowlist for an account without clinical standing (audit F-09).
+ *
+ * A doctor or staff member who is suspended, unverified, never employed,
+ * between employments or otherwise outside clinical standing may use only
+ * routes carrying this marker: their own account and profile, its
+ * security (password, two-factor, sessions), the session read, the
+ * verification documents that restore standing, the files those are
+ * uploaded through, and the status vocabulary. Every other route —
+ * `@Authenticated()` ones included — answers 403 `clinical_standing_required`
+ * for them. Explicit rather than inferred: a new route is closed to them
+ * until someone decides otherwise.
+ */
+export function OutsideClinicalStanding(): CustomDecorator<string> {
+  return SetMetadata(OUTSIDE_STANDING_METADATA, true);
+}

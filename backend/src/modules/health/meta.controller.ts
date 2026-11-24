@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 
 import { RevalidatePrivately } from '../../common/http/cache-policy';
-import { Authenticated, NotPhi } from '../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../shared/authz';
 
 import { MetaService, type MetaEnumsResponse } from './meta.service';
 
@@ -19,6 +19,8 @@ import { MetaService, type MetaEnumsResponse } from './meta.service';
  * validate its own unions, and there is no `meta.*` capability to name.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('meta')
 export class MetaController {
   constructor(private readonly meta: MetaService) {}

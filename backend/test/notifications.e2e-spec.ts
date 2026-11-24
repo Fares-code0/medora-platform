@@ -8,6 +8,7 @@ import {
   registrationBody,
   testEmail,
   tokenFromLink,
+  makeClinicalDoctor,
 } from './support/auth-app';
 import {
   createPatientRecords,
@@ -93,6 +94,8 @@ async function signUp(local: string, role = 'patient'): Promise<Session> {
     .post(VERIFY)
     .send({ token: tokenFromLink(mailBody(harness.sink.lastTo(email)!)) })
     .expect(204);
+  // A doctor needs clinical standing to reach their notifications (F-09).
+  if (role === 'doctor') await makeClinicalDoctor(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)

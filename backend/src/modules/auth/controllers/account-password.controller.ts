@@ -2,7 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, OutsideClinicalStanding } from '../../../shared/authz';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
 import { changePasswordSchema, verifyPasswordSchema, type VerifyPasswordInput } from '../dto';
 import { PasswordRecoveryService } from '../services/password-recovery.service';
@@ -20,6 +20,8 @@ import { ReauthenticationService } from '../services/reauthentication.service';
  * zone 1 would not let the users module borrow them.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me/password')
 export class AccountPasswordController {
   constructor(

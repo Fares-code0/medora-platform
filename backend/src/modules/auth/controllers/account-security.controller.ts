@@ -13,7 +13,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated, NotPhi } from '../../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../../shared/authz';
 import type {
   ActiveSessionView,
   LoginEventView,
@@ -51,6 +51,8 @@ import { AccountSecurityService } from '../services/account-security.service';
  * and `POST /me/2fa/*` are here despite their `/me` paths.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me')
 export class AccountSecurityController {
   constructor(private readonly security: AccountSecurityService) {}
