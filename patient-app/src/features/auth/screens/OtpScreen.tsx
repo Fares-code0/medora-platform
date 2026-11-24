@@ -6,7 +6,7 @@ import { View } from 'react-native';
 import { headingA11y } from '@/accessibility/a11y';
 import { Button, Input, Screen, Text } from '@/components';
 import { useFieldChain } from '@/components/form/useFieldChain';
-import { useT } from '@/i18n';
+import { translateValidation, useT } from '@/i18n';
 import type { AuthStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
 import { isApiError } from '@/types/api';
@@ -87,10 +87,10 @@ export function OtpScreen({ navigation }: Props) {
   const submit = async () => {
     const parsed = otpFormSchema.safeParse({ code });
     if (!parsed.success) {
-      // The schema's own message, which is not in the catalogue: Zod
-      // schemas are module-level and cannot read a hook, so form-level
-      // validation strings are the part of C-09 still to be designed.
-      setError(parsed.error.issues[0]?.message ?? t('auth.otp.body'));
+      // The schema's own message, rendered through its `validation.*`
+      // key: Zod schemas are module-level and cannot read a hook.
+      const issue = parsed.error.issues[0]?.message;
+      setError(issue === undefined ? t('auth.otp.body') : translateValidation(t, issue));
       return;
     }
     setError(null);

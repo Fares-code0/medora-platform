@@ -10,6 +10,9 @@
       "**/*"
     ],
     "icon": "./assets/icon.png",
+    "locales": {
+      "ar": "./locales/ar.json"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.medora.patient",

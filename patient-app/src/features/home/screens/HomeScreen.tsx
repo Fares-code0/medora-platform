@@ -144,17 +144,17 @@ export function HomeScreen() {
         tone="error"
         testID="home-emergency-card"
         onPress={() => navigation.navigate('Emergency')}
-        accessibilityLabel="Emergency help"
-        accessibilityHint="Opens emergency guidance. It does not place a call."
+        accessibilityLabel={t('emergency.help')}
+        accessibilityHint={t('emergency.entry.hint')}
       >
         <View style={[styles.row, { columnGap: theme.space[3] }]}>
           <Icon name="alert" size={24} color="error" />
           <View style={styles.grow}>
             <Text variant="h3" color="error">
-              Emergency help
+              {t('emergency.help')}
             </Text>
             <Text variant="bodySm" color="textSecondary">
-              What to do, and who to call. Works offline.
+              {t('emergency.entry.homeDetail')}
             </Text>
           </View>
           <Icon name="forward" size={20} color="error" />

@@ -4,6 +4,7 @@ import { AppState, StyleSheet, View, type AppStateStatus } from 'react-native';
 
 import { decorative } from '@/accessibility/a11y';
 import { Icon, Text } from '@/components';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 /**
@@ -71,7 +72,9 @@ function asAppStateStatus(state: string | null | undefined): AppStateStatus {
  * also when it takes the picture.
  */
 export function useAppIsObscured(): boolean {
-  const [obscured, setObscured] = useState(() => isObscuring(asAppStateStatus(AppState.currentState)));
+  const [obscured, setObscured] = useState(() =>
+    isObscuring(asAppStateStatus(AppState.currentState)),
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -119,6 +122,7 @@ export function PhiPrivacyShield({ protecting, children }: PhiPrivacyShieldProps
  */
 function PrivacyCover() {
   const theme = useTheme();
+  const t = useT();
 
   return (
     <View
@@ -132,7 +136,7 @@ function PrivacyCover() {
     >
       <Icon name="shield" size={40} color="primary" />
       <Text variant="body" color="textSecondary">
-        Medora is hidden while you are in another app.
+        {t('privacy.cover')}
       </Text>
     </View>
   );

@@ -160,10 +160,10 @@ export function LoginScreen({ navigation }: Props) {
           tone="ghost"
           onPress={() => navigation.navigate('Register')}
         />
-        {/* English, deliberately — see `WelcomeScreen`'s note on the
-            emergency affordance and W-10. */}
+        {/* Translated since the W-10 owner's 2026-11-23 approval — see
+            `WelcomeScreen`'s note on the emergency affordance. */}
         <Button
-          label="Emergency help"
+          label={t('emergency.help')}
           tone="ghost"
           icon="alert"
           testID="login-emergency"

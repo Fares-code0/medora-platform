@@ -63,6 +63,41 @@ test to pass.
   persistent framing.
 - `src/features/emergency/components/EmergencyCallButton.tsx` — N-03's two-step
   activation before any dial.
+- The emergency and clinical blocks of `src/i18n/messages/en.ts` and
+  `src/i18n/messages/ar.ts` — since 2026-11-23 the words themselves live
+  there (`emergency.*`, `crash.*`, `support.urgent.*`, `upgrade.emergency`,
+  `messages.urgencyNotice`, and the clinical vocabulary
+  `health.allergy.severity.*`, `health.medication.status.*`,
+  `health.history.kind.*`, `health.labs.flag.*`,
+  `health.prescriptions.status.*`), and `guidance.ts` holds only their keys.
+
+**Arabic — translation approved, clinical review outstanding (2026-11-23)**
+
+The owner approved localizing all application-controlled copy into Arabic on
+2026-11-23, this item's copy included. That approval covers **translating
+only**. The Arabic of every key above is an **engineering draft awaiting the
+named clinical reviewer**: it has not been read by a clinician or by a native
+speaker, and nothing in this register records a signature for it. Signing this
+item means the signatory has read the English **and** the Arabic side by side
+and accepts that the Arabic preserves the clinical meaning exactly — including
+that no emergency instruction was weakened or altered. `signoff.test.ts` holds
+the no-treatment-instruction constraint against the catalogue values in both
+languages until then. Operator-configured emergency number labels and
+`whenToUse` lines are operator data, rendered as configured and never
+translated by the app; they are outside this item.
+
+**Questions on the English source, for the clinical reviewer** (raised by the
+independent Arabic review, 2026-11-23; the Arabic mirrors the English
+faithfully in both, so these are not translation defects and the English was
+not changed):
+
+1. `emergency.call.confirmDetail` — "Only continue if you need emergency help
+   now" is shown for **every** confirmed call, including the clinic's own line
+   and the patient's emergency contacts, where "emergency help" may not apply.
+   Should those two calls carry different wording?
+2. `emergency.unconfigured.body` — the claim that the local emergency number
+   "is usually on the back of your phone's SIM card" needs confirming as
+   factually accurate for the deployment regions, or removing.
 
 **What holds until it is signed**
 
@@ -168,7 +203,7 @@ never to decide that a value is safe to show.
 |---|---|
 | Store privacy declarations, the privacy-policy URL, the retention period | `docs/STORE_PRIVACY.md` §6 — a different owner and a different set of questions |
 | The accessibility audit's owner signature | `docs/A11Y_AUDIT.md` §7 — S-09, which carries its own |
-| Whether the Emergency affordance is translated into Arabic | `docs/A11Y_AUDIT.md` §6 — routed to this document's item 1, because it is emergency copy |
+| Whether the Emergency affordance is translated into Arabic | Decided: the owner approved the translation on 2026-11-23 (`docs/A11Y_AUDIT.md` §6). The **clinical review of the Arabic wording** is inside this document's item 1, and it is not signed |
 | Release signing and provisioning | W-03. A *cryptographic* signature, unrelated to this file despite the word |
 
 ---
@@ -178,6 +213,7 @@ never to decide that a value is safe to show.
 | Change | Effect |
 |---|---|
 | Any edit to `features/emergency/content/` | Item 1 is re-opened — a signature covers what was read |
+| Any edit to an emergency or clinical catalogue key (§2 item 1), in either language | Item 1 is re-opened — a signature covers what was read |
 | An AI surface of any kind | Item 2 stops being an absence and becomes an artefact list — **this happened on 2026-09-14** |
 | Any edit to `features/ai/` copy or to the `ai.*` catalogue block | Item 2 is re-opened — a signature covers what was read |
 | An assistant that generates output | A **new** row. Item 2 covers the framing, never the generated text |

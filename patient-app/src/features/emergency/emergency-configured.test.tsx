@@ -1,5 +1,5 @@
 import { act, fireEvent, waitFor } from '@testing-library/react-native';
-import { AccessibilityInfo, Linking } from 'react-native';
+import { AccessibilityInfo, Linking, StyleSheet } from 'react-native';
 
 import { renderWithProviders } from '@/test/render';
 
@@ -43,9 +43,12 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-async function renderConfigured(configuration: EmergencyConfiguration = CONFIGURED) {
+async function renderConfigured(
+  configuration: EmergencyConfiguration = CONFIGURED,
+  locale: 'en' | 'ar' = 'en',
+) {
   installed.push(jest.spyOn(emergencyService, 'getConfiguration').mockResolvedValue(configuration));
-  const view = renderWithProviders(<EmergencyScreen />);
+  const view = renderWithProviders(<EmergencyScreen />, { locale });
   await act(async () => undefined);
   return view;
 }
@@ -258,5 +261,92 @@ describe('the offer to book instead (N-01)', () => {
     // The rule this whole screen is built on: nothing here dials except
     // through the two-step gate.
     expect(openURL).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Arabic twins — W-10 translation approval, 2026-11-23.
+ *
+ * The operator's `label` and `whenToUse` are DATA and stay exactly as
+ * configured (here, English) inside the Arabic sentence; the number is
+ * isolated left-to-right so "+966 11 555 0100" is not reordered.
+ */
+describe('in Arabic', () => {
+  it("frames the operator's verbatim label in Arabic, and never translates it", async () => {
+    const view = await renderConfigured(CONFIGURED, 'ar');
+
+    await waitFor(() => expect(view.getByText('أرقام قدّمتها عيادتك لهذه المنطقة')).toBeTruthy());
+    expect(view.getByText('اتصل بـ\u2068Poison control\u2069')).toBeTruthy();
+    expect(view.getByText('Life-threatening emergencies')).toBeTruthy();
+    expect(view.getByText('أرقام الطوارئ مقدّمة من عيادتك.')).toBeTruthy();
+  });
+
+  it('confirms the clinic call in Arabic, with the number isolated', async () => {
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const view = await renderConfigured(CONFIGURED, 'ar');
+
+    fireEvent.press(await waitFor(() => view.getByTestId('emergency-call-clinic')));
+
+    expect(open).not.toHaveBeenCalled();
+    expect(view.getByText('الاتصال بـ\u2068العيادة\u2069؟')).toBeTruthy();
+    expect(view.getByText('اتصل بالرقم \u2066+966 11 555 0100\u2069')).toBeTruthy();
+    expect(view.getByText('افتح في الخرائط')).toBeTruthy();
+  });
+
+  it('says the number out loud in Arabic when the dialler will not open', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(Linking, 'openURL').mockRejectedValue(new Error('no dialler'));
+    const announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => {});
+    const view = await renderConfigured(CONFIGURED, 'ar');
+
+    fireEvent.press(await waitFor(() => view.getByTestId('emergency-call-amb')));
+    await act(async () => {
+      fireEvent.press(view.getByText('اتصل بالرقم \u2066997\u2069'));
+    });
+
+    await waitFor(() =>
+      expect(
+        view.getByText('لا يستطيع هذا الجهاز إجراء مكالمات. اطلب هذا الرقم من هاتف آخر:'),
+      ).toBeTruthy(),
+    );
+    expect(announce).toHaveBeenCalledWith('تعذّر فتح تطبيق الهاتف. الرقم هو \u2066997\u2069.');
+  });
+
+  it('lays the fallback number out left-to-right, so its digits cannot be reordered (review H-1)', async () => {
+    // A bare "+966 11 555 0100" has no strong character; in an RTL
+    // paragraph the bidi algorithm may reverse its digit groups. The
+    // fallback is the one place the number stands alone, to be read
+    // aloud, so it is pinned LTR — and its text is the number, unchanged.
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(Linking, 'openURL').mockRejectedValue(new Error('no dialler'));
+    jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    const view = await renderConfigured(CONFIGURED, 'ar');
+
+    fireEvent.press(await waitFor(() => view.getByTestId('emergency-call-clinic')));
+    await act(async () => {
+      fireEvent.press(view.getByText('اتصل بالرقم \u2066+966 11 555 0100\u2069'));
+    });
+
+    const number = await waitFor(() => view.getByTestId('emergency-call-clinic-fallback-number'));
+    expect(StyleSheet.flatten(number.props.style)).toMatchObject({ writingDirection: 'ltr' });
+    expect(number.props.children).toBe('+966 11 555 0100');
+  });
+
+  it('pins the fallback number left-to-right in English too, with the text unchanged', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(Linking, 'openURL').mockRejectedValue(new Error('no dialler'));
+    jest.spyOn(AccessibilityInfo, 'announceForAccessibility').mockImplementation(() => {});
+    const view = await renderConfigured();
+
+    fireEvent.press(await waitFor(() => view.getByTestId('emergency-call-amb')));
+    await act(async () => {
+      fireEvent.press(view.getByText('Call 997'));
+    });
+
+    const number = await waitFor(() => view.getByTestId('emergency-call-amb-fallback-number'));
+    expect(StyleSheet.flatten(number.props.style)).toMatchObject({ writingDirection: 'ltr' });
+    expect(number.props.children).toBe('997');
   });
 });

@@ -44,8 +44,6 @@ export interface BiometricLockGateProps {
   readonly gate?: BiometricGate;
 }
 
-const PROMPT = 'Unlock Medora';
-
 export function BiometricLockGate({ children, gate = expoBiometricGate }: BiometricLockGateProps) {
   const { locked } = useSession();
   if (!locked) return <>{children}</>;
@@ -61,7 +59,8 @@ function LockScreen({ gate }: { readonly gate: BiometricGate }) {
   const attempt = useCallback(async () => {
     setBusy(true);
     try {
-      const result = await gate.authenticate(PROMPT);
+      // The OS sheet's text is this app's, so it is in the app's language.
+      const result = await gate.authenticate(t('biometric.prompt'), t('action.cancel'));
       setOutcome(result);
       if (result === 'success') {
         unlock();
@@ -76,7 +75,7 @@ function LockScreen({ gate }: { readonly gate: BiometricGate }) {
     } finally {
       setBusy(false);
     }
-  }, [gate, unlock]);
+  }, [gate, t, unlock]);
 
   // Prompt once on mount. A patient returning to a locked app expects
   // the sensor, not a button that then summons it.

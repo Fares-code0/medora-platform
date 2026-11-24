@@ -87,7 +87,10 @@ const SAFE_AREA_METRICS = {
  * use. So this file builds its own wrapper and takes the session as a
  * parameter rather than as an ambient fact.
  */
-function renderWithSession(ui: ReactNode, { withSession }: { withSession: boolean }) {
+function renderWithSession(
+  ui: ReactNode,
+  { withSession, locale }: { withSession: boolean; locale?: 'en' | 'ar' },
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0 },
@@ -121,7 +124,7 @@ function renderWithSession(ui: ReactNode, { withSession }: { withSession: boolea
     );
     return (
       <SafeAreaProvider initialMetrics={SAFE_AREA_METRICS}>
-        <LocaleProvider>
+        <LocaleProvider {...(locale === undefined ? {} : { initialLocale: locale })}>
           <ThemeProvider initialMode="light">
             <QueryClientProvider client={queryClient}>
               <ToastProvider>{session}</ToastProvider>
@@ -232,6 +235,26 @@ describe('when the read fails', () => {
     // A section headed "Your emergency contacts" with nothing under it
     // is worse than no section: on this screen it reads as a list that
     // failed to load at the moment it is needed.
+    expect(view.queryByText('Your emergency contacts')).toBeNull();
+  });
+});
+
+/**
+ * Arabic twin — W-10 translation approval, 2026-11-23. The names and the
+ * relationship are the clinic's record and stay as recorded; only the
+ * frame around them is Arabic.
+ */
+describe('in Arabic', () => {
+  it('frames the recorded contacts in Arabic and leaves the record as written', async () => {
+    stub(CONTACTS);
+
+    const view = renderWithSession(<EmergencyContacts />, { withSession: true, locale: 'ar' });
+
+    expect(await view.findByTestId('emergency-contact-EC-1')).toBeTruthy();
+    expect(view.getByText('جهات اتصالك في الطوارئ')).toBeTruthy();
+    expect(view.getByText('Huda Ahmed')).toBeTruthy();
+    expect(view.getByText('\u2068Sister\u2069 · أول من يُتصل به')).toBeTruthy();
+    expect(view.getByText('جهة اتصال في الطوارئ')).toBeTruthy();
     expect(view.queryByText('Your emergency contacts')).toBeNull();
   });
 });

@@ -67,16 +67,15 @@ export function MessagesScreen({ navigation }: Props) {
         {t('messages.title')}
       </Text>
 
-      {/* English, deliberately: it tells a patient what to do when
-          something is urgent or an emergency, which is clinically
-          reviewed material under N-07 and W-10. `messages/en.ts` states
-          the rule; everything else on this screen is translated. */}
+      {/* It tells a patient what to do when something is urgent or an
+          emergency, so it is inside the W-10 review. English-only until
+          the owner approved translating emergency copy (2026-11-23); the
+          Arabic is an engineering draft awaiting the clinical reviewer. */}
       <Card tone="warning" testID="messages-urgency-notice">
         <View style={[styles.row, { columnGap: theme.space[2] }]}>
           <Icon name="alert" size={18} color="warning" />
           <Text variant="bodySm" color="textSecondary" style={styles.grow}>
-            Messages are not urgent care. A clinician may not read this for a day or more. If
-            something is urgent, call the clinic; if it is an emergency, use Emergency help.
+            {t('messages.urgencyNotice')}
           </Text>
         </View>
       </Card>

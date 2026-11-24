@@ -302,12 +302,12 @@ export function ThreadScreen({ route }: Props) {
             reason to remove the one route that never waited for a reply.
           */}
           <Button
-            label="Emergency"
+            label={t('emergency.short')}
             tone="ghost"
             icon="alert"
             testID="thread-emergency"
             onPress={() => rootNavigation.navigate('Emergency')}
-            hint="Messages are not urgent care"
+            hint={t('emergency.entry.threadHint')}
           />
           <View style={styles.grow} />
           {readOnly ? null : (

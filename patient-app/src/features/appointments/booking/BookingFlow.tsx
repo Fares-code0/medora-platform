@@ -194,7 +194,7 @@ export function BookingFlow({ route }: Props) {
         <Button
           label={t('action.back')}
           tone="ghost"
-          icon="chevronLeft"
+          icon="back"
           onPress={goBack}
           testID="booking-back"
         />

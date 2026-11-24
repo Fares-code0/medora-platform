@@ -291,7 +291,34 @@ describe('the catalogues', () => {
    * covers this catalogue before any build ships. Listing them here is
    * what makes that reviewable — it is the list of strings a clinician
    * must read in both languages.
+   *
+   * ── 2026-11-23: the emergency and clinical copy moved in ───────────
+   *
+   * The W-10 owner approved translating ALL application-controlled copy,
+   * emergency guidance and clinical vocabulary included. That copy is now
+   * in the catalogue under the namespaces in `CLINICAL_REVIEW_NAMESPACES`,
+   * which are exempt from the word ban as a block — they ARE the clinical
+   * material — and are held instead by the tests below: present in both
+   * catalogues, actually Arabic, and free of treatment instruction. The
+   * approval covers translating only; the clinical sign-off on that
+   * Arabic is still not given (`docs/SIGNOFF.md`).
    */
+  const CLINICAL_REVIEW_NAMESPACES = [
+    'emergency.',
+    'crash.',
+    'support.urgent.',
+    'upgrade.emergency',
+    'messages.urgencyNotice',
+    'health.allergy.severity.',
+    'health.medication.status.',
+    'health.history.kind.',
+    'health.labs.flag.',
+    'health.prescriptions.status.',
+  ];
+
+  const inClinicalReview = (key: string) =>
+    CLINICAL_REVIEW_NAMESPACES.some((namespace) => key.startsWith(namespace));
+
   const CLINICAL_WORDS = ['symptom', 'diagnos', 'dose', 'first aid', 'ambulance', 'chest pain'];
 
   const CLINICAL_EXEMPT: Readonly<Record<string, string>> = {
@@ -313,7 +340,7 @@ describe('the catalogues', () => {
     for (const [key, value] of Object.entries(en)) {
       for (const clinical of CLINICAL_WORDS) {
         if (!value.toLowerCase().includes(clinical)) continue;
-        if (key in CLINICAL_EXEMPT) continue;
+        if (key in CLINICAL_EXEMPT || inClinicalReview(key)) continue;
         found.push(`${key} → "${clinical}"`);
       }
     }
@@ -331,9 +358,55 @@ describe('the catalogues', () => {
     }
   });
 
-  it('still refuses emergency guidance outright, in any key', () => {
+  it('holds every clinical-review key in both catalogues, in Arabic', () => {
+    const keys = Object.keys(en).filter(inClinicalReview);
+    // Each namespace is populated: an empty one would be a renamed
+    // namespace silently leaving the review list.
+    for (const namespace of CLINICAL_REVIEW_NAMESPACES) {
+      expect({ namespace, present: keys.some((key) => key.startsWith(namespace)) }).toEqual({
+        namespace,
+        present: true,
+      });
+    }
+    for (const key of keys) {
+      const arabic = catalogues.ar[key as MessageKey];
+      const withoutPlaceholders = arabic.replace(/\{\w+\}/g, '');
+      expect({ key, arabicScript: /[\u0600-\u06FF]/.test(arabic) }).toEqual({
+        key,
+        arabicScript: true,
+      });
+      expect({ key, latin: /[A-Za-z]{2,}/.test(withoutPlaceholders) }).toEqual({
+        key,
+        latin: false,
+      });
+    }
+  });
+
+  it('isolates every interpolated number and label inside Arabic clinical copy', () => {
+    // A "+966 11 555 0100" or a Latin contact name inside a right-to-left
+    // sentence is reordered by the bidi algorithm unless it is isolated.
+    for (const key of Object.keys(en).filter(inClinicalReview)) {
+      const arabic = catalogues.ar[key as MessageKey];
+      for (const match of arabic.matchAll(/\{(\w+)\}/g)) {
+        const at = match.index ?? 0;
+        expect({ key, isolated: /[\u2066\u2068]$/.test(arabic.slice(0, at)) }).toEqual({
+          key,
+          isolated: true,
+        });
+        expect({ key, closed: arabic.slice(at + match[0].length).startsWith('\u2069') }).toEqual({
+          key,
+          closed: true,
+        });
+      }
+    }
+  });
+
+  it('still refuses first-aid instruction outright, in any key', () => {
     // The half of the original rule that takes no exceptions: N-07's
-    // first-aid material is not in this catalogue and never will be.
+    // first-aid material is not in this catalogue. The emergency copy
+    // that is here is recognition ("these signs mean call now"), never
+    // treatment; `test/signoff.test.ts` holds the longer list, in both
+    // languages.
     const values = Object.values(en).join(' ').toLowerCase();
     for (const guidance of ['first aid', 'ambulance', 'cpr', 'recovery position']) {
       expect(values).not.toContain(guidance);

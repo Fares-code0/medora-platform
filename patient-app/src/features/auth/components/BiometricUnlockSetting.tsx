@@ -61,10 +61,15 @@ export function BiometricUnlockSetting({ gate = expoBiometricGate }: BiometricUn
   // screen does is a control the patient's thumb lands on by accident.
   if (availability === null || !availability.usable) return null;
 
-  // The platform's own name for the sensor — "Face ID", "Fingerprint" —
-  // in whatever language the OS gave it. Only the sentence around it is
-  // this app's to translate.
-  const label = availability.label ?? t('biometric.setting.fallbackName');
+  // "Face ID" is Apple's product name and stays as written. "Fingerprint"
+  // and the generic fallback are this app's words (`labelFor` in
+  // `biometrics.ts` chooses them), so they are catalogue keys.
+  const label =
+    availability.label === 'Face ID'
+      ? availability.label
+      : availability.label === 'Fingerprint'
+        ? t('biometric.method.fingerprint')
+        : t('biometric.setting.fallbackName');
 
   return (
     <Card tone="sunken">

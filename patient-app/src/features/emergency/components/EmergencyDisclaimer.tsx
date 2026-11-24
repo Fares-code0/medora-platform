@@ -1,9 +1,10 @@
 import { StyleSheet, View } from 'react-native';
 
 import { Icon, Text } from '@/components';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
-import { EMERGENCY_DISCLAIMER } from '../content/guidance';
+import { EMERGENCY_DISCLAIMER_KEY } from '../content/guidance';
 
 /**
  * The disclaimer.
@@ -18,13 +19,15 @@ import { EMERGENCY_DISCLAIMER } from '../content/guidance';
  */
 export function EmergencyDisclaimer() {
   const theme = useTheme();
+  const t = useT();
+  const disclaimer = t(EMERGENCY_DISCLAIMER_KEY);
 
   return (
     <View
       testID="emergency-disclaimer"
       accessible
       accessibilityRole="alert"
-      accessibilityLabel={EMERGENCY_DISCLAIMER}
+      accessibilityLabel={disclaimer}
       style={[
         styles.banner,
         {
@@ -38,7 +41,7 @@ export function EmergencyDisclaimer() {
     >
       <Icon name="alert" size={22} color="error" />
       <Text critical variant="bodySm" color="error" style={styles.grow}>
-        {EMERGENCY_DISCLAIMER}
+        {disclaimer}
       </Text>
     </View>
   );

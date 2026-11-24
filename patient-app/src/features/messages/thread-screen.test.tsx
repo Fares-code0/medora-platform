@@ -96,7 +96,7 @@ function Blank() {
 }
 
 async function renderThread(
-  options: { conversation?: Conversation; conversationId?: string } = {},
+  options: { conversation?: Conversation; conversationId?: string; locale?: 'en' | 'ar' } = {},
 ) {
   const get = stub('getConversation').mockResolvedValue(options.conversation ?? CONVERSATION);
   const setOnline = captureNetInfo();
@@ -114,6 +114,7 @@ async function renderThread(
         </Stack.Navigator>
       </NavigationContainer>
     </NetworkProvider>,
+    { locale: options.locale ?? 'en' },
   );
 
   await act(async () => undefined);
@@ -490,5 +491,16 @@ describe('a closed thread offers no way to write into it (M-02, M-03)', () => {
     await act(async () => {
       resolve(CONVERSATION);
     });
+  });
+});
+
+describe('the emergency route in Arabic (W-10 translation approval, 2026-11-23)', () => {
+  it('labels it and says messages are not urgent care, in Arabic', async () => {
+    const view = await renderThread({ locale: 'ar' });
+
+    const button = view.getByTestId('thread-emergency');
+    expect(button.props.accessibilityHint).toBe('الرسائل ليست رعاية عاجلة');
+    expect(view.getByText('الطوارئ')).toBeTruthy();
+    expect(view.queryByText('Emergency')).toBeNull();
   });
 });

@@ -4,7 +4,7 @@ import path from 'node:path';
 import Feather from '@expo/vector-icons/Feather';
 import { I18nManager } from 'react-native';
 
-import { Icon, resolveGlyph } from '@/components/Icon';
+import { Icon, mirrorsInRtl, resolveGlyph } from '@/components/Icon';
 import { renderWithProviders } from '@/test/render';
 
 /**
@@ -96,6 +96,30 @@ describe('directional icons mirror with the layout (S-08)', () => {
     expect(glyphFor('forward', true)).toBe('chevron-left');
     expect(glyphFor('forward', true)).toBe(glyphFor('chevronLeft', false));
   });
+
+  it('mirrors the send glyph in a right-to-left layout, and nothing else', () => {
+    // Feather's paper plane flies up and to the RIGHT — the reading
+    // direction in English, backwards in Arabic — and has no left-facing
+    // twin to swap to, so it is flipped rather than renamed.
+    expect(mirrorsInRtl('send', true)).toBe(true);
+    expect(mirrorsInRtl('send', false)).toBe(false);
+    expect(mirrorsInRtl('search', true)).toBe(false);
+    expect(mirrorsInRtl('forward', true)).toBe(false);
+
+    const styleFor = (rtl: boolean): unknown => {
+      const was = I18nManager.isRTL;
+      Object.defineProperty(I18nManager, 'isRTL', { value: rtl, configurable: true });
+      try {
+        const view = renderWithProviders(<Icon name="send" label="Send" />);
+        return view.UNSAFE_getByType(Feather).props.style;
+      } finally {
+        Object.defineProperty(I18nManager, 'isRTL', { value: was, configurable: true });
+      }
+    };
+
+    expect(styleFor(true)).toEqual({ transform: [{ scaleX: -1 }] });
+    expect(styleFor(false)).toBeUndefined();
+  });
 });
 
 describe('nothing hard-codes a reading direction', () => {
@@ -103,9 +127,13 @@ describe('nothing hard-codes a reading direction', () => {
     // `Icon` still knows both glyphs — it needs them to resolve `forward`
     // — but a screen naming one has decided which way the reader moves,
     // which is exactly the decision it must not make.
+    // `icon="chevronLeft"` on a `Button` is the same decision through a
+    // different prop: the booking flow's Back button carried one until
+    // 2026-11-23 and pointed forward in Arabic.
     const offenders = SOURCES.filter(
       ({ file, source }) =>
-        file !== path.join('components', 'Icon.tsx') && /name="chevron(Right|Left)"/.test(source),
+        file !== path.join('components', 'Icon.tsx') &&
+        /(name|icon)=["{']*chevron(Right|Left)/.test(source),
     ).map(({ file }) => file);
 
     expect(offenders).toEqual([]);
