@@ -57,6 +57,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { PermissionResolver } from '../../../shared/authz';
+import { isLastPlatformAdminViolation } from '../../../shared/database';
 import { UserStatus } from '../../../generated/prisma/enums';
 import type { PlatformUserView } from '../dto/account.dto';
 import type {
@@ -181,7 +182,16 @@ export class PlatformUserService {
 
     await this.assertAdministrationSurvives(target.role.code, input.role, input.active);
 
-    const updated = await this.users.update(target.id, actor.id, { roleId, status });
+    const updated = await this.users
+      .update(target.id, actor.id, { roleId, status })
+      .catch((error: unknown) => {
+        // The database's invariant (F-10): judged at COMMIT, under a lock,
+        // so a concurrent revocation cannot slip past a count read here.
+        if (isLastPlatformAdminViolation(error)) {
+          throw AppException.conflict('This is the last Platform Admin; grant another one first', 'conflict');
+        }
+        throw error;
+      });
 
     // Deactivation ends the sessions that are already open. Without this
     // the lever does nothing for the case it is pulled in — an account
@@ -211,6 +221,7 @@ export class PlatformUserService {
         statusBefore: target.status,
         statusAfter: updated.status,
         sessionsRevoked: revoked,
+        adminScopesEnded: updated.adminScopesEnded,
       },
     });
 

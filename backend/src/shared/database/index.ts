@@ -8,7 +8,12 @@
  * any schema change.
  */
 export { DatabaseModule } from './database.module';
-export { conflictingFields, isLockNotGranted, isUniqueViolation } from './prisma-errors';
+export {
+  conflictingFields,
+  isLastPlatformAdminViolation,
+  isLockNotGranted,
+  isUniqueViolation,
+} from './prisma-errors';
 export { PrismaService } from './prisma.service';
 export {
   applySoftDeleteFilter,

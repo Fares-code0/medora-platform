@@ -135,20 +135,48 @@ export class PlatformUserRepository {
     userId: string,
     actorId: string,
     data: { readonly roleId?: string | undefined; readonly status?: UserStatus | undefined },
-  ): Promise<PlatformUserRow> {
-    return this.prisma.db.user.update({
-      where: { id: userId },
-      data: {
-        ...(data.roleId === undefined ? {} : { roleId: data.roleId }),
-        ...(data.status === undefined ? {} : { status: data.status }),
-        ...(UUID.test(actorId) ? { updatedBy: actorId } : {}),
-        // Role and status are authorization: the cached permission set and
-        // any token minted before this write are stale (ADR-046, §2.10).
-        ...(data.roleId === undefined && data.status === undefined
-          ? {}
-          : { authzVersion: { increment: 1 } }),
-      },
-      select: LIST_SELECT,
+  ): Promise<PlatformUserRow & { readonly adminScopesEnded: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(data.roleId === undefined ? {} : { roleId: data.roleId }),
+          ...(data.status === undefined ? {} : { status: data.status }),
+          ...(UUID.test(actorId) ? { updatedBy: actorId } : {}),
+          // Role and status are authorization: the cached permission set and
+          // any token minted before this write are stale (ADR-046, §2.10).
+          ...(data.roleId === undefined && data.status === undefined
+            ? {}
+            : { authzVersion: { increment: 1 } }),
+        },
+        select: LIST_SELECT,
+      });
+
+      // One model of admin standing (audit F-10): a Platform Admin grant or
+      // a Hospital Admin assignment means something only on an `admin`
+      // account. A demotion ends them in the same transaction, so a grant
+      // never lingers to revive on a later re-promotion, and the database's
+      // last-Platform-Admin invariant judges the demotion and the
+      // revocation together at COMMIT.
+      let adminScopesEnded = 0;
+      if (data.roleId !== undefined && updated.role.code !== 'admin') {
+        const now = new Date();
+        const revokedBy = UUID.test(actorId) ? actorId : null;
+        adminScopesEnded += (
+          await tx.platformAdminGrant.updateMany({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: now, ...(revokedBy === null ? {} : { revokedBy }) },
+          })
+        ).count;
+        adminScopesEnded += (
+          await tx.hospitalRoleAssignment.updateMany({
+            where: { userId, revokedAt: null, role: { is: { code: 'admin' } } },
+            data: { revokedAt: now },
+          })
+        ).count;
+      }
+
+      return { ...updated, adminScopesEnded };
     });
   }
 

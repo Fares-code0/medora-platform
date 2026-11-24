@@ -24,7 +24,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { AppException } from '../../../common/errors/app.exception';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { AdminScopeService, PermissionResolver } from '../../../shared/authz';
-import { isUniqueViolation } from '../../../shared/database';
+import { isLastPlatformAdminViolation, isUniqueViolation } from '../../../shared/database';
 import type {
   EndAccessInput,
   GrantAdminInput,
@@ -305,7 +305,17 @@ export class HospitalStaffingService {
       throw AppException.conflict('The last Platform Admin cannot be revoked');
     }
 
-    const sessionsRevoked = await this.staffing.revokePlatformAdmin(user.id, actor.id);
+    const sessionsRevoked = await this.staffing
+      .revokePlatformAdmin(user.id, actor.id)
+      .catch((error: unknown) => {
+        // The count above is a fast answer; this is the guarantee. The
+        // database re-checks at COMMIT under a lock (F-10), so two
+        // concurrent revocations cannot both pass.
+        if (isLastPlatformAdminViolation(error)) {
+          throw AppException.conflict('The last Platform Admin cannot be revoked');
+        }
+        throw error;
+      });
     await this.permissions.forget(user.id);
     await this.record(actor, 'platform.admin_revoked', null, 'user', user.publicId, {
       affectedUserId: user.id,

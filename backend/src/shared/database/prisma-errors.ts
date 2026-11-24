@@ -169,3 +169,28 @@ export function isLockNotGranted(error: unknown): boolean {
     (value) => typeof value === 'string' && LOCK_NOT_GRANTED.has(value),
   );
 }
+
+/**
+ * The database refused a commit that would leave no effective Platform
+ * Admin (`assert_platform_admin_survives`, migration
+ * 20261125092000_platform_admin_invariant; audit F-10).
+ *
+ * Matched on the trigger's message rather than SQLSTATE 23514 alone, which
+ * every CHECK constraint shares. The error can surface as a Prisma known
+ * request error or, when it is raised at COMMIT, as the driver's own error,
+ * so the whole cause chain is searched.
+ */
+export function isLastPlatformAdminViolation(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  const visit = (value: unknown, depth: number): boolean => {
+    if (depth > 6 || value === null || value === undefined || seen.has(value)) return false;
+    if (typeof value === 'string') return value.includes('last_platform_admin');
+    if (typeof value !== 'object') return false;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    return ['message', 'originalMessage', 'cause', 'meta', 'driverAdapterError'].some((key) =>
+      visit(record[key], depth + 1),
+    );
+  };
+  return visit(error, 0);
+}
