@@ -58,7 +58,7 @@ when context is missing · **PHI-early** = PHI can be read before authorization 
 
 | # | Gap | Why it is not implemented here | Tracked |
 |---|---|---|---|
-| G1 | The legacy rule ignores the doctor's hospital, employment and practice status, so a suspended or terminated doctor keeps legacy access to assigned patients | Changing the **authoritative** rule is enforcement. Suspension is documented as *not* cutting access (`admin-doctor.service.ts:38-46`); reversing that is a product decision. Employment-based denial is OD-12, but it only becomes enforceable together with hospital-owned assignments (B3, #17) | #27, #22, #18 |
+| G1 | The legacy rule ignores the doctor's hospital, employment and practice status, so a suspended or terminated doctor keeps legacy access to assigned patients. **Resolved by S3 (§6): #18 decided; the rule is hospital-, employment- and lifecycle-aware** | Changing the **authoritative** rule is enforcement. Suspension is documented as *not* cutting access (`admin-doctor.service.ts:38-46`); reversing that is a product decision. Employment-based denial is OD-12, but it only becomes enforceable together with hospital-owned assignments (B3, #17) | #27, #22, #18 |
 | G2 | Admin directory, reveal, administration, users, audit are platform-wide | Hospital Admin vs Platform Admin capabilities are undecided in detail | #16 |
 | G3 | Employment end → immediate session and token revocation (OD-12) | **Implemented for the platform-wide admin (#54).** `POST /doctors/:doctorId/employments/:employmentId/end` (`doctors.manage`) sets `ended_at`, revokes the employment's live care assignments, the live `hospital_role_assignments` sourced from it (`revokedHospitalRoles`) and every session of the doctor's account, and writes `doctor.employment_ended` with `audit_events.hospital_id` set to the employment's hospital (as does `doctor.employment_started`), all in one transaction; the doctor's next request is 401 and the refresh token is refused (`doctor-employment-lifecycle.e2e-spec.ts`). **Remaining:** legacy assignments with no `doctor_employment_id` are not touched (#17; counted in the audit metadata as `legacyAssignmentsUntouched`); published slots and permission caches (G4) are not revoked; Hospital Admin scoping of the routes is S5 (#16) | #27, #54 |
 | G4 | Role-permission edits (`role_permissions`) and overrides apply only at the next token issue (≤ 900 s) | Needs a permission version on the token or session; ADR-046 deliberately covers only the role code | #27 |
@@ -91,3 +91,107 @@ cross-hospital e2e tests before it ships.
   `adminScope: { type: 'platform' }` until #16 is decided.
 - Background work carries explicit, validated hospital and actor ids; it never inherits a request
   store (F5).
+
+## 6. S3/S4 enforcement status (2026-11-24, commits `afa04af`, `e9e3494`)
+
+Several §1 facts predate S3 and are now superseded: the hospital-blind legacy rule is no longer the
+gate, `isAssigned` is hospital-aware, domain modules filter by `hospital_id`, and suspension now cuts
+clinical access (#18). §1 stays as it was, as the audit record.
+
+### The rule (authoritative, unflagged)
+
+`PatientScopeService.canReach`/`assertCanReach` → `decidePatientReach`
+(`backend/src/shared/authz/hospital-patient-scope.ts`). A principal reaches a patient only if **all**
+of these hold:
+
+1. the role is `doctor`. Platform Admin, Hospital Admin and every other role get no clinical access
+   (OD-07);
+2. the doctor has **exactly one** clinical employment, derived on the server: `doctor_employments.ended_at
+   IS NULL`, at a hospital with `status = 'ACTIVE'` and `deleted_at IS NULL`, held by a doctor with
+   `deleted_at IS NULL`, `verification_status = VERIFIED` and `practice_status IN (ACTIVE, VACATION)`.
+   No employment, or more than one, fails closed;
+3. a **live** assignment (`revoked_at IS NULL`) links that doctor and patient and is owned by that
+   employment: `doctor_employment_id` is the active employment and `hospital_id` is its hospital, with
+   the patient's `hospital_medical_record_id` there.
+
+Out of scope is 404, the same as a missing patient (ADR-022). `assertCanReach` returns the chart scope
+(`doctorId`, `doctorEmploymentId`, `hospitalId`, `patientId`, `hospitalMedicalRecordId`).
+`PrismaPatientAssignmentRepository.isAssigned` answers with the same rule. The employment read is
+memoized per request. The assignment read is never memoized (F6).
+
+**Doctor lifecycle (#18).** VACATION keeps access. Unverified (PENDING, REJECTED, DOCS_REQUESTED),
+SUSPENDED, terminated (no active employment) and soft-deleted doctors are denied. An assignment owned
+by an ended employment stays denied after a rehire at the same hospital (OD-12). The session context
+(`GET /auth/session`) is unchanged and still has no verification predicate. Session and login rules for
+these states are separate work.
+
+**Legacy ownership (#17).** An assignment with `hospital_id IS NULL` never grants access. Child rows
+with no hospital are excluded from every doctor read and list. No legacy row is assigned, updated or
+deleted. The shadow comparison, its C1 bounds and `HOSPITAL_SCOPE_SHADOW_*` are removed. A leftover
+variable is ignored.
+
+### Surfaces covered
+
+- **Chart (N-1).** Detail, profile bundle, allergies, alerts, every tab (history, notes, vitals,
+  medications, documents, studies, appointments) and reveal. Hospital-owned child rows are filtered to
+  `hospital_id = active hospital`. `nextAppointment` reads the active hospital only. Emergency contacts
+  and chronic conditions are patient-level. A doctor's directory and export list only patients with an
+  assignment owned by the active employment. A doctor with no clinical employment gets an empty list,
+  never the masked admin directory.
+- **Medical records (N-6), lab orders, studies and trends (N-7), prescriptions and the safety screen
+  (N-8).** Reads, details, lists, summaries and exports require `hospital_id` = the active hospital (and
+  an owned assignment for the care arm). The safety screen reads only the active hospital's allergies
+  and prescriptions.
+- **Files (N-9).** A patient document, record attachment or lab attachment is readable only if the
+  chart is reachable **and** `files.hospital_id` = the active hospital. This also applies to the
+  uploader's own clinical upload.
+- **AI (N-10).** Patient binding goes through `assertCanReach`. Record, lab and prescription entities
+  must belong to the active hospital.
+- **Search (N-11), appointments, dashboard (KPIs, schedule, trends, satisfaction, recent activity,
+  action queue, critical alerts) and reports (analytics snapshot, insights, CSV, revenue alternate).**
+  All are scoped to the doctor and the active hospital.
+- **Writes stamp the server-derived scope.**
+  - Patient registration creates the hospital medical record at the doctor's hospital, and the owned
+    primary assignment.
+  - Chart children carry `hospital_id` and `hospital_medical_record_id`.
+  - Records, lab orders, prescriptions (including renewals) and doctor bookings also carry
+    `doctor_employment_id`.
+  - Signing a prescription stamps its `patient_medications` row.
+  - Patient-bound AI threads are stamped.
+  - Clinical uploads take the uploader's hospital. An unowned upload is claimed by the chart, record or
+    order it is filed under. Another hospital's upload is refused.
+  - Notifications copy the scope of the owned row they point at (`notifications_scoped_link_trg`).
+- **Soft-delete lookups.**
+  - Doctor-by-user lookups in patients, records, labs and pharmacy now go through the clinical
+    employment.
+  - These now use `findFirst` with `deletedAt: null`: appointments `doctorIdForUser` and `doctorSummary`
+    (reassignment target), the labs department by name, and the patient self-scope lookup
+    (`prisma-patient-self.repository.ts`).
+
+### Not covered
+
+- **The S2 backfill must run before deployment.** Until it does, charts reachable only through legacy
+  assignments, including the demo seed's, are unreachable (#17, by design).
+- **Admin surfaces (S5, #16).** The masked directory, oversight list, nudge and administrative cancel
+  remain platform-wide.
+- **Admin reassignment of a hospital-owned booking is refused with 409.** Phase 21 makes
+  `doctor_employment_id` immutable in place. A transfer workflow is a Database decision.
+- **Patient self-booking (`/me/appointments`) and the booking target hospital** wait on Database E1/A4.
+- **Messaging (OD-13)** stays participant-based. The AI thread list stays owner-scoped (every turn
+  re-resolves its context). Time-off resolution is doctor-level across hospitals.
+- **The DR-05 permission-based rule** (without the assignment anchor) is not part of S3.
+
+### Tests
+
+The rule is tested against PostgreSQL in `backend/test/hospital-patient-scope.e2e-spec.ts`.
+`backend/test/hospital-clinical-isolation.e2e-spec.ts` covers, over HTTP:
+
+- N-1 and N-6…N-11;
+- a patient assigned only at another hospital;
+- a legacy unowned assignment;
+- another hospital's child rows on a shared patient;
+- VACATION, unverified, suspended, soft-deleted and terminated doctors;
+- a doctor moving hospitals.
+
+Fixtures create owned data: `test/support/hospital-fixture.ts` and
+`createAuthHarness({ clinicalDoctors: true })`.
