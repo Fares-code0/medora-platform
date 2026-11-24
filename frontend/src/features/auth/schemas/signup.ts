@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { MessageKey } from '@/i18n';
+
 import { strongPassword } from './password';
 
 /**
@@ -50,27 +52,27 @@ export const PROFESSIONAL_CATEGORIES = [
 
 export type ProfessionalCategory = (typeof PROFESSIONAL_CATEGORIES)[number];
 
-/** The label shown against each value. */
-export const PROFESSIONAL_CATEGORY_LABELS: Readonly<Record<ProfessionalCategory, string>> = {
-  physician: 'Physician',
-  dentist: 'Dentist',
-  pharmacist: 'Pharmacist',
-  nurse: 'Nurse',
-  technician: 'Technician',
+/** The catalogue key of the label shown against each value. */
+export const PROFESSIONAL_CATEGORY_LABELS: Readonly<Record<ProfessionalCategory, MessageKey>> = {
+  physician: 'signup.category.physician',
+  dentist: 'signup.category.dentist',
+  pharmacist: 'signup.category.pharmacist',
+  nurse: 'signup.category.nurse',
+  technician: 'signup.category.technician',
 };
 
 const accountFields = {
-  firstName: z.string().trim().min(1, 'Enter your first name').max(60),
-  lastName: z.string().trim().min(1, 'Enter your last name').max(60),
-  email: z.string().min(1, 'Enter your email').email('Enter a valid email address'),
+  firstName: z.string().trim().min(1, 'validation.firstName').max(60),
+  lastName: z.string().trim().min(1, 'validation.lastName').max(60),
+  email: z.string().min(1, 'validation.enterEmail').email('validation.email'),
   phone: z
     .string()
-    .min(1, 'Enter your phone number')
-    .regex(phoneRegex, 'Enter a valid phone number'),
+    .min(1, 'validation.phone')
+    .regex(phoneRegex, 'validation.phoneInvalid'),
   password: strongPassword,
-  confirmPassword: z.string().min(1, 'Confirm your password'),
-  acceptTerms: z.boolean().refine((v) => v, { message: 'You must accept the Terms & Conditions' }),
-  acceptPrivacy: z.boolean().refine((v) => v, { message: 'You must accept the Privacy Policy' }),
+  confirmPassword: z.string().min(1, 'validation.confirmYourPassword'),
+  acceptTerms: z.boolean().refine((v) => v, { message: 'validation.acceptTerms' }),
+  acceptPrivacy: z.boolean().refine((v) => v, { message: 'validation.acceptPrivacy' }),
 } as const;
 
 /**
@@ -84,7 +86,7 @@ const accountFields = {
 const passwordsMatch = (data: { password: string; confirmPassword: string }): boolean =>
   data.password === data.confirmPassword;
 
-const passwordsMatchError = { message: 'Passwords do not match', path: ['confirmPassword'] };
+const passwordsMatchError = { message: 'validation.passwordMismatch', path: ['confirmPassword'] };
 
 /**
  * Doctor signup — the account fields plus the professional block.
@@ -109,19 +111,19 @@ export const doctorSignupSchema = z
     professionalRegistrationNumber: z
       .string()
       .trim()
-      .min(3, 'Enter your professional registration number')
+      .min(3, 'validation.professionalNumber')
       .max(40),
     professionalCategory: z.enum(PROFESSIONAL_CATEGORIES, {
-      message: 'Select your professional category',
+      message: 'validation.professionalCategory',
     }),
-    specialty: z.string().trim().min(2, 'Enter your specialty').max(60),
+    specialty: z.string().trim().min(2, 'validation.specialty').max(60),
     registrationExpiresOn: z
       .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the format YYYY-MM-DD')
-      .refine((value) => !Number.isNaN(Date.parse(value)), 'Enter a real date')
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'validation.dateFormat')
+      .refine((value) => !Number.isNaN(Date.parse(value)), 'validation.realDate')
       .refine(
         (value) => Date.parse(`${value}T23:59:59.999Z`) > Date.now(),
-        'That registration has already expired',
+        'validation.registrationExpired',
       )
       .optional()
       .or(z.literal('')),

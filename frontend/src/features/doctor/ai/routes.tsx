@@ -11,7 +11,7 @@ import { routes } from '@/routes';
 export const aiRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.assistant,
-    handle: { crumb: 'Medora AI' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.assistant' } satisfies RouteHandle,
     lazy: async () => {
       const { AiAssistantPage } = await import('./pages/AiAssistantPage');
       return { Component: AiAssistantPage };

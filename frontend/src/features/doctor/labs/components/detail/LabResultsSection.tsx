@@ -3,6 +3,7 @@ import { LineChart } from 'lucide-react';
 import { Alert } from '@/components/feedback';
 import { StatusBadge } from '@/components/patterns';
 import { Button } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import { hasPreliminaryResults } from '../../model/review';
 import {
@@ -34,6 +35,7 @@ function ResultRow({
   result: LabResultItem;
   onViewTrend: ((analyte: string) => void) | undefined;
 }) {
+  const t = useT();
   const meta = LAB_RESULT_FLAG_META[result.flag];
   const emphasize = result.flag !== 'normal';
   const trendable = onViewTrend !== undefined && result.numericValue !== null;
@@ -66,7 +68,7 @@ function ResultRow({
         {result.flag === 'normal' ? (
           <span className="text-text-tertiary">{meta.abbr}</span>
         ) : (
-          <StatusBadge status={meta.kind} label={meta.label} />
+          <StatusBadge status={meta.kind} label={t(meta.labelKey)} />
         )}
       </td>
       <td className="py-2.5 align-top text-end">

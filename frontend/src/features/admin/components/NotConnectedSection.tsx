@@ -1,5 +1,6 @@
 import { notConnected } from '@/api/http';
 import { ErrorState } from '@/components/feedback';
+import { useT } from '@/i18n';
 
 import { SECTION_META } from '../administration.meta';
 import type { AdminSectionSlug } from '../administration.types';
@@ -19,9 +20,10 @@ import { SectionShell } from './SectionShell';
  * the demo build keeps the full screen.
  */
 export function NotConnectedSection({ slug }: { slug: AdminSectionSlug }) {
+  const t = useT();
   return (
     <SectionShell slug={slug}>
-      <ErrorState error={notConnected(SECTION_META[slug].label)} headingLevel="h2" />
+      <ErrorState error={notConnected(t(SECTION_META[slug].labelKey))} headingLevel="h2" />
     </SectionShell>
   );
 }

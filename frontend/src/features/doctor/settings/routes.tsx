@@ -17,7 +17,7 @@ const lazyPage = async () => {
 export const settingsRoutes: readonly RouteObject[] = [
   {
     path: `${routes.doctor.root}/settings`,
-    handle: { crumb: 'Settings' } satisfies RouteHandle,
+    handle: { titleKey: 'shell.settings' } satisfies RouteHandle,
     children: [
       { index: true, element: <Navigate to={routes.doctor.settings('profile')} replace /> },
       // No crumb on the :section child — the parent already contributes

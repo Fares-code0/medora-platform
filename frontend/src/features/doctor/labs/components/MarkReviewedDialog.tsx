@@ -4,6 +4,7 @@ import { Alert } from '@/components/feedback';
 import { Stack } from '@/components/layout';
 import { StatusBadge } from '@/components/patterns';
 import { Button, Checkbox, Modal, Textarea } from '@/components/ui';
+import { useT } from '@/i18n';
 import { formatDate } from '@/utils/dates';
 
 import {
@@ -57,6 +58,7 @@ export function MarkReviewedDialog({
   submitting,
   errorMessage,
 }: MarkReviewedDialogProps) {
+  const t = useT();
   const [acknowledged, setAcknowledged] = useState<readonly string[]>([]);
   const [note, setNote] = useState('');
 
@@ -154,7 +156,7 @@ export function MarkReviewedDialog({
                     <div className="mt-2 ps-7">
                       <StatusBadge
                         status={LAB_RESULT_FLAG_META[result.flag].kind}
-                        label={LAB_RESULT_FLAG_META[result.flag].label}
+                        label={t(LAB_RESULT_FLAG_META[result.flag].labelKey)}
                       />
                     </div>
                   </div>

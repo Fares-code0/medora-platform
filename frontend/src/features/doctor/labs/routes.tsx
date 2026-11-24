@@ -11,7 +11,7 @@ import { routes } from '@/routes';
 export const labsRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.labs,
-    handle: { crumb: 'Labs' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.labs' } satisfies RouteHandle,
     lazy: async () => {
       const { LabsPage } = await import('./pages/LabsPage');
       return { Component: LabsPage };
@@ -20,7 +20,7 @@ export const labsRoutes: readonly RouteObject[] = [
   {
     // Declared before `:labId` so the static segment wins the match.
     path: routes.doctor.newLabOrder(),
-    handle: { crumb: 'New order' } satisfies RouteHandle,
+    handle: { titleKey: 'route.newLabOrder' } satisfies RouteHandle,
     lazy: async () => {
       const { NewLabOrderPage } = await import('./pages/NewLabOrderPage');
       return { Component: NewLabOrderPage };
@@ -28,7 +28,7 @@ export const labsRoutes: readonly RouteObject[] = [
   },
   {
     path: `${routes.doctor.labs}/:labId`,
-    handle: { crumb: 'Result' } satisfies RouteHandle,
+    handle: { titleKey: 'route.labResult' } satisfies RouteHandle,
     lazy: async () => {
       const { LabDetailPage } = await import('./pages/LabDetailPage');
       return { Component: LabDetailPage };

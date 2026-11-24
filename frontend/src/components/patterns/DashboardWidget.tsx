@@ -4,6 +4,7 @@ import { ErrorState } from '@/components/feedback/ErrorState';
 import { Skeleton } from '@/components/feedback/Skeleton';
 import { Card, type CardTone } from '@/components/ui/Card';
 import type { MenuEntry } from '@/components/ui/Dropdown';
+import { useT } from '@/i18n';
 
 import { WidgetMenu } from './dashboard/WidgetMenu';
 
@@ -43,6 +44,7 @@ export function DashboardWidget({
   className,
   children,
 }: DashboardWidgetProps) {
+  const t = useT();
   const headerAction =
     actions !== undefined || menu !== undefined ? (
       <div className="flex items-center gap-2">
@@ -69,7 +71,7 @@ export function DashboardWidget({
           </div>
         ) : error ? (
           <ErrorState
-            title={error.title ?? `Couldn't load ${title.toLowerCase()}`}
+            title={error.title ?? t('ui.loadErrorNamed', { name: title.toLowerCase() })}
             onRetry={error.onRetry}
             className="border-0"
           />

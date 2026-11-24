@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { StatisticCard, type StatisticCardProps } from './StatisticCard';
@@ -58,6 +59,7 @@ export function Sparkline({
 }
 
 export function KpiWidget({ sparkline, href, linkLabel, ...statProps }: KpiWidgetProps) {
+  const t = useT();
   const card = (
     <div className="relative">
       <StatisticCard {...statProps} />
@@ -74,7 +76,7 @@ export function KpiWidget({ sparkline, href, linkLabel, ...statProps }: KpiWidge
   return (
     <a
       href={href}
-      aria-label={linkLabel ?? `View ${statProps.label} details`}
+      aria-label={linkLabel ?? t('ui.viewDetails', { label: statProps.label })}
       className="block rounded-surface transition-transform duration-base ease-out hover:-translate-y-px [&>div>div]:hover:shadow-popover"
     >
       {card}

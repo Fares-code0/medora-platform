@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Drawer } from '@/components/ui/Drawer';
+import { useT } from '@/i18n';
 
 import type { DashboardWidgetDefinition, DashboardWidgetGroupDefinition } from './types';
 
@@ -62,6 +63,7 @@ function WidgetOption<TId extends string, TGroup extends string>({
   active: boolean;
   onToggle: (id: TId, active: boolean) => void;
 }) {
+  const t = useT();
   const Icon = widget.icon;
   const controlId = `dashboard-widget-${widget.id}`;
 
@@ -83,11 +85,11 @@ function WidgetOption<TId extends string, TGroup extends string>({
         <p className="mt-0.5 text-caption text-text-secondary">{widget.description}</p>
         {widget.source === 'sample' ? (
           <Badge variant="neutral" className="mt-1.5">
-            Sample data
+            {t('dashboard.sampleData')}
           </Badge>
         ) : widget.source === 'unavailable' ? (
           <Badge variant="neutral" className="mt-1.5">
-            Not available yet
+            {t('dashboard.notAvailableYet')}
           </Badge>
         ) : null}
       </div>
@@ -115,13 +117,14 @@ export function CustomizeDashboardDrawer<TId extends string, TGroup extends stri
   onToggle,
   onClear,
 }: CustomizeDashboardDrawerProps<TId, TGroup>) {
+  const t = useT();
   const total = widgets.length;
 
   return (
     <Drawer
       open={open}
       onClose={onClose}
-      title="Customize dashboard"
+      title={t('dashboard.customizeTitle')}
       // Floats clear of the viewport edges on a glass surface and fades in
       // place (150ms, no slide): it configures the page behind it, which
       // stays in view.
@@ -129,22 +132,21 @@ export function CustomizeDashboardDrawer<TId extends string, TGroup extends stri
       footer={
         <>
           <Button variant="ghost" onClick={onClear} disabled={activeCount === 0}>
-            Remove all
+            {t('ui.removeAll')}
           </Button>
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            {t('ui.cancel')}
           </Button>
-          <Button onClick={onDone}>Done</Button>
+          <Button onClick={onDone}>{t('ui.done')}</Button>
         </>
       }
     >
       <p className="text-body-sm text-text-secondary">
-        Choose what appears on your Overview. Your dashboard updates when you select Done, and the
-        layout rearranges itself around whatever you pick.
+        {t('dashboard.customizeIntro')}
       </p>
       {/* Announced as the count changes, so a screen reader hears each toggle land. */}
       <p aria-live="polite" className="mt-3 text-caption font-medium text-text-secondary">
-        {`${String(activeCount)} of ${String(total)} widgets selected`}
+        {t('dashboard.widgetsSelected', { selected: activeCount, total })}
       </p>
 
       <div className="mt-6 flex flex-col gap-6">

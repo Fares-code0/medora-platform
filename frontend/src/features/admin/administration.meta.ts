@@ -34,7 +34,7 @@ import {
 
 import type { StatisticTone, StatusKind } from '@/components/patterns';
 import type { BadgeEmphasis, BadgeVariant } from '@/components/ui';
-import type { TranslateFn } from '@/i18n';
+import type { MessageKey, TranslateFn } from '@/i18n';
 import { formatDateWith } from '@/i18n';
 import { adminNavigation } from '@/layouts';
 
@@ -79,121 +79,121 @@ export function adminSectionOptions(t: TranslateFn): readonly {
 
 export const SECTION_META: Record<
   AdminSectionSlug,
-  { readonly label: string; readonly description: string; readonly icon: LucideIcon }
+  { readonly labelKey: MessageKey; readonly descriptionKey: MessageKey; readonly icon: LucideIcon }
 > = {
   overview: {
-    label: 'Overview',
-    description: 'Platform health, security alerts and the work waiting on you.',
+    labelKey: 'admin.section.overview',
+    descriptionKey: 'admin.section.overview.description',
     icon: LayoutDashboard,
   },
   clinic: {
-    label: 'Clinic Overview',
-    description: 'Live snapshot of today’s clinic activity and utilization.',
+    labelKey: 'admin.section.clinic',
+    descriptionKey: 'admin.section.clinic.description',
     icon: Activity,
   },
   doctors: {
-    label: 'Doctors',
-    description: 'Onboarding, verification, and the standing of every doctor on the platform.',
+    labelKey: 'admin.section.doctors',
+    descriptionKey: 'admin.section.doctors.description',
     icon: Stethoscope,
   },
   patients: {
-    label: 'Patients',
-    description: 'Account support, access governance and lifecycle — never clinical review.',
+    labelKey: 'admin.section.patients',
+    descriptionKey: 'admin.section.patients.description',
     icon: UsersRound,
   },
   appointments: {
-    label: 'Appointment Oversight',
-    description: 'Every doctor’s appointments, the ones that are stuck, and what to do about them.',
+    labelKey: 'admin.section.appointments',
+    descriptionKey: 'admin.section.appointments.description',
     icon: CalendarCheck,
   },
   queue: {
-    label: 'Queue Management',
-    description: 'Who is next, who is waiting and who is running late.',
+    labelKey: 'admin.section.queue',
+    descriptionKey: 'admin.section.queue.description',
     icon: ListOrdered,
   },
   'waiting-room': {
-    label: 'Waiting Room',
-    description: 'Patients checked in and waiting to be seen.',
+    labelKey: 'admin.section.waitingRoom',
+    descriptionKey: 'admin.section.waitingRoom.description',
     icon: Armchair,
   },
   staff: {
-    label: 'Staff Management',
-    description: 'Clinic team, roles, availability and permissions.',
+    labelKey: 'admin.section.staff',
+    descriptionKey: 'admin.section.staff.description',
     icon: Users,
   },
   departments: {
-    label: 'Departments',
-    description: 'Clinic departments, their heads and staffing.',
+    labelKey: 'admin.section.departments',
+    descriptionKey: 'admin.section.departments.description',
     icon: Building2,
   },
   shifts: {
-    label: 'Shift Management',
-    description: 'Weekly shift planner across the whole team.',
+    labelKey: 'admin.section.shifts',
+    descriptionKey: 'admin.section.shifts.description',
     icon: CalendarRange,
   },
   schedule: {
-    label: 'Working Schedule',
-    description: 'Clinic opening hours across the week.',
+    labelKey: 'admin.section.schedule',
+    descriptionKey: 'admin.section.schedule.description',
     icon: Clock,
   },
   holidays: {
-    label: 'Holidays',
-    description: 'Public and clinic closures for the year.',
+    labelKey: 'admin.section.holidays',
+    descriptionKey: 'admin.section.holidays.description',
     icon: CalendarOff,
   },
   rooms: {
-    label: 'Room Management',
-    description: 'Consultation, lab, procedure, pharmacy and waiting areas.',
+    labelKey: 'admin.section.rooms',
+    descriptionKey: 'admin.section.rooms.description',
     icon: DoorOpen,
   },
   resources: {
-    label: 'Resources',
-    description: 'Equipment and consumable stock across the clinic.',
+    labelKey: 'admin.section.resources',
+    descriptionKey: 'admin.section.resources.description',
     icon: Package,
   },
   announcements: {
-    label: 'Announcements',
-    description: 'Internal notices for the clinic team.',
+    labelKey: 'admin.section.announcements',
+    descriptionKey: 'admin.section.announcements.description',
     icon: Megaphone,
   },
   policies: {
-    label: 'Clinic Policies',
-    description: 'Operating policies and compliance documents.',
+    labelKey: 'admin.section.policies',
+    descriptionKey: 'admin.section.policies.description',
     icon: ScrollText,
   },
   templates: {
-    label: 'Document Templates',
-    description: 'Reusable clinical document templates.',
+    labelKey: 'admin.section.templates',
+    descriptionKey: 'admin.section.templates.description',
     icon: FileText,
   },
   communications: {
-    label: 'Communication Monitoring',
-    description: 'Conversation oversight, safety flags and gated content access.',
+    labelKey: 'admin.section.communications',
+    descriptionKey: 'admin.section.communications.description',
     icon: MessagesSquare,
   },
   logs: {
-    label: 'System Logs',
-    description: 'Every authentication, security and administrative event on the platform.',
+    labelKey: 'admin.section.logs',
+    descriptionKey: 'admin.section.logs.description',
     icon: FileSearch,
   },
   reports: {
-    label: 'Reports',
-    description: 'Growth, utilization, clinical operations and platform performance.',
+    labelKey: 'admin.section.reports',
+    descriptionKey: 'admin.section.reports.description',
     icon: ChartColumnBig,
   },
   settings: {
-    label: 'Platform Settings',
-    description: 'Organization, communication, security and data configuration.',
+    labelKey: 'admin.section.settings',
+    descriptionKey: 'admin.section.settings.description',
     icon: Settings2,
   },
   preferences: {
-    label: 'My Settings',
-    description: 'Your personal account, appearance, and workspace preferences.',
+    labelKey: 'admin.section.preferences',
+    descriptionKey: 'admin.section.preferences.description',
     icon: SlidersHorizontal,
   },
   profile: {
-    label: 'My Profile',
-    description: 'Your administrator identity, security and activity.',
+    labelKey: 'admin.section.profile',
+    descriptionKey: 'admin.section.profile.description',
     icon: UserRoundCog,
   },
 };

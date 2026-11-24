@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 import { Bold, Eye, Italic, List, Pencil } from 'lucide-react';
 
 import { Button, Textarea } from '@/components/ui';
+import { useT, useTx } from '@/i18n';
 
 import { MarkdownContent } from './RichText';
 
@@ -44,8 +45,11 @@ export function RichTextField({
   required,
   placeholder,
   error,
-  helperText = 'Markdown: **bold**, *italic*, `code`, - lists, ## headings.',
+  helperText: helperTextProp,
 }: RichTextFieldProps) {
+  const t = useT();
+  const tx = useTx();
+  const helperText = helperTextProp ?? t('richText.helper');
   const [mode, setMode] = useState<Mode>('write');
   const textareaId = useId();
 
@@ -87,39 +91,39 @@ export function RichTextField({
             variant="ghost"
             size="sm"
             leadingIcon={Bold}
-            aria-label="Bold"
+            aria-label={t('richText.bold')}
             disabled={mode === 'preview'}
             onClick={() => {
               wrap('**');
             }}
           >
-            Bold
+            {t('richText.bold')}
           </Button>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             leadingIcon={Italic}
-            aria-label="Italic"
+            aria-label={t('richText.italic')}
             disabled={mode === 'preview'}
             onClick={() => {
               wrap('*');
             }}
           >
-            Italic
+            {t('richText.italic')}
           </Button>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             leadingIcon={List}
-            aria-label="Bulleted list"
+            aria-label={t('richText.bulletedList')}
             disabled={mode === 'preview'}
             onClick={() => {
               prefixLine('- ');
             }}
           >
-            List
+            {t('richText.list')}
           </Button>
         </div>
         <Button
@@ -131,7 +135,7 @@ export function RichTextField({
             setMode(mode === 'write' ? 'preview' : 'write');
           }}
         >
-          {mode === 'write' ? 'Preview' : 'Write'}
+          {mode === 'write' ? t('richText.preview') : t('richText.write')}
         </Button>
       </div>
 
@@ -151,10 +155,12 @@ export function RichTextField({
         />
       ) : (
         <div>
-          <p className="mb-1 text-caption font-medium text-text-secondary">{label} — preview</p>
+          <p className="mb-1 text-caption font-medium text-text-secondary">
+            {tx('richText.previewOf', { label })}
+          </p>
           <div className="min-h-[8rem] rounded-surface border border-border bg-surface-sunken p-3">
             {value.trim() === '' ? (
-              <p className="text-body-sm text-text-secondary">Nothing written yet.</p>
+              <p className="text-body-sm text-text-secondary">{t('richText.empty')}</p>
             ) : (
               <MarkdownContent markdown={value} />
             )}

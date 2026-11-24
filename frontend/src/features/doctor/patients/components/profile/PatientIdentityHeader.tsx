@@ -21,6 +21,7 @@ import {
   type Patient,
 } from '@/features/shared-domain/patient-identity';
 import { useDisclosure } from '@/hooks/useDisclosure';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 import { MedoraAiLogo } from '@/shared/components/branding';
 import { exportPdf, printDataset } from '@/utils/export';
@@ -47,6 +48,7 @@ export function PatientIdentityHeader({
   allergies,
   onViewRecord,
 }: PatientIdentityHeaderProps) {
+  const t = useT();
   const navigate = useNavigate();
   const { profile } = useDoctorProfile();
   const reportDialog = useDisclosure();
@@ -63,7 +65,7 @@ export function PatientIdentityHeader({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <h1 className={PAGE_TITLE_CLASS}>{patient.name}</h1>
-                <StatusBadge status={statusMeta.kind} label={statusMeta.label} />
+                <StatusBadge status={statusMeta.kind} label={t(statusMeta.labelKey)} />
                 <StatusBadge status={riskMeta.kind} label={`Risk: ${riskMeta.label}`} />
               </div>
               <p className="mt-1 text-body-sm text-text-secondary">

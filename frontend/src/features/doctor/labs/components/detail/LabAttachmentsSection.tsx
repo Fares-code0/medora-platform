@@ -1,6 +1,7 @@
 import { Download, Eye, Paperclip } from 'lucide-react';
 
 import { Badge, Button, IconButton, Tooltip } from '@/components/ui';
+import { useT } from '@/i18n';
 import { formatDate } from '@/utils/dates';
 import { exportPdf, openPdfPreview } from '@/utils/export';
 
@@ -20,6 +21,7 @@ function formatSize(sizeKb: number): string {
 }
 
 export function LabAttachmentsSection({ test }: { test: LabTest }) {
+  const t = useT();
   return (
     <LabSectionCard title="Attachments">
       {test.attachments.length === 0 ? (
@@ -48,7 +50,9 @@ export function LabAttachmentsSection({ test }: { test: LabTest }) {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <Badge variant="neutral">{LAB_ATTACHMENT_KIND_META[attachment.kind].label}</Badge>
+                <Badge variant="neutral">
+                  {t(LAB_ATTACHMENT_KIND_META[attachment.kind].labelKey)}
+                </Badge>
                 <Button
                   variant="ghost"
                   size="sm"

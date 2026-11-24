@@ -6,6 +6,7 @@ import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { ErrorState } from '@/components/feedback/ErrorState';
 import { Skeleton } from '@/components/feedback/Skeleton';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { Checkbox } from './Checkbox';
@@ -164,6 +165,7 @@ export function DataTable<T>({
   getRowClassName,
   className,
 }: DataTableProps<T>) {
+  const t = useT();
   const totalColumns = columns.length + (selectable ? 1 : 0);
   const allIds = rows.map(getRowId);
   const selectedSet = new Set(selectedIds);
@@ -372,7 +374,7 @@ export function DataTable<T>({
                 style={pinned ? { insetInlineStart: '0px' } : undefined}
               >
                 <Checkbox
-                  aria-label="Select all rows"
+                  aria-label={t('ui.selectAllRows')}
                   checked={allSelected}
                   indeterminate={someSelected && !allSelected}
                   onChange={toggleAll}
@@ -484,7 +486,7 @@ export function DataTable<T>({
             <tr>
               <td colSpan={totalColumns} className="p-8">
                 <ErrorState
-                  title={error.title ?? "Couldn't load this table"}
+                  title={error.title ?? t('ui.tableLoadError')}
                   onRetry={error.onRetry}
                   className="border-0"
                 />
@@ -494,7 +496,7 @@ export function DataTable<T>({
           {!loading && !error && rows.length === 0 ? (
             <tr>
               <td colSpan={totalColumns}>
-                {emptyState ?? <EmptyState title="No records to show" />}
+                {emptyState ?? <EmptyState title={t('ui.tableEmpty')} />}
               </td>
             </tr>
           ) : null}
@@ -540,7 +542,7 @@ export function DataTable<T>({
                         onClick={(event) => event.stopPropagation()}
                       >
                         <Checkbox
-                          aria-label={`Select row ${id}`}
+                          aria-label={t('ui.selectRow', { id })}
                           checked={isSelected}
                           onChange={() => toggleRow(id)}
                         />

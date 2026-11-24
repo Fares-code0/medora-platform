@@ -2,6 +2,7 @@ import type { KeyboardEvent } from 'react';
 
 import { Check, X, type LucideIcon } from 'lucide-react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 /**
@@ -33,6 +34,7 @@ export function Chip({
   icon: Icon,
   className,
 }: ChipProps) {
+  const t = useT();
   const baseClasses = cn(
     // max-w-full lets long labels truncate instead of overflowing the
     // container (e.g. education entries on narrow viewports).
@@ -68,7 +70,7 @@ export function Chip({
     <button
       type="button"
       disabled={disabled}
-      aria-label={removeLabel ?? `Remove ${label}`}
+      aria-label={removeLabel ?? t('ui.removeItem', { label })}
       onClick={onRemove}
       className="hit-target touch-target -mr-1.5 inline-flex h-4 w-4 [--touch-x:14px] [--touch-y:14px] touch:mx-[14px] shrink-0 items-center justify-center rounded-pill text-current transition-colors duration-fast hover:bg-border disabled:cursor-not-allowed"
     >

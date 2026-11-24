@@ -15,10 +15,10 @@ import { strongPassword } from './password';
 export const acceptInvitationSchema = z
   .object({
     password: strongPassword,
-    confirmPassword: z.string().min(1, 'Confirm your password'),
+    confirmPassword: z.string().min(1, 'validation.confirmYourPassword'),
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: 'Passwords do not match',
+    message: 'validation.passwordMismatch',
     path: ['confirmPassword'],
   });
 
@@ -33,8 +33,8 @@ export type AcceptInvitationValues = z.infer<typeof acceptInvitationSchema>;
 export const activateInvitationSchema = z.object({
   code: z
     .string()
-    .length(6, 'Enter the 6-digit code')
-    .regex(/^\d+$/, 'Code must be digits only'),
+    .length(6, 'validation.codeLength')
+    .regex(/^\d+$/, 'validation.digitsOnly'),
 });
 
 export type ActivateInvitationValues = z.infer<typeof activateInvitationSchema>;

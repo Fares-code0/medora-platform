@@ -14,7 +14,7 @@ import {
   THOUSANDS_SEPARATOR,
 } from './format';
 import { LOCALE_CODES, type Locale } from './locales';
-import { loadAllCatalogues, type Messages } from './messages';
+import { loadAllCatalogues, type PartialMessages } from './messages';
 
 /**
  * DEC-009 — Latin digits in every language. The words follow the app's
@@ -94,14 +94,15 @@ describe('the words follow the language', () => {
 
 describe('catalogues', () => {
   // Loaded on demand in the app (NEW-21).
-  let catalogues: Record<Locale, Messages>;
+  let catalogues: Record<Locale, PartialMessages>;
   beforeAll(async () => {
     catalogues = await loadAllCatalogues();
   });
 
   it.each(LOCALE_CODES)('%s has no native digit in any message', (locale) => {
     const offenders = Object.entries(catalogues[locale]).filter(([, text]) =>
-      NATIVE_DIGIT.test(text),
+      // A plural message is an object of forms; every form is checked.
+      NATIVE_DIGIT.test(typeof text === 'string' ? text : JSON.stringify(text)),
     );
     expect(offenders).toEqual([]);
   });
@@ -131,7 +132,9 @@ describe('one formatting module', () => {
           ),
       );
     expect(offenders).toEqual([]);
-  });
+    // A whole-tree walk: the default 5 s overruns when it shares the CPU with
+    // the other whole-tree scans (logical properties, hard-coded copy).
+  }, 60_000);
 });
 
 describe('DEC-011 — separators of the shared number formatter', () => {

@@ -17,7 +17,7 @@ const lazyPage = async () => {
 export const appointmentsRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.appointments,
-    handle: { crumb: 'Appointments' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.appointments' } satisfies RouteHandle,
     lazy: lazyPage,
   },
   {
@@ -27,7 +27,7 @@ export const appointmentsRoutes: readonly RouteObject[] = [
      * so a reader does not have to know that to be sure.
      */
     path: routes.doctor.bookAppointment(),
-    handle: { crumb: 'New appointment' } satisfies RouteHandle,
+    handle: { titleKey: 'route.newAppointment' } satisfies RouteHandle,
     lazy: async () => {
       const { NewAppointmentPage } = await import('./pages/NewAppointmentPage');
       return { Component: NewAppointmentPage };
@@ -35,7 +35,7 @@ export const appointmentsRoutes: readonly RouteObject[] = [
   },
   {
     path: `${routes.doctor.appointments}/:appointmentId`,
-    handle: { crumb: 'Appointment' } satisfies RouteHandle,
+    handle: { titleKey: 'route.appointment' } satisfies RouteHandle,
     lazy: lazyPage,
   },
 ];

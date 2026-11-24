@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import type { ReactNode } from 'react';
 
+import { useT } from '@/i18n';
+
 import { Button } from './Button';
 import { Modal } from './Modal';
 
@@ -35,11 +37,13 @@ export function ConfirmationDialog({
   title,
   description,
   confirmLabel,
-  cancelLabel = 'Go back',
+  cancelLabel,
   tone = 'destructive',
   loading = false,
   children,
 }: ConfirmationDialogProps) {
+  const t = useT();
+  const shownCancelLabel = cancelLabel ?? t('ui.goBack');
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
   return (
@@ -55,7 +59,7 @@ export function ConfirmationDialog({
       footer={
         <>
           <Button ref={cancelRef} variant="secondary" onClick={onClose} disabled={loading}>
-            {cancelLabel}
+            {shownCancelLabel}
           </Button>
           <Button
             variant={tone === 'destructive' ? 'destructive' : 'primary'}

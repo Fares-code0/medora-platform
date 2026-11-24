@@ -1,5 +1,6 @@
 import type { StatusKind } from '@/components/patterns';
 import type { BloodType, Gender } from '@/features/shared-domain/patient-identity';
+import type { MessageKey } from '@/i18n';
 
 /**
  * Laboratory domain model (D-05).
@@ -29,13 +30,13 @@ export type LabTestStatus = 'ordered' | 'collected' | 'processing' | 'completed'
 
 export const LAB_STATUS_META: Record<
   LabTestStatus,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
-  ordered: { label: 'Ordered', kind: 'pending' },
-  collected: { label: 'Collected', kind: 'info' },
-  processing: { label: 'Processing', kind: 'active' },
-  completed: { label: 'Completed', kind: 'completed' },
-  cancelled: { label: 'Cancelled', kind: 'cancelled' },
+  ordered: { label: 'Ordered', labelKey: 'lab.status.ordered', kind: 'pending' },
+  collected: { label: 'Collected', labelKey: 'lab.status.collected', kind: 'info' },
+  processing: { label: 'Processing', labelKey: 'lab.status.processing', kind: 'active' },
+  completed: { label: 'Completed', labelKey: 'lab.status.completed', kind: 'completed' },
+  cancelled: { label: 'Cancelled', labelKey: 'lab.status.cancelled', kind: 'cancelled' },
 };
 
 export const LAB_STATUSES = Object.keys(LAB_STATUS_META) as readonly LabTestStatus[];
@@ -51,11 +52,11 @@ export type LabPriority = 'routine' | 'urgent' | 'stat';
 
 export const LAB_PRIORITY_META: Record<
   LabPriority,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
-  routine: { label: 'Routine', kind: 'normal' },
-  urgent: { label: 'Urgent', kind: 'expiring' },
-  stat: { label: 'STAT', kind: 'critical' },
+  routine: { label: 'Routine', labelKey: 'lab.priority.routine', kind: 'normal' },
+  urgent: { label: 'Urgent', labelKey: 'lab.priority.urgent', kind: 'expiring' },
+  stat: { label: 'STAT', labelKey: 'lab.priority.stat', kind: 'critical' },
 };
 
 export const LAB_PRIORITIES = Object.keys(LAB_PRIORITY_META) as readonly LabPriority[];
@@ -106,14 +107,29 @@ export type LabResultFlag =
 
 export const LAB_RESULT_FLAG_META: Record<
   LabResultFlag,
-  { readonly label: string; readonly kind: StatusKind; readonly abbr: string }
+  {
+    readonly label: string;
+    readonly labelKey: MessageKey;
+    readonly kind: StatusKind;
+    readonly abbr: string;
+  }
 > = {
-  normal: { label: 'Normal', kind: 'normal', abbr: '—' },
-  low: { label: 'Low', kind: 'expiring', abbr: 'L' },
-  high: { label: 'High', kind: 'expiring', abbr: 'H' },
-  'critical-low': { label: 'Critical low', kind: 'critical', abbr: 'LL' },
-  'critical-high': { label: 'Critical high', kind: 'critical', abbr: 'HH' },
-  abnormal: { label: 'Abnormal', kind: 'expiring', abbr: 'A' },
+  normal: { label: 'Normal', labelKey: 'lab.flag.normal', kind: 'normal', abbr: '—' },
+  low: { label: 'Low', labelKey: 'lab.flag.low', kind: 'expiring', abbr: 'L' },
+  high: { label: 'High', labelKey: 'lab.flag.high', kind: 'expiring', abbr: 'H' },
+  'critical-low': {
+    label: 'Critical low',
+    labelKey: 'lab.flag.criticalLow',
+    kind: 'critical',
+    abbr: 'LL',
+  },
+  'critical-high': {
+    label: 'Critical high',
+    labelKey: 'lab.flag.criticalHigh',
+    kind: 'critical',
+    abbr: 'HH',
+  },
+  abnormal: { label: 'Abnormal', labelKey: 'lab.flag.abnormal', kind: 'expiring', abbr: 'A' },
 };
 
 export function isCriticalFlag(flag: LabResultFlag): boolean {
@@ -194,11 +210,17 @@ export interface LabSpecimen {
 
 export type LabAttachmentKind = 'report' | 'addendum' | 'external' | 'raw-data';
 
-export const LAB_ATTACHMENT_KIND_META: Record<LabAttachmentKind, { readonly label: string }> = {
-  report: { label: 'Report' },
-  addendum: { label: 'Addendum' },
-  external: { label: 'External' },
-  'raw-data': { label: 'Raw data' },
+export const LAB_ATTACHMENT_KIND_META: Record<
+  LabAttachmentKind,
+  {
+    readonly label: string;
+    readonly labelKey: MessageKey;
+  }
+> = {
+  report: { label: 'Report', labelKey: 'lab.attachment.report' },
+  addendum: { label: 'Addendum', labelKey: 'lab.attachment.addendum' },
+  external: { label: 'External', labelKey: 'lab.attachment.external' },
+  'raw-data': { label: 'Raw data', labelKey: 'lab.attachment.raw' },
 };
 
 export interface LabAttachment {

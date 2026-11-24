@@ -8,14 +8,17 @@ import { PASSWORD_MIN_LENGTH, passwordChecks } from '@/utils/password';
  * platform `@/utils/password` util so the auth flows and the doctor Account
  * settings share one source of truth. Re-exported here so existing auth
  * imports keep working.
+ *
+ * The messages are catalogue keys; the form renders them with
+ * `translateIfKey(t, message, { count: PASSWORD_MIN_LENGTH })`.
  */
 
 export { PASSWORD_MIN_LENGTH, passwordChecks };
 
 export const strongPassword = z
   .string()
-  .min(PASSWORD_MIN_LENGTH, `Use at least ${String(PASSWORD_MIN_LENGTH)} characters`)
-  .refine(passwordChecks.lower, 'Add a lowercase letter')
-  .refine(passwordChecks.upper, 'Add an uppercase letter')
-  .refine(passwordChecks.digit, 'Add a number')
-  .refine(passwordChecks.symbol, 'Add a symbol');
+  .min(PASSWORD_MIN_LENGTH, 'validation.passwordLength')
+  .refine(passwordChecks.lower, 'validation.passwordLower')
+  .refine(passwordChecks.upper, 'validation.passwordUpper')
+  .refine(passwordChecks.digit, 'validation.passwordDigit')
+  .refine(passwordChecks.symbol, 'validation.passwordSymbol');

@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/app/providers';
 import { Alert } from '@/components/feedback';
 import { Button, Input } from '@/components/ui';
-import { useT } from '@/i18n';
+import { translateIfKey, useT } from '@/i18n';
 import { routes } from '@/routes';
 
 import { AuthCard, AuthFormError } from '../components';
@@ -71,7 +71,7 @@ export default function ForgotPasswordPage() {
           autoFocus
           leadingIcon={Mail}
           placeholder={t('common.emailPlaceholder')}
-          error={errors.email?.message}
+          error={translateIfKey(t, errors.email?.message)}
           {...register('email')}
         />
         <Button type="submit" fullWidth loading={isSubmitting}>
