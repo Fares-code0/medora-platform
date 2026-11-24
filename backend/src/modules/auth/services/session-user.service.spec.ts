@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../../common/auth/hospital-context';
-import type { HospitalContextService } from '../../../shared/authz';
+import type { AdminScope, AdminScopeService, HospitalContextService } from '../../../shared/authz';
 import { UserStatus } from '../../../generated/prisma/enums';
 import type { IdentityRepository } from '../repositories/identity.repository';
 import { SessionUserService } from './session-user.service';
@@ -24,16 +24,23 @@ const identityUser = {
   role: { code: 'doctor' },
 };
 
-function service(context: HospitalContext, user: unknown = identityUser) {
+function service(
+  context: HospitalContext,
+  user: unknown = identityUser,
+  adminScope: AdminScope = { kind: 'none', reason: 'not_mapped' },
+) {
   const identity = { findById: vi.fn().mockResolvedValue(user) };
   const forRequest = vi.fn().mockResolvedValue(context);
+  const adminForRequest = vi.fn().mockResolvedValue(adminScope);
   const sessions = new SessionUserService(
     identity as unknown as IdentityRepository,
     { forRequest } as unknown as HospitalContextService,
+    { forRequest: adminForRequest } as unknown as AdminScopeService,
   );
   return {
     current: (who: AuthenticatedUser) => sessions.current(who),
     forRequest,
+    adminForRequest,
   };
 }
 
@@ -99,14 +106,16 @@ describe('SessionUserService hospital context', () => {
 
   describe('token role and database role disagree (F3, #23)', () => {
     it('resolves the context for the database role when a doctor token meets an admin row', async () => {
-      const { current, forRequest } = service(
+      const { current, forRequest, adminForRequest } = service(
         { kind: 'unresolved', reason: 'admin_scope_not_mapped' },
         { ...identityUser, role: { code: 'admin' } },
       );
 
       const result = await current({ ...principal, role: 'doctor' });
 
-      expect(forRequest).toHaveBeenCalledWith({ id: principal.id, role: 'admin' });
+      // S5: an administrator's scope is the enforced admin scope.
+      expect(adminForRequest).toHaveBeenCalledWith({ id: principal.id, role: 'admin' });
+      expect(forRequest).not.toHaveBeenCalled();
       expect(result.role).toBe('admin');
       // A doctor-employment hospital is never reported alongside role: admin.
       expect(result.activeHospital).toBeNull();
@@ -128,6 +137,43 @@ describe('SessionUserService hospital context', () => {
       expect(forRequest).toHaveBeenCalledWith({ id: principal.id, role: 'doctor' });
       expect(result.role).toBe('doctor');
       expect(result.adminScope).toBeNull();
+    });
+  });
+
+  describe('administrator scope (S5: the scope the admin routes enforce)', () => {
+    const adminRow = { ...identityUser, role: { code: 'admin' } };
+    const adminPrincipal = { ...principal, role: 'admin' };
+    const unused: HospitalContext = { kind: 'unresolved', reason: 'admin_scope_not_mapped' };
+
+    it('reports platform scope only for an explicitly marked Platform Admin', async () => {
+      const result = await service(unused, adminRow, { kind: 'platform' }).current(adminPrincipal);
+
+      expect(result.adminScope).toEqual({ type: 'platform' });
+      expect(result.activeHospital).toBeNull();
+    });
+
+    it("reports a Hospital Admin's one hospital", async () => {
+      const result = await service(unused, adminRow, {
+        kind: 'hospital',
+        hospitalId: 'hospital-1',
+        hospitalName: 'North Hospital',
+      }).current(adminPrincipal);
+
+      expect(result.adminScope).toEqual({
+        type: 'hospital',
+        hospital: { id: 'hospital-1', name: 'North Hospital' },
+      });
+      expect(result.activeHospital).toBeNull();
+    });
+
+    it('reports no scope for an unmapped or ambiguous administrator', async () => {
+      for (const reason of ['not_mapped', 'ambiguous_hospital_admin'] as const) {
+        const result = await service(unused, adminRow, { kind: 'none', reason }).current(
+          adminPrincipal,
+        );
+        expect(result.adminScope).toBeNull();
+        expect(result.activeHospital).toBeNull();
+      }
     });
   });
 

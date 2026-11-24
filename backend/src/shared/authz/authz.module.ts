@@ -3,6 +3,9 @@ import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common
 import { ConfigService } from '../../config';
 import { DatabaseModule } from '../database';
 
+import { AdminScopeGuard } from './admin-scope.guard';
+import { PrismaAdminScopeRepository } from './admin-scope.repository';
+import { ADMIN_SCOPE_REPOSITORY, AdminScopeService } from './admin-scope.service';
 import { AuthorizationGuard } from './authorization.guard';
 import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
 import { HOSPITAL_PATIENT_SCOPE_REPOSITORY } from './hospital-patient-scope';
@@ -98,6 +101,11 @@ import {
     PatientScopeService,
     PatientSelfScopeService,
     AuthorizationGuard,
+    // S5: administrative scope, resolved per request from authoritative
+    // state and enforced by `AdminScopeGuard` on every administrative route.
+    { provide: ADMIN_SCOPE_REPOSITORY, useClass: PrismaAdminScopeRepository },
+    AdminScopeService,
+    AdminScopeGuard,
   ],
   exports: [
     PermissionResolver,
@@ -105,6 +113,8 @@ import {
     PatientSelfScopeService,
     HospitalContextService,
     AuthorizationGuard,
+    AdminScopeService,
+    AdminScopeGuard,
     ROLE_REPOSITORY,
     PERMISSION_CACHE,
     PATIENT_ASSIGNMENT_REPOSITORY,

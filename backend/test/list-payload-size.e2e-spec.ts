@@ -19,6 +19,7 @@ import {
   seedPatient,
   toProcessing,
 } from './support/lab-fixture';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * RM M41.2 — "payload-size audit of list DTOs" (master guide §15.4:
@@ -167,6 +168,8 @@ async function adminToken(): Promise<string> {
     .send({ code: currentCode(secret) });
   const role = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: role.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const { otpToken } = await login(email);
   return dataOf<{ accessToken: string }>(

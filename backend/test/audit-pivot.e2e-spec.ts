@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * The audit pivot across pages (RM M28.3, corrected at M32.3).
@@ -122,6 +123,8 @@ async function signUpAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),
@@ -372,20 +375,18 @@ describe('authorization scopes', () => {
     ).toBe(403);
   });
 
-  it('gives a `logs.view` override the same pivot as an administrator', async () => {
-    // The ledger is platform-wide by design (API §14): the capability is
-    // the scope, so two holders of it see the same counts.
+  it('refuses a `logs.view` override without an administrative scope (S5)', async () => {
+    // S5 (OD-07): the ledger is an administrative surface. A Platform Admin
+    // reads all of it, a Hospital Admin its own hospital's rows; a non-admin
+    // account holding `logs.view` by override has no administrative scope
+    // and is refused, on page one and on a cursor page asking for the pivot.
     const admin = await page('pageSize=2');
-    const auditor = await page('pageSize=2', auditorToken);
+    expect(admin.pivot).toEqual(FULL);
 
-    expect(auditor.pivot).toEqual(admin.pivot);
-    expect(auditor.items.map((item) => item.id)).toEqual(admin.items.map((item) => item.id));
-
-    const auditorSecond = await page(
-      `pageSize=2&${after(auditor.nextCursor)}&pivot=true`,
-      auditorToken,
-    );
-    expect(auditorSecond.pivot).toEqual(FULL);
+    expect((await list('pageSize=2', auditorToken)).status).toBe(403);
+    expect(
+      (await list(`pageSize=2&${after(admin.nextCursor)}&pivot=true`, auditorToken)).status,
+    ).toBe(403);
   });
 });
 

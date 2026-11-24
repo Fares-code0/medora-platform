@@ -3,7 +3,13 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import {
+  AdminScoped,
+  Can,
+  CurrentAdminScope,
+  hospitalFilterOf,
+  type ResolvedAdminScope,
+} from '../../../shared/authz';
 import type {
   AdminDoctorDetail,
   PracticeStatusResult,
@@ -23,6 +29,7 @@ import {
   AdminDoctorService,
   type PaginatedAdminDoctors,
 } from '../services/admin-doctor.service';
+import { DoctorAdminScopeService } from '../services/doctor-admin-scope.service';
 
 /**
  * The administrator's doctor surface (RM M9.3, M9.5 — API §3.4–3.7).
@@ -50,23 +57,35 @@ import {
  * flags explicitly: "verify by contract test, not by UI". That is what
  * `doctor-administration.e2e-spec.ts` does.
  */
+// S5 (OD-07): Platform Admin — every doctor; Hospital Admin — doctors with an
+// active employment at its hospital, others 404 (`DoctorAdminScopeService`);
+// no administrative scope — 403.
+@AdminScoped('any')
 @Controller('doctors')
 export class AdminDoctorController {
-  constructor(private readonly doctors: AdminDoctorService) {}
+  constructor(
+    private readonly doctors: AdminDoctorService,
+    private readonly scopes: DoctorAdminScopeService,
+  ) {}
 
   /** API §3.4 — the roster with its four operational columns. */
   @Can('doctors.manage')
   @Get()
   list(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Query(zodQuery(adminDoctorQuerySchema)) query: AdminDoctorQuery,
   ): Promise<PaginatedAdminDoctors> {
-    return this.doctors.list(query);
+    return this.doctors.list(query, hospitalFilterOf(scope));
   }
 
   /** API §3.5 — the detail, carrying `affectedAppointments` for §3.7. */
   @Can('doctors.manage')
   @Get(':doctorId')
-  detail(@Param('doctorId') doctorId: string): Promise<AdminDoctorDetail> {
+  async detail(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('doctorId') doctorId: string,
+  ): Promise<AdminDoctorDetail> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.detail(doctorId);
   }
 
@@ -81,10 +100,12 @@ export class AdminDoctorController {
   @Can('doctors.verify')
   @Post(':doctorId/verify')
   @HttpCode(HttpStatus.OK)
-  verify(
+  async verify(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
   ): Promise<VerificationResult> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.verify(actor, doctorId);
   }
 
@@ -92,11 +113,13 @@ export class AdminDoctorController {
   @Can('doctors.verify')
   @Post(':doctorId/reject')
   @HttpCode(HttpStatus.OK)
-  reject(
+  async reject(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Body(zodBody(decisionReasonSchema)) body: DecisionReasonInput,
   ): Promise<VerificationResult> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.reject(actor, doctorId, body);
   }
 
@@ -104,11 +127,13 @@ export class AdminDoctorController {
   @Can('doctors.verify')
   @Post(':doctorId/request-documents')
   @HttpCode(HttpStatus.OK)
-  requestDocuments(
+  async requestDocuments(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Body(zodBody(requestDocumentsSchema)) body: RequestDocumentsInput,
   ): Promise<VerificationResult> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.requestDocuments(actor, doctorId, body);
   }
 
@@ -123,12 +148,14 @@ export class AdminDoctorController {
   @Can('doctors.verify')
   @Post(':doctorId/documents/:documentId/approve')
   @HttpCode(HttpStatus.OK)
-  approveDocument(
+  async approveDocument(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Param('documentId') documentId: string,
     @Body(zodBody(approveDocumentSchema)) body: ApproveDocumentInput,
   ): Promise<AdminDoctorDetail> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.approveDocument(actor, doctorId, documentId, body);
   }
 
@@ -136,12 +163,14 @@ export class AdminDoctorController {
   @Can('doctors.verify')
   @Post(':doctorId/documents/:documentId/reject')
   @HttpCode(HttpStatus.OK)
-  rejectDocument(
+  async rejectDocument(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Param('documentId') documentId: string,
     @Body(zodBody(decisionReasonSchema)) body: DecisionReasonInput,
   ): Promise<AdminDoctorDetail> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.rejectDocument(actor, doctorId, documentId, body);
   }
 
@@ -155,11 +184,13 @@ export class AdminDoctorController {
   @Can('doctors.manage')
   @Post(':doctorId/suspend')
   @HttpCode(HttpStatus.OK)
-  suspend(
+  async suspend(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Body(zodBody(decisionReasonSchema)) body: DecisionReasonInput,
   ): Promise<PracticeStatusResult> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.suspend(actor, doctorId, body);
   }
 
@@ -167,10 +198,12 @@ export class AdminDoctorController {
   @Can('doctors.manage')
   @Post(':doctorId/reactivate')
   @HttpCode(HttpStatus.OK)
-  reactivate(
+  async reactivate(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
   ): Promise<PracticeStatusResult> {
+    await this.scopes.assertDoctor(scope, doctorId);
     return this.doctors.reactivate(actor, doctorId);
   }
 }

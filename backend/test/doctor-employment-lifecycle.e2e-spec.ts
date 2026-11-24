@@ -14,6 +14,7 @@ import {
   testEmail,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * The doctor employment lifecycle (OD-12, gap G3, stage S6 — GitHub #54),
@@ -160,6 +161,8 @@ async function signInAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)

@@ -13,6 +13,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * `GET/PATCH /me/profile` and `PUT /me/profile/photo`
@@ -127,6 +128,8 @@ async function adminToken(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)

@@ -23,6 +23,25 @@ import { PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * S5 scope filters. `null` is platform-wide (a Platform Admin); a hospital id
+ * restricts to that hospital. A legacy row with no hospital is never in a
+ * hospital's scope.
+ *
+ * Staff have no `hospital_id` of their own: a staff member is in a hospital's
+ * scope while they hold an **active** `hospital_staff_affiliations` row there
+ * (one per staff member, MRD-05).
+ */
+function staffIn(hospitalId: string | null): Prisma.StaffMemberWhereInput {
+  return hospitalId === null
+    ? {}
+    : { hospitalAffiliations: { some: { hospitalId, endedAt: null } } };
+}
+
+function inHospital(hospitalId: string | null): { hospitalId?: string } {
+  return hospitalId === null ? {} : { hospitalId };
+}
+
 const STAFF_SELECT = {
   id: true,
   name: true,
@@ -71,37 +90,58 @@ export class DirectoryRepository {
 
   /* ── Staff ─────────────────────────────────────────────────── */
 
-  listStaff(page: number, pageSize: number) {
+  listStaff(page: number, pageSize: number, hospitalId: string | null) {
+    const where = staffIn(hospitalId);
     return Promise.all([
       this.prisma.db.staffMember.findMany({
+        where,
         select: STAFF_SELECT,
         orderBy: { name: 'asc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-      this.prisma.db.staffMember.count(),
+      this.prisma.db.staffMember.count({ where }),
     ]);
   }
 
-  createStaff(data: Prisma.StaffMemberUncheckedCreateInput) {
-    return this.prisma.db.staffMember.create({ data, select: STAFF_SELECT });
+  /**
+   * A Hospital Admin's new staff member is affiliated with its hospital in
+   * the same transaction, so the row is never created outside the scope that
+   * created it.
+   */
+  createStaff(data: Prisma.StaffMemberUncheckedCreateInput, hospitalId: string | null) {
+    if (hospitalId === null) {
+      return this.prisma.db.staffMember.create({ data, select: STAFF_SELECT });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.staffMember.create({ data, select: { id: true } });
+      await tx.hospitalStaffAffiliation.create({ data: { staffId: created.id, hospitalId } });
+      return tx.staffMember.findUniqueOrThrow({ where: { id: created.id }, select: STAFF_SELECT });
+    });
   }
 
-  async updateStaff(id: string, data: Prisma.StaffMemberUncheckedUpdateInput) {
+  async updateStaff(
+    id: string,
+    data: Prisma.StaffMemberUncheckedUpdateInput,
+    hospitalId: string | null,
+  ) {
     if (!UUID.test(id)) return null;
 
-    const moved = await this.prisma.db.staffMember.updateMany({ where: { id }, data });
+    const moved = await this.prisma.db.staffMember.updateMany({
+      where: { id, ...staffIn(hospitalId) },
+      data,
+    });
 
     return moved.count === 0
       ? null
       : this.prisma.db.staffMember.findUnique({ where: { id }, select: STAFF_SELECT });
   }
 
-  async softDeleteStaff(id: string): Promise<number> {
+  async softDeleteStaff(id: string, hospitalId: string | null): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.staffMember.updateMany({
-      where: { id },
+      where: { id, ...staffIn(hospitalId) },
       data: { deletedAt: new Date() },
     });
 
@@ -116,9 +156,23 @@ export class DirectoryRepository {
 
   /* ── Departments ───────────────────────────────────────────── */
 
-  listDepartments() {
+  /**
+   * The department catalogue is platform-wide (no `hospital_id`); a Hospital
+   * Admin reads it with `staffCount` counted over its own hospital's staff
+   * only, so another hospital's headcount never shows.
+   */
+  listDepartments(hospitalId: string | null) {
+    if (hospitalId === null) {
+      return this.prisma.db.department.findMany({
+        select: DEPARTMENT_SELECT,
+        orderBy: { name: 'asc' },
+      });
+    }
     return this.prisma.db.department.findMany({
-      select: DEPARTMENT_SELECT,
+      select: {
+        ...DEPARTMENT_SELECT,
+        _count: { select: { staff: { where: staffIn(hospitalId) } } },
+      },
       orderBy: { name: 'asc' },
     });
   }
@@ -163,29 +217,40 @@ export class DirectoryRepository {
 
   /* ── Rooms ─────────────────────────────────────────────────── */
 
-  listRooms() {
-    return this.prisma.db.room.findMany({ select: ROOM_SELECT, orderBy: { name: 'asc' } });
+  listRooms(hospitalId: string | null) {
+    return this.prisma.db.room.findMany({
+      where: inHospital(hospitalId),
+      select: ROOM_SELECT,
+      orderBy: { name: 'asc' },
+    });
   }
 
-  createRoom(data: Prisma.RoomUncheckedCreateInput) {
-    return this.prisma.db.room.create({ data, select: ROOM_SELECT });
+  /** A Hospital Admin's room is stamped with its hospital. */
+  createRoom(data: Prisma.RoomUncheckedCreateInput, hospitalId: string | null) {
+    return this.prisma.db.room.create({
+      data: { ...data, ...inHospital(hospitalId) },
+      select: ROOM_SELECT,
+    });
   }
 
-  async updateRoom(id: string, data: Prisma.RoomUncheckedUpdateInput) {
+  async updateRoom(id: string, data: Prisma.RoomUncheckedUpdateInput, hospitalId: string | null) {
     if (!UUID.test(id)) return null;
 
-    const moved = await this.prisma.db.room.updateMany({ where: { id }, data });
+    const moved = await this.prisma.db.room.updateMany({
+      where: { id, ...inHospital(hospitalId) },
+      data,
+    });
 
     return moved.count === 0
       ? null
       : this.prisma.db.room.findUnique({ where: { id }, select: ROOM_SELECT });
   }
 
-  async softDeleteRoom(id: string): Promise<number> {
+  async softDeleteRoom(id: string, hospitalId: string | null): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.room.updateMany({
-      where: { id },
+      where: { id, ...inHospital(hospitalId) },
       data: { deletedAt: new Date() },
     });
 
@@ -200,42 +265,57 @@ export class DirectoryRepository {
 
   /* ── Resources ─────────────────────────────────────────────── */
 
-  listResources() {
+  listResources(hospitalId: string | null) {
     return this.prisma.db.resource.findMany({
+      where: inHospital(hospitalId),
       select: RESOURCE_SELECT,
       orderBy: { name: 'asc' },
     });
   }
 
-  createResource(data: Prisma.ResourceUncheckedCreateInput) {
-    return this.prisma.db.resource.create({ data, select: RESOURCE_SELECT });
+  /** A Hospital Admin's resource is stamped with its hospital. */
+  createResource(data: Prisma.ResourceUncheckedCreateInput, hospitalId: string | null) {
+    return this.prisma.db.resource.create({
+      data: { ...data, ...inHospital(hospitalId) },
+      select: RESOURCE_SELECT,
+    });
   }
 
-  async updateResource(id: string, data: Prisma.ResourceUncheckedUpdateInput) {
+  async updateResource(
+    id: string,
+    data: Prisma.ResourceUncheckedUpdateInput,
+    hospitalId: string | null,
+  ) {
     if (!UUID.test(id)) return null;
 
-    const moved = await this.prisma.db.resource.updateMany({ where: { id }, data });
+    const moved = await this.prisma.db.resource.updateMany({
+      where: { id, ...inHospital(hospitalId) },
+      data,
+    });
 
     return moved.count === 0
       ? null
       : this.prisma.db.resource.findUnique({ where: { id }, select: RESOURCE_SELECT });
   }
 
-  async softDeleteResource(id: string): Promise<number> {
+  async softDeleteResource(id: string, hospitalId: string | null): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.resource.updateMany({
-      where: { id },
+      where: { id, ...inHospital(hospitalId) },
       data: { deletedAt: new Date() },
     });
 
     return result.count;
   }
 
-  resourceById(id: string) {
+  resourceById(id: string, hospitalId: string | null) {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.resource.findUnique({ where: { id }, select: RESOURCE_SELECT });
+    return this.prisma.db.resource.findFirst({
+      where: { id, ...inHospital(hospitalId) },
+      select: RESOURCE_SELECT,
+    });
   }
 }
 

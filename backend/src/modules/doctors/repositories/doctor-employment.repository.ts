@@ -149,9 +149,10 @@ export class DoctorEmploymentRepository {
    * department that was soft-deleted after the employment, and the
    * soft-delete extension would null those nested relations.
    */
-  listFor(doctorId: string): Promise<EmploymentRow[]> {
+  listFor(doctorId: string, hospitalId: string | null): Promise<EmploymentRow[]> {
     return this.prisma.doctorEmployment.findMany({
-      where: { doctorId },
+      // S5: a Hospital Admin sees its own hospital's employments only.
+      where: { doctorId, ...(hospitalId === null ? {} : { hospitalId }) },
       select: EMPLOYMENT_SELECT,
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
     });

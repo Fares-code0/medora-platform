@@ -4,7 +4,13 @@ import type { Response } from 'express';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import {
+  AdminScoped,
+  Can,
+  CurrentAdminScope,
+  hospitalFilterOf,
+  type ResolvedAdminScope,
+} from '../../../shared/authz';
 import {
   auditExportSchema,
   auditQuerySchema,
@@ -33,6 +39,10 @@ import { AuditRetentionService } from '../services/audit-retention.service';
  * different act with a different blast radius.
  */
 @Can('logs.view')
+// S5 (OD-07 #16 item 7): Platform Admin — the whole metadata-only ledger,
+// unchanged; Hospital Admin — rows with its `hospital_id` only (another
+// hospital's event is 404); no administrative scope — 403.
+@AdminScoped('any')
 @Controller('audit-events')
 export class AuditController {
   constructor(
@@ -43,8 +53,11 @@ export class AuditController {
 
   /** §14.1 — filters, keyset pagination, pivot and the retention meta. */
   @Get()
-  async list(@Query(zodQuery(auditQuerySchema)) query: AuditQuery) {
-    return this.query.list(query, await this.retention.retentionDays());
+  async list(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Query(zodQuery(auditQuerySchema)) query: AuditQuery,
+  ) {
+    return this.query.list(query, await this.retention.retentionDays(), hospitalFilterOf(scope));
   }
 
   /**
@@ -61,10 +74,11 @@ export class AuditController {
   @Header('Cache-Control', 'no-store')
   async export(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Query(zodQuery(auditExportSchema)) input: AuditExportInput,
     @Res() response: Response,
   ): Promise<void> {
-    const file = await this.exports.export(actor, input);
+    const file = await this.exports.export(actor, input, hospitalFilterOf(scope));
 
     response
       .status(200)
@@ -75,7 +89,7 @@ export class AuditController {
 
   /** §14.2 — the full payload and the correlated events. */
   @Get(':eventId')
-  detail(@Param('eventId') eventId: string) {
-    return this.query.detail(eventId);
+  detail(@CurrentAdminScope() scope: ResolvedAdminScope, @Param('eventId') eventId: string) {
+    return this.query.detail(eventId, hospitalFilterOf(scope));
   }
 }

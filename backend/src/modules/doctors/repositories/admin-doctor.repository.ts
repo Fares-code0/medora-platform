@@ -98,6 +98,11 @@ export interface AdminDoctorCriteria {
   readonly sort: 'name:asc' | 'name:desc' | 'joined:asc' | 'joined:desc' | 'rating:desc';
   readonly page: number;
   readonly pageSize: number;
+  /**
+   * S5: a Hospital Admin's roster — doctors with an active employment at
+   * this hospital. Absent (Platform Admin): every doctor, as before.
+   */
+  readonly hospitalId?: string | undefined;
 }
 
 @Injectable()
@@ -126,6 +131,9 @@ export class AdminDoctorRepository {
         ? {}
         : { verificationStatus: criteria.verification }),
       ...(criteria.status === undefined ? {} : { practiceStatus: criteria.status }),
+      ...(criteria.hospitalId === undefined
+        ? {}
+        : { employments: { some: { hospitalId: criteria.hospitalId, endedAt: null } } }),
       ...(criteria.joinedFrom === undefined && criteria.joinedTo === undefined
         ? {}
         : {

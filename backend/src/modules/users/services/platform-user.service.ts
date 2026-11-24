@@ -103,8 +103,13 @@ export class PlatformUserService {
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
   ) {}
 
-  async list(query: PlatformUserQuery): Promise<PaginatedPlatformUsers> {
-    const { rows, totalItems } = await this.users.list(query);
+  /**
+   * S5: `hospitalId` is the Hospital Admin's hospital (its staff only, see
+   * `usersIn`), or `null` for a Platform Admin (every account). An account
+   * outside the scope is 404 on every route below (ADR-022).
+   */
+  async list(query: PlatformUserQuery, hospitalId: string | null): Promise<PaginatedPlatformUsers> {
+    const { rows, totalItems } = await this.users.list(query, hospitalId);
 
     return {
       items: rows.map(toView),
@@ -115,8 +120,8 @@ export class PlatformUserService {
     };
   }
 
-  async detail(publicId: string): Promise<PlatformUserView> {
-    const row = await this.users.findByPublicId(publicId);
+  async detail(publicId: string, hospitalId: string | null): Promise<PlatformUserView> {
+    const row = await this.users.findByPublicId(publicId, hospitalId);
     if (row === null) throw AppException.notFound('User not found');
 
     return toView(row);
@@ -149,8 +154,12 @@ export class PlatformUserService {
    * its history — an administrator who may deactivate an account but not
    * see why it was flagged would be worse off, not safer.
    */
-  async activityFeed(publicId: string, query: ActivityQuery): Promise<PaginatedActivity> {
-    const target = await this.users.findIdentity(publicId);
+  async activityFeed(
+    publicId: string,
+    query: ActivityQuery,
+    hospitalId: string | null,
+  ): Promise<PaginatedActivity> {
+    const target = await this.users.findIdentity(publicId, hospitalId);
     // 404 before the feed, and identical to a genuinely missing account:
     // an administrator listing activity for a `usr_…` that does not exist
     // must not learn from the shape of the answer that it might.
@@ -163,8 +172,9 @@ export class PlatformUserService {
     actor: AuthenticatedUser,
     publicId: string,
     input: UpdatePlatformUserInput,
+    hospitalId: string | null,
   ): Promise<PlatformUserView> {
-    const target = await this.users.findIdentity(publicId);
+    const target = await this.users.findIdentity(publicId, hospitalId);
     if (target === null) throw AppException.notFound('User not found');
 
     if (target.id === actor.id) {

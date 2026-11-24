@@ -411,6 +411,25 @@ async function provisionOne(
       ? await enrolAdminSecondFactor(prisma, services, settings, user.id)
       : false;
 
+  // S5 (OD-07, M-13): the admin role alone grants no administrative scope.
+  // The demo administrator is marked Platform Admin explicitly; this runs only
+  // where demo credentials are permitted (never production). Idempotent, and
+  // not reported as a change of its own.
+  if (seed.roleCode === 'admin') {
+    const live = await prisma.platformAdminAssignment.findFirst({
+      where: { userId: user.id, revokedAt: null },
+      select: { id: true },
+    });
+    if (live === null) {
+      await prisma.platformAdminAssignment.create({
+        data: {
+          userId: user.id,
+          grantReason: 'seed: demo administrator (demo credentials, non-production only)',
+        },
+      });
+    }
+  }
+
   if (created) return report('created', secondFactorAdded);
   if (credentialAdded) return report('credential-added', secondFactorAdded);
   return report('unchanged', secondFactorAdded);

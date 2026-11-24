@@ -34,7 +34,7 @@ import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../../common/auth/hospital-context';
 import { UserStatus } from '../../../generated/prisma/enums';
-import { HospitalContextService } from '../../../shared/authz';
+import { AdminScopeService, HospitalContextService, type AdminScope } from '../../../shared/authz';
 import { IdentityRepository } from '../repositories/identity.repository';
 import type { SessionUserPayload } from './login.service';
 
@@ -54,6 +54,7 @@ export class SessionUserService {
   constructor(
     private readonly identity: IdentityRepository,
     private readonly contexts: HospitalContextService,
+    private readonly adminScopes: AdminScopeService,
   ) {}
 
   async current(principal: AuthenticatedUser): Promise<CurrentSessionUserPayload> {
@@ -73,10 +74,19 @@ export class SessionUserService {
     // token whose role claim no longer matches (ADR-046), so on this path
     // the two agree; reading the role from one place keeps that true even
     // if the guard were bypassed by a test or a future route.
-    const hospitalContext = await this.contexts.forRequest({
-      id: principal.id,
-      role: user.role.code,
-    });
+    //
+    // S5: an administrator's `adminScope` is the scope the admin routes
+    // enforce (`AdminScopeService`), so the shell can never show a scope the
+    // API refuses. `{ type: 'platform' }` only for an explicitly marked
+    // Platform Admin (OD-07, M-13); an unmapped or ambiguous admin is `null`.
+    const scope =
+      user.role.code === 'admin'
+        ? sessionAdminScope(
+            await this.adminScopes.forRequest({ id: principal.id, role: user.role.code }),
+          )
+        : sessionHospitalScope(
+            await this.contexts.forRequest({ id: principal.id, role: user.role.code }),
+          );
 
     return {
       id: user.publicId,
@@ -87,10 +97,26 @@ export class SessionUserService {
       // the change visible, and the guards read the token's copy anyway.
       role: user.role.code,
       permissions: principal.permissions,
-      ...sessionHospitalScope(hospitalContext),
+      ...scope,
     };
   }
 }
+function sessionAdminScope(
+  scope: AdminScope,
+): Pick<CurrentSessionUserPayload, 'activeHospital' | 'adminScope'> {
+  if (scope.kind === 'platform') return { activeHospital: null, adminScope: { type: 'platform' } };
+  if (scope.kind === 'hospital') {
+    return {
+      activeHospital: null,
+      adminScope: {
+        type: 'hospital',
+        hospital: { id: scope.hospitalId, name: scope.hospitalName },
+      },
+    };
+  }
+  return { activeHospital: null, adminScope: null };
+}
+
 function sessionHospitalScope(
   context: HospitalContext,
 ): Pick<CurrentSessionUserPayload, 'activeHospital' | 'adminScope'> {

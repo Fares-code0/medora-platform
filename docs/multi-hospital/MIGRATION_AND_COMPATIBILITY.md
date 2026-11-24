@@ -52,6 +52,21 @@ ADR-018 §3.
 | M-18 | Ratings never written (`ratingAvg` null) | `04-people.prisma` | Aggregated from `satisfaction_surveys` (OD-10) | Attribute only surveys with verified hospital ownership and separate approval; preserve unassigned surveys |
 | M-19 | No coordinates, no insurance coverage model | schema | Location coordinates; `HospitalInsuranceCoverage` (OD-10, OD-14) | New data; uninsured patients are unaffected |
 
+**M-13 mapping command (S5, 2026-11-24).** Since S5 an `admin` account with neither designation has
+**no** administrative scope (every administrative route is 403), so each existing administrator must
+be mapped before it can administer:
+
+- Platform Admin: `npm --prefix backend run db:reconcile:platform-admin -- --email <account> --reason
+  "<mapping list entry>" [--granted-by <approver email>]` — one named account per run, dry run by
+  default, `--apply` refused for `APP_ENV=production` (production mapping needs the reviewed list and a
+  separate approval). It refuses non-admin, inactive or unknown accounts and any account holding a live
+  hospital admin assignment; the grant row (`platform_admin_assignments`) records reason, granter and
+  time, and is revoked, never deleted.
+- Hospital Admin: one live `hospital_role_assignments` row with the `admin` role at exactly one hospital
+  (no command yet; the database refuses it for a live Platform Admin).
+- The development/test/staging seed and the demo-credential provisioner mark the demo administrator
+  as Platform Admin; nothing else is inferred.
+
 ## 3. Migration strategy (TECHNICAL RECOMMENDATION)
 
 1. **Expand:** new tables and nullable columns. Create a default hospital/location only when approved;

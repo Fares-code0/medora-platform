@@ -78,4 +78,24 @@ export {
   type HospitalContextRepository,
 } from './hospital-context.service';
 export { PatientSelfScopeService } from './patient-self-scope.service';
+export {
+  ADMIN_SCOPE_REPOSITORY,
+  AdminScopeService,
+  hospitalFilterOf,
+  scopeFromFacts,
+  type AdminScope,
+  type AdminScopeFacts,
+  type AdminScopeRefusal,
+  type AdminScopeRepository,
+  type ResolvedAdminScope,
+} from './admin-scope.service';
+export {
+  ADMIN_SCOPE_METADATA,
+  AdminScopeGuard,
+  AdminScoped,
+  CurrentAdminScope,
+  CurrentAdminScopeOrOtherRole,
+  type AdminScopeMode,
+  type AdminScopeRule,
+} from './admin-scope.guard';
 export { AuthzKernelModule } from './authz.module';

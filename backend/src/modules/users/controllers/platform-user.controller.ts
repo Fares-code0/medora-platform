@@ -3,7 +3,13 @@ import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import {
+  AdminScoped,
+  Can,
+  CurrentAdminScope,
+  hospitalFilterOf,
+  type ResolvedAdminScope,
+} from '../../../shared/authz';
 import type { PlatformUserView } from '../dto/account.dto';
 import {
   activityQuerySchema,
@@ -57,6 +63,9 @@ import {
  * checked against a register rather than typed in by an administrator.
  */
 @Can('roles.manage')
+// S5 (OD-07): Platform Admin — every account; Hospital Admin — its hospital's
+// staff only (`usersIn`), others 404; no administrative scope — 403.
+@AdminScoped('any')
 @Controller('admin/users')
 export class PlatformUserController {
   constructor(private readonly users: PlatformUserService) {}
@@ -64,15 +73,19 @@ export class PlatformUserController {
   /** API §2.10 — the paginated, filterable account list. */
   @Get()
   list(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Query(zodQuery(platformUserQuerySchema)) query: PlatformUserQuery,
   ): Promise<PaginatedPlatformUsers> {
-    return this.users.list(query);
+    return this.users.list(query, hospitalFilterOf(scope));
   }
 
   /** One account, by the `usr_…` id the list returned. */
   @Get(':userId')
-  detail(@Param('userId') userId: string): Promise<PlatformUserView> {
-    return this.users.detail(userId);
+  detail(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('userId') userId: string,
+  ): Promise<PlatformUserView> {
+    return this.users.detail(userId, hospitalFilterOf(scope));
   }
 
   /**
@@ -96,10 +109,11 @@ export class PlatformUserController {
    */
   @Get(':userId/activity')
   activity(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('userId') userId: string,
     @Query(zodQuery(activityQuerySchema)) query: ActivityQuery,
   ): Promise<PaginatedActivity> {
-    return this.users.activityFeed(userId, query);
+    return this.users.activityFeed(userId, query, hospitalFilterOf(scope));
   }
 
   /**
@@ -114,9 +128,10 @@ export class PlatformUserController {
   @Patch(':userId')
   update(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('userId') userId: string,
     @Body(zodBody(updatePlatformUserSchema)) body: UpdatePlatformUserInput,
   ): Promise<PlatformUserView> {
-    return this.users.update(actor, userId, body);
+    return this.users.update(actor, userId, body, hospitalFilterOf(scope));
   }
 }

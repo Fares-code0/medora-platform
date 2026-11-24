@@ -167,8 +167,9 @@ export class OperationsService {
     }
   }
 
-  async shifts() {
-    return (await this.operations.shifts()).map((row) => ({
+  /** S5: `hospitalId` null is platform-wide; otherwise that hospital's shifts only. */
+  async shifts(hospitalId: string | null) {
+    return (await this.operations.shifts(hospitalId)).map((row) => ({
       id: row.id,
       staffId: row.staffId,
       kind: SHIFT_KIND_TO_WIRE[row.kind],
@@ -176,30 +177,67 @@ export class OperationsService {
     }));
   }
 
-  async createShift(body: ShiftBody) {
-    if ((await this.operations.staffExists(body.staffId)) === 0) {
-      throw AppException.validation({ staffId: ['No such staff member'] }, 'No such staff member');
+  /**
+   * S5: a Hospital Admin rosters only staff with an active affiliation at its
+   * hospital, and the shift is stamped with that hospital and affiliation. A
+   * staff member of another hospital reads as "no such staff member", exactly
+   * like one that does not exist. A Platform Admin keeps the legacy,
+   * hospital-less roster.
+   */
+  async createShift(body: ShiftBody, hospitalId: string | null) {
+    let affiliationId: string | null = null;
+    if (hospitalId === null) {
+      if ((await this.operations.staffExists(body.staffId)) === 0) {
+        throw AppException.validation(
+          { staffId: ['No such staff member'] },
+          'No such staff member',
+        );
+      }
+    } else {
+      affiliationId = await this.operations.activeAffiliation(body.staffId, hospitalId);
+      if (affiliationId === null) {
+        throw AppException.validation(
+          { staffId: ['No such staff member'] },
+          'No such staff member',
+        );
+      }
     }
 
-    const row = await this.operations.createShift({
-      staffId: body.staffId,
-      kind: SHIFT_KIND_FROM_WIRE[body.kind]!,
-      days: body.days,
-    });
+    let row;
+    try {
+      row = await this.operations.createShift({
+        staffId: body.staffId,
+        kind: SHIFT_KIND_FROM_WIRE[body.kind]!,
+        days: body.days,
+        ...(hospitalId === null || affiliationId === null
+          ? {}
+          : { hospitalId, hospitalStaffAffiliationId: affiliationId }),
+      });
+    } catch (error) {
+      if (hospitalId !== null && isUniqueViolation(error)) {
+        throw AppException.conflict('This staff member already has that shift.');
+      }
+      throw error;
+    }
 
     return { id: row.id, staffId: row.staffId, kind: SHIFT_KIND_TO_WIRE[row.kind], days: row.days };
   }
 
-  async deleteShift(id: string): Promise<void> {
-    if ((await this.operations.deleteShift(id)) === 0) {
+  async deleteShift(id: string, hospitalId: string | null): Promise<void> {
+    if ((await this.operations.deleteShift(id, hospitalId)) === 0) {
       throw AppException.notFound('Shift assignment not found');
     }
   }
 
   /* ── M23.4 — queue and waiting room ────────────────────────── */
 
-  async queue(now: Date = new Date()) {
-    return (await this.operations.queue()).map((row) => toQueueView(row, now));
+  /**
+   * S5: `hospitalId` is the Hospital Admin's hospital, or `null` for a
+   * non-admin role the route admits unchanged (reception). Platform Admins
+   * never reach the queue: its rows name patients (OD-07, no automatic PHI).
+   */
+  async queue(hospitalId: string | null, now: Date = new Date()) {
+    return (await this.operations.queue(hospitalId)).map((row) => toQueueView(row, now));
   }
 
   /**
@@ -210,35 +248,44 @@ export class OperationsService {
    * because `queue_entries` has no status column — the queue *is* the
    * set of people still waiting.
    */
-  async advance(id: string): Promise<void> {
-    const entry = await this.operations.queueEntry(id);
+  async advance(id: string, hospitalId: string): Promise<void> {
+    const entry = await this.operations.queueEntry(id, hospitalId);
 
     if (entry === null) throw AppException.notFound('Queue entry not found');
 
-    await this.operations.removeFromQueue(id);
+    await this.operations.removeFromQueue(id, hospitalId);
   }
 
-  async assignRoom(id: string, roomId: string, now: Date = new Date()) {
-    const row = await this.operations.assignRoom(id, roomId);
+  async assignRoom(id: string, roomId: string, hospitalId: string, now: Date = new Date()) {
+    // A room of another hospital (or none) is out of scope: 404 (ADR-022).
+    if ((await this.operations.roomInHospital(roomId, hospitalId)) === 0) {
+      throw AppException.notFound('Room not found');
+    }
+    const row = await this.operations.assignRoom(id, roomId, hospitalId);
 
     if (row === null) throw AppException.notFound('Queue entry not found');
 
     return toQueueView(row, now);
   }
 
-  async removeFromQueue(id: string): Promise<void> {
-    if ((await this.operations.removeFromQueue(id)) === 0) {
+  async removeFromQueue(id: string, hospitalId: string): Promise<void> {
+    if ((await this.operations.removeFromQueue(id, hospitalId)) === 0) {
       throw AppException.notFound('Queue entry not found');
     }
   }
 
-  async waitingRoom(now: Date = new Date()) {
-    return (await this.operations.waitingRoom()).map((row) => toWaitingView(row, now));
+  async waitingRoom(hospitalId: string | null, now: Date = new Date()) {
+    return (await this.operations.waitingRoom(hospitalId)).map((row) => toWaitingView(row, now));
   }
 
   /** `call` moves `waiting → called`; `seat` moves `called → in-room`. */
-  async moveWaiting(id: string, action: 'call' | 'seat', now: Date = new Date()) {
-    const entry = await this.operations.waitingEntry(id);
+  async moveWaiting(
+    id: string,
+    action: 'call' | 'seat',
+    hospitalId: string,
+    now: Date = new Date(),
+  ) {
+    const entry = await this.operations.waitingEntry(id, hospitalId);
 
     if (entry === null) throw AppException.notFound('Waiting-room entry not found');
 
@@ -254,7 +301,7 @@ export class OperationsService {
       );
     }
 
-    const moved = await this.operations.transitionWaiting(id, expected, target);
+    const moved = await this.operations.transitionWaiting(id, hospitalId, expected, target);
 
     // Zero means another operator moved the row between the read and the
     // write: the same 409, reached by the compare-and-set rather than by
@@ -266,7 +313,7 @@ export class OperationsService {
       );
     }
 
-    const updated = await this.operations.waitingEntry(id);
+    const updated = await this.operations.waitingEntry(id, hospitalId);
 
     return toWaitingView(updated ?? entry, now);
   }
@@ -404,8 +451,8 @@ export class OperationsService {
 
   /* ── M23.7 — the thin audit feed ───────────────────────────── */
 
-  async recentAuditEvents(limit: number) {
-    return (await this.operations.recentAuditEvents(limit)).map((row) => ({
+  async recentAuditEvents(limit: number, hospitalId: string | null) {
+    return (await this.operations.recentAuditEvents(limit, hospitalId)).map((row) => ({
       id: row.id,
       at: row.occurredAt.toISOString(),
       actorId: row.actorId,

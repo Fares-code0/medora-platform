@@ -192,7 +192,7 @@ export async function seedDemo(prisma: PrismaClient): Promise<Record<string, num
   }
 
   // ADR-017 §2 — exactly one administrator is seeded.
-  await prisma.user.upsert({
+  const demoAdmin = await prisma.user.upsert({
     where: { email: 'admin@medora.health' },
     create: {
       publicId: 'usr_demo_admin',
@@ -208,6 +208,28 @@ export async function seedDemo(prisma: PrismaClient): Promise<Record<string, num
     },
     update: {},
   });
+
+  // S5 (OD-07, M-13): the `admin` role alone grants no administrative scope.
+  // The demo administrator is marked Platform Admin explicitly, here and only
+  // here — this function never runs for APP_ENV=production. Idempotent: an
+  // existing live grant is kept; an account no longer holding the admin role
+  // is left unmarked (the database would refuse it).
+  let demoPlatformAdmin = 0;
+  if (demoAdmin.roleId === adminRole.id) {
+    const live = await prisma.platformAdminAssignment.findFirst({
+      where: { userId: demoAdmin.id, revokedAt: null },
+      select: { id: true },
+    });
+    if (live === null) {
+      await prisma.platformAdminAssignment.create({
+        data: {
+          userId: demoAdmin.id,
+          grantReason: 'seed: demo administrator (development/test/staging seed only)',
+        },
+      });
+      demoPlatformAdmin = 1;
+    }
+  }
 
   const primaryDoctorId = doctorIds[0] ?? '';
   const secondDoctorId = doctorIds[1] ?? primaryDoctorId;
@@ -296,5 +318,6 @@ export async function seedDemo(prisma: PrismaClient): Promise<Record<string, num
     demoPatients: DEMO_PATIENTS.length,
     demoConditions: conditionCount,
     demoAllergies: allergyCount,
+    demoPlatformAdminGrants: demoPlatformAdmin,
   };
 }

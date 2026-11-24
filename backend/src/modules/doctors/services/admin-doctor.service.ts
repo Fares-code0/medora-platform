@@ -95,8 +95,10 @@ export class AdminDoctorService {
   ) {}
 
   /** API §3.4 — the roster, with the four operational columns. */
-  async list(query: AdminDoctorQuery): Promise<PaginatedAdminDoctors> {
+  /** S5: `hospitalId` — a Hospital Admin's roster; `null` — every doctor. */
+  async list(query: AdminDoctorQuery, hospitalId: string | null): Promise<PaginatedAdminDoctors> {
     const { rows, totalItems } = await this.doctors.list({
+      ...(hospitalId === null ? {} : { hospitalId }),
       q: query.q,
       specialtyId: query.specialtyId,
       departmentId: query.departmentId,

@@ -33,7 +33,12 @@ export class AuditQueryService {
   constructor(private readonly audit: AuditRepository) {}
 
   /** §14.1 — a filtered, keyset-paginated page, with its pivot. */
-  async list(query: AuditQuery, retentionDays: number) {
+  /**
+   * S5: `hospitalId` restricts the page, the pivot and the correlated set to
+   * `audit_events.hospital_id` = the Hospital Admin's hospital; `null` is the
+   * Platform Admin's whole, metadata-only ledger (unchanged).
+   */
+  async list(query: AuditQuery, retentionDays: number, hospitalId: string | null) {
     if (query.from !== undefined && query.to !== undefined) {
       if (Date.parse(query.from) > Date.parse(query.to)) {
         throw AppException.validation(
@@ -51,8 +56,8 @@ export class AuditQueryService {
     const withPivot = query.pivot ?? parseCursor(query.cursor) === null;
 
     const [{ rows, hasMore }, pivot] = await Promise.all([
-      this.audit.page(query),
-      withPivot ? this.audit.pivot(query) : Promise.resolve(undefined),
+      this.audit.page(query, hospitalId),
+      withPivot ? this.audit.pivot(query, hospitalId) : Promise.resolve(undefined),
     ]);
     const last = rows.at(-1);
 
@@ -75,12 +80,13 @@ export class AuditQueryService {
   }
 
   /** §14.2 — one event, its payload, and what happened around it. */
-  async detail(id: string) {
-    const event = await this.audit.findById(id);
+  /** Another hospital's event is 404, as a missing one (ADR-022). */
+  async detail(id: string, hospitalId: string | null) {
+    const event = await this.audit.findById(id, hospitalId);
 
     if (event === null) throw AppException.notFound('Audit event not found');
 
-    const correlated = await this.audit.correlated(event, CORRELATED_LIMIT);
+    const correlated = await this.audit.correlated(event, CORRELATED_LIMIT, hospitalId);
 
     return {
       ...toView(event),

@@ -13,7 +13,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { AdminScoped, Can } from '../../../shared/authz';
 import {
   apiKeySchema,
   integrationPatchSchema,
@@ -54,6 +54,9 @@ import { PlatformSettingsService } from '../services/platform-settings.service';
  * under the wrong one.
  */
 @Can('settings.manageSystem')
+// S5 (OD-07): platform configuration — Platform Admin only; a Hospital Admin
+// or an administrator with no explicit scope is refused (403).
+@AdminScoped('platform')
 @Controller('platform-settings')
 export class PlatformSettingsController {
   constructor(
@@ -144,6 +147,7 @@ export class PlatformSettingsController {
  * the top of the class rather than a per-handler detail.
  */
 @Can('integrations.manage')
+@AdminScoped('platform')
 @Controller('platform-settings/integrations')
 export class PlatformIntegrationController {
   constructor(private readonly integrations: IntegrationService) {}

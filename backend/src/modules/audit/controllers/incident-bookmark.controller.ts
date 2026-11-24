@@ -21,6 +21,10 @@ import { AuditExportService } from '../services/audit-export.service';
  * may not read the ledger has no use for a saved selection of it.
  */
 @Can('logs.view')
+// S5: deliberately not admin-scoped. A bookmark is the investigator's own
+// note — a name and a list of event ids, no ledger content — and stays
+// owner-scoped as before; reading the events it names goes through
+// `/audit-events`, which is scoped.
 @Controller('me/incident-bookmarks')
 export class IncidentBookmarkController {
   constructor(private readonly bookmarks: AuditExportService) {}

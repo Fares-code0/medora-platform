@@ -51,6 +51,16 @@ export const CORRELATION_WINDOW_MS = 5 * 60 * 1000;
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * S5: `null` is the whole ledger (Platform Admin, metadata-only contract
+ * unchanged); a hospital id restricts every read to
+ * `audit_events.hospital_id` = that hospital. Rows with no hospital (legacy,
+ * platform events) are outside every hospital's scope.
+ */
+function inHospital(hospitalId: string | null): { hospitalId?: string } {
+  return hospitalId === null ? {} : { hospitalId };
+}
+
 const LIST_SELECT = {
   id: true,
   occurredAt: true,
@@ -87,9 +97,10 @@ export class AuditRepository {
    */
   async page(
     query: AuditQuery,
+    hospitalId: string | null,
   ): Promise<{ rows: AuditEventRow[]; hasMore: boolean }> {
     const rows = await this.prisma.auditEvent.findMany({
-      where: this.whereFor(query),
+      where: { ...this.whereFor(query), ...inHospital(hospitalId) },
       select: LIST_SELECT,
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       take: query.pageSize + 1,
@@ -108,10 +119,10 @@ export class AuditRepository {
   }
 
   /** By id alone, which is how a client addresses an event it listed. */
-  findById(id: string): Promise<AuditEventDetailRow | null> {
+  findById(id: string, hospitalId: string | null): Promise<AuditEventDetailRow | null> {
     if (!UUID.test(id)) return Promise.resolve(null);
     return this.prisma.auditEvent.findFirst({
-      where: { id },
+      where: { id, ...inHospital(hospitalId) },
       select: { ...LIST_SELECT, payload: true },
     });
   }
@@ -127,7 +138,11 @@ export class AuditRepository {
    * the actor-and-time half is what makes correlation work regardless of
    * whether a call site was updated.
    */
-  correlated(event: AuditEventRow, limit: number): Promise<AuditEventRow[]> {
+  correlated(
+    event: AuditEventRow,
+    limit: number,
+    hospitalId: string | null,
+  ): Promise<AuditEventRow[]> {
     const window = {
       gte: new Date(event.occurredAt.getTime() - CORRELATION_WINDOW_MS),
       lte: new Date(event.occurredAt.getTime() + CORRELATION_WINDOW_MS),
@@ -144,7 +159,11 @@ export class AuditRepository {
     if (sameSession.length === 0 && sameActor.length === 0) return Promise.resolve([]);
 
     return this.prisma.auditEvent.findMany({
-      where: { id: { not: event.id }, OR: [...sameSession, ...sameActor] },
+      where: {
+        id: { not: event.id },
+        OR: [...sameSession, ...sameActor],
+        ...inHospital(hospitalId),
+      },
       select: LIST_SELECT,
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       take: limit,
@@ -152,9 +171,13 @@ export class AuditRepository {
   }
 
   /** Rows for an export, bounded — §14.3. */
-  forExport(query: AuditQuery, limit: number): Promise<AuditEventRow[]> {
+  forExport(
+    query: AuditQuery,
+    limit: number,
+    hospitalId: string | null,
+  ): Promise<AuditEventRow[]> {
     return this.prisma.auditEvent.findMany({
-      where: this.whereFor(query),
+      where: { ...this.whereFor(query), ...inHospital(hospitalId) },
       select: LIST_SELECT,
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
       take: limit,
@@ -174,11 +197,14 @@ export class AuditRepository {
    * older than its cursor — numbers beside the filters that shrank as the
    * reader paged. `filtersOf` is the filter alone.
    */
-  async pivot(query: AuditQuery): Promise<{
+  async pivot(
+    query: AuditQuery,
+    hospitalId: string | null,
+  ): Promise<{
     byCategory: Record<string, number>;
     bySeverity: Record<string, number>;
   }> {
-    const where = this.filtersOf(query);
+    const where = { ...this.filtersOf(query), ...inHospital(hospitalId) };
 
     const [categories, severities] = await Promise.all([
       this.prisma.auditEvent.groupBy({ by: ['category'], where, _count: { _all: true } }),
