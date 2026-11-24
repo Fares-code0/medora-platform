@@ -387,45 +387,6 @@ export const envSchema = z.object({
   RATE_LIMIT_AUTH_MAX: positiveInt.default(20),
   RATE_LIMIT_AUTH_WINDOW_SECONDS: positiveInt.default(60),
 
-  // ── Phase 22 hospital scope, shadow mode ────────────────────────────
-  /**
-   * Whether `PatientScopeService` also computes the hospital-aware shadow
-   * decision and logs divergence from the legacy decision. Observation
-   * only: on or off, the legacy rule alone grants or refuses access. On
-   * costs at most one hospital-context query per request and one
-   * assignment-scope query per comparison (not memoized since F6, #25),
-   * bounded by the in-flight cap below; off costs
-   * nothing (PHASE22_BACKEND_HANDOFF.md, correction 3). `GET /auth/session`
-   * reports the hospital context either way.
-   *
-   * **Opt-in (default off).** Shadow queries share the application's pool
-   * (10 connections per process by default) with no enforced query timeout
-   * and an unbounded connection-wait queue, and the comparison is detached,
-   * so a slow database lets them accumulate (resource-safety audit). Enable
-   * it in a real-load environment only after shadow query execution is
-   * bounded (condition C1: a statement timeout on the shadow queries and/or
-   * an in-flight cap). Unknown values still fail startup.
-   *
-   * C1 is now implemented by the two bounds below; enabling the shadow under
-   * real load remains a separate, deliberate decision (#26).
-   */
-  HOSPITAL_SCOPE_SHADOW_COMPARISON: booleanish.default(false),
-  /**
-   * C1 — at most this many shadow comparisons in flight per process. At the
-   * cap a comparison is **skipped** (never queued): the authorization
-   * decision is already made and never waits for the shadow. Capped below
-   * the `pg` pool's default of 10 so the shadow can never hold the whole pool.
-   */
-  HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT: positiveInt.max(8).default(4),
-  /**
-   * C1 — PostgreSQL `statement_timeout` for the shadow's assignment query,
-   * set **transaction-locally** (`set_config(…, true)`) so it never outlives
-   * the shadow's own transaction or reaches the next user of the pooled
-   * connection (proven in `database-statement-timeout.e2e-spec.ts`). The same
-   * bound applies to waiting for a pool connection and to the transaction.
-   */
-  HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS: positiveInt.min(10).max(5_000).default(250),
-
   // ── Metrics (M38.1) ─────────────────────────────────────────────────
   /**
    * The bearer token `GET /metrics` requires. **Unset, the endpoint does

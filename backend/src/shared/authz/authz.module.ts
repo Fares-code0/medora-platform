@@ -5,11 +5,7 @@ import { DatabaseModule } from '../database';
 
 import { AuthorizationGuard } from './authorization.guard';
 import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
-import {
-  HOSPITAL_PATIENT_SCOPE_REPOSITORY,
-  HospitalPatientScopeShadow,
-  type HospitalPatientScopeRepository,
-} from './hospital-patient-scope.shadow';
+import { HOSPITAL_PATIENT_SCOPE_REPOSITORY } from './hospital-patient-scope';
 import { PatientScopeService } from './patient-scope.service';
 import { PatientSelfScopeService } from './patient-self-scope.service';
 import { PermissionResolver } from './permission-resolver.service';
@@ -87,28 +83,17 @@ import {
     },
     { provide: PATIENT_ASSIGNMENT_REPOSITORY, useClass: PrismaPatientAssignmentRepository },
     { provide: PATIENT_SELF_REPOSITORY, useClass: PrismaPatientSelfRepository },
-    // Phase 22 (shadow mode). Hospital context is resolved lazily and at most
-    // once per request (request-scope.ts); there is no global interceptor.
+    // Hospital context is resolved lazily and at most once per request
+    // (request-scope.ts); there is no global interceptor.
     { provide: HOSPITAL_CONTEXT_REPOSITORY, useClass: PrismaHospitalContextRepository },
-    { provide: HOSPITAL_PATIENT_SCOPE_REPOSITORY, useClass: PrismaHospitalPatientScopeRepository },
-    HospitalContextService,
-    // The comparison exists only while HOSPITAL_SCOPE_SHADOW_COMPARISON is on.
-    // Off, PatientScopeService receives no shadow and runs exactly the
-    // pre-Phase-22 path with no extra query.
+    // S3: the hospital-aware patient scope is authoritative. One class serves
+    // both the port `PatientScopeService` reads and `isAssigned` above.
+    PrismaHospitalPatientScopeRepository,
     {
-      provide: HospitalPatientScopeShadow,
-      inject: [ConfigService, HospitalContextService, HOSPITAL_PATIENT_SCOPE_REPOSITORY],
-      useFactory: (
-        config: ConfigService,
-        contexts: HospitalContextService,
-        repository: HospitalPatientScopeRepository,
-      ): HospitalPatientScopeShadow | undefined =>
-        config.hospitalScopeShadowComparison
-          ? new HospitalPatientScopeShadow(contexts, repository, {
-              maxInFlight: config.hospitalScopeShadowLimits.maxInFlight,
-            })
-          : undefined,
+      provide: HOSPITAL_PATIENT_SCOPE_REPOSITORY,
+      useExisting: PrismaHospitalPatientScopeRepository,
     },
+    HospitalContextService,
     PermissionResolver,
     PatientScopeService,
     PatientSelfScopeService,

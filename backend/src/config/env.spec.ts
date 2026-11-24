@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { parse } from 'dotenv';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ConfigService } from './config.service';
 import { EnvValidationError, loadEnv, resetEnvForTesting } from './env';
 import { envSchema } from './env.schema';
 
@@ -334,75 +333,21 @@ describe('production hardening (RM M3.1)', () => {
   });
 });
 
-describe('the hospital scope shadow switch (Phase 22, opt-in after the resource-safety audit)', () => {
-  it('is off when the variable is unset', () => {
-    setEnv({});
-    expect(loadEnv().HOSPITAL_SCOPE_SHADOW_COMPARISON).toBe(false);
-    expect(new ConfigService(loadEnv()).hospitalScopeShadowComparison).toBe(false);
-  });
-
+describe('the retired Phase 22 shadow switch (S3)', () => {
+  // The hospital-aware patient scope is authoritative since S3, so the
+  // shadow comparison and its C1 bounds no longer exist. A leftover variable
+  // in a deployment is ignored like any other unknown key, never read.
   it.each([
-    ['true', true],
-    ['1', true],
-    ['false', false],
-    ['0', false],
-  ] as const)('reads an explicit %s as %s', (value, expected) => {
-    setEnv({ HOSPITAL_SCOPE_SHADOW_COMPARISON: value });
-    expect(loadEnv().HOSPITAL_SCOPE_SHADOW_COMPARISON).toBe(expected);
-    expect(new ConfigService(loadEnv()).hospitalScopeShadowComparison).toBe(expected);
+    'HOSPITAL_SCOPE_SHADOW_COMPARISON',
+    'HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT',
+    'HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS',
+  ])('%s is not part of the schema', (name) => {
+    expect(Object.keys(envSchema.shape)).not.toContain(name);
   });
 
-  it.each(['yes', 'TRUE', 'on', '', '2'])('refuses %j at startup, naming the variable', (value) => {
-    setEnv({ HOSPITAL_SCOPE_SHADOW_COMPARISON: value });
-    expect(captureError().message).toContain('HOSPITAL_SCOPE_SHADOW_COMPARISON');
-  });
-
-  it('stays off in production when unset — production rules do not enable it', () => {
-    // Same production fixture as 'production hardening (RM M3.1)'.
-    setEnv({
-      APP_ENV: 'production',
-      COOKIE_DOMAIN: 'medora.health',
-      CORS_ORIGINS: 'https://app.medora.health',
-      SMTP_USER: 'mailer',
-      JWT_SECRET: 'a-signing-key-that-is-long-enough-000000',
-      APP_PUBLIC_URL: 'https://app.medora.health',
-      CLAMAV_HOST: 'clamav',
-    });
-    expect(loadEnv().HOSPITAL_SCOPE_SHADOW_COMPARISON).toBe(false);
-  });
-});
-
-describe('the hospital scope shadow bounds (C1, #26)', () => {
-  it('defaults to 4 in flight and a 250 ms statement timeout', () => {
-    setEnv({});
-    expect(new ConfigService(loadEnv()).hospitalScopeShadowLimits).toEqual({
-      maxInFlight: 4,
-      statementTimeoutMs: 250,
-    });
-  });
-
-  it('reads explicit values', () => {
-    setEnv({
-      HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT: '2',
-      HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS: '500',
-    });
-    expect(new ConfigService(loadEnv()).hospitalScopeShadowLimits).toEqual({
-      maxInFlight: 2,
-      statementTimeoutMs: 500,
-    });
-  });
-
-  it.each(['0', '-1', '9', '1.5', 'many'])(
-    'refuses an in-flight cap of %j (below the pool size, at least one)',
-    (value) => {
-      setEnv({ HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT: value });
-      expect(captureError().message).toContain('HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT');
-    },
-  );
-
-  it.each(['0', '9', '5001', 'soon'])('refuses a statement timeout of %j', (value) => {
-    setEnv({ HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS: value });
-    expect(captureError().message).toContain('HOSPITAL_SCOPE_SHADOW_STATEMENT_TIMEOUT_MS');
+  it('a leftover value does not stop startup', () => {
+    setEnv({ HOSPITAL_SCOPE_SHADOW_COMPARISON: 'true' });
+    expect(() => loadEnv()).not.toThrow();
   });
 });
 

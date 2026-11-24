@@ -32,39 +32,35 @@
 
 import { Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../database';
+import { decidePatientReach } from './hospital-patient-scope';
 import type { PatientAssignmentRepository } from './authz.types';
-
-@Injectable()
-export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async isAssigned(doctorUserId: string, patientId: string): Promise<boolean> {
-    const assignment = await this.prisma.db.patientDoctorAssignment.findFirst({
-      where: {
-        revokedAt: null,
-        doctor: { userId: doctorUserId },
-        // Accepts either the public `PT-…` handle or the raw uuid, so a
-        // caller that already resolved the patient does not pay for a
-        // second lookup. Both columns are unique, so the disjunction
-        // cannot match two different patients.
-        patient: { OR: [{ publicId: patientId }, ...uuidClause(patientId)] },
-      },
-      select: { id: true },
-    });
-
-    return assignment !== null;
-  }
-}
+import { PrismaHospitalPatientScopeRepository } from './prisma-hospital-patient-scope.repository';
 
 /**
- * A uuid comparison is only added when the input actually looks like
- * one. Postgres rejects a malformed uuid literal with a type error
- * rather than returning no rows, so passing `PT-1001` into a `uuid`
- * column would turn a legitimate "not assigned" into a 500.
+ * ## Since S3: only hospital-owned assignments count
+ *
+ * `isAssigned` answers with the authoritative hospital-aware rule
+ * (`hospital-patient-scope.ts`), not with the bare row. A legacy row with
+ * no hospital (#17), a row owned by another hospital or by an ended
+ * employment, and any row of a doctor who is unverified, suspended,
+ * soft-deleted or without an active employment (#18, OD-12) is "not
+ * assigned". Keeping a hospital-blind variant of this port would leave a
+ * second, weaker answer to the same question one import away.
  */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+@Injectable()
+export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
+  constructor(private readonly scopes: PrismaHospitalPatientScopeRepository) {}
 
-function uuidClause(value: string): readonly { id: string }[] {
-  return UUID.test(value) ? [{ id: value }] : [];
+  async isAssigned(doctorUserId: string, patientId: string): Promise<boolean> {
+    const [employments, assignments] = await Promise.all([
+      this.scopes.activeClinicalEmployments(doctorUserId),
+      this.scopes.liveAssignmentScopes(doctorUserId, patientId),
+    ]);
+
+    return decidePatientReach(
+      { userId: doctorUserId, roleCode: 'doctor' },
+      employments,
+      assignments,
+    ).allowed;
+  }
 }

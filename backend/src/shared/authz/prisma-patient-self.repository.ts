@@ -42,8 +42,11 @@ export class PrismaPatientSelfRepository implements PatientSelfRepository {
   async findPatientIdByUserId(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const patient = await this.prisma.db.patient.findUnique({
-      where: { userId },
+    // `findFirst` with `deletedAt: null`, not `findUnique`: the soft-delete
+    // extension filters only the former, and a deactivated chart must not
+    // be the account's self scope.
+    const patient = await this.prisma.db.patient.findFirst({
+      where: { userId, deletedAt: null },
       select: { publicId: true },
     });
 
