@@ -101,14 +101,16 @@ hospital-context work (§3 G1, S3).
 | State | Rule (as implemented) | Where | Tests |
 |---|---|---|---|
 | Employment terminated — at least one `doctor_employments` row, none with `ended_at IS NULL` | Sign-in refused `403 account_inactive` (password login before any OTP challenge; again at every session mint, so `/auth/otp/verify` and `/auth/otp/recovery` too); refresh refused `401` and the session revoked; an existing access token `401` on the next request | `IdentityRepository.isTerminatedDoctor`, `LoginService.login`/`establishSession`, `RefreshService`; per request inside the guard's existing single statement (`SessionService.activePermissionVersion`) — defence in depth beside the revocation at employment end | `doctor-lifecycle-auth.e2e-spec.ts`, `doctor-employment-lifecycle.e2e-spec.ts`, `account-security.e2e-spec.ts` |
-| No employment rows (legacy / unmapped) | **Not** terminated: sign-in and tokens unchanged; still listed to patients. Clinical access comes only from the hospital-aware rule, which gives it none | — | `doctor-lifecycle-auth.e2e-spec.ts` |
-| Suspended (`practice_status = suspended`) | Sign-in allowed; every authenticated route except the own-account allow-list (`auth/guards/own-account-routes.ts`) is `403 practice_suspended`. Decided per request from the same database read, keyed on Nest's route metadata, fail closed for any unlisted or unresolvable route | `AccessTokenGuard` | `access-token.guard.spec.ts`, `doctor-lifecycle-auth.e2e-spec.ts` |
+| No employment rows (legacy / unmapped) | **Not** terminated: sign-in and tokens unchanged; **not** listed to patients (owner decision 2026-11-24). Clinical access comes only from the hospital-aware rule, which gives it none | — | `doctor-lifecycle-auth.e2e-spec.ts` |
+| Suspended (`practice_status = suspended`) | Sign-in allowed; every authenticated route except the own-account allow-list (`auth/guards/own-account-routes.ts`, which includes `GET /me/settings` read-only, owner decision 2026-11-24) is `403 practice_suspended`. Decided per request from the same database read, keyed on Nest's route metadata, fail closed for any unlisted or unresolvable route | `AccessTokenGuard` | `access-token.guard.spec.ts`, `doctor-lifecycle-auth.e2e-spec.ts` |
 | Unverified | Sign-in allowed (unchanged) | — | `doctor-lifecycle-auth.e2e-spec.ts` |
 | Vacation | Sign-in and every route unchanged | — | `doctor-lifecycle-auth.e2e-spec.ts` |
-| Patient-facing doctor lists (`GET /patient/doctors`, `/:doctorId`) | Already required `VERIFIED` + practice `ACTIVE` (so vacation is also hidden) + not soft-deleted; now also excludes terminated doctors | `PatientDoctorRepository` | `doctor-lifecycle-auth.e2e-spec.ts` |
+| Patient-facing doctor lists (`GET /patient/doctors`, `/:doctorId`) | Already required `VERIFIED` + practice `ACTIVE` (so vacation is also hidden) + not soft-deleted; now also requires an **active employment** (excludes terminated doctors and legacy doctors with no employment; owner decision 2026-11-24) | `PatientDoctorRepository` | `doctor-lifecycle-auth.e2e-spec.ts` |
 
-Open: whether legacy doctors with no employment should stay listed to patients, and whether
-on-vacation doctors should be listed (today they are not) — product decisions, not changed here.
+Decided 2026-11-24 (owner): legacy doctors with no employment rows are **not** visible to patients;
+on-vacation doctors stay unlisted; `GET /me/settings` is allowed for suspended doctors (read-only);
+the session-mint path re-checks account status after the second factor (`LoginService.establishSession`).
+Client handling of `practice_suspended` (Web, Patient App) is a separate client task.
 
 ## 7. S3/S4 enforcement status (2026-11-24, commits `afa04af`, `e9e3494`)
 

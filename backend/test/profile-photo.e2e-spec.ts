@@ -24,6 +24,7 @@ import {
   testEmail,
 } from './support/auth-app';
 import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import { createTestHospital, destroyTestHospitals, employDoctor } from './support/hospital-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -433,6 +434,10 @@ describe('the doctor photo on the patient surfaces (§3, §4)', () => {
         practiceStatus: 'ACTIVE',
       },
     });
+    // Patient-visible now also needs an active employment (owner decision
+    // 2026-11-24: doctors with no employment are not offered to patients).
+    const hospital = await createTestHospital(harness.prisma, TAG);
+    await employDoctor(harness.prisma, doctor.id, hospital.id);
 
     records = await createPatientRecords(harness.prisma, TAG, 1);
     const record = records[0]!;
@@ -480,6 +485,7 @@ describe('the doctor photo on the patient surfaces (§3, §4)', () => {
     await harness.prisma.file.deleteMany({ where: { id: { in: createdFiles } } });
     await destroyPatientRecords(harness.prisma, TAG);
     await destroyTestDoctor(harness.prisma, TAG);
+    await destroyTestHospitals(harness.prisma, TAG);
   });
 
   it('serves a clean photo as the same loadable signed URL on every surface', async () => {

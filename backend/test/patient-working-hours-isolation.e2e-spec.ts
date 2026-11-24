@@ -10,6 +10,7 @@ import {
   tokenFromLink,
 } from './support/auth-app';
 import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import { createTestHospital, destroyTestHospitals, employDoctor } from './support/hospital-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -123,6 +124,10 @@ beforeAll(async () => {
     where: { id: doctor.id },
     data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
   });
+  // Patient-visible now also needs an active employment (owner decision
+  // 2026-11-24: doctors with no employment are not offered to patients).
+  const hospital = await createTestHospital(harness.prisma, DOCTOR_TAG);
+  await employDoctor(harness.prisma, doctor.id, hospital.id);
   await harness.prisma.doctorAvailability.createMany({
     data: GRID.map(({ weekday, start, end }) => ({
       doctorId: doctor.id,
@@ -166,6 +171,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await destroyPatientRecords(harness.prisma, PATIENT_TAG);
   await destroyTestDoctor(harness.prisma, DOCTOR_TAG);
+  await destroyTestHospitals(harness.prisma, DOCTOR_TAG);
   await harness.reset();
   await harness.close();
 });
@@ -181,7 +187,9 @@ describe('the fixture is what the sweep assumes', () => {
   it('the grid is real, and the leak patterns match how it serialises', async () => {
     // Without this, a sweep that finds nothing proves nothing — the
     // patterns could simply never match how the grid serialises.
-    const rows = await harness.prisma.doctorAvailability.findMany({ where: { doctorId: doctor.id } });
+    const rows = await harness.prisma.doctorAvailability.findMany({
+      where: { doctorId: doctor.id },
+    });
     expect(rows).toHaveLength(GRID.length);
     const serialised = JSON.stringify(rows.map((row) => row.startTime));
     expect(LEAK_PATTERNS.some((pattern) => pattern.test(serialised))).toBe(true);
@@ -214,11 +222,13 @@ describe('no patient-reachable GET route returns availability-derived times (AST
 
       const text = response.text ?? '';
       const matched = LEAK_PATTERNS.filter((pattern) => pattern.test(text));
-      if (matched.length > 0) leaks.push(`${route} → ${String(response.status)} matched ${String(matched)}`);
+      if (matched.length > 0)
+        leaks.push(`${route} → ${String(response.status)} matched ${String(matched)}`);
 
       const keys = keysDeep(response.body);
       const leakedKeys = GRID_KEYS.filter((key) => keys.has(key));
-      if (leakedKeys.length > 0) leaks.push(`${route} → ${String(response.status)} keys ${leakedKeys.join(',')}`);
+      if (leakedKeys.length > 0)
+        leaks.push(`${route} → ${String(response.status)} keys ${leakedKeys.join(',')}`);
     }
 
     expect(leaks).toEqual([]);

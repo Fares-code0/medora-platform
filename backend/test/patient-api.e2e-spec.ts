@@ -12,6 +12,7 @@ import {
   tokenFromLink,
 } from './support/auth-app';
 import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import { createTestHospital, destroyTestHospitals, employDoctor } from './support/hospital-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -85,10 +86,15 @@ beforeAll(async () => {
     where: { id: practitioner.id },
     data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
   });
+  // Patient-visible now also needs an active employment (owner decision
+  // 2026-11-24: doctors with no employment are not offered to patients).
+  const hospital = await createTestHospital(harness.prisma, DOCTOR_TAG);
+  await employDoctor(harness.prisma, practitioner.id, hospital.id);
 });
 
 afterAll(async () => {
   await destroyTestDoctor(harness.prisma, DOCTOR_TAG);
+  await destroyTestHospitals(harness.prisma, DOCTOR_TAG);
   await destroyPatientRecords(harness.prisma, PATIENT_TAG);
   await harness.reset();
   await harness.close();

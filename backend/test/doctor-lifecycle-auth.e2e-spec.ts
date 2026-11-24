@@ -379,7 +379,7 @@ describe('unverified and on vacation — login unchanged', () => {
 });
 
 describe('patient-facing doctor listing', () => {
-  it('does not offer a verified, active doctor whose employment has ended', async () => {
+  it('offers only doctors with an active employment: not terminated, not legacy without employment', async () => {
     const viewer = await seedDoctor('listing-viewer');
     const token = (await signIn(viewer.email)).accessToken;
 
@@ -401,7 +401,9 @@ describe('patient-facing doctor listing', () => {
       (await request(harness.server).get(`${PATIENT_DOCTORS}/${doctorId}`).set(auth(token))).status;
 
     expect(await status(employed.doctorId)).toBe(200);
-    expect(await status(legacy.doctorId)).toBe(200);
+    // Owner decision 2026-11-24: a legacy doctor with no employment rows is
+    // not visible to patients.
+    expect(await status(legacy.doctorId)).toBe(404);
     expect(await status(terminated.doctorId)).toBe(404);
 
     const list = await request(harness.server)
@@ -409,9 +411,7 @@ describe('patient-facing doctor listing', () => {
       .set(auth(token));
     expect(list.status).toBe(200);
     const page = dataOf<{ items: { id: string }[]; totalItems: number }>(list);
-    expect(page.items.map((item) => item.id).sort()).toEqual(
-      [employed.doctorId, legacy.doctorId].sort(),
-    );
-    expect(page.totalItems).toBe(2);
+    expect(page.items.map((item) => item.id)).toEqual([employed.doctorId]);
+    expect(page.totalItems).toBe(1);
   });
 });

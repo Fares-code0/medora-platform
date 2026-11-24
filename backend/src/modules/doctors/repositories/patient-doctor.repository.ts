@@ -56,20 +56,18 @@ export interface DoctorPage {
 /**
  * Applied to every patient-facing read. Not overridable by any caller.
  *
- * #18 (OWNER_DECISIONS 2026-11-23): a doctor whose employment has ended —
- * at least one `doctor_employments` row and none active — has no clinical
- * access and is not offered either. A doctor with no employment rows
- * (legacy, not yet mapped to a hospital) is not "terminated" and is still
- * listed; unverified, suspended (and on-vacation) doctors were already
- * excluded by the two predicates above it, soft-deleted ones by the
+ * #18 (OWNER_DECISIONS 2026-11-23) and the owner's answer of 2026-11-24:
+ * only a doctor with an **active employment** (`ended_at IS NULL`) is
+ * offered. That excludes a doctor whose employment has ended and a legacy
+ * doctor with no employment rows at all (not yet mapped to a hospital).
+ * Unverified, suspended and on-vacation doctors (vacation stays unlisted)
+ * are excluded by the two predicates above it, soft-deleted ones by the
  * client extension.
  */
 const PATIENT_VISIBLE = {
   verificationStatus: 'VERIFIED',
   practiceStatus: 'ACTIVE',
-  NOT: {
-    AND: [{ employments: { some: {} } }, { employments: { none: { endedAt: null } } }],
-  },
+  employments: { some: { endedAt: null } },
 } satisfies Prisma.DoctorWhereInput;
 
 const SUMMARY_SELECT = {
