@@ -213,6 +213,15 @@ describe.each(['light', 'dark'] as const)('ADR-0005 roles — %s', (theme) => {
     const fill = ratio(token('color-ai-launcher', theme), token('color-surface', theme));
     expect(Math.max(edge, fill), `AI launcher boundary (${theme})`).toBeGreaterThanOrEqual(3);
   });
+
+  it('the navbar AI button draws its icon in a colour that reads on its white tile', () => {
+    // Found in a real browser: once the logo became a currentColor icon, the
+    // `ai` variant's text-inverse (white in light) drew it white on white.
+    // The icon gets its own role, fixed in both themes like the fill.
+    expect(token('color-ai-launcher-icon', theme)).toBe(token('color-ai-launcher-icon', 'light'));
+    const icon = ratio(token('color-ai-launcher-icon', theme), token('color-ai-launcher', theme));
+    expect(icon, `AI launcher icon on its fill (${theme})`).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 /** sRGB × k per channel — what CSS `brightness(k)` does to a flat colour. */

@@ -122,7 +122,7 @@ export function AppNavbar({ config, elevated, onMenuToggle }: AppNavbarProps) {
                 <IconButton
                   icon={MedoraAiLogo}
                   variant="ai"
-                  className="border border-ai-launcher-border bg-ai-launcher"
+                  className="border border-ai-launcher-border bg-ai-launcher text-ai-launcher-icon"
                   aria-label={t('shell.openAssistant')}
                   onClick={() => navigate(routes.doctor.assistant)}
                 />

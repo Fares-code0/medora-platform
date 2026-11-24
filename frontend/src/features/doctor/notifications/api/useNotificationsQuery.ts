@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { createKeyFactory } from '@/api/query-keys';
 
 import type { NotificationPatch, SendMessageInput } from '../model/notification-service';
+import { sortNotifications } from '../model/selectors';
 import type { DoctorNotification } from '../model/types';
 
 /**
@@ -201,12 +202,17 @@ function useOptimisticListPatch() {
       }
       // The bell's rows too, so a row read on the page stops reading as
       // unread in the bell before the write lands. An archived row leaves
-      // the feed, which lists unarchived notifications only.
+      // the feed, which lists unarchived notifications only. The feed is the
+      // server's first page, ordered pinned first then newest; re-applying
+      // that order keeps a pin or unpin from waiting for the refetch.
       for (const [queryKey, rows] of previousRecent) {
         if (rows === undefined) continue;
         queryClient.setQueryData<readonly DoctorNotification[]>(
           queryKey,
-          rows.map(patchRow).filter((notification) => !notification.archived),
+          sortNotifications(
+            rows.map(patchRow).filter((notification) => !notification.archived),
+            'newest',
+          ),
         );
       }
 

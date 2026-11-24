@@ -42,7 +42,12 @@ export function NotificationViewNav({
 }: NotificationViewNavProps) {
   return (
     <nav aria-label="Notification views" className="min-w-0">
-      <ul className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
+      {/* `relative` makes this scroller the containing block of the count
+          pills' sr-only spans (position: absolute). Without it they resolved
+          against <main> at their scrolled-off static position and widened
+          the whole page by ~180px at phone widths (found in a real browser
+          at 375px; NotificationViewNav.test.tsx pins the class). */}
+      <ul className="relative -mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0 lg:pb-0">
         {views.map((view) => {
           const Icon = VIEW_ICONS[view];
           const current = view === value;

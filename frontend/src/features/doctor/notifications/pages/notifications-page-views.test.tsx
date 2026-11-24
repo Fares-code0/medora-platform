@@ -177,6 +177,23 @@ describe('the notification views', () => {
   });
 });
 
+describe('the toolbar on a phone', () => {
+  // A real-browser finding at 320px: with only `min-w-0 flex-1`, the two
+  // selects shrank to a letter each ("A…", "N…"). jsdom has no layout, so
+  // the floor that makes the row wrap instead is what is pinned.
+  it('keeps the category and sort selects at a readable minimum width', async () => {
+    stubApi(routes());
+    renderPage();
+
+    for (const name of ['Filter by category', 'Sort notifications']) {
+      const control = await screen.findByRole('combobox', { name });
+      const container = control.closest('.min-w-\\[8\\.5rem\\]');
+      expect(container, name).not.toBeNull();
+      expect(container).toHaveClass('basis-[8.5rem]', 'sm:basis-auto');
+    }
+  });
+});
+
 describe('the empty states', () => {
   it("says you're all caught up when nothing is unread", async () => {
     stubApi(routes([view('ntf-2', 'Refill approved', { readAt: daysAgo(0) })]));
@@ -246,6 +263,46 @@ describe('bulk actions', () => {
     );
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(2);
     expect(toasts.filter((toast) => toast.variant === 'error')).toEqual([]);
+  });
+
+  it('reports each of two overlapping bulk actions, not only the last', async () => {
+    const { fetchMock } = stubApi({
+      ...routes(),
+      'POST /notifications/ntf-1/read': () => new Response(null, { status: 204 }),
+      'POST /notifications/ntf-2/read': () => new Response(null, { status: 204 }),
+      'POST /notifications/ntf-1/archive': () => new Response(null, { status: 204 }),
+      'POST /notifications/ntf-2/archive': () => new Response(null, { status: 204 }),
+    });
+    // Hold every write until both actions are in flight: the overlap a fast
+    // second action produces against a slow server.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal('fetch', async (input: URL | string, init: RequestInit = {}) => {
+      if ((init.method ?? 'GET').toUpperCase() === 'POST') await gate;
+      return fetchMock(input, init);
+    });
+    renderPage();
+
+    const selectAll = async () =>
+      userEvent.click(
+        await screen.findByRole('checkbox', { name: 'Select all notifications on this page' }),
+      );
+    await selectAll();
+    await userEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+    if (!screen.queryByRole('button', { name: 'Archive' })) await selectAll();
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    release();
+
+    await waitFor(() => {
+      expect(toasts).toContainEqual(
+        expect.objectContaining({ variant: 'success', title: '2 notifications marked as read' }),
+      );
+      expect(toasts).toContainEqual(
+        expect.objectContaining({ variant: 'success', title: '2 notifications archived' }),
+      );
+    });
   });
 
   it('never claims success when a bulk write is refused', async () => {

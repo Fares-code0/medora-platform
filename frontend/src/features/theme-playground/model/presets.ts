@@ -82,13 +82,16 @@ const sidebar = (active: string) =>
   }) as const;
 
 /*
-  The navbar Medora AI button (ADR-0005 §11): a white tile with a black edge
-  in both modes in every preset, as in tokens.css.
+  The navbar Medora AI button (ADR-0005 §11): a white tile in both modes in
+  every preset, with a near-black icon on it, edged in that mode's own border-strong — the same rule as
+  tokens.css, where the edge is a neutral gray rather than near-black.
 */
-const AI_LAUNCHER = {
-  '--color-ai-launcher': '#ffffff',
-  '--color-ai-launcher-border': '#0b0d0f',
-} as const;
+const aiLauncher = (borderStrong: string) =>
+  ({
+    '--color-ai-launcher': '#ffffff',
+    '--color-ai-launcher-border': borderStrong,
+    '--color-ai-launcher-icon': '#0b0d0f',
+  }) as const;
 
 const MEDICAL_BLUE: ThemePreset = {
   id: 'medical-blue',
@@ -123,7 +126,7 @@ const MEDICAL_BLUE: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#8cbcf0'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#7b8798'),
     '--color-tab-active-text': '#0b1726',
     '--color-tab-indicator': '#0b5cad',
     ...STATUS_LIGHT,
@@ -167,7 +170,7 @@ const MEDICAL_BLUE: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#8cbcf0'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#687588'),
     '--color-tab-active-text': '#f2f5f9',
     '--color-tab-indicator': '#8cbcf0',
     ...STATUS_DARK,
@@ -217,7 +220,7 @@ const MIDNIGHT_PURPLE: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#b4a2f0'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#847e96'),
     '--color-tab-active-text': '#17122b',
     '--color-tab-indicator': '#5b3fa8',
     ...STATUS_LIGHT,
@@ -261,7 +264,7 @@ const MIDNIGHT_PURPLE: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#b4a2f0'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#757087'),
     '--color-tab-active-text': '#f3f0fa',
     '--color-tab-indicator': '#b4a2f0',
     ...STATUS_DARK,
@@ -311,7 +314,7 @@ const EMERALD_GREEN: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#6fd1ad'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#7a8a82'),
     '--color-tab-active-text': '#0c1a14',
     '--color-tab-indicator': '#0d6b50',
     ...STATUS_LIGHT,
@@ -355,7 +358,7 @@ const EMERALD_GREEN: ThemePreset = {
     '--color-control-knob': '#ffffff',
     '--color-scrollbar-track': 'transparent',
     ...sidebar('#6fd1ad'),
-    ...AI_LAUNCHER,
+    ...aiLauncher('#68786f'),
     '--color-tab-active-text': '#f1f6f3',
     '--color-tab-indicator': '#6fd1ad',
     ...STATUS_DARK,

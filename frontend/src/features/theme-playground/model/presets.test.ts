@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { isValidColor } from './color';
+import { contrastRatio, isValidColor } from './color';
 import { checkPalette } from './contrast-rules';
 import { buildPresets } from './presets';
 import { COPIED_TOKEN_NAMES, COPIED_TOKENS, WEB_TOKENS } from './tokens';
@@ -102,6 +102,21 @@ describe.each(PRESETS.map((p) => [p.label, p] as const))('%s', (_label, preset) 
       .filter((f) => f.severity === 'fail')
       .map((f) => f.message);
     expect(failures).toStrictEqual([]);
+  });
+
+  // Mirrors styles/contrast.test.ts for the shipped theme: the AI launcher's
+  // edge is the mode's own neutral border-strong (not near-black), and the
+  // button's boundary still reads at 3:1 against the navbar surface.
+  it.each(['light', 'dark'] as const)('edges the AI launcher in border-strong (%s)', (mode) => {
+    const palette = preset[mode];
+    expect(palette['--color-ai-launcher-border']).toBe(palette['--color-border-strong']);
+    const edge = contrastRatio(palette['--color-ai-launcher-border'], palette['--color-surface']);
+    const fill = contrastRatio(palette['--color-ai-launcher'], palette['--color-surface']);
+    expect(edge).not.toBeNull();
+    expect(Math.max(edge ?? 0, fill ?? 0), `${mode} launcher boundary`).toBeGreaterThanOrEqual(3);
+    // ...and its icon reads on the white fill (it once rendered white on white).
+    const icon = contrastRatio(palette['--color-ai-launcher-icon'], palette['--color-ai-launcher']);
+    expect(icon ?? 0, `${mode} launcher icon`).toBeGreaterThanOrEqual(4.5);
   });
 });
 

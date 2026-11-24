@@ -192,33 +192,37 @@ export function NotificationsPage() {
   // The list rolls itself back on a refused write (DP-05); this says so, so a
   // row that reappears is never a silent mystery. A bulk action also says
   // when it worked — and only then.
+  //
+  // `mutateAsync`, not `mutate(vars, { onSuccess })`: TanStack Query runs a
+  // `mutate` call's own callbacks only for the LATEST call on the observer,
+  // so a second bulk action started before the first settled swallowed the
+  // first one's toast. Each call's promise reports its own outcome.
+  const { mutateAsync: updateNotifications } = updateMutation;
   const patch = useCallback(
-    (ids: readonly string[], value: NotificationPatch, options?: { readonly bulk?: boolean }) =>
-      updateMutation.mutate(
-        { ids, patch: value },
-        {
-          onSuccess: () => {
-            if (options?.bulk) {
-              toast({
-                variant: 'success',
-                title: `${plural(ids.length, 'notification')} ${bulkVerb(value)}`,
-              });
-            }
-          },
-          onError: () =>
+    (ids: readonly string[], value: NotificationPatch, options?: { readonly bulk?: boolean }) => {
+      updateNotifications({ ids, patch: value }).then(
+        () => {
+          if (options?.bulk) {
             toast({
-              variant: 'error',
-              title: `Could not update ${ids.length === 1 ? 'the notification' : `${String(ids.length)} notifications`}`,
-              // One write per row: a bulk failure may have landed part-way,
-              // and the reconcile shows exactly what was kept.
-              description:
-                ids.length === 1
-                  ? 'Nothing was changed.'
-                  : 'Some or all of them were not changed. The list shows what was saved.',
-            }),
+              variant: 'success',
+              title: `${plural(ids.length, 'notification')} ${bulkVerb(value)}`,
+            });
+          }
         },
-      ),
-    [updateMutation, toast],
+        () =>
+          toast({
+            variant: 'error',
+            title: `Could not update ${ids.length === 1 ? 'the notification' : `${String(ids.length)} notifications`}`,
+            // One write per row: a bulk failure may have landed part-way,
+            // and the reconcile shows exactly what was kept.
+            description:
+              ids.length === 1
+                ? 'Nothing was changed.'
+                : 'Some or all of them were not changed. The list shows what was saved.',
+          }),
+      );
+    },
+    [updateNotifications, toast],
   );
 
   const bulkPatch = (value: NotificationPatch) => {
@@ -300,9 +304,12 @@ export function NotificationsPage() {
             resultCount={listQuery.isPending ? null : filtered.length}
           />
         </div>
+        {/* On phones the two selects share a row at no less than 8.5rem each
+            and the actions wrap below them: with `min-w-0` alone, a 320px
+            screen squeezed them to "A…" and "N…" (seen in a real browser). */}
         <Select
           aria-label="Filter by category"
-          containerClassName="min-w-0 flex-1 sm:w-44 sm:flex-none"
+          containerClassName="min-w-[8.5rem] flex-1 basis-[8.5rem] sm:w-44 sm:flex-none sm:basis-auto"
           options={[
             { value: ALL_CATEGORIES, label: 'All categories' },
             ...NOTIFICATION_CATEGORIES.map((category) => ({
@@ -317,7 +324,7 @@ export function NotificationsPage() {
         />
         <Select
           aria-label="Sort notifications"
-          containerClassName="min-w-0 flex-1 sm:w-40 sm:flex-none"
+          containerClassName="min-w-[8.5rem] flex-1 basis-[8.5rem] sm:w-40 sm:flex-none sm:basis-auto"
           options={NOTIFICATION_SORTS.map((sort) => ({
             value: sort,
             label: NOTIFICATION_SORT_LABELS[sort],

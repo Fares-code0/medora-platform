@@ -91,4 +91,23 @@ describe('the avatar menu — My Profile', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'My Profile' }));
     expect(screen.getByTestId('path')).toHaveTextContent(path);
   });
+
+  // The administrator's avatar Settings is personal preferences; Platform
+  // Settings is the sidebar's (AppSidebar.test.tsx). They must not converge.
+  it('sends the admin avatar Settings to personal preferences, not Platform Settings', async () => {
+    account.name = 'Platform Admin';
+    account.role = 'admin';
+    render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <AvatarMenu />
+          <PathProbe />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Platform Admin/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
+    expect(screen.getByTestId('path')).toHaveTextContent('/admin/preferences');
+    expect(screen.getByTestId('path')).not.toHaveTextContent('/admin/settings');
+  });
 });

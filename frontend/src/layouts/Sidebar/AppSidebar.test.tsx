@@ -896,6 +896,30 @@ describe('AppSidebar reception — Queue and Waiting Room', () => {
 });
 
 /**
+ * An administrator has two settings destinations. The sidebar's Settings is
+ * Platform Settings; personal preferences live in the avatar menu
+ * (AvatarMenu.test.tsx). Pin the sidebar half so the two cannot swap or
+ * collapse into one.
+ */
+describe('AppSidebar — administrator Settings destination', () => {
+  it('points the footer Settings at Platform Settings, and offers no Help', () => {
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={['/admin']}>
+          <AppSidebar config={adminNavigation} collapsed={false} />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/admin/settings',
+    );
+    expect(screen.queryByRole('link', { name: 'Help' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /preferences/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
  * The groups are a single-open accordion: opening one closes any other, the
  * open one closes when chosen again, and navigation opens the group that
  * holds the page and so closes the rest. Highlighting is independent of it:

@@ -250,6 +250,26 @@ describe('Professional profile settings (DEC-007)', () => {
     );
   });
 
+  it('titles the administrator’s personal page as preferences, distinct from Platform Settings', async () => {
+    const router = await signInAs('admin@medora.health');
+    await waitFor(
+      () => {
+        expect(router.state.location.pathname.startsWith(routes.admin.root)).toBe(true);
+      },
+      { timeout: LAZY_ROUTE_MS },
+    );
+
+    await router.navigate(`${preferences}/account`);
+
+    expect(
+      await screen.findByRole('heading', { name: 'My Preferences' }, { timeout: LAZY_ROUTE_MS }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Settings' })).not.toBeInTheDocument();
+    // The caption names where the other destination lives, so neither page
+    // reads as the only "Settings".
+    expect(screen.getByText(/Platform-wide configuration is under Settings/)).toBeInTheDocument();
+  });
+
   it('still gives a doctor the professional profile', async () => {
     const router = await signInAs('doctor@medora.health');
     await waitFor(

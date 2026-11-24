@@ -135,9 +135,16 @@ function AreaFallback() {
  * feature module importing another; the app layer is the sanctioned composer
  * (the same reason ShellBadgesProvider and the search providers live here).
  */
+const ADMIN_PREFERENCES_TITLE = 'My Preferences';
+const ADMIN_PREFERENCES_CAPTION =
+  'Your own account, security and display preferences. Platform-wide configuration is under Settings in the sidebar.';
+
 const adminPreferencesRoute: RouteObject = {
   path: 'preferences',
-  handle: { crumb: 'My Settings' } satisfies RouteHandle,
+  // "Preferences", not "Settings": the sidebar's Settings is Platform
+  // Settings (/admin/settings). Two pages both titled Settings was the
+  // ambiguity this naming removes.
+  handle: { crumb: 'My Preferences' } satisfies RouteHandle,
   children: [
     {
       index: true,
@@ -162,6 +169,8 @@ const adminPreferencesRoute: RouteObject = {
               buildSectionPath={buildSectionPath}
               backHref={routes.admin.root}
               sections={sections}
+              title={ADMIN_PREFERENCES_TITLE}
+              caption={ADMIN_PREFERENCES_CAPTION}
             />
           ),
         };
