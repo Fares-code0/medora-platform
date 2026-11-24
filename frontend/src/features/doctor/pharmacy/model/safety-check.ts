@@ -1,3 +1,5 @@
+import type { MessageKey } from '@/i18n';
+
 import type { CompleteDraft } from './authoring';
 import type { MedicationCategory, SafetyWarning, SafetyWarningSeverity } from './types';
 
@@ -34,16 +36,26 @@ export type SafetyEvidenceSource = 'demo-formulary' | 'clinical-service';
 
 export const SAFETY_EVIDENCE_META: Record<
   SafetyEvidenceSource,
-  { readonly label: string; readonly detail: string; readonly isDemo: boolean }
+  {
+    readonly label: string;
+    readonly labelKey: MessageKey;
+    readonly detail: string;
+    readonly detailKey: MessageKey;
+    readonly isDemo: boolean;
+  }
 > = {
   'demo-formulary': {
     label: 'Demo formulary',
+    labelKey: 'rx.evidence.demoFormulary',
+    detailKey: 'rx.evidence.demoFormulary.detail',
     detail:
       'Screened against a five-medication demo formulary and its canned notes — not a clinical interaction service. Verdicts here are illustrative and must not be relied on for care.',
     isDemo: true,
   },
   'clinical-service': {
     label: 'Clinical interaction service',
+    labelKey: 'rx.evidence.clinicalService',
+    detailKey: 'rx.evidence.clinicalService.detail',
     detail: 'Screened against the licensed drug interaction and allergy service.',
     isDemo: false,
   },

@@ -1,19 +1,15 @@
-import { StatusBadge } from '@/components/patterns';
 import { type DataTableColumn } from '@/components/ui';
-import {
-  PATIENT_STATUS_META,
-  RISK_LEVEL_META,
-  type Patient,
-} from '@/features/shared-domain/patient-identity';
+import { type Patient } from '@/features/shared-domain/patient-identity';
 
 import { DateCell, NextAppointmentCell } from './PatientDateCells';
 import { PatientNameCell } from './PatientNameCell';
 import { PatientRowActions } from './PatientRowActions';
+import { PatientRiskCell, PatientStatusCell } from './PatientStatusCells';
 
 /**
  * Column set for the patients DataTable (UX 2.2). Cell components live in
- * their own files (PatientNameCell, PatientDateCells) so this module
- * exports configuration only.
+ * their own files (PatientNameCell, PatientDateCells, PatientStatusCells) so
+ * this module exports configuration only.
  *
  * There is no "Assigned doctor" column. The list is the signed-in doctor's
  * own patients, so the column repeated their name on every row, in width
@@ -65,23 +61,13 @@ export const PATIENT_COLUMNS: ReadonlyArray<DataTableColumn<Patient>> = [
   {
     id: 'status',
     header: 'Status',
-    cell: (patient) => (
-      <StatusBadge
-        status={PATIENT_STATUS_META[patient.status].kind}
-        label={PATIENT_STATUS_META[patient.status].label}
-      />
-    ),
+    cell: (patient) => <PatientStatusCell status={patient.status} />,
   },
   {
     id: 'riskLevel',
     header: 'Risk',
     sortable: true,
-    cell: (patient) => (
-      <StatusBadge
-        status={RISK_LEVEL_META[patient.riskLevel].kind}
-        label={RISK_LEVEL_META[patient.riskLevel].label}
-      />
-    ),
+    cell: (patient) => <PatientRiskCell level={patient.riskLevel} />,
   },
   { id: 'age', header: 'Age', sortable: true, numeric: true, cell: (patient) => patient.age },
   {

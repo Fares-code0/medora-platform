@@ -7,11 +7,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/app/providers';
 import { Alert } from '@/components/feedback';
 import { Button, PasswordInput } from '@/components/ui';
-import { useT } from '@/i18n';
+import { translateIfKey, useT } from '@/i18n';
 import { routes } from '@/routes';
 
 import { AuthCard, AuthFormError, PasswordStrengthMeter } from '../components';
 import { authErrorKey } from '../error-message';
+import { PASSWORD_MIN_LENGTH } from '../schemas/password';
 import { resetSchema, type ResetValues } from '../schemas/reset';
 
 export default function ResetPasswordPage() {
@@ -70,7 +71,7 @@ export default function ResetPasswordPage() {
             label={t('reset.newPassword')}
             autoComplete="new-password"
             autoFocus
-            error={errors.password?.message}
+            error={translateIfKey(t, errors.password?.message, { count: PASSWORD_MIN_LENGTH })}
             {...register('password')}
           />
           <PasswordStrengthMeter password={password} />
@@ -78,7 +79,7 @@ export default function ResetPasswordPage() {
         <PasswordInput
           label={t('common.confirmPassword')}
           autoComplete="new-password"
-          error={errors.confirmPassword?.message}
+          error={translateIfKey(t, errors.confirmPassword?.message)}
           {...register('confirmPassword')}
         />
         <Button type="submit" fullWidth loading={isSubmitting}>

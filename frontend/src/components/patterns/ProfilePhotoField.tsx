@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ImageUp, Maximize, Minus, Plus, RotateCcw, Trash2 } from 'lucide-react';
 
 import { Avatar, Button, Modal } from '@/components/ui';
+import { useT } from '@/i18n';
 
 /**
  * Profile photo field — an avatar preview with Upload / Change / Remove, plus
@@ -44,6 +45,7 @@ export function ProfilePhotoField({
   removable = true,
   busy = false,
 }: ProfilePhotoFieldProps) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [editorSrc, setEditorSrc] = useState<string | null>(null);
 
@@ -52,16 +54,16 @@ export function ProfilePhotoField({
     event.target.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      onError('Choose an image file.');
+      onError(t('photo.error.notImage'));
       return;
     }
     if (file.size > MAX_PHOTO_BYTES) {
-      onError('Keep the image under 4 MB.');
+      onError(t('photo.error.tooLarge'));
       return;
     }
     const reader = new FileReader();
     reader.onload = () => setEditorSrc(typeof reader.result === 'string' ? reader.result : null);
-    reader.onerror = () => onError('Could not read that file.');
+    reader.onerror = () => onError(t('photo.error.unreadable'));
     reader.readAsDataURL(file);
   };
 
@@ -69,7 +71,7 @@ export function ProfilePhotoField({
     <div className="flex items-center gap-4">
       <Avatar name={name || 'User'} src={value ?? undefined} size="xl" roleRing={roleRing} />
       <div className="flex flex-col gap-2">
-        <p className="text-body-sm font-medium text-text-primary">Profile photo</p>
+        <p className="text-body-sm font-medium text-text-primary">{t('photo.title')}</p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -79,16 +81,16 @@ export function ProfilePhotoField({
             loading={busy}
             onClick={() => inputRef.current?.click()}
           >
-            {value ? 'Change photo' : 'Upload photo'}
+            {value ? t('photo.change') : t('photo.upload')}
           </Button>
           {value && removable ? (
             <Button type="button" variant="ghost" size="sm" leadingIcon={Trash2} onClick={() => onChange(null)}>
-              Remove
+              {t('ui.remove')}
             </Button>
           ) : null}
         </div>
         <p className="text-caption text-text-secondary">
-          JPG or PNG. You can zoom, move, and crop before saving.
+          {t('photo.hint')}
         </p>
         <input
           ref={inputRef}
@@ -96,7 +98,7 @@ export function ProfilePhotoField({
           accept="image/*"
           className="sr-only"
           onChange={onFile}
-          aria-label="Upload profile photo"
+          aria-label={t('photo.uploadLabel')}
         />
       </div>
 
@@ -136,6 +138,8 @@ function PhotoEditorModal({
   onSave: (dataUrl: string) => void;
   onError: (message: string) => void;
 }) {
+  // `translate`, not `t`: `t` names the crop transform throughout this component.
+  const translate = useT();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [ready, setReady] = useState(false);
@@ -151,9 +155,9 @@ function PhotoEditorModal({
       imageRef.current = img;
       setReady(true);
     };
-    img.onerror = () => onError('Could not load that image.');
+    img.onerror = () => onError(translate('photo.error.unloadable'));
     img.src = src;
-  }, [src, onError]);
+  }, [src, onError, translate]);
 
   /** Cover-fit base scale so the image always fills the frame at zoom 1. */
   const draw = useCallback(
@@ -215,7 +219,7 @@ function PhotoEditorModal({
     out.height = OUTPUT_SIZE;
     const ctx = out.getContext('2d');
     if (!ctx) {
-      onError('Could not process the image.');
+      onError(translate('photo.error.process'));
       return;
     }
     // Circular crop so the saved avatar is genuinely round.
@@ -233,16 +237,16 @@ function PhotoEditorModal({
     <Modal
       open
       onClose={onCancel}
-      title="Edit profile photo"
-      description="Drag to move, zoom to frame, then crop to a circle."
+      title={translate('photo.editTitle')}
+      description={translate('photo.editDescription')}
       size="md"
       footer={
         <>
           <Button variant="secondary" onClick={onCancel}>
-            Cancel
+            {translate('ui.cancel')}
           </Button>
           <Button onClick={save} disabled={!ready}>
-            Save photo
+            {translate('photo.save')}
           </Button>
         </>
       }
@@ -271,7 +275,7 @@ function PhotoEditorModal({
         <div className="flex w-full max-w-[264px] items-center gap-3">
           <button
             type="button"
-            aria-label="Zoom out"
+            aria-label={translate('ui.zoomOut')}
             onClick={() => setZoom(transform.zoom - 0.25)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-surface text-text-secondary hover:bg-surface-sunken"
           >
@@ -284,12 +288,12 @@ function PhotoEditorModal({
             step={0.05}
             value={transform.zoom}
             onChange={(event) => setZoom(Number(event.target.value))}
-            aria-label="Zoom"
+            aria-label={translate('ui.zoom')}
             className="h-1.5 flex-1 cursor-pointer appearance-none rounded-pill bg-border accent-primary"
           />
           <button
             type="button"
-            aria-label="Zoom in"
+            aria-label={translate('ui.zoomIn')}
             onClick={() => setZoom(transform.zoom + 0.25)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-surface text-text-secondary hover:bg-surface-sunken"
           >
@@ -306,7 +310,7 @@ function PhotoEditorModal({
             leadingIcon={Maximize}
             onClick={() => setTransform((t) => ({ ...t, x: 0, y: 0 }))}
           >
-            Center
+            {translate('ui.center')}
           </Button>
           <Button
             type="button"
@@ -315,7 +319,7 @@ function PhotoEditorModal({
             leadingIcon={RotateCcw}
             onClick={() => setTransform(CENTERED)}
           >
-            Reset
+            {translate('ui.reset')}
           </Button>
         </div>
       </div>

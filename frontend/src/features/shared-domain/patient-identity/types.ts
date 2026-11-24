@@ -1,4 +1,5 @@
 import type { StatusKind } from '@/components/patterns';
+import type { MessageKey } from '@/i18n';
 
 /**
  * Patients domain model — feature-local types (FRONTEND_ARCHITECTURE §9.1:
@@ -49,23 +50,27 @@ export interface Patient {
  */
 export const PATIENT_STATUS_META: Record<
   PatientStatus,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
-  active: { label: 'Active', kind: 'active' },
-  'under-treatment': { label: 'Under treatment', kind: 'info' },
-  critical: { label: 'Critical', kind: 'critical' },
-  'follow-up': { label: 'Follow-up', kind: 'awaiting' },
-  discharged: { label: 'Discharged', kind: 'archived' },
+  active: { label: 'Active', labelKey: 'patient.status.active', kind: 'active' },
+  'under-treatment': {
+    label: 'Under treatment',
+    labelKey: 'patient.status.underTreatment',
+    kind: 'info',
+  },
+  critical: { label: 'Critical', labelKey: 'patient.status.critical', kind: 'critical' },
+  'follow-up': { label: 'Follow-up', labelKey: 'patient.status.followUp', kind: 'awaiting' },
+  discharged: { label: 'Discharged', labelKey: 'patient.status.discharged', kind: 'archived' },
 };
 
 export const RISK_LEVEL_META: Record<
   RiskLevel,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
-  low: { label: 'Low', kind: 'normal' },
-  medium: { label: 'Medium', kind: 'expiring' },
-  high: { label: 'High', kind: 'critical' },
-  critical: { label: 'Critical', kind: 'critical' },
+  low: { label: 'Low', labelKey: 'patient.risk.low', kind: 'normal' },
+  medium: { label: 'Medium', labelKey: 'patient.risk.medium', kind: 'expiring' },
+  high: { label: 'High', labelKey: 'patient.risk.high', kind: 'critical' },
+  critical: { label: 'Critical', labelKey: 'patient.risk.critical', kind: 'critical' },
 };
 
 export const PATIENT_STATUSES = Object.keys(PATIENT_STATUS_META) as readonly PatientStatus[];

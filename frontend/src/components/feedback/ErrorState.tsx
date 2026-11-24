@@ -1,6 +1,7 @@
 import { AlertCircle } from 'lucide-react';
 
 import { isNotConnected } from '@/api/http';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 /**
@@ -40,18 +41,17 @@ interface ErrorStateProps {
 }
 
 export function ErrorState({
-  title = "Couldn't load this section",
+  title,
   description,
   onRetry,
   error,
   headingLevel: Heading = 'p',
   className,
 }: ErrorStateProps) {
+  const t = useT();
   const unconnected = isNotConnected(error);
-  const shownTitle = unconnected ? 'Not connected yet' : title;
-  const shownDescription = unconnected
-    ? 'This area is not available from the Medora server in this deployment.'
-    : description;
+  const shownTitle = unconnected ? t('ui.notConnected') : (title ?? t('ui.sectionLoadError'));
+  const shownDescription = unconnected ? t('ui.notConnectedBody') : description;
   const retry = unconnected ? undefined : onRetry;
   return (
     <div
@@ -77,7 +77,7 @@ export function ErrorState({
           onClick={retry}
           className="mt-2 inline-flex h-8 items-center rounded-surface border border-border-strong bg-surface px-3 text-body-sm font-medium text-primary transition-colors duration-fast hover:bg-surface-sunken active:scale-[0.98]"
         >
-          Retry
+          {t('ui.retry')}
         </button>
       ) : null}
     </div>

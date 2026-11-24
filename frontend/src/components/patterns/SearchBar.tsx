@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { SearchInput } from '@/components/ui/SearchInput';
 import { SEARCH_DEBOUNCE_MS } from '@/constants';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useT } from '@/i18n';
 
 /**
  * SearchBar — DS §8.28 contextual search (tables/lists).
@@ -31,12 +32,13 @@ export function SearchBar({
   onValueChange,
   onDebouncedChange,
   debounceMs = SEARCH_DEBOUNCE_MS,
-  placeholder = 'Search…',
+  placeholder,
   resultCount = null,
-  label = 'Search',
+  label,
   disabled = false,
   className,
 }: SearchBarProps) {
+  const t = useT();
   const debounced = useDebouncedValue(value, debounceMs);
   const callbackRef = useRef(onDebouncedChange);
   callbackRef.current = onDebouncedChange;
@@ -53,17 +55,15 @@ export function SearchBar({
   return (
     <div className={className}>
       <SearchInput
-        aria-label={label}
-        placeholder={placeholder}
+        aria-label={label ?? t('ui.search')}
+        placeholder={placeholder ?? t('shell.searchPlaceholder')}
         value={value}
         disabled={disabled}
         onChange={(event) => onValueChange(event.target.value)}
         onClear={() => onValueChange('')}
       />
       <span aria-live="polite" className="sr-only">
-        {resultCount === null
-          ? ''
-          : `${String(resultCount)} ${resultCount === 1 ? 'result' : 'results'}`}
+        {resultCount === null ? '' : t('ui.resultCount', { count: resultCount })}
       </span>
     </div>
   );

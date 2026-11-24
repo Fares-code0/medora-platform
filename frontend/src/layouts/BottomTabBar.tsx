@@ -35,14 +35,13 @@ function Tab({
   label,
   active,
   badgeCount,
-  unreadLabel,
 }: {
   item: NavigationItem;
   label: string;
   active: boolean;
   badgeCount: number;
-  unreadLabel: string;
 }) {
+  const t = useT();
   const Icon = item.icon;
   return (
     <a href={item.path} aria-current={active ? 'page' : undefined} className={tabClasses(active)}>
@@ -51,7 +50,7 @@ function Tab({
         {badgeCount > 0 ? (
           <CountBadge
             count={badgeCount}
-            aria-label={`${String(badgeCount)} ${unreadLabel}`}
+            aria-label={t('shell.unreadCount', { count: badgeCount })}
             className="absolute -end-2.5 -top-1.5 scale-90"
           />
         ) : null}
@@ -89,7 +88,6 @@ export function BottomTabBar({ config, onMore }: BottomTabBarProps) {
           label={t(item.labelKey)}
           active={isItemActive(pathname, item.path, allPaths, item.end)}
           badgeCount={item.badgeSource ? badgeCounts[item.badgeSource] : 0}
-          unreadLabel={t('shell.unread').toLowerCase()}
         />
       ))}
       <button type="button" onClick={onMore} className={tabClasses(false)}>

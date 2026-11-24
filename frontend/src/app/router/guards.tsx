@@ -2,6 +2,7 @@ import { Navigate, Outlet, useLocation, useSearchParams } from 'react-router-dom
 
 import { useAuth, useCan } from '@/app/providers';
 import { resolveDestination } from '@/features/auth';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 import { workspaceFor } from '@/routes/workspaces';
 import { Logo } from '@/shared/components/branding';
@@ -19,6 +20,7 @@ import { ForbiddenPage } from '../error-boundary/ErrorPages';
 export function RequireAuth() {
   const { status } = useAuth();
   const location = useLocation();
+  const t = useT();
 
   if (status === 'booting') {
     // Full-app bootstrap pattern (DS 8.32) — replaced with the branded
@@ -26,7 +28,7 @@ export function RequireAuth() {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-5 bg-background">
         <Logo size="lg" label="Medora" />
-        <p className="animate-pulse text-body-sm text-text-tertiary">Loading…</p>
+        <p className="animate-pulse text-body-sm text-text-tertiary">{t('state.loading')}</p>
       </div>
     );
   }

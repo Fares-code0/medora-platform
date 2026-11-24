@@ -16,12 +16,12 @@ const lazyPage = async () => {
 export const messagingRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.messages,
-    handle: { crumb: 'Messages' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.messages' } satisfies RouteHandle,
     lazy: lazyPage,
   },
   {
     path: `${routes.doctor.messages}/:conversationId`,
-    handle: { crumb: 'Messages' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.messages' } satisfies RouteHandle,
     lazy: lazyPage,
   },
 ];

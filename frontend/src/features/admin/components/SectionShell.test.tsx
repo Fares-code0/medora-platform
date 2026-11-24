@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import { translate } from '@/i18n';
+
 import { SECTION_META } from '../administration.meta';
 
 import { Panel } from './primitives';
@@ -21,7 +23,7 @@ describe('SectionShell', () => {
     );
 
     expect(
-      screen.getByRole('heading', { name: SECTION_META.staff.label, level: 1 }),
+      screen.getByRole('heading', { name: translate('en', SECTION_META.staff.labelKey), level: 1 }),
     ).toBeInTheDocument();
   });
 

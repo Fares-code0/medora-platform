@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 
 import { EyeOff } from 'lucide-react';
 
+import { useT } from '@/i18n';
+
 import { Reveal } from '../Reveal';
 
 import type { DashboardWidgetDefinition, DashboardWidgetSize } from './types';
@@ -64,6 +66,7 @@ export function DashboardWidgetGrid<TId extends string, TProps extends object>({
   onRemove,
   widgetProps,
 }: DashboardWidgetGridProps<TId, TProps>) {
+  const t = useT();
   /*
    * Widgets on screen at first paint enter as one staggered sequence; a widget
    * added later — including one removed and put back — enters on its own, at
@@ -77,7 +80,7 @@ export function DashboardWidgetGrid<TId extends string, TProps extends object>({
   }, []);
 
   return (
-    <ul aria-label="Dashboard widgets" className="flex flex-wrap gap-4">
+    <ul aria-label={t('dashboard.widgets')} className="flex flex-wrap gap-4">
       {activeIds.map((id, position) => {
         const widget = getWidget(id);
         const Widget = widget.component;

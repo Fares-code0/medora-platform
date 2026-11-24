@@ -16,6 +16,7 @@ import {
   type TestSpec,
 } from '@/features/shared-domain/lab-studies';
 import type { Patient } from '@/features/shared-domain/patient-identity';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 
 import { useOrderLabsMutation } from '../api/useLabOrderMutation';
@@ -52,6 +53,7 @@ import { refusalOf } from '../model/refusal';
 const NO_TESTS: readonly TestSpec[] = [];
 
 export function NewLabOrderPage() {
+  const t = useT();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
@@ -231,7 +233,7 @@ export function NewLabOrderPage() {
                   }}
                   options={Object.entries(LAB_PRIORITY_META).map(([value, meta]) => ({
                     value,
-                    label: meta.label,
+                    label: t(meta.labelKey),
                   }))}
                 />
                 <Select

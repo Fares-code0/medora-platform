@@ -16,7 +16,7 @@ const lazyPage = async () => {
 export const reportsRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.reports,
-    handle: { crumb: 'Reports' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.reports' } satisfies RouteHandle,
     lazy: lazyPage,
   },
 ];

@@ -1,3 +1,4 @@
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 /**
@@ -14,9 +15,14 @@ interface SpinnerProps {
   label?: string;
 }
 
-export function Spinner({ size = 'md', className, label = 'Loading' }: SpinnerProps) {
+export function Spinner({ size = 'md', className, label }: SpinnerProps) {
+  const t = useT();
   return (
-    <span role="status" aria-label={label} className={cn('inline-block', className)}>
+    <span
+      role="status"
+      aria-label={label ?? t('ui.loadingShort')}
+      className={cn('inline-block', className)}
+    >
       <span
         className={cn(
           'block animate-spin rounded-pill border-[3px] border-border border-t-primary',

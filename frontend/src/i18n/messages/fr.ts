@@ -1,4 +1,4 @@
-import type { Messages } from './en';
+import type { PartialMessages } from './en';
 
 /**
  * French (Français) — left-to-right.
@@ -15,7 +15,7 @@ import type { Messages } from './en';
  * font and input path in a web app, so a normal space is used consistently
  * rather than inconsistently.
  */
-export const fr: Messages = {
+export const fr: PartialMessages = {
   // Brand panel
   'brand.welcome': 'Bienvenue sur Medora',
   'brand.tagline': 'La plateforme dopée à l’IA pour les équipes de santé modernes.',
@@ -324,4 +324,15 @@ export const fr: Messages = {
   'invitation.error.taken': 'Un compte existe déjà avec cette adresse e-mail.',
   'invitation.error.weakPassword': 'Choisissez un mot de passe plus robuste.',
   'invitation.error.generic': 'Nous n’avons pas pu finaliser votre invitation. Veuillez réessayer.',
+
+  /* ── Unread counts (plural; were concatenated before the Arabic foundation) ── */
+  'shell.unreadCount': { one: '{count} non lu', other: '{count} non lus' },
+  'shell.notificationsUnread': {
+    one: 'Notifications ({count} non lu)',
+    other: 'Notifications ({count} non lus)',
+  },
+  'shell.unreadNotificationsBadge': {
+    one: '{count} non lu — Notifications',
+    other: '{count} non lus — Notifications',
+  },
 };

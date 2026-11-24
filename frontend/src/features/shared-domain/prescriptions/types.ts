@@ -14,6 +14,7 @@ import {
 
 import type { StatusKind } from '@/components/patterns';
 import type { BloodType, Gender } from '@/features/shared-domain/patient-identity';
+import type { MessageKey } from '@/i18n';
 
 /**
  * Pharmacy domain model — feature-local types mirroring the future
@@ -37,20 +38,24 @@ export type PrescriptionStatus =
 
 export const PRESCRIPTION_STATUS_META: Record<
   PrescriptionStatus,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
   /*
    * Created but never signed — the state a refused signature leaves a
    * prescription in on the server (API §7.7). Not issued; nothing to dispense.
    */
-  draft: { label: 'Draft — not issued', kind: 'awaiting' },
-  active: { label: 'Active', kind: 'active' },
+  draft: { label: 'Draft — not issued', labelKey: 'rx.status.draft', kind: 'awaiting' },
+  active: { label: 'Active', labelKey: 'rx.status.active', kind: 'active' },
   // In the patient's hands: a running course the pharmacy has settled.
-  dispensed: { label: 'Dispensed', kind: 'info' },
-  completed: { label: 'Completed', kind: 'completed' },
-  discontinued: { label: 'Discontinued', kind: 'cancelled' },
-  'pending-approval': { label: 'Pending approval', kind: 'pending' },
-  expired: { label: 'Expired', kind: 'archived' },
+  dispensed: { label: 'Dispensed', labelKey: 'rx.status.dispensed', kind: 'info' },
+  completed: { label: 'Completed', labelKey: 'rx.status.completed', kind: 'completed' },
+  discontinued: { label: 'Discontinued', labelKey: 'rx.status.discontinued', kind: 'cancelled' },
+  'pending-approval': {
+    label: 'Pending approval',
+    labelKey: 'rx.status.pendingApproval',
+    kind: 'pending',
+  },
+  expired: { label: 'Expired', labelKey: 'rx.status.expired', kind: 'archived' },
 };
 
 export const PRESCRIPTION_STATUSES = Object.keys(
@@ -63,12 +68,12 @@ export type RefillStatus = 'none' | 'available' | 'due' | 'pending';
 
 export const REFILL_STATUS_META: Record<
   RefillStatus,
-  { readonly label: string; readonly kind: StatusKind }
+  { readonly label: string; readonly labelKey: MessageKey; readonly kind: StatusKind }
 > = {
-  none: { label: 'No refills', kind: 'archived' },
-  available: { label: 'Refills available', kind: 'normal' },
-  due: { label: 'Refill due', kind: 'expiring' },
-  pending: { label: 'Refill pending', kind: 'pending' },
+  none: { label: 'No refills', labelKey: 'rx.refill.none', kind: 'archived' },
+  available: { label: 'Refills available', labelKey: 'rx.refill.available', kind: 'normal' },
+  due: { label: 'Refill due', labelKey: 'rx.refill.due', kind: 'expiring' },
+  pending: { label: 'Refill pending', labelKey: 'rx.refill.pending', kind: 'pending' },
 };
 
 export const REFILL_STATUSES = Object.keys(REFILL_STATUS_META) as readonly RefillStatus[];
@@ -160,22 +165,37 @@ export type SafetyWarningSeverity = 'info' | 'warning' | 'critical';
 
 export const SAFETY_WARNING_KIND_META: Record<
   SafetyWarningKind,
-  { readonly label: string; readonly icon: LucideIcon }
+  { readonly label: string; readonly labelKey: MessageKey; readonly icon: LucideIcon }
 > = {
-  interaction: { label: 'Drug interaction', icon: ShieldAlert },
-  allergy: { label: 'Allergy conflict', icon: CircleAlert },
-  duplicate: { label: 'Duplicate therapy', icon: Pill },
-  dosage: { label: 'Dosage alert', icon: CircleAlert },
+  interaction: { label: 'Drug interaction', labelKey: 'rx.warning.interaction', icon: ShieldAlert },
+  allergy: { label: 'Allergy conflict', labelKey: 'rx.warning.allergy', icon: CircleAlert },
+  duplicate: { label: 'Duplicate therapy', labelKey: 'rx.warning.duplicate', icon: Pill },
+  dosage: { label: 'Dosage alert', labelKey: 'rx.warning.dosage', icon: CircleAlert },
 };
 
 /** Severity → P8 vocabulary (badges) and Alert variant (banners). */
 export const SAFETY_WARNING_SEVERITY_META: Record<
   SafetyWarningSeverity,
-  { readonly label: string; readonly kind: StatusKind; readonly alert: 'info' | 'warning' | 'error' }
+  {
+    readonly label: string;
+    readonly labelKey: MessageKey;
+    readonly kind: StatusKind;
+    readonly alert: 'info' | 'warning' | 'error';
+  }
 > = {
-  info: { label: 'Info', kind: 'info', alert: 'info' },
-  warning: { label: 'Warning', kind: 'expiring', alert: 'warning' },
-  critical: { label: 'Critical', kind: 'critical', alert: 'error' },
+  info: { label: 'Info', labelKey: 'rx.severity.info', kind: 'info', alert: 'info' },
+  warning: {
+    label: 'Warning',
+    labelKey: 'rx.severity.warning',
+    kind: 'expiring',
+    alert: 'warning',
+  },
+  critical: {
+    label: 'Critical',
+    labelKey: 'rx.severity.critical',
+    kind: 'critical',
+    alert: 'error',
+  },
 };
 
 export interface SafetyWarning {
@@ -214,16 +234,24 @@ export type PrescriptionTimelineKind =
 
 export const PRESCRIPTION_TIMELINE_META: Record<
   PrescriptionTimelineKind,
-  { readonly label: string; readonly icon: LucideIcon }
+  { readonly label: string; readonly labelKey: MessageKey; readonly icon: LucideIcon }
 > = {
-  prescribed: { label: 'Prescribed', icon: FilePlus2 },
-  dispensed: { label: 'Dispensed', icon: Truck },
-  'refill-requested': { label: 'Refill requested', icon: RefreshCw },
-  'refill-approved': { label: 'Refill approved', icon: RefreshCw },
-  renewed: { label: 'Renewed', icon: RotateCcw },
-  'note-added': { label: 'Note added', icon: NotebookPen },
-  discontinued: { label: 'Discontinued', icon: Ban },
-  expired: { label: 'Expired', icon: CalendarClock },
+  prescribed: { label: 'Prescribed', labelKey: 'rx.timeline.prescribed', icon: FilePlus2 },
+  dispensed: { label: 'Dispensed', labelKey: 'rx.timeline.dispensed', icon: Truck },
+  'refill-requested': {
+    label: 'Refill requested',
+    labelKey: 'rx.timeline.refillRequested',
+    icon: RefreshCw,
+  },
+  'refill-approved': {
+    label: 'Refill approved',
+    labelKey: 'rx.timeline.refillApproved',
+    icon: RefreshCw,
+  },
+  renewed: { label: 'Renewed', labelKey: 'rx.timeline.renewed', icon: RotateCcw },
+  'note-added': { label: 'Note added', labelKey: 'rx.timeline.noteAdded', icon: NotebookPen },
+  discontinued: { label: 'Discontinued', labelKey: 'rx.timeline.discontinued', icon: Ban },
+  expired: { label: 'Expired', labelKey: 'rx.timeline.expired', icon: CalendarClock },
 };
 
 export interface PrescriptionTimelineEvent {

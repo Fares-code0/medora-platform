@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { isMessageKey } from '@/i18n';
 import { adminNavigation } from '@/layouts';
 import { routes } from '@/routes';
 
@@ -41,7 +42,7 @@ describe('admin navigation', () => {
     }
   });
 
-  it('names every route with a breadcrumb crumb, so titles and breadcrumbs work', () => {
+  it('names every route with a title key, so titles and breadcrumbs work', () => {
     // Redirects are exempt: they render a <Navigate> and are gone before a
     // breadcrumb could be read, so naming one would only invent a page.
     // `/admin/platform` is the only such route (ADM-01 retired the section
@@ -50,13 +51,19 @@ describe('admin navigation', () => {
     // or `children:` (nested subroutes) render pages. Every other route that
     // actually renders must have a breadcrumb name.
     for (const route of adminRoutes.filter((r) => r.lazy !== undefined || r.children !== undefined)) {
-      const crumb = (route.handle as { crumb?: string } | undefined)?.crumb;
-      expect(typeof crumb, `route "${String(route.path ?? 'index')}" has no crumb`).toBe('string');
+      const titleKey = (route.handle as { titleKey?: string } | undefined)?.titleKey;
+      expect(typeof titleKey, `route "${String(route.path ?? 'index')}" has no titleKey`).toBe(
+        'string',
+      );
+      expect(
+        isMessageKey(titleKey ?? ''),
+        `route "${String(route.path ?? 'index')}": unknown key`,
+      ).toBe(true);
     }
   });
 
-  it('keeps each inlined route crumb identical to its SECTION_META label', () => {
-    // Crumbs are string literals in routes.tsx rather than SECTION_META
+  it('keeps each inlined route title key identical to its SECTION_META label key', () => {
+    // Title keys are literals in routes.tsx rather than SECTION_META
     // lookups, deliberately: importing the meta module there would drag it
     // (and its icon imports) into the entry chunk. This test is what stops
     // the two copies drifting.
@@ -65,9 +72,10 @@ describe('admin navigation', () => {
       if (typeof slug !== 'string') continue;
       const meta = SECTION_META[slug as keyof typeof SECTION_META];
       if (!meta) continue;
-      expect((route.handle as { crumb?: string }).crumb, `crumb drifted for "${slug}"`).toBe(
-        meta.label,
-      );
+      expect(
+        (route.handle as { titleKey?: string }).titleKey,
+        `title key drifted for "${slug}"`,
+      ).toBe(meta.labelKey);
     }
   });
 

@@ -1,4 +1,5 @@
 import { TONE_CLASSES } from '@/components/charts';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 import { formatDate } from '@/utils/dates';
 
@@ -69,6 +70,7 @@ export interface AnalyteTrendChartProps {
 }
 
 export function AnalyteTrendChart({ trends, band, ariaLabel }: AnalyteTrendChartProps) {
+  const t = useT();
   const domain = trendDomain(trends, band);
   const span = domain.max - domain.min;
 
@@ -213,7 +215,7 @@ export function AnalyteTrendChart({ trends, band, ariaLabel }: AnalyteTrendChart
                   <title>
                     {`${trend.analyte} ${formatValue(point.value, span)}${
                       trend.unit ? ` ${trend.unit}` : ''
-                    } — ${LAB_RESULT_FLAG_META[point.flag].label}, ${formatDate(point.at)} (${point.labId})`}
+                    } — ${t(LAB_RESULT_FLAG_META[point.flag].labelKey)}, ${formatDate(point.at)} (${point.labId})`}
                   </title>
                 </circle>
               );

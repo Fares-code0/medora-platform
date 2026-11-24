@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 
 import { IconButton, Tooltip } from '@/components/ui';
+import { useT } from '@/i18n';
 import { copyText } from '@/utils/clipboard';
 
 /**
@@ -112,6 +113,7 @@ function highlightLine(line: string, keyBase: string): ReactNode[] {
 }
 
 function CodeBlock({ code, language }: { code: string; language: string | null }) {
+  const t = useT();
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const copied = copyState === 'copied';
 
@@ -131,17 +133,23 @@ function CodeBlock({ code, language }: { code: string; language: string | null }
       <div className="flex items-center justify-between border-b border-border px-3 py-1">
         <span className="font-mono text-caption text-text-tertiary">{language ?? 'code'}</span>
         <Tooltip
-          content={copied ? 'Copied' : copyState === 'failed' ? "Couldn't copy" : 'Copy code'}
+          content={
+            copied
+              ? t('richText.copied')
+              : copyState === 'failed'
+                ? t('richText.copyFailedShort')
+                : t('richText.copyCode')
+          }
         >
           <IconButton
             icon={copied ? Check : Copy}
             size="sm"
             aria-label={
               copied
-                ? 'Code copied'
+                ? t('richText.codeCopied')
                 : copyState === 'failed'
-                  ? "Couldn't copy the code — select it instead"
-                  : 'Copy code to clipboard'
+                  ? t('richText.copyFailed')
+                  : t('richText.copyToClipboard')
             }
             onClick={copy}
           />

@@ -44,13 +44,14 @@ const PANEL_MOTION = {
 } as const;
 
 function FeedRow({ item, onSelect }: { item: ShellFeedItem; onSelect: (id: string) => void }) {
+  const t = useT();
   const Icon = item.icon;
   return (
     <li>
       <button
         type="button"
         onClick={() => onSelect(item.id)}
-        aria-label={`${item.title}${item.unread ? ' (unread) — mark as read' : ''}`}
+        aria-label={item.unread ? t('shell.notificationUnread', { title: item.title }) : item.title}
         className="flex w-full items-start gap-3 rounded-surface px-1 py-3 text-start transition-colors duration-fast hover:bg-surface-sunken"
       >
         <span
@@ -69,7 +70,7 @@ function FeedRow({ item, onSelect }: { item: ShellFeedItem; onSelect: (id: strin
         </div>
         {item.unread ? (
           <span className="mt-2 flex h-2 w-2 shrink-0 rounded-pill bg-primary">
-            <span className="sr-only">Unread</span>
+            <span className="sr-only">{t('shell.unread')}</span>
           </span>
         ) : null}
       </button>
@@ -84,6 +85,7 @@ function Feed({
   items: readonly ShellFeedItem[] | null;
   onSelect: (id: string) => void;
 }) {
+  const t = useT();
   if (items === null) {
     return (
       <div aria-busy="true" className="flex flex-col gap-3">
@@ -99,8 +101,8 @@ function Feed({
       <EmptyState
         headingLevel="h3"
         className="py-8"
-        title="You're all caught up"
-        description="New notifications appear here as clinical activity happens."
+        title={t('shell.allCaughtUp')}
+        description={t('shell.allCaughtUpBody')}
       />
     );
   }
@@ -186,9 +188,11 @@ export function NotificationButton() {
       <IconButton
         ref={triggerRef}
         icon={Bell}
-        aria-label={`${t('shell.notifications')}${
-          unreadCount > 0 ? ` (${String(unreadCount)} ${t('shell.unread').toLowerCase()})` : ''
-        }`}
+        aria-label={
+          unreadCount > 0
+            ? t('shell.notificationsUnread', { count: unreadCount })
+            : t('shell.notifications')
+        }
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={isOpen ? panelId : undefined}
@@ -198,7 +202,7 @@ export function NotificationButton() {
       {unreadCount > 0 ? (
         <CountBadge
           count={unreadCount}
-          aria-label={`${String(unreadCount)} ${t('shell.unread').toLowerCase()} — ${t('shell.notifications')}`}
+          aria-label={t('shell.unreadNotificationsBadge', { count: unreadCount })}
           className="pointer-events-none absolute -end-0.5 -top-0.5"
         />
       ) : null}
@@ -241,14 +245,14 @@ export function NotificationButton() {
                 </h2>
                 {unreadCount > 0 ? (
                   <span className="rounded-pill bg-primary-subtle px-2 py-0.5 text-caption font-medium text-primary">
-                    {unreadCount} {t('shell.unread').toLowerCase()}
+                    {t('shell.unreadCount', { count: unreadCount })}
                   </span>
                 ) : null}
               </div>
               {unreadCount > 0 ? (
                 <Button variant="ghost" size="sm" onClick={onMarkAllRead}>
                   <CheckCheck aria-hidden="true" className="h-4 w-4" strokeWidth={1.75} />
-                  Mark all as read
+                  {t('shell.markAllRead')}
                 </Button>
               ) : null}
             </div>
@@ -261,14 +265,14 @@ export function NotificationButton() {
               <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
                 {hasItems && clearRead !== null ? (
                   <Button variant="ghost" size="sm" onClick={clearRead}>
-                    Clear read
+                    {t('shell.clearRead')}
                   </Button>
                 ) : (
                   <span />
                 )}
                 {viewAllHref ? (
                   <LinkButton href={viewAllHref} variant="ghost" size="sm" onClick={close}>
-                    View all notifications
+                    {t('shell.viewAllNotifications')}
                   </LinkButton>
                 ) : null}
               </div>

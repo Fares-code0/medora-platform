@@ -9,7 +9,7 @@ import { useAuth } from '@/app/providers';
 import { Alert } from '@/components/feedback';
 import { Button, Checkbox, Input, PasswordInput } from '@/components/ui';
 import { env } from '@/configs/env';
-import { useT, type MessageKey } from '@/i18n';
+import { translateIfKey, useT, type MessageKey } from '@/i18n';
 import { routes } from '@/routes';
 import { isAuthError, UnsupportedRoleError, type AuthErrorCode } from '@/types/auth';
 
@@ -115,16 +115,16 @@ export default function LoginPage() {
             <ul dir="ltr" className="font-mono text-caption">
               {demoAccounts.map((a) => (
                 <li key={a.email} className="mb-1 last:mb-0">
-                  {a.label}: {a.email}
+                  {t(a.labelKey)}: {a.email}
                   {/* Only the two accounts whose sign-in is deliberately
                       suspended carry a note. `font-sans` because it is
                       prose inside a monospaced list of addresses. */}
-                  {a.note === undefined ? null : (
-                    <span className="block font-sans text-text-secondary">{a.note}</span>
+                  {a.noteKey === undefined ? null : (
+                    <span className="block font-sans text-text-secondary">{t(a.noteKey)}</span>
                   )}
                 </li>
               ))}
-              <li>Password: {MOCK_PASSWORD}</li>
+              <li>{t('login.demoPassword', { password: MOCK_PASSWORD })}</li>
             </ul>
           </Alert>
         </div>
@@ -147,14 +147,14 @@ export default function LoginPage() {
           autoFocus
           leadingIcon={Mail}
           placeholder={t('common.emailPlaceholder')}
-          error={errors.email?.message}
+          error={translateIfKey(t, errors.email?.message)}
           {...register('email')}
         />
         <PasswordInput
           size="lg"
           label={t('common.password')}
           autoComplete="current-password"
-          error={errors.password?.message}
+          error={translateIfKey(t, errors.password?.message)}
           {...register('password')}
         />
         <div className="flex items-center justify-between gap-3">

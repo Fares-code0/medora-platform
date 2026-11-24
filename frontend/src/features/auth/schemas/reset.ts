@@ -5,10 +5,10 @@ import { strongPassword } from './password';
 export const resetSchema = z
   .object({
     password: strongPassword,
-    confirmPassword: z.string().min(1, 'Confirm your password'),
+    confirmPassword: z.string().min(1, 'validation.confirmYourPassword'),
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: 'Passwords do not match',
+    message: 'validation.passwordMismatch',
     path: ['confirmPassword'],
   });
 

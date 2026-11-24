@@ -1,4 +1,5 @@
 import { Alert } from '@/components/feedback';
+import { useT } from '@/i18n';
 
 import {
   SAFETY_WARNING_KIND_META,
@@ -19,12 +20,13 @@ import { EmptySectionNote, PharmacySectionCard } from './PharmacySectionCard';
  */
 
 function WarningAlert({ warning }: { warning: SafetyWarning }) {
+  const t = useT();
   const severity = SAFETY_WARNING_SEVERITY_META[warning.severity];
   const kind = SAFETY_WARNING_KIND_META[warning.kind];
   return (
     <Alert variant={severity.alert} critical={warning.severity === 'critical'} title={warning.title}>
       <p>
-        <span className="font-medium text-text-primary">{kind.label}.</span> {warning.detail}
+        <span className="font-medium text-text-primary">{t(kind.labelKey)}.</span> {warning.detail}
       </p>
     </Alert>
   );

@@ -1,7 +1,7 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
-import { ErrorState } from '@/components/feedback';
+import { FeatureErrorFallback } from './FeatureErrorFallback';
 
 /**
  * Catches a crash in the routed feature **without taking the shell with it**
@@ -74,12 +74,7 @@ export class FeatureErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="mx-auto max-w-container-md px-4 py-10">
-          <ErrorState
-            headingLevel="h1"
-            title="This page couldn't be loaded"
-            description="Something went wrong while rendering it. The rest of Medora is unaffected — use the menu to go somewhere else, or try again."
-            onRetry={() => this.setState({ hasError: false })}
-          />
+          <FeatureErrorFallback onRetry={() => this.setState({ hasError: false })} />
         </div>
       );
     }

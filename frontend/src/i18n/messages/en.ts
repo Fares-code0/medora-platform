@@ -1,11 +1,16 @@
 /**
  * English — the source catalogue (F-19).
  *
- * **English is the only file written by hand as prose.** Every other locale
- * is typed as `Record<MessageKey, string>` against this object, so a missing
- * or misspelled key in a translation is a compile error rather than a
- * silent fallback. Adding a string is therefore: add it here, then add it to
- * the four translations — the typechecker will not let you forget one.
+ * **English is the only file written by hand as prose.** Arabic is typed
+ * `Messages` against this object — every key, so a key added here without its
+ * Arabic is a compile error. French, Persian and Turkish are typed
+ * `PartialMessages` (owner decision, 2026-11-23): a key they lack renders in
+ * English. Adding a string is therefore: add it here, add it to `ar.ts`, and
+ * add it to the other three when a translator has it. See `../README.md`.
+ *
+ * A plural message is an object of CLDR forms (`{ one, other }` in English;
+ * all six — zero, one, two, few, many, other — in Arabic), selected by
+ * `t(key, { count })`.
  *
  * Keys are namespaced by surface (`login.*`, `nav.*`, `ui.*`, `state.*`).
  * The `login.*` / `signup.*` / `otp.*` / `forgot.*` / `reset.*` /
@@ -181,6 +186,7 @@ export const en = {
   'shell.searchPlaceholder': 'Search…',
   'shell.searchPatientsPlaceholder': 'Search patients…',
   'shell.notifications': 'Notifications',
+  'shell.activeHospital': 'Active hospital: ',
   'shell.dismissNotification': 'Dismiss notification',
   'shell.unread': 'Unread',
   'shell.more': 'More',
@@ -319,10 +325,326 @@ export const en = {
   'invitation.error.taken': 'An account with this email already exists.',
   'invitation.error.weakPassword': 'Choose a stronger password.',
   'invitation.error.generic': 'We could not complete your invitation. Please try again.',
+  /* ── Shared controls, continued (foundation phase) ─────────── */
+  'ui.goBack': 'Go back',
+  'ui.done': 'Done',
+  'ui.remove': 'Remove',
+  'ui.removeAll': 'Remove all',
+  'ui.removeItem': 'Remove {label}',
+  'ui.removeFilter': 'Remove filter: {label}',
+  'ui.clearAll': 'Clear all',
+  'ui.reset': 'Reset',
+  'ui.center': 'Center',
+  'ui.zoom': 'Zoom',
+  'ui.retry': 'Retry',
+  'ui.loadingShort': 'Loading',
+  'ui.mainNavigation': 'Main',
+  'ui.selectRow': 'Select row {id}',
+  'ui.tableLoadError': 'Couldn\'t load this table',
+  'ui.tableEmpty': 'No records to show',
+  'ui.sectionLoadError': 'Couldn\'t load this section',
+  'ui.loadErrorNamed': 'Couldn\'t load {name}',
+  'ui.notConnected': 'Not connected yet',
+  'ui.notConnectedBody': 'This area is not available from the Medora server in this deployment.',
+  'ui.showingRange': 'Showing {from}–{to} of {total}',
+  'ui.pageNumber': 'Page {page}',
+  'ui.resultCount': { one: '{count} result', other: '{count} results' },
+  'ui.viewDetails': 'View {label} details',
+  'ui.exportOptions': 'Export options',
+  'ui.exportCsv': 'Export as CSV',
+  'ui.exportExcel': 'Export as Excel',
+  'ui.exportPdf': 'Export as PDF',
+  'ui.print': 'Print',
+  /* ── Customizable dashboards ──────────────────────────────── */
+  'dashboard.label': 'Dashboard',
+  'dashboard.widgets': 'Dashboard widgets',
+  'dashboard.customize': 'Customize',
+  'dashboard.customizeTitle': 'Customize dashboard',
+  'dashboard.customizeIntro':
+    'Choose what appears on your Overview. Your dashboard updates when you select Done, and the layout rearranges itself around whatever you pick.',
+  'dashboard.widgetsSelected': '{selected} of {total} widgets selected',
+  'dashboard.sampleData': 'Sample data',
+  'dashboard.notAvailableYet': 'Not available yet',
+  'dashboard.greeting.morning': 'Good morning, {name}',
+  'dashboard.greeting.afternoon': 'Good afternoon, {name}',
+  'dashboard.greeting.evening': 'Good evening, {name}',
+  /* ── Profile photo field ──────────────────────────────────── */
+  'photo.title': 'Profile photo',
+  'photo.change': 'Change photo',
+  'photo.upload': 'Upload photo',
+  'photo.uploadLabel': 'Upload profile photo',
+  'photo.hint': 'JPG or PNG. You can zoom, move, and crop before saving.',
+  'photo.editTitle': 'Edit profile photo',
+  'photo.editDescription': 'Drag to move, zoom to frame, then crop to a circle.',
+  'photo.save': 'Save photo',
+  'photo.error.notImage': 'Choose an image file.',
+  'photo.error.tooLarge': 'Keep the image under 4 MB.',
+  'photo.error.unreadable': 'Could not read that file.',
+  'photo.error.unloadable': 'Could not load that image.',
+  'photo.error.process': 'Could not process the image.',
+  /* ── Rich text ────────────────────────────────────────────── */
+  'richText.copyCode': 'Copy code',
+  'richText.copied': 'Copied',
+  'richText.copyFailedShort': 'Couldn\'t copy',
+  'richText.codeCopied': 'Code copied',
+  'richText.copyFailed': 'Couldn\'t copy the code — select it instead',
+  'richText.copyToClipboard': 'Copy code to clipboard',
+  'richText.helper': 'Markdown: **bold**, *italic*, `code`, - lists, ## headings.',
+  'richText.bold': 'Bold',
+  'richText.italic': 'Italic',
+  'richText.bulletedList': 'Bulleted list',
+  'richText.list': 'List',
+  'richText.preview': 'Preview',
+  'richText.write': 'Write',
+  'richText.previewOf': '{label} — preview',
+  'richText.empty': 'Nothing written yet.',
+  /* ── Shell chrome, continued ──────────────────────────────── */
+  'shell.pageLoadError': 'This page couldn\'t be loaded',
+  'shell.pageLoadErrorBody':
+    'Something went wrong while rendering it. The rest of Medora is unaffected — use the menu to go somewhere else, or try again.',
+  'shell.searching': 'Searching…',
+  'shell.noMatches': 'No matches for “{term}”.',
+  'shell.notificationUnread': '{title} (unread) — mark as read',
+  'shell.allCaughtUp': 'You\'re all caught up',
+  'shell.allCaughtUpBody': 'New notifications appear here as clinical activity happens.',
+  'shell.markAllRead': 'Mark all as read',
+  'shell.clearRead': 'Clear read',
+  'shell.viewAllNotifications': 'View all notifications',
+  'shell.unreadCount': { one: '{count} unread', other: '{count} unread' },
+  'shell.notificationsUnread': {
+    one: 'Notifications ({count} unread)',
+    other: 'Notifications ({count} unread)',
+  },
+  'shell.unreadNotificationsBadge': {
+    one: '{count} unread — Notifications',
+    other: '{count} unread — Notifications',
+  },
+  'shell.loadingAdministration': 'Loading the administration area',
+  /* ── Page titles (route handles: document title, announcer, breadcrumb) ── */
+  'route.newAppointment': 'New appointment',
+  'route.appointment': 'Appointment',
+  'route.newLabOrder': 'New order',
+  'route.labResult': 'Result',
+  'route.medicalRecords': 'Medical records',
+  'route.newRecord': 'New record',
+  'route.record': 'Record',
+  'route.addPatient': 'Add patient',
+  'route.patientProfile': 'Patient profile',
+  'route.newPrescription': 'New prescription',
+  'route.prescription': 'Prescription',
+  'route.patientDirectory': 'Patient directory',
+  'route.doctorProfile': 'Doctor profile',
+  'route.patientAccount': 'Patient account',
+  'route.conversation': 'Conversation',
+  /* ── Administration sections (SECTION_META) ───────────────── */
+  'admin.section.overview': 'Overview',
+  'admin.section.overview.description':
+    'Platform health, security alerts and the work waiting on you.',
+  'admin.section.clinic': 'Clinic Overview',
+  'admin.section.clinic.description': 'Live snapshot of today’s clinic activity and utilization.',
+  'admin.section.doctors': 'Doctors',
+  'admin.section.doctors.description':
+    'Onboarding, verification, and the standing of every doctor on the platform.',
+  'admin.section.patients': 'Patients',
+  'admin.section.patients.description':
+    'Account support, access governance and lifecycle — never clinical review.',
+  'admin.section.appointments': 'Appointment Oversight',
+  'admin.section.appointments.description':
+    'Every doctor’s appointments, the ones that are stuck, and what to do about them.',
+  'admin.section.queue': 'Queue Management',
+  'admin.section.queue.description': 'Who is next, who is waiting and who is running late.',
+  'admin.section.waitingRoom': 'Waiting Room',
+  'admin.section.waitingRoom.description': 'Patients checked in and waiting to be seen.',
+  'admin.section.staff': 'Staff Management',
+  'admin.section.staff.description': 'Clinic team, roles, availability and permissions.',
+  'admin.section.departments': 'Departments',
+  'admin.section.departments.description': 'Clinic departments, their heads and staffing.',
+  'admin.section.shifts': 'Shift Management',
+  'admin.section.shifts.description': 'Weekly shift planner across the whole team.',
+  'admin.section.schedule': 'Working Schedule',
+  'admin.section.schedule.description': 'Clinic opening hours across the week.',
+  'admin.section.holidays': 'Holidays',
+  'admin.section.holidays.description': 'Public and clinic closures for the year.',
+  'admin.section.rooms': 'Room Management',
+  'admin.section.rooms.description': 'Consultation, lab, procedure, pharmacy and waiting areas.',
+  'admin.section.resources': 'Resources',
+  'admin.section.resources.description': 'Equipment and consumable stock across the clinic.',
+  'admin.section.announcements': 'Announcements',
+  'admin.section.announcements.description': 'Internal notices for the clinic team.',
+  'admin.section.policies': 'Clinic Policies',
+  'admin.section.policies.description': 'Operating policies and compliance documents.',
+  'admin.section.templates': 'Document Templates',
+  'admin.section.templates.description': 'Reusable clinical document templates.',
+  'admin.section.communications': 'Communication Monitoring',
+  'admin.section.communications.description':
+    'Conversation oversight, safety flags and gated content access.',
+  'admin.section.logs': 'System Logs',
+  'admin.section.logs.description':
+    'Every authentication, security and administrative event on the platform.',
+  'admin.section.reports': 'Reports',
+  'admin.section.reports.description':
+    'Growth, utilization, clinical operations and platform performance.',
+  'admin.section.settings': 'Platform Settings',
+  'admin.section.settings.description':
+    'Organization, communication, security and data configuration.',
+  'admin.section.preferences': 'My Settings',
+  'admin.section.preferences.description':
+    'Your personal account, appearance, and workspace preferences.',
+  'admin.section.profile': 'My Profile',
+  'admin.section.profile.description': 'Your administrator identity, security and activity.',
+  /* ── Form validation, continued (auth schemas) ────────────── */
+  'validation.enterEmail': 'Enter your email',
+  'validation.enterPassword': 'Enter your password',
+  'validation.confirmYourPassword': 'Confirm your password',
+  'validation.codeLength': 'Enter the {count}-digit code',
+  'validation.digitsOnly': 'Code must be digits only',
+  'validation.passwordLength': {
+    one: 'Use at least {count} characters',
+    other: 'Use at least {count} characters',
+  },
+  'validation.passwordLower': 'Add a lowercase letter',
+  'validation.passwordUpper': 'Add an uppercase letter',
+  'validation.passwordDigit': 'Add a number',
+  'validation.passwordSymbol': 'Add a symbol',
+  'validation.firstName': 'Enter your first name',
+  'validation.lastName': 'Enter your last name',
+  'validation.phone': 'Enter your phone number',
+  'validation.phoneInvalid': 'Enter a valid phone number',
+  'validation.acceptTerms': 'You must accept the Terms & Conditions',
+  'validation.acceptPrivacy': 'You must accept the Privacy Policy',
+  'validation.professionalNumber': 'Enter your professional registration number',
+  'validation.professionalCategory': 'Select your professional category',
+  'validation.specialty': 'Enter your specialty',
+  'validation.dateFormat': 'Use the format YYYY-MM-DD',
+  'validation.realDate': 'Enter a real date',
+  'validation.registrationExpired': 'That registration has already expired',
+  /* ── Auth, continued ──────────────────────────────────────── */
+  'signup.category.physician': 'Physician',
+  'signup.category.dentist': 'Dentist',
+  'signup.category.pharmacist': 'Pharmacist',
+  'signup.category.nurse': 'Nurse',
+  'signup.category.technician': 'Technician',
+  'otp.codeLabel': 'Verification code',
+  'otp.digitOf': 'Digit {index} of {total}',
+  'login.demoPassword': 'Password: {password}',
+  'demo.account.doctor': 'Doctor',
+  'demo.account.admin': 'Admin',
+  'demo.account.doctorUnverified': 'Doctor (unverified)',
+  'demo.account.doctorTwoFactor': 'Doctor (2FA)',
+  'demo.account.reception': 'Reception',
+  'demo.account.laboratory': 'Laboratory',
+  'demo.account.pharmacy': 'Pharmacy',
+  'demo.note.unverified': 'Email unverified — see the verification screen',
+  'demo.note.twoFactor': '2FA enabled — see the OTP step-up',
+  /* ── Shared clinical vocabularies (features/shared-domain) ─── */
+  'lab.status.ordered': 'Ordered',
+  'lab.status.collected': 'Collected',
+  'lab.status.processing': 'Processing',
+  'lab.status.completed': 'Completed',
+  'lab.status.cancelled': 'Cancelled',
+  'lab.priority.routine': 'Routine',
+  'lab.priority.urgent': 'Urgent',
+  'lab.priority.stat': 'STAT',
+  'lab.flag.normal': 'Normal',
+  'lab.flag.low': 'Low',
+  'lab.flag.high': 'High',
+  'lab.flag.criticalLow': 'Critical low',
+  'lab.flag.criticalHigh': 'Critical high',
+  'lab.flag.abnormal': 'Abnormal',
+  'lab.attachment.report': 'Report',
+  'lab.attachment.addendum': 'Addendum',
+  'lab.attachment.external': 'External',
+  'lab.attachment.raw': 'Raw data',
+  'patient.status.active': 'Active',
+  'patient.status.underTreatment': 'Under treatment',
+  'patient.status.critical': 'Critical',
+  'patient.status.followUp': 'Follow-up',
+  'patient.status.discharged': 'Discharged',
+  'patient.risk.low': 'Low',
+  'patient.risk.medium': 'Medium',
+  'patient.risk.high': 'High',
+  'patient.risk.critical': 'Critical',
+  'rx.status.draft': 'Draft — not issued',
+  'rx.status.active': 'Active',
+  'rx.status.dispensed': 'Dispensed',
+  'rx.status.completed': 'Completed',
+  'rx.status.discontinued': 'Discontinued',
+  'rx.status.pendingApproval': 'Pending approval',
+  'rx.status.expired': 'Expired',
+  'rx.refill.none': 'No refills',
+  'rx.refill.available': 'Refills available',
+  'rx.refill.due': 'Refill due',
+  'rx.refill.pending': 'Refill pending',
+  'rx.warning.interaction': 'Drug interaction',
+  'rx.warning.allergy': 'Allergy conflict',
+  'rx.warning.duplicate': 'Duplicate therapy',
+  'rx.warning.dosage': 'Dosage alert',
+  'rx.severity.info': 'Info',
+  'rx.severity.warning': 'Warning',
+  'rx.severity.critical': 'Critical',
+  'rx.timeline.prescribed': 'Prescribed',
+  'rx.timeline.dispensed': 'Dispensed',
+  'rx.timeline.refillRequested': 'Refill requested',
+  'rx.timeline.refillApproved': 'Refill approved',
+  'rx.timeline.renewed': 'Renewed',
+  'rx.timeline.noteAdded': 'Note added',
+  'rx.timeline.discontinued': 'Discontinued',
+  'rx.timeline.expired': 'Expired',
+  /* ── Prescription safety screening (authoring) ────────────── */
+  'rx.severityBadge': '{severity} severity',
+  'rx.cannotOverride': 'Cannot be overridden',
+  'rx.foundAgainst': 'Found against:',
+  'rx.acknowledge': 'I have reviewed this {severity} {kind} and accept it',
+  'rx.evidence.demoFormulary': 'Demo formulary',
+  'rx.evidence.demoFormulary.detail':
+    'Screened against a five-medication demo formulary and its canned notes — not a clinical interaction service. Verdicts here are illustrative and must not be relied on for care.',
+  'rx.evidence.clinicalService': 'Clinical interaction service',
+  'rx.evidence.clinicalService.detail':
+    'Screened against the licensed drug interaction and allergy service.',
+  'patient.riskLabel': 'Risk: {level}',
 } as const;
 
-/** Every key the app can translate. */
-export type MessageKey = keyof typeof en;
+/**
+ * A CLDR plural category, as `Intl.PluralRules#select` returns it.
+ *
+ * English uses two (`one`, `other`); Arabic uses all six — zero, one, two,
+ * few (3–10), many (11–99) and other (100, 101, …).
+ */
+export type PluralCategory = 'zero' | 'one' | 'two' | 'few' | 'many' | 'other';
 
-/** The shape every other locale must satisfy, in full. */
-export type Messages = Record<MessageKey, string>;
+/**
+ * A message that varies with `{count}`: one form per plural category the
+ * language uses. `other` is the one every language has and the form chosen
+ * when a category is missing.
+ */
+export type PluralForms = { readonly other: string } & {
+  readonly [Category in Exclude<PluralCategory, 'other'>]?: string;
+};
+
+type Source = typeof en;
+
+/** Every key the app can translate. */
+export type MessageKey = keyof Source;
+
+/** The keys whose English value is a plural object rather than a string. */
+export type PluralMessageKey = {
+  [Key in MessageKey]: Source[Key] extends string ? never : Key;
+}[MessageKey];
+
+/**
+ * A complete catalogue: every key, a string where English has a string and a
+ * plural object where English has one. Arabic is typed this way, so a key
+ * added to `en` without its Arabic is a compile error.
+ */
+export type Messages = {
+  readonly [Key in MessageKey]: Source[Key] extends string ? string : PluralForms;
+};
+
+/**
+ * A partial catalogue — what French, Persian and Turkish are typed as (owner
+ * decision, 2026-11-23). A key they lack renders in English, which is what
+ * those users already saw for every untranslated feature interior, rather
+ * than blocking a string from shipping in Arabic until three more languages
+ * have it. See `src/i18n/README.md`.
+ */
+export type PartialMessages = Partial<Messages>;

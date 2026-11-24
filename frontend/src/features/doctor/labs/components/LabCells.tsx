@@ -2,6 +2,7 @@ import { CheckCheck } from 'lucide-react';
 
 import { StatusBadge } from '@/components/patterns';
 import { Avatar, Badge } from '@/components/ui';
+import { useT } from '@/i18n';
 import { formatDate } from '@/utils/dates';
 
 import {
@@ -57,13 +58,15 @@ export function LabCategoryCell({ test }: { test: LabTest }) {
 }
 
 export function LabStatusBadge({ test }: { test: LabTest }) {
+  const t = useT();
   const meta = LAB_STATUS_META[test.status];
-  return <StatusBadge status={meta.kind} label={meta.label} />;
+  return <StatusBadge status={meta.kind} label={t(meta.labelKey)} />;
 }
 
 export function LabPriorityBadge({ test }: { test: LabTest }) {
+  const t = useT();
   const meta = LAB_PRIORITY_META[test.priority];
-  return <StatusBadge status={meta.kind} label={meta.label} />;
+  return <StatusBadge status={meta.kind} label={t(meta.labelKey)} />;
 }
 
 /**
@@ -74,6 +77,7 @@ export function LabPriorityBadge({ test }: { test: LabTest }) {
  * "not looked at".
  */
 export function LabFlagCell({ test }: { test: LabTest }) {
+  const t = useT();
   if (test.results.length === 0) {
     return <span className="text-text-tertiary">—</span>;
   }
@@ -97,7 +101,7 @@ export function LabFlagCell({ test }: { test: LabTest }) {
     <div className="min-w-0">
       <StatusBadge
         status={worst === null ? 'normal' : LAB_RESULT_FLAG_META[worst.flag].kind}
-        label={worst === null ? 'Normal' : LAB_RESULT_FLAG_META[worst.flag].label}
+        label={t(worst === null ? 'lab.flag.normal' : LAB_RESULT_FLAG_META[worst.flag].labelKey)}
       />
       <p className="mt-1 text-caption text-text-tertiary">
         {abnormal === 0

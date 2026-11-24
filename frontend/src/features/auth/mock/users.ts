@@ -1,3 +1,4 @@
+import type { MessageKey } from '@/i18n';
 import type { Permission, SessionUser } from '@/types/auth';
 
 import type { MockUserRecord } from './types';
@@ -156,8 +157,12 @@ export const seededUsers: readonly MockUserRecord[] = [
  */
 export interface DemoAccount {
   readonly label: string;
+  /** `label`'s catalogue key — what the login hint renders. */
+  readonly labelKey: MessageKey;
   readonly email: string;
   readonly note?: string;
+  /** `note`'s catalogue key — what the login hint renders. */
+  readonly noteKey?: MessageKey;
 }
 
 /**
@@ -176,27 +181,31 @@ export interface DemoAccount {
  * That was a discoverability gap, not a missing feature, and listing them
  * is the whole of the fix.
  *
- * The notes are English and not routed through `useT()`, matching the
- * labels beside them and `DemoAccessPanel`'s own copy: translating demo
- * scaffolding would put permanent strings into all five catalogues to
- * serve a hint that only appears when the mock backend is on.
+ * The hint renders `labelKey` / `noteKey` through `useT()` (Arabic
+ * localization, foundation phase: the owner put mock-mode chrome in scope).
+ * `label` and `note` keep the English beside them for the roster tests and
+ * for reading this file; `demo-accounts.test.tsx` holds the two in step.
  */
 export const demoAccounts: readonly DemoAccount[] = [
-  { label: 'Doctor', email: 'doctor@medora.health' },
-  { label: 'Admin', email: 'admin@medora.health' },
+  { label: 'Doctor', labelKey: 'demo.account.doctor', email: 'doctor@medora.health' },
+  { label: 'Admin', labelKey: 'demo.account.admin', email: 'admin@medora.health' },
   {
     label: 'Doctor (unverified)',
+    labelKey: 'demo.account.doctorUnverified',
     email: 'unverified@medora.health',
     note: 'Email unverified — see the verification screen',
+    noteKey: 'demo.note.unverified',
   },
   {
     label: 'Doctor (2FA)',
+    labelKey: 'demo.account.doctorTwoFactor',
     email: 'secure@medora.health',
     note: '2FA enabled — see the OTP step-up',
+    noteKey: 'demo.note.twoFactor',
   },
-  { label: 'Reception', email: 'reception@medora.health' },
-  { label: 'Laboratory', email: 'lab@medora.health' },
-  { label: 'Pharmacy', email: 'pharmacy@medora.health' },
+  { label: 'Reception', labelKey: 'demo.account.reception', email: 'reception@medora.health' },
+  { label: 'Laboratory', labelKey: 'demo.account.laboratory', email: 'lab@medora.health' },
+  { label: 'Pharmacy', labelKey: 'demo.account.pharmacy', email: 'pharmacy@medora.health' },
 ];
 
 export function findUser(email: string): MockUserRecord | undefined {

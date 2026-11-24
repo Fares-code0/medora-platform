@@ -1,5 +1,7 @@
 import { Building2 } from 'lucide-react';
 
+import { useT } from '@/i18n';
+
 import { useActiveHospital } from './useActiveHospital';
 
 /**
@@ -13,13 +15,14 @@ import { useActiveHospital } from './useActiveHospital';
  * Arabic or Latin regardless of the interface language.
  */
 export function ActiveHospital() {
+  const t = useT();
   const hospital = useActiveHospital();
   if (hospital === null) return null;
 
   return (
     <p className="flex min-w-0 items-center gap-1 text-caption text-text-tertiary">
       <Building2 className="size-3 shrink-0" aria-hidden="true" />
-      <span className="sr-only">Active hospital: </span>
+      <span className="sr-only">{t('shell.activeHospital')}</span>
       <span dir="auto" className="truncate">
         {hospital.name}
       </span>

@@ -9,7 +9,7 @@ import { routes } from '@/routes';
 export const clinicRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.myClinic,
-    handle: { crumb: 'My clinic' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.myClinic' } satisfies RouteHandle,
     lazy: async () => {
       const { MyClinicPage } = await import('./pages/MyClinicPage');
       return { Component: MyClinicPage };

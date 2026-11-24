@@ -150,7 +150,7 @@ export function GlobalSearch({ placeholder, autoFocus = false, onDismiss }: Glob
             <p role="status" className="px-4 py-6 text-center text-body-sm text-text-secondary">
               {/* Never "no matches" over an index that has not finished
                   loading — that is a claim the shell cannot yet support. */}
-              {pending ? 'Searching…' : `No matches for “${term.trim()}”.`}
+              {pending ? t('shell.searching') : t('shell.noMatches', { term: term.trim() })}
             </p>
           ) : (
             <ul

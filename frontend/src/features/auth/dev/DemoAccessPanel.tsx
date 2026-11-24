@@ -5,6 +5,7 @@ import { FlaskConical } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import { Button } from '@/components/ui';
 import { env } from '@/configs/env';
+import { useLocale } from '@/i18n';
 import { isAuthError, type SessionUser } from '@/types/auth';
 
 import { AuthFormError } from '../components';
@@ -78,21 +79,51 @@ const DEMO_DOCTOR_ACCOUNT = {
  * that reads as a developer tool. It deliberately does not pre-fill the
  * real form.
  *
- * The copy is English and not routed through `useT()`. Every catalogue
- * key has to exist in all five locales (`i18n/messages`), and translating
- * scaffolding that ships to nobody would put five permanent strings into
- * the product's translation surface to serve a development button. The
- * patient app's own fixture hint is English for the same reason.
+ * The copy is translated, but not through the shared catalogue. Every key in
+ * `i18n/messages/en.ts` ships in the production bundle (English is eager),
+ * and three of these sentences are the markers `scripts/demo-access-boundary.ts`
+ * scans a production bundle for — moving them there would make every
+ * release build fail that guard, correctly. So the panel carries its own
+ * English and Arabic (`COPY` below) and stays wholly inside `features/auth/dev/`,
+ * which a production build replaces with a stub. French, Persian and Turkish
+ * read the English, as they do any key their catalogue lacks.
  */
+const COPY = {
+  en: {
+    development: 'Development',
+    continueAs: 'Continue as Demo Doctor',
+    mockBackend: 'the mock backend (no API)',
+    apiBackend: (url: string) => `the API at ${url}`,
+    notProvisioned:
+      'The demo doctor account is not provisioned on this API. Run npm --prefix backend run db:seed with APP_ENV=development (backend/docs/LOCAL_DEMO_ACCOUNTS.md).',
+    failed: (backend: string) => `Demo sign-in failed against ${backend}. Is it running?`,
+    caption: (backend: string) =>
+      `Signs in as the seeded demo doctor through ${backend}. Local development demo accounts only.`,
+  },
+  ar: {
+    development: 'التطوير',
+    continueAs: 'المتابعة كطبيب تجريبي',
+    mockBackend: 'الخادم التجريبي (دون واجهة برمجية)',
+    apiBackend: (url: string) => `الواجهة البرمجية على ${url}`,
+    notProvisioned:
+      'حساب الطبيب التجريبي غير مُهيّأ على هذه الواجهة البرمجية. شغّل npm --prefix backend run db:seed مع APP_ENV=development ‏(backend/docs/LOCAL_DEMO_ACCOUNTS.md).',
+    failed: (backend: string) => `فشل تسجيل الدخول التجريبي عبر ${backend}. هل هو قيد التشغيل؟`,
+    caption: (backend: string) =>
+      `يسجّل الدخول بحساب الطبيب التجريبي عبر ${backend}. حسابات تجريبية للتطوير المحلي فقط.`,
+  },
+} as const;
+
 export function DemoAccessPanel({
   onSignedIn,
 }: {
   readonly onSignedIn: (user: SessionUser) => void;
 }) {
   const { login } = useAuth();
+  const { locale } = useLocale();
+  const copy = locale === 'ar' ? COPY.ar : COPY.en;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const backend = env.enableMocks ? 'the mock backend (no API)' : `the API at ${env.apiBaseUrl}`;
+  const backend = env.enableMocks ? copy.mockBackend : copy.apiBackend(env.apiBaseUrl);
 
   async function signIn(): Promise<void> {
     setPending(true);
@@ -103,8 +134,8 @@ export function DemoAccessPanel({
     } catch (failure) {
       setError(
         isAuthError(failure) && failure.code === 'invalid_credentials'
-          ? 'The demo doctor account is not provisioned on this API. Run npm --prefix backend run db:seed with APP_ENV=development (backend/docs/LOCAL_DEMO_ACCOUNTS.md).'
-          : `Demo sign-in failed against ${backend}. Is it running?`,
+          ? copy.notProvisioned
+          : copy.failed(backend),
       );
     } finally {
       setPending(false);
@@ -116,7 +147,7 @@ export function DemoAccessPanel({
       <div className="flex items-center gap-3" aria-hidden="true">
         <span className="h-px flex-1 bg-border" />
         <span className="text-caption font-medium uppercase tracking-wide text-text-secondary">
-          Development
+          {copy.development}
         </span>
         <span className="h-px flex-1 bg-border" />
       </div>
@@ -132,7 +163,7 @@ export function DemoAccessPanel({
         loading={pending}
         onClick={() => void signIn()}
       >
-        Continue as Demo Doctor
+        {copy.continueAs}
       </Button>
 
       {/* Secondary, not tertiary. `styles/text-roles.test.ts` holds a
@@ -140,7 +171,7 @@ export function DemoAccessPanel({
           disclosure moves to secondary rather than being absorbed into it:
           an honesty marker a reader skips defeats the reason it exists. */}
       <p className="mt-2 text-center text-caption text-text-secondary">
-        {`Signs in as the seeded demo doctor through ${backend}. Local development demo accounts only.`}
+        {copy.caption(backend)}
       </p>
     </div>
   );
