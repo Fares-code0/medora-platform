@@ -13,6 +13,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
 /**
@@ -86,7 +87,9 @@ async function signUpDoctor(local: string): Promise<{ token: string; userId: str
   await markVerified(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   return { token, userId: await userIdOf(email) };
@@ -106,7 +109,10 @@ async function signUpAdmin(
   ).accessToken;
 
   const secret = dataOf<{ secret: string }>(
-    await request(h.server).post('/api/v1/me/2fa/setup').set(as(bootstrap)).send({ password: PASSWORD }),
+    await request(h.server)
+      .post('/api/v1/me/2fa/setup')
+      .set(as(bootstrap))
+      .send({ password: PASSWORD }),
   ).secret;
 
   await request(h.server)
@@ -138,7 +144,7 @@ function revealsBy(actorId: string) {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('patients-reveal-m73');
+  harness = await createAuthHarness('patients-reveal-m73', { clinicalDoctors: true });
 
   ({ token: adminToken, userId: adminUserId } = await signUpAdmin('reveal-admin'));
   ({ token: deniedToken, userId: deniedUserId } = await signUpAdmin('reveal-denied'));
@@ -153,9 +159,8 @@ beforeAll(async () => {
     where: { userId: doctorUserId },
     select: { id: true },
   });
-  await harness.prisma.patientDoctorAssignment.create({
-    data: { patientId, doctorId: doctor.id, role: 'primary' },
-  });
+  // Owned by the doctor's employment at the suite's hospital (S3).
+  await assignOwned(harness.prisma, { patientId, doctorId: doctor.id, role: 'primary' });
 
   // Take the capability away from one administrator through the real
   // override surface (§15.5), which also invalidates the permission
@@ -261,7 +266,10 @@ describe('M7.3 — the justification', () => {
   it.each([
     ['no body', {}],
     ['a reason under twelve characters', { category: 'clinical-review', reason: 'checking' }],
-    ['twelve characters only once trimmed', { category: 'clinical-review', reason: '   short    ' }],
+    [
+      'twelve characters only once trimmed',
+      { category: 'clinical-review', reason: '   short    ' },
+    ],
     ['a category ADM-10 does not offer', { category: 'curiosity', reason: JUSTIFIED.reason }],
   ])('refuses %s with 422 and files nothing', async (_label, body) => {
     const before = (await revealsBy(adminUserId)).length;

@@ -21,6 +21,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deleteDoctors, deletePatients } from './support/hospital-fixture';
 import { createGate, scheduleLockWaiters, waitUntil } from './support/barrier';
 
 /**
@@ -277,7 +278,7 @@ const statusesOf = (responses: request.Response[]): number[] =>
   responses.map((r) => r.status).sort((a, b) => a - b);
 
 beforeAll(async () => {
-  harness = await createAuthHarness('appointments-concurrency');
+  harness = await createAuthHarness('appointments-concurrency', { clinicalDoctors: true });
 }, 60_000);
 
 afterEach(() => {
@@ -291,7 +292,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -746,7 +747,7 @@ async function seedAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+  await deleteDoctors(harness.prisma, { where: { user: { email } } });
 
   const login = await request(harness.server)
     .post(LOGIN)

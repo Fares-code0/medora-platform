@@ -16,6 +16,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 
 /**
  * Record attachments — API §6.7, RM M12.5.
@@ -116,7 +117,9 @@ async function seedDoctor(local: string): Promise<Doctor> {
   await markVerified(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const user = await harness.prisma.user.findUniqueOrThrow({
@@ -128,18 +131,15 @@ async function seedDoctor(local: string): Promise<Doctor> {
 }
 
 async function seedPatient(token: string): Promise<string> {
-  const response = await request(harness.server)
-    .post(PATIENTS)
-    .set(as(token))
-    .send({
-      fullName: 'Nadia Fathy',
-      dateOfBirth: '1979-02-03',
-      gender: 'female',
-      bloodType: 'B+',
-      phone: '+20 100 555 2211',
-      allergies: [],
-      chronicConditions: [],
-    });
+  const response = await request(harness.server).post(PATIENTS).set(as(token)).send({
+    fullName: 'Nadia Fathy',
+    dateOfBirth: '1979-02-03',
+    gender: 'female',
+    bloodType: 'B+',
+    phone: '+20 100 555 2211',
+    allergies: [],
+    chronicConditions: [],
+  });
 
   expect(response.status, JSON.stringify(response.body)).toBe(201);
 
@@ -150,18 +150,15 @@ async function seedPatient(token: string): Promise<string> {
 }
 
 async function createRecord(token: string, patient: string): Promise<string> {
-  const response = await request(harness.server)
-    .post(RECORDS)
-    .set(as(token))
-    .send({
-      patientId: patient,
-      visitDate: '2026-10-20T09:00:00.000Z',
-      visitType: 'Consultation',
-      priority: 'normal',
-      chiefComplaint: 'Palpitations on exertion',
-      historyOfPresentIllness: 'Two weeks, no syncope.',
-      physicalExamination: 'Regular rhythm at rest.',
-    });
+  const response = await request(harness.server).post(RECORDS).set(as(token)).send({
+    patientId: patient,
+    visitDate: '2026-10-20T09:00:00.000Z',
+    visitType: 'Consultation',
+    priority: 'normal',
+    chiefComplaint: 'Palpitations on exertion',
+    historyOfPresentIllness: 'Two weeks, no syncope.',
+    physicalExamination: 'Regular rhythm at rest.',
+  });
 
   expect(response.status, JSON.stringify(response.body)).toBe(201);
 
@@ -206,6 +203,7 @@ async function markScanned(fileId: string, result: 'clean' | 'infected'): Promis
 
 beforeAll(async () => {
   harness = await createAuthHarness('record-attachments-m125', {
+    clinicalDoctors: true,
     overrides: [{ token: FILE_STORAGE, value: storage }],
   });
 
@@ -224,7 +222,7 @@ afterAll(async () => {
     await harness.prisma.medicalRecord.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
   await harness.prisma.file.deleteMany({ where: { originalName: { startsWith: NAME_PREFIX } } });
 

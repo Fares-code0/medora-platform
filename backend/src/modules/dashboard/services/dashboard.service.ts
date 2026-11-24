@@ -33,6 +33,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import { CacheService, DOCTOR_DASHBOARD, paramsKey } from '../../../shared/cache';
 import { DashboardRepository, type ActivityRow } from '../repositories/dashboard.repository';
 import { ActionQueueService } from './action-queue.service';
@@ -57,6 +58,8 @@ export class DashboardService {
     private readonly dashboard: DashboardRepository,
     private readonly actionQueue: ActionQueueService,
     private readonly cache: CacheService,
+    /** S4: the dashboard is the doctor's active hospital's (server-derived). */
+    private readonly scope: PatientScopeService,
   ) {}
 
   /**
@@ -86,21 +89,21 @@ export class DashboardService {
 
   /** API §16.2 — the whole Overview in one round trip. */
   async composite(user: AuthenticatedUser, now = new Date()) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     const window = windowFor(now);
 
-    if (doctorId === null) return this.emptyComposite(user, window);
+    if (doctor === null) return this.emptyComposite(user, window);
 
     // Fired together. They are independent reads of one instant, and
     // running them in series would make the page cost seven round trips
     // for no isolation benefit — the composite fails as a unit either
     // way.
     const [kpis, schedule, trends, satisfaction, recentActivity, actionQueue] = await Promise.all([
-      this.kpis(doctorId, window),
-      this.schedule(doctorId, window),
-      this.trends(doctorId, window),
-      this.satisfaction(doctorId, window),
-      this.recentActivity(doctorId, user.id),
+      this.kpis(doctor, window),
+      this.schedule(doctor, window),
+      this.trends(doctor, window),
+      this.satisfaction(doctor, window),
+      this.recentActivity(doctor, user.id),
       this.actionQueue.forDoctor(user),
     ]);
 
@@ -119,42 +122,42 @@ export class DashboardService {
   /* ── The widgets (M27.2), each the composite's own slice ───── */
 
   async kpisFor(user: AuthenticatedUser, now = new Date()) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     const window = windowFor(now);
 
-    return doctorId === null ? emptyKpis(window) : this.kpis(doctorId, window);
+    return doctor === null ? emptyKpis(window) : this.kpis(doctor, window);
   }
 
   async scheduleFor(user: AuthenticatedUser, now = new Date()) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
-    return doctorId === null ? [] : this.schedule(doctorId, windowFor(now));
+    return doctor === null ? [] : this.schedule(doctor, windowFor(now));
   }
 
   async trendsFor(user: AuthenticatedUser, now = new Date()) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     const window = windowFor(now);
 
-    return doctorId === null ? emptyTrends(window) : this.trends(doctorId, window);
+    return doctor === null ? emptyTrends(window) : this.trends(doctor, window);
   }
 
   async satisfactionFor(user: AuthenticatedUser, now = new Date()) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
-    return doctorId === null ? emptySatisfaction() : this.satisfaction(doctorId, windowFor(now));
+    return doctor === null ? emptySatisfaction() : this.satisfaction(doctor, windowFor(now));
   }
 
   async recentActivityFor(user: AuthenticatedUser) {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
-    return doctorId === null ? [] : this.recentActivity(doctorId, user.id);
+    return doctor === null ? [] : this.recentActivity(doctor, user.id);
   }
 
   /* ── The slices ────────────────────────────────────────────── */
 
-  private async kpis(doctorId: string, window: DashboardWindow) {
+  private async kpis(doctor: ClinicalEmployment, window: DashboardWindow) {
     const counts = await this.dashboard.kpis(
-      doctorId,
+      doctor,
       window.now,
       window.dayStart,
       window.dayEnd,
@@ -178,8 +181,8 @@ export class DashboardService {
     };
   }
 
-  private async schedule(doctorId: string, window: DashboardWindow) {
-    const rows = await this.dashboard.schedule(doctorId, window.dayStart, window.dayEnd);
+  private async schedule(doctor: ClinicalEmployment, window: DashboardWindow) {
+    const rows = await this.dashboard.schedule(doctor, window.dayStart, window.dayEnd);
 
     // The next one still ahead of the request's clock — what the mock
     // marks `isNext`. Computed here because it depends on *now*, and a
@@ -202,8 +205,8 @@ export class DashboardService {
     }));
   }
 
-  private async trends(doctorId: string, window: DashboardWindow) {
-    const rows = await this.dashboard.trends(doctorId, window.trendFrom, window.dayEnd);
+  private async trends(doctor: ClinicalEmployment, window: DashboardWindow) {
+    const rows = await this.dashboard.trends(doctor, window.trendFrom, window.dayEnd);
     const byDay = new Map(rows.map((row) => [row.day, row] as const));
 
     // Every one of the fourteen days, including the empty ones. A series
@@ -215,8 +218,8 @@ export class DashboardService {
     }));
   }
 
-  private async satisfaction(doctorId: string, window: DashboardWindow) {
-    const rows = await this.dashboard.satisfaction(doctorId, window.monthStart);
+  private async satisfaction(doctor: ClinicalEmployment, window: DashboardWindow) {
+    const rows = await this.dashboard.satisfaction(doctor, window.monthStart);
     const counts = new Map(rows.map((row) => [row.rating, row.count] as const));
     const total = rows.reduce((sum, row) => sum + row.count, 0);
 
@@ -238,8 +241,8 @@ export class DashboardService {
     };
   }
 
-  private async recentActivity(doctorId: string, userId: string) {
-    return (await this.dashboard.recentActivity(doctorId, userId, ACTIVITY_LIMIT)).map(toActivity);
+  private async recentActivity(doctor: ClinicalEmployment, userId: string) {
+    return (await this.dashboard.recentActivity(doctor, userId, ACTIVITY_LIMIT)).map(toActivity);
   }
 
   private emptyComposite(user: AuthenticatedUser, window: DashboardWindow) {

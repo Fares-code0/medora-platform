@@ -9,6 +9,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients, ownedChart } from './support/hospital-fixture';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
 /**
@@ -156,10 +157,15 @@ async function medicationList(token: string, patientPublicId: string): Promise<M
 }
 
 /** A medication the patient reported: no prescription behind it. */
-async function giveExternalEntry(patientId: string, name = 'Aspirin (self-reported)'): Promise<void> {
+async function giveExternalEntry(
+  patientId: string,
+  name = 'Aspirin (self-reported)',
+): Promise<void> {
   await harness.prisma.patientMedication.create({
     data: {
       patientId,
+      // On the patient's chart at the suite's hospital (S3).
+      ...(await ownedChart(harness.prisma, patientId)),
       name,
       dosage: '75 mg',
       frequency: 'Once daily',
@@ -170,7 +176,7 @@ async function giveExternalEntry(patientId: string, name = 'Aspirin (self-report
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-medlist');
+  harness = await createAuthHarness('rx-medlist', { clinicalDoctors: true });
   sweeper = harness.app.get(PrescriptionSweepService);
 
   const byName = async (name: string): Promise<string> =>
@@ -210,7 +216,7 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -260,6 +266,8 @@ describe('RM M13.6 verify — signing an Rx adds a patient_medications row', () 
     await harness.prisma.patientAllergy.create({
       data: {
         patientId: patient.id,
+        // On the patient's chart at the suite's hospital (S3).
+        ...(await ownedChart(harness.prisma, patient.id)),
         allergen: 'Penicillin',
         severity: 'SEVERE',
         reaction: 'Anaphylaxis',

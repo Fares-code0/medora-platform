@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 
 /**
  * `Idempotency-Key` — ADR-014, API §0.5 ("replays return the original
@@ -113,7 +114,7 @@ function uniqueKey(label: string): string {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('idempotency');
+  harness = await createAuthHarness('idempotency', { clinicalDoctors: true });
   store = harness.app.get(IdempotencyStore);
 
   doctor = await signIn('idem-doctor');
@@ -135,7 +136,7 @@ afterAll(async () => {
     const owned = { patient: { publicId: { in: charts } } };
     await harness.prisma.patientMedication.deleteMany({ where: owned });
     await harness.prisma.prescription.deleteMany({ where: owned });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: charts } } });
   }
 
   // `idempotency_records` cascades from `users`, which `reset` removes.

@@ -57,7 +57,7 @@ import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { PatientScopeService, principalOf, type PatientClinicalScope } from '../../../shared/authz';
 import { PATIENT_BOUND_MODES, REF_BOUND_MODES } from '../dto/ai-enums';
 import type { AiContextInput } from '../dto/ai.schema';
 import {
@@ -70,6 +70,11 @@ export interface ResolvedContext {
   readonly mode: string;
   readonly patient: BoundPatient | null;
   readonly entity: BoundEntity | null;
+  /**
+   * The chart's hospital scope when a patient is bound (S3/S4): the thread
+   * is owned by it, and the bound entity must belong to it.
+   */
+  readonly scope: PatientClinicalScope | null;
 }
 
 @Injectable()
@@ -85,22 +90,25 @@ export class AiContextService {
 
     if (input.patientId === undefined) {
       // `general` — nothing to bind, nothing to scope.
-      return { mode: input.mode, patient: null, entity: null };
+      return { mode: input.mode, patient: null, entity: null, scope: null };
     }
 
     // Step 2. Refuses with 404 and a message identical to a genuinely
     // missing patient's, which is ADR-022's requirement rather than this
     // service's choice.
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    const scope = await this.scope.assertCanReach(principalOf(user), input.patientId);
 
     const patient = await this.context.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
 
     if (input.refId === undefined) {
-      return { mode: input.mode, patient, entity: null };
+      return { mode: input.mode, patient, entity: null, scope };
     }
 
-    const entity = await this.resolveEntity(input.mode, patient.id, input.refId);
+    // The entity must be the active hospital's (S3): a record, order or
+    // prescription written at another hospital, or with no hospital (#17),
+    // is as unavailable as one on another patient.
+    const entity = await this.resolveEntity(input.mode, patient.id, scope.hospitalId, input.refId);
 
     // Step 3. Well formed, permitted, and still unresolvable — which is
     // the case §11.4 assigns 409 to. The message names the handle
@@ -114,7 +122,7 @@ export class AiContextService {
       );
     }
 
-    return { mode: input.mode, patient, entity };
+    return { mode: input.mode, patient, entity, scope };
   }
 
   /**
@@ -186,15 +194,16 @@ export class AiContextService {
   private resolveEntity(
     mode: string,
     patientId: string,
+    hospitalId: string,
     refId: string,
   ): Promise<BoundEntity | null> {
     switch (mode) {
       case 'record':
-        return this.context.recordFor(patientId, refId);
+        return this.context.recordFor(patientId, hospitalId, refId);
       case 'labs':
-        return this.context.labOrderFor(patientId, refId);
+        return this.context.labOrderFor(patientId, hospitalId, refId);
       case 'pharmacy':
-        return this.context.prescriptionFor(patientId, refId);
+        return this.context.prescriptionFor(patientId, hospitalId, refId);
       default:
         // Unreachable: `assertShape` has already refused a `refId` in
         // any other mode. Returning null rather than throwing keeps the

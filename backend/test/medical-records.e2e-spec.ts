@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients, assignOwned } from './support/hospital-fixture';
 
 /**
  * The clinical document (RM M12 — API §6).
@@ -209,6 +210,8 @@ async function seedAppointment(doctor: Doctor, patientReference: string): Promis
       startsAt: new Date('2026-09-10T09:00:00.000Z'),
       reason: 'Headache review',
       status: 'COMPLETED',
+      // Owned like the chart (S4): a record links only its own hospital's visit.
+      ...(await assignOwned(harness.prisma, { doctorId: doctorRow.id, patientId: patientRow.id })),
     },
   });
 
@@ -229,7 +232,7 @@ function patch(token: string, reference: string, body: Record<string, unknown>) 
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('medical-records');
+  harness = await createAuthHarness('medical-records', { clinicalDoctors: true });
 }, 60_000);
 
 afterAll(async () => {
@@ -242,7 +245,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { publicId: { startsWith: APPOINTMENT_TAG } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -757,9 +760,8 @@ describe('PATCH /medical-records/{id} (§6.4) and the version trail (§6.8)', ()
       where: { user: { email: colleague.email } },
       select: { id: true },
     });
-    await harness.prisma.patientDoctorAssignment.create({
-      data: { patientId: patient.id, doctorId: colleagueDoctor.id },
-    });
+    // Owned by the colleague's employment at the same hospital (S3).
+    await assignOwned(harness.prisma, { patientId: patient.id, doctorId: colleagueDoctor.id });
 
     expect((await detail(colleague.token, reference)).status).toBe(200);
 
@@ -1267,9 +1269,8 @@ describe('notes (§6.6)', () => {
       where: { user: { email: colleague.email } },
       select: { id: true },
     });
-    await harness.prisma.patientDoctorAssignment.create({
-      data: { patientId: patient.id, doctorId: colleagueDoctor.id },
-    });
+    // Owned by the colleague's employment at the same hospital (S3).
+    await assignOwned(harness.prisma, { patientId: patient.id, doctorId: colleagueDoctor.id });
 
     expect((await detail(colleague.token, reference)).status).toBe(200);
 

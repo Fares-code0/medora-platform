@@ -5,7 +5,11 @@
  *
  * The list is scoped by `patient.careAssignments`, the same predicate
  * `PatientRepository` uses, so a record whose patient the caller is not
- * on is never loaded. Single-record reads go through the service's
+ * on is never loaded. Since S3/S4 the predicate is hospital-aware: the
+ * record must be owned by the doctor's active hospital, and the care
+ * assignment by the doctor's active employment there. A record created at
+ * another hospital, or a legacy record with no hospital (#17), is never
+ * loaded either — not even for a patient the doctor does care for. Single-record reads go through the service's
  * `PatientScopeService.assertCanReach` as well, and the two agree
  * because they read the same table with the same clause — a record
  * absent from the list is one whose detail answers 404.
@@ -38,6 +42,8 @@
  */
 
 import { Injectable } from '@nestjs/common';
+
+import type { ClinicalEmployment, PatientClinicalScope } from '../../../shared/authz';
 
 import type { Prisma } from '../../../generated/prisma/client';
 import type {
@@ -300,17 +306,6 @@ export class RecordRepository {
     private readonly cache: CacheService,
   ) {}
 
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    if (!UUID.test(userId)) return null;
-
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
-  }
-
   async displayNameForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
@@ -324,10 +319,10 @@ export class RecordRepository {
 
   /** API §6.1, scoped to the patients the caller has a care relationship with. */
   async list(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     criteria: RecordCriteria,
   ): Promise<{ rows: readonly ListRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(doctor, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.medicalRecord.findMany({
@@ -344,20 +339,20 @@ export class RecordRepository {
   }
 
   /** The document with every child, care-scoped in the WHERE. */
-  findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
+  findForDoctor(doctor: ClinicalEmployment, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, ...careScope(doctorId) },
+      where: { publicId, ...careScope(doctor) },
       select: DETAIL_SELECT,
     });
   }
 
   /** The lightweight row, for a status check before a write. */
   findHeaderForDoctor(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     publicId: string,
   ): Promise<{ id: string; publicId: string; status: RecordStatus } | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, ...careScope(doctorId) },
+      where: { publicId, ...careScope(doctor) },
       select: { id: true, publicId: true, status: true },
     });
   }
@@ -424,12 +419,19 @@ export class RecordRepository {
    * schema ties `medical_records.appointment_id` to the record's patient.
    */
   async appointmentForDoctor(
-    doctorId: string,
-    patientId: string,
+    scope: PatientClinicalScope,
     publicId: string,
   ): Promise<{ id: string } | null> {
+    // At the record's hospital, on the same medical record: the
+    // `medical_records_scoped_link_trg` trigger refuses any other link.
     return this.prisma.db.appointment.findFirst({
-      where: { publicId, doctorId, patientId },
+      where: {
+        publicId,
+        doctorId: scope.doctorId,
+        patientId: scope.patientId,
+        hospitalId: scope.hospitalId,
+        hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
+      },
       select: { id: true },
     });
   }
@@ -437,8 +439,8 @@ export class RecordRepository {
   /** API §6.3 — the document, its children and its `created` event. */
   async create(input: {
     readonly publicId: string;
-    readonly patientId: string;
-    readonly doctorId: string;
+    /** The chart's scope from `assertCanReach`: patient, hospital, record, employment. */
+    readonly scope: PatientClinicalScope;
     readonly departmentId: string | null;
     readonly appointmentId: string | null;
     readonly visitDate: Date;
@@ -456,8 +458,11 @@ export class RecordRepository {
       const created = await tx.medicalRecord.create({
         data: {
           publicId: input.publicId,
-          patientId: input.patientId,
-          doctorId: input.doctorId,
+          patientId: input.scope.patientId,
+          doctorId: input.scope.doctorId,
+          hospitalId: input.scope.hospitalId,
+          hospitalMedicalRecordId: input.scope.hospitalMedicalRecordId,
+          doctorEmploymentId: input.scope.doctorEmploymentId,
           departmentId: input.departmentId,
           appointmentId: input.appointmentId,
           visitDate: input.visitDate,
@@ -674,6 +679,13 @@ export class RecordRepository {
 
       await tx.$queryRaw`SELECT id FROM files WHERE id = ${input.fileId}::uuid FOR UPDATE`;
 
+      // The record's hospital: `validate_clinical_file_owner` requires the
+      // attachment's file to belong to it (DR-04).
+      const { hospitalId } = await tx.medicalRecord.findUniqueOrThrow({
+        where: { id: input.recordId },
+        select: { hospitalId: true },
+      });
+
       const file = await tx.file.findFirst({
         where: {
           id: input.fileId,
@@ -682,8 +694,11 @@ export class RecordRepository {
           deletedAt: null,
           // Emptied by M25.5's sweep once the object is collected.
           storageKey: { not: '' },
+          // Another hospital's upload is not this record's to attach; one
+          // with no owner yet is claimed below.
+          OR: [{ hospitalId: null }, { hospitalId }],
         },
-        select: { originalName: true, sizeBytes: true },
+        select: { originalName: true, sizeBytes: true, hospitalId: true },
       });
       if (file === null) throw new UploadUnavailable();
 
@@ -692,6 +707,10 @@ export class RecordRepository {
         select: { id: true },
       });
       if (linked !== null) throw new UploadAlreadyAttached();
+
+      if (file.hospitalId !== hospitalId) {
+        await tx.file.update({ where: { id: input.fileId }, data: { hospitalId } });
+      }
 
       const name = (input.name ?? file.originalName).slice(0, 200);
 
@@ -813,13 +832,13 @@ export class RecordRepository {
   }
 
   /** API §6.10 — the cards. */
-  async summaryFor(doctorId: string): Promise<{
+  async summaryFor(doctor: ClinicalEmployment): Promise<{
     open: number;
     completed: number;
     critical: number;
     unsignedNotes: number;
   }> {
-    const scope = careScope(doctorId);
+    const scope = careScope(doctor);
 
     const [open, completed, critical, unsignedNotes] = await Promise.all([
       this.prisma.db.medicalRecord.count({
@@ -835,11 +854,14 @@ export class RecordRepository {
     return { open, completed, critical, unsignedNotes };
   }
 
-  private whereFor(doctorId: string, criteria: RecordCriteria): Prisma.MedicalRecordWhereInput {
+  private whereFor(
+    doctor: ClinicalEmployment,
+    criteria: RecordCriteria,
+  ): Prisma.MedicalRecordWhereInput {
     const mode = 'insensitive' as const;
 
     return {
-      ...careScope(doctorId),
+      ...careScope(doctor),
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -893,9 +915,26 @@ export class RecordRepository {
  * the same clause `PatientRepository` applies to the chart itself, and
  * the two must agree: a patient absent from a doctor's list is a patient
  * whose records answer 404.
+ *
+ * Hospital-aware since S3/S4: the record is the active hospital's
+ * (`hospital_id`, never NULL — #17), and the assignment is owned by the
+ * doctor's active employment there, so a legacy or another hospital's
+ * assignment grants nothing.
  */
-function careScope(doctorId: string): Prisma.MedicalRecordWhereInput {
-  return { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } };
+function careScope(doctor: ClinicalEmployment): Prisma.MedicalRecordWhereInput {
+  return {
+    hospitalId: doctor.hospitalId,
+    patient: {
+      careAssignments: {
+        some: {
+          doctorId: doctor.doctorId,
+          doctorEmploymentId: doctor.doctorEmploymentId,
+          hospitalId: doctor.hospitalId,
+          revokedAt: null,
+        },
+      },
+    },
+  };
 }
 
 /**

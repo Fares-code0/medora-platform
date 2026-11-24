@@ -48,7 +48,7 @@ let strangerToken = '';
 let patientId = '';
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-pipeline');
+  harness = await createAuthHarness('lab-pipeline', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'pipeline-doctor');
   strangerToken = await seedDoctor(harness, 'pipeline-stranger');
@@ -82,16 +82,12 @@ describe('RM M14.2 verify — the transition matrix through HTTP', () => {
     expect(collected.collectedDate).not.toBeNull();
 
     const processing = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'processing' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'processing' }).expect(200),
     );
     expect(processing.status).toBe('processing');
 
     const completed = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(200),
     );
     expect(completed.status).toBe('completed');
     expect(completed.completedDate).not.toBeNull();
@@ -143,9 +139,7 @@ describe('RM M14.2 verify — the transition matrix through HTTP', () => {
     expect(response.status).toBe(409);
     // "allowed: " with an empty list reads as a bug rather than as an
     // answer, so a terminal order gets its own wording.
-    expect(errorBody(response).detail).toBe(
-      'Lab order is completed and cannot change status',
-    );
+    expect(errorBody(response).detail).toBe('Lab order is completed and cannot change status');
   });
 
   it('allows cancellation from every live step', async () => {
@@ -168,9 +162,11 @@ describe('RM M14.2 verify — the transition matrix through HTTP', () => {
     const fromProcessing = await orderTest(harness, doctorToken, patientId);
     await toProcessing(harness, doctorToken, fromProcessing.id);
     expect(
-      (await post(harness, doctorToken, `/${fromProcessing.id}/transition`, {
-        to: 'cancelled',
-      })).status,
+      (
+        await post(harness, doctorToken, `/${fromProcessing.id}/transition`, {
+          to: 'cancelled',
+        })
+      ).status,
     ).toBe(200);
   });
 
@@ -208,9 +204,7 @@ describe('the timeline records every step, attributed', () => {
     const order = await orderTest(harness, doctorToken, patientId);
     await toProcessing(harness, doctorToken, order.id);
     const completed = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(200),
     );
 
     // `completed` writes a **`verified`** event: DB §E7's vocabulary has
@@ -278,9 +272,7 @@ describe('the timeline records every step, attributed', () => {
     }).expect(200);
 
     const processing = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'processing' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'processing' }).expect(200),
     );
 
     expect(processing.timeline.filter((event) => event.kind === 'received')).toHaveLength(0);
@@ -488,9 +480,7 @@ describe('RM M14.3 verify — a blocked condition refuses processing', () => {
     }).expect(200);
 
     const cancelled = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'cancelled' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'cancelled' }).expect(200),
     );
 
     expect(cancelled.status).toBe('cancelled');
@@ -727,9 +717,7 @@ describe('the worklist filters (§8.2)', () => {
       await get(harness, doctorToken, '?status=ordered&pageSize=100').expect(200),
     );
     const both = dataOf<Page<LabOrderView>>(
-      await get(harness, doctorToken, '?status=ordered&status=collected&pageSize=100').expect(
-        200,
-      ),
+      await get(harness, doctorToken, '?status=ordered&status=collected&pageSize=100').expect(200),
     );
 
     expect(both.totalItems).toBeGreaterThanOrEqual(single.totalItems);

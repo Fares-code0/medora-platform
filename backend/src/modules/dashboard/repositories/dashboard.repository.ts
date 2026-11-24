@@ -21,6 +21,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/database';
 
@@ -65,16 +67,6 @@ export interface ActivityRow {
 export class DashboardRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The caller's `doctors` row, or `null` for an account without one. */
-  async doctorIdFor(userId: string): Promise<string | null> {
-    const row = await this.prisma.db.doctor.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return row?.id ?? null;
-  }
-
   /**
    * The five KPI figures, in one transaction — see the header.
    *
@@ -83,8 +75,15 @@ export class DashboardRepository {
    * and "next at 09:00" about an appointment that already happened is
    * the kind of wrong that makes a dashboard untrusted.
    */
-  kpis(doctorId: string, now: Date, dayStart: Date, dayEnd: Date, weekStart: Date, previousWeekStart: Date): Promise<KpiCounts> {
-    const mine = { doctorId, deletedAt: null };
+  kpis(
+    doctor: ClinicalEmployment,
+    now: Date,
+    dayStart: Date,
+    dayEnd: Date,
+    weekStart: Date,
+    previousWeekStart: Date,
+  ): Promise<KpiCounts> {
+    const mine = { doctorId: doctor.doctorId, hospitalId: doctor.hospitalId, deletedAt: null };
 
     return this.prisma.$transaction(async (tx) => {
       const [
@@ -114,7 +113,17 @@ export class DashboardRepository {
         // own caption in the mock describes. A doctor's patient count is
         // their assignments, not the clinic's roster.
         tx.patient.count({
-          where: { deletedAt: null, careAssignments: { some: { doctorId, revokedAt: null } } },
+          where: {
+            deletedAt: null,
+            careAssignments: {
+              some: {
+                doctorId: doctor.doctorId,
+                doctorEmploymentId: doctor.doctorEmploymentId,
+                hospitalId: doctor.hospitalId,
+                revokedAt: null,
+              },
+            },
+          },
         }),
         tx.appointment.count({
           where: { ...mine, status: 'COMPLETED', startsAt: { gte: weekStart, lt: dayEnd } },
@@ -140,9 +149,13 @@ export class DashboardRepository {
     });
   }
 
-  schedule(doctorId: string, dayStart: Date, dayEnd: Date): Promise<ScheduleRow[]> {
+  schedule(doctor: ClinicalEmployment, dayStart: Date, dayEnd: Date): Promise<ScheduleRow[]> {
     return this.prisma.db.appointment.findMany({
-      where: { doctorId, startsAt: { gte: dayStart, lt: dayEnd } },
+      where: {
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
+        startsAt: { gte: dayStart, lt: dayEnd },
+      },
       select: {
         publicId: true,
         startsAt: true,
@@ -167,13 +180,14 @@ export class DashboardRepository {
    * draw a clinic that closes at random, which is the same rule M23.1
    * applies to its hourly histogram.
    */
-  trends(doctorId: string, from: Date, to: Date): Promise<TrendPoint[]> {
+  trends(doctor: ClinicalEmployment, from: Date, to: Date): Promise<TrendPoint[]> {
     return this.prisma.$queryRaw<TrendPoint[]>`
       SELECT to_char(date_trunc('day', starts_at), 'YYYY-MM-DD') AS day,
              COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
              COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
       FROM appointments
-      WHERE doctor_id = ${doctorId}::uuid
+      WHERE doctor_id = ${doctor.doctorId}::uuid
+        AND hospital_id = ${doctor.hospitalId}::uuid
         AND deleted_at IS NULL
         AND starts_at >= ${from}
         AND starts_at < ${to}
@@ -183,10 +197,14 @@ export class DashboardRepository {
   }
 
   /** Rating histogram for the caller's own surveys, this month. */
-  async satisfaction(doctorId: string, from: Date): Promise<SatisfactionRow[]> {
+  async satisfaction(doctor: ClinicalEmployment, from: Date): Promise<SatisfactionRow[]> {
     const rows = await this.prisma.db.satisfactionSurvey.groupBy({
       by: ['rating'],
-      where: { doctorId, submittedAt: { gte: from } },
+      where: {
+        doctorId: doctor.doctorId,
+        appointment: { hospitalId: doctor.hospitalId },
+        submittedAt: { gte: from },
+      },
       _count: { _all: true },
     });
 
@@ -208,10 +226,19 @@ export class DashboardRepository {
    * both its writer and who may read it. A doctor's own recent work is
    * readable from the rows that recorded it.
    */
-  async recentActivity(doctorId: string, userId: string, limit: number): Promise<ActivityRow[]> {
+  async recentActivity(
+    doctor: ClinicalEmployment,
+    userId: string,
+    limit: number,
+  ): Promise<ActivityRow[]> {
     const [notes, prescriptions, labs] = await Promise.all([
       this.prisma.db.recordNote.findMany({
-        where: { authorId: userId, signed: true, signedAt: { not: null } },
+        where: {
+          authorId: userId,
+          signed: true,
+          signedAt: { not: null },
+          record: { hospitalId: doctor.hospitalId },
+        },
         select: {
           id: true,
           signedAt: true,
@@ -221,7 +248,11 @@ export class DashboardRepository {
         take: limit,
       }),
       this.prisma.db.prescription.findMany({
-        where: { prescribingDoctorId: doctorId, signedAt: { not: null } },
+        where: {
+          prescribingDoctorId: doctor.doctorId,
+          hospitalId: doctor.hospitalId,
+          signedAt: { not: null },
+        },
         select: {
           id: true,
           signedAt: true,
@@ -232,7 +263,11 @@ export class DashboardRepository {
         take: limit,
       }),
       this.prisma.db.labOrder.findMany({
-        where: { orderedBy: doctorId, completedAt: { not: null } },
+        where: {
+          orderedBy: doctor.doctorId,
+          hospitalId: doctor.hospitalId,
+          completedAt: { not: null },
+        },
         select: {
           id: true,
           completedAt: true,

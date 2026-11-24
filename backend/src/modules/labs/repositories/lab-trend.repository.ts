@@ -56,6 +56,8 @@ export class LabTrendRepository {
   /** Every released numeric result for these analytes, oldest first. */
   pointsFor(input: {
     readonly patientId: string;
+    /** The active hospital (S3): another hospital's or an unowned order is not this chart's. */
+    readonly hospitalId: string;
     readonly analytes: readonly string[];
     readonly from?: Date | undefined;
     readonly to?: Date | undefined;
@@ -72,6 +74,7 @@ export class LabTrendRepository {
         valueNumeric: { not: null },
         order: {
           patientId: input.patientId,
+          hospitalId: input.hospitalId,
           status: 'COMPLETED',
           deletedAt: null,
           ...(input.from === undefined && input.to === undefined

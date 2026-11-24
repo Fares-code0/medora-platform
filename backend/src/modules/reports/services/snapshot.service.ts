@@ -30,6 +30,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import type {
   AnalyticsSnapshotView,
   HeatmapView,
@@ -87,7 +89,7 @@ export class SnapshotService {
 
   async build(
     userId: string,
-    doctorId: string,
+    doctor: ClinicalEmployment,
     query: AnalyticsQuery,
     now: Date,
   ): Promise<AnalyticsSnapshotView> {
@@ -101,24 +103,35 @@ export class SnapshotService {
     const view = CATEGORY_VIEW[query.category] ?? { charts: [], kpiIds: [] };
     const wants = (chart: string): boolean => view.charts.includes(chart);
 
-    const [kpis, trend, weekday, departments, labStatus, age, heatmap, pharmacy, messages, ai, records] =
-      await Promise.all([
-        this.kpis(view.kpiIds, doctorId, current, previous, demographics, now, query.compare),
-        wants('trend') ? this.trend(query.category, doctorId, current, demographics, now) : [],
-        wants('weekday')
-          ? this.snapshots.appointmentsByWeekday(doctorId, current, demographics, now)
-          : null,
-        wants('departments')
-          ? this.snapshots.patientsByDepartment(doctorId, current, demographics, now)
-          : [],
-        wants('labStatus') ? this.snapshots.labStatusSplit(doctorId, current, demographics, now) : [],
-        wants('age') ? this.snapshots.ageDistribution(doctorId, current, demographics, now) : [],
-        wants('heatmap') ? this.snapshots.activityHeatmap(doctorId, current, demographics, now) : null,
-        wants('pharmacy') ? this.snapshots.prescriptionsByMedication(doctorId, current, 8) : [],
-        wants('messages') ? this.snapshots.messagesByWeekday(userId, current) : null,
-        wants('ai') ? this.snapshots.aiUsageByMode(userId, current) : [],
-        wants('records') ? this.snapshots.recordsByType(doctorId, current) : [],
-      ]);
+    const [
+      kpis,
+      trend,
+      weekday,
+      departments,
+      labStatus,
+      age,
+      heatmap,
+      pharmacy,
+      messages,
+      ai,
+      records,
+    ] = await Promise.all([
+      this.kpis(view.kpiIds, doctor, current, previous, demographics, now, query.compare),
+      wants('trend') ? this.trend(query.category, doctor, current, demographics, now) : [],
+      wants('weekday')
+        ? this.snapshots.appointmentsByWeekday(doctor, current, demographics, now)
+        : null,
+      wants('departments')
+        ? this.snapshots.patientsByDepartment(doctor, current, demographics, now)
+        : [],
+      wants('labStatus') ? this.snapshots.labStatusSplit(doctor, current, demographics, now) : [],
+      wants('age') ? this.snapshots.ageDistribution(doctor, current, demographics, now) : [],
+      wants('heatmap') ? this.snapshots.activityHeatmap(doctor, current, demographics, now) : null,
+      wants('pharmacy') ? this.snapshots.prescriptionsByMedication(doctor, current, 8) : [],
+      wants('messages') ? this.snapshots.messagesByWeekday(userId, current) : null,
+      wants('ai') ? this.snapshots.aiUsageByMode(userId, current) : [],
+      wants('records') ? this.snapshots.recordsByType(doctor, current) : [],
+    ]);
 
     return {
       category: query.category,
@@ -173,7 +186,7 @@ export class SnapshotService {
   /** The trend series the category asks for, by name. */
   private async trend(
     category: string,
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
@@ -183,7 +196,7 @@ export class SnapshotService {
         {
           name: 'Patients',
           tone: 'primary',
-          points: [...(await this.snapshots.patientTrend(doctorId, window, demographics, now))],
+          points: [...(await this.snapshots.patientTrend(doctor, window, demographics, now))],
         },
       ];
     }
@@ -193,7 +206,7 @@ export class SnapshotService {
         {
           name: 'Appointments',
           tone: 'info',
-          points: [...(await this.snapshots.appointmentTrend(doctorId, window, demographics, now))],
+          points: [...(await this.snapshots.appointmentTrend(doctor, window, demographics, now))],
         },
       ];
     }
@@ -201,8 +214,8 @@ export class SnapshotService {
     // `overview` takes every series (`trendSeries: null`), minus revenue
     // while billing is off.
     const [patients, appointments] = await Promise.all([
-      this.snapshots.patientTrend(doctorId, window, demographics, now),
-      this.snapshots.appointmentTrend(doctorId, window, demographics, now),
+      this.snapshots.patientTrend(doctor, window, demographics, now),
+      this.snapshots.appointmentTrend(doctor, window, demographics, now),
     ]);
 
     return [
@@ -213,7 +226,7 @@ export class SnapshotService {
 
   private async kpis(
     ids: readonly string[],
-    doctorId: string,
+    doctor: ClinicalEmployment,
     current: Window,
     previous: Window,
     demographics: Demographics,
@@ -251,25 +264,25 @@ export class SnapshotService {
     };
 
     await measure('patients', 'Patients', 'primary', (window) =>
-      this.snapshots.patientCount(doctorId, window, demographics, now),
+      this.snapshots.patientCount(doctor, window, demographics, now),
     );
     await measure('appointments', 'Appointments', 'info', (window) =>
-      this.snapshots.appointmentCount(doctorId, window, demographics, now),
+      this.snapshots.appointmentCount(doctor, window, demographics, now),
     );
     await measure('lab-orders', 'Lab orders', 'error', (window) =>
-      this.snapshots.labOrderCount(doctorId, window, demographics, now),
+      this.snapshots.labOrderCount(doctor, window, demographics, now),
     );
     await measure('prescriptions', 'Prescriptions', 'warning', (window) =>
-      this.snapshots.prescriptionCount(doctorId, window, demographics, now),
+      this.snapshots.prescriptionCount(doctor, window, demographics, now),
     );
 
     if (wanted.has('growth')) {
       // Growth is the patient count's own movement, so it is a percent
       // rather than a count — and it needs the comparison window by
       // definition, which is why it reads zero without `compare`.
-      const value = await this.snapshots.patientCount(doctorId, current, demographics, now);
+      const value = await this.snapshots.patientCount(doctor, current, demographics, now);
       const before = compare
-        ? await this.snapshots.patientCount(doctorId, previous, demographics, now)
+        ? await this.snapshots.patientCount(doctor, previous, demographics, now)
         : value;
 
       out.push({

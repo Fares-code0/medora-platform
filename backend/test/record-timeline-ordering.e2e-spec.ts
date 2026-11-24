@@ -51,7 +51,7 @@ let doctorToken = '';
 let patient: { id: string; name: string; mrn: string };
 
 beforeAll(async () => {
-  harness = await createAuthHarness('record-timeline');
+  harness = await createAuthHarness('record-timeline', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'timeline-doctor');
   patient = await seedPatient(harness, doctorToken);

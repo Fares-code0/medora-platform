@@ -1,12 +1,8 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  type AuthHarness,
-  createAuthHarness,
-  dataOf,
-  testEmail,
-} from './support/auth-app';
+import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import { assignOwned, deletePatients } from './support/hospital-fixture';
 import { seedDoctor, seedPatient } from './support/lab-fixture';
 
 /**
@@ -93,13 +89,15 @@ async function bookVisits(
         durationMin: 30,
         status: 'COMPLETED',
         reason: 'Routine',
+        // Owned by the doctor's hospital (S4): the report is that hospital's.
+        ...(await assignOwned(harness.prisma, { doctorId: doctor.id, patientId: patient.id })),
       },
     });
   }
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('reports-revenue');
+  harness = await createAuthHarness('reports-revenue', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'revenue-doctor');
   const patient = await seedPatient(harness, doctorToken);
@@ -116,7 +114,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: charts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: charts } } });
   }
 
   await harness.reset();

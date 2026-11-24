@@ -42,7 +42,7 @@ import {
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import {
   assertScanClean,
   DOWNLOAD_TTL_SECONDS,
@@ -116,10 +116,10 @@ export class RecordService {
 
   /** API §6.1. */
   async list(user: AuthenticatedUser, query: RecordListQuery): Promise<PaginatedRecords> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      doctor,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -145,10 +145,10 @@ export class RecordService {
    * count and the filter *names*.
    */
   async export(user: AuthenticatedUser, query: RecordExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      doctor,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
@@ -225,9 +225,12 @@ export class RecordService {
    * status nothing could ever be in.
    */
   async create(user: AuthenticatedUser, input: CreateRecordInput): Promise<MedicalRecordView> {
-    const doctorId = await this.requireDoctor(user);
+    await this.requireDoctor(user);
 
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    // The chart's scope (S3/S4): the record is created at the active
+    // hospital, on the patient's medical record there, under the doctor's
+    // active employment — server-derived, never client input.
+    const scope = await this.scope.assertCanReach(principalOf(user), input.patientId);
 
     const patient = await this.records.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
@@ -238,8 +241,7 @@ export class RecordService {
     const appointmentId =
       input.appointmentId === undefined
         ? null
-        : ((await this.records.appointmentForDoctor(doctorId, patient.id, input.appointmentId))
-            ?.id ?? null);
+        : ((await this.records.appointmentForDoctor(scope, input.appointmentId))?.id ?? null);
 
     // A named appointment that does not resolve is a client error worth
     // reporting, not a field to drop silently — the record would then
@@ -257,8 +259,7 @@ export class RecordService {
 
     await this.records.create({
       publicId: reference,
-      patientId: patient.id,
-      doctorId,
+      scope,
       departmentId,
       appointmentId,
       visitDate: input.visitDate,
@@ -317,7 +318,7 @@ export class RecordService {
     // 403 and not 404 — they have just read it. DEC-004 leaves "which
     // roles besides the author" open, so none are admitted until it is
     // decided.
-    if (current.doctor.id !== (await this.requireDoctor(user))) {
+    if (current.doctor.id !== (await this.requireDoctor(user)).doctorId) {
       throw AppException.forbidden('Only the record’s author may edit it', 'not_record_author');
     }
 
@@ -643,8 +644,8 @@ export class RecordService {
 
   /** The care-scoped fetch every single-record path begins with. */
   private async require(user: AuthenticatedUser, publicId: string): Promise<DetailRow> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.records.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const row = await this.records.findForDoctor(doctor, publicId);
     // Identical to a genuinely missing record, and carrying no
     // reference: the caller must not be able to tell the two apart.
     if (row === null) throw recordNotFound();
@@ -652,13 +653,19 @@ export class RecordService {
     return row;
   }
 
-  private async requireDoctor(user: AuthenticatedUser): Promise<string> {
-    const doctorId = await this.records.doctorIdForUser(user.id);
-    if (doctorId === null) {
+  /**
+   * The doctor's clinical employment (S3/S4): the active hospital every
+   * record read and write is scoped to. No profile, no active employment,
+   * or an unverified, suspended or deleted doctor (#18, OD-12) all fail
+   * closed with the same 404.
+   */
+  private async requireDoctor(user: AuthenticatedUser): Promise<ClinicalEmployment> {
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
+    if (doctor === null) {
       throw AppException.notFound('No doctor profile for this account');
     }
 
-    return doctorId;
+    return doctor;
   }
 
   private async actorName(user: AuthenticatedUser): Promise<string> {

@@ -56,7 +56,12 @@ import {
   TransactionalAuditWriter,
   type AuditDispatcher,
 } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import {
+  PatientScopeService,
+  principalOf,
+  type ClinicalEmployment,
+  type PatientClinicalScope,
+} from '../../../shared/authz';
 import { isUniqueViolation } from '../../../shared/database';
 import { maskPatientIdentity, type MaskedIdentity } from '../../../shared/phi';
 import { bloodTypeToWire, genderToWire } from '../dto/clinical-enums';
@@ -119,37 +124,43 @@ export class PatientService {
   /**
    * API §4.1.
    *
-   * A doctor gets their own assigned patients in the clear; anyone else
-   * holding `patients.view` gets the masked directory. The clear branch
-   * is gated on there actually being a `doctors` row, not on the role
-   * string — the same reasoning M9.4 gives, and it fails closed: an
-   * account that claims the doctor role with no professional profile
-   * gets the masked view rather than everyone's chart.
+   * A doctor gets their own assigned patients at their active hospital in
+   * the clear (S3/S4); anyone else holding `patients.view` gets the masked
+   * directory. A doctor with no clinical employment — none, ended,
+   * unverified, suspended or deleted (#18, OD-12) — gets an empty list:
+   * missing context fails closed, and the platform-wide masked directory is
+   * an administrator's view, never a doctor's fallback.
    */
   async list(
     user: AuthenticatedUser,
     query: PatientListQuery,
   ): Promise<PaginatedPatients<PatientView | MaskedIdentity>> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const doctor = await this.doctorScope(user);
+    if (doctor === 'none') return emptyPage(query);
 
     const { rows, totalItems } = await this.patients.list(
-      doctorId,
+      doctor,
       criteriaFor(query, query.page, query.pageSize),
     );
 
     // The masked branch needs no appointment lookup — a masked row does
     // not carry `nextAppointment`, and a query for a field nobody will
     // see is a query worth not making.
-    const nextByPatient = clear
-      ? await this.patients.nextAppointments(rows.map((row) => row.id))
-      : {};
+    const nextByPatient =
+      doctor === null
+        ? {}
+        : await this.patients.nextAppointments(
+            rows.map((row) => row.id),
+            doctor.hospitalId,
+          );
 
     const now = new Date();
 
     return {
       items: rows.map((row) =>
-        clear ? toView(row, nextByPatient[row.id] ?? null, now) : toMasked(row),
+        doctor === null
+          ? toMasked(row)
+          : toView(ownedAllergies(row, doctor.hospitalId), nextByPatient[row.id] ?? null, now),
       ),
       page: query.page,
       pageSize: query.pageSize,
@@ -175,13 +186,15 @@ export class PatientService {
    * why it is a `warning` in the taxonomy rather than an ordinary read.
    */
   async export(user: AuthenticatedUser, query: PatientExportQuery): Promise<CsvFile> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const scope = await this.doctorScope(user);
+    // Fails closed exactly like `list`: an export of nothing.
+    const doctor = scope === 'none' ? null : scope;
+    const clear = scope !== null;
 
-    const { rows, totalItems } = await this.patients.list(
-      doctorId,
-      criteriaFor(query, 1, EXPORT_ROW_LIMIT),
-    );
+    const { rows, totalItems } =
+      scope === 'none'
+        ? { rows: [], totalItems: 0 }
+        : await this.patients.list(doctor, criteriaFor(query, 1, EXPORT_ROW_LIMIT));
 
     if (totalItems > EXPORT_ROW_LIMIT) throw exportTooLarge(totalItems);
 
@@ -189,10 +202,22 @@ export class PatientService {
     let body: string;
 
     if (clear) {
-      const nextByPatient = await this.patients.nextAppointments(rows.map((row) => row.id));
+      const nextByPatient =
+        doctor === null
+          ? {}
+          : await this.patients.nextAppointments(
+              rows.map((row) => row.id),
+              doctor.hospitalId,
+            );
       body = toCsv(
         CLEAR_EXPORT_COLUMNS,
-        rows.map((row) => toView(row, nextByPatient[row.id] ?? null, now)),
+        rows.map((row) =>
+          toView(
+            doctor === null ? row : ownedAllergies(row, doctor.hospitalId),
+            nextByPatient[row.id] ?? null,
+            now,
+          ),
+        ),
       );
     } else {
       body = toCsv(MASKED_EXPORT_COLUMNS, rows.map(toMasked));
@@ -215,10 +240,7 @@ export class PatientService {
   }
 
   /** API §4.3 — one patient, care-scoped for a doctor, masked for anyone else. */
-  async detail(
-    user: AuthenticatedUser,
-    publicId: string,
-  ): Promise<PatientView | MaskedIdentity> {
+  async detail(user: AuthenticatedUser, publicId: string): Promise<PatientView | MaskedIdentity> {
     const row = await this.patients.findByPublicId(publicId);
     // 404 **before** the scope check, and identical to it: a caller must
     // not be able to tell a chart they may not reach from one that does
@@ -230,12 +252,12 @@ export class PatientService {
       return toMasked(row);
     }
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    const scope = await this.scope.assertCanReach(principalOf(user), publicId);
     await this.recordPhiRead(user, row, 'patient.view');
 
-    const next = await this.patients.nextAppointments([row.id]);
+    const next = await this.patients.nextAppointments([row.id], scope.hospitalId);
 
-    return toView(row, next[row.id] ?? null, new Date());
+    return toView(ownedAllergies(row, scope.hospitalId), next[row.id] ?? null, new Date());
   }
 
   /**
@@ -306,17 +328,17 @@ export class PatientService {
 
   /** API §4.4 — the profile bundle the chart screen loads first. */
   async profile(user: AuthenticatedUser, publicId: string): Promise<PatientProfileBundle> {
-    const row = await this.requireReachable(user, publicId);
+    const { row, scope } = await this.requireReachable(user, publicId);
 
     const [bundle, next] = await Promise.all([
-      this.patients.bundleFor(row.id),
-      this.patients.nextAppointments([row.id]),
+      this.patients.bundleFor(scope),
+      this.patients.nextAppointments([row.id], scope.hospitalId),
     ]);
 
     await this.recordPhiRead(user, row, 'patient.profile_view');
 
     return {
-      patient: toView(row, next[row.id] ?? null, new Date()),
+      patient: toView(ownedAllergies(row, scope.hospitalId), next[row.id] ?? null, new Date()),
       latestVitals:
         bundle.latestVitals === null
           ? null
@@ -365,11 +387,13 @@ export class PatientService {
    * last-4 protect nothing.
    */
   async create(user: AuthenticatedUser, input: CreatePatientInput): Promise<PatientView> {
-    const doctorId = await this.patients.doctorIdForUser(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     // A patient must be registered *by* a practitioner, because
     // registration creates the care relationship that makes the chart
-    // reachable. An account with no `doctors` row has nobody to assign.
-    if (doctorId === null) {
+    // reachable. Since S4 that relationship is owned by the practitioner's
+    // active hospital employment (server-derived), so an account with no
+    // clinical employment — or no `doctors` row — has nobody to assign.
+    if (doctor === null) {
       throw AppException.forbidden('Only a practitioner can register a patient');
     }
 
@@ -390,7 +414,7 @@ export class PatientService {
     const row = await this.createWithUniqueMrn({
       publicId,
       input,
-      doctorId,
+      doctor,
       actorId: user.id,
       conditionIds: ids,
     });
@@ -426,12 +450,11 @@ export class PatientService {
     publicId: string,
     input: UpdatePatientInput,
   ): Promise<PatientView> {
-    const row = await this.requireReachable(user, publicId);
+    const { row, scope } = await this.requireReachable(user, publicId);
 
     const updated = await this.patients.update(row.id, user.id, {
       status: input.status === undefined ? undefined : PATIENT_STATUS_FROM_WIRE[input.status],
-      riskLevel:
-        input.riskLevel === undefined ? undefined : RISK_LEVEL_FROM_WIRE[input.riskLevel],
+      riskLevel: input.riskLevel === undefined ? undefined : RISK_LEVEL_FROM_WIRE[input.riskLevel],
       phone: input.phone,
       email: input.email,
       address: input.address,
@@ -457,14 +480,14 @@ export class PatientService {
       },
     });
 
-    const next = await this.patients.nextAppointments([row.id]);
+    const next = await this.patients.nextAppointments([row.id], scope.hospitalId);
 
-    return toView(updated, next[row.id] ?? null, new Date());
+    return toView(ownedAllergies(updated, scope.hospitalId), next[row.id] ?? null, new Date());
   }
 
   /** API §4: "patient deletion does not exist" — deactivate only. */
   async deactivate(user: AuthenticatedUser, publicId: string): Promise<void> {
-    const row = await this.requireReachable(user, publicId);
+    const { row } = await this.requireReachable(user, publicId);
 
     await this.patients.deactivate(row.id, user.id);
 
@@ -482,8 +505,8 @@ export class PatientService {
     user: AuthenticatedUser,
     publicId: string,
   ): Promise<readonly PatientAllergyView[]> {
-    const row = await this.requireReachable(user, publicId);
-    return row.allergies.map(toAllergyView);
+    const { row, scope } = await this.requireReachable(user, publicId);
+    return ownedAllergies(row, scope.hospitalId).allergies.map(toAllergyView);
   }
 
   async addAllergy(
@@ -491,12 +514,12 @@ export class PatientService {
     publicId: string,
     input: CreateAllergyInput,
   ): Promise<PatientAllergyView> {
-    const row = await this.requireReachable(user, publicId);
+    const { scope } = await this.requireReachable(user, publicId);
 
     let created: AllergyRow;
     try {
       created = await this.patients.createAllergy({
-        patientId: row.id,
+        scope,
         actorId: user.id,
         allergen: input.allergen,
         severity: ALLERGY_SEVERITY_FROM_WIRE[input.severity] ?? 'MILD',
@@ -537,9 +560,9 @@ export class PatientService {
     allergyId: string,
     input: UpdateAllergyInput,
   ): Promise<PatientAllergyView> {
-    const row = await this.requireReachable(user, publicId);
+    const { scope } = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAllergy(row.id, allergyId, user.id, {
+    const updated = await this.patients.updateAllergy(scope, allergyId, user.id, {
       allergen: input.allergen,
       severity:
         input.severity === undefined ? undefined : ALLERGY_SEVERITY_FROM_WIRE[input.severity],
@@ -560,14 +583,10 @@ export class PatientService {
     return toAllergyView(updated);
   }
 
-  async removeAllergy(
-    user: AuthenticatedUser,
-    publicId: string,
-    allergyId: string,
-  ): Promise<void> {
-    const row = await this.requireReachable(user, publicId);
+  async removeAllergy(user: AuthenticatedUser, publicId: string, allergyId: string): Promise<void> {
+    const { scope } = await this.requireReachable(user, publicId);
 
-    const removed = await this.patients.removeAllergy(row.id, allergyId, user.id);
+    const removed = await this.patients.removeAllergy(scope, allergyId, user.id);
     if (removed === 0) throw AppException.notFound('Allergy not found');
 
     // Removing an allergy narrows what the prescription safety screen
@@ -588,8 +607,8 @@ export class PatientService {
     publicId: string,
     activeOnly: boolean,
   ): Promise<readonly PatientAlertView[]> {
-    const row = await this.requireReachable(user, publicId);
-    return (await this.patients.alerts(row.id, activeOnly)).map(toAlertView);
+    const { scope } = await this.requireReachable(user, publicId);
+    return (await this.patients.alerts(scope, activeOnly)).map(toAlertView);
   }
 
   async addAlert(
@@ -597,10 +616,10 @@ export class PatientService {
     publicId: string,
     input: CreateAlertInput,
   ): Promise<PatientAlertView> {
-    const row = await this.requireReachable(user, publicId);
+    const { scope } = await this.requireReachable(user, publicId);
 
     const created = await this.patients.createAlert({
-      patientId: row.id,
+      scope,
       actorId: user.id,
       severity: ALERT_SEVERITY_FROM_WIRE[input.severity] ?? 'WARNING',
       message: input.message,
@@ -623,11 +642,10 @@ export class PatientService {
     alertId: string,
     input: UpdateAlertInput,
   ): Promise<PatientAlertView> {
-    const row = await this.requireReachable(user, publicId);
+    const { scope } = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAlert(row.id, alertId, user.id, {
-      severity:
-        input.severity === undefined ? undefined : ALERT_SEVERITY_FROM_WIRE[input.severity],
+    const updated = await this.patients.updateAlert(scope, alertId, user.id, {
+      severity: input.severity === undefined ? undefined : ALERT_SEVERITY_FROM_WIRE[input.severity],
       message: input.message,
       active: input.active,
       reason: input.reason,
@@ -656,13 +674,23 @@ export class PatientService {
   private async requireReachable(
     user: AuthenticatedUser,
     publicId: string,
-  ): Promise<PatientRow> {
+  ): Promise<{ row: PatientRow; scope: PatientClinicalScope }> {
     const row = await this.patients.findByPublicId(publicId);
     if (row === null) throw notFound();
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    const scope = await this.scope.assertCanReach(principalOf(user), publicId);
 
-    return row;
+    return { row, scope };
+  }
+
+  /**
+   * The list scope: `null` for a non-doctor (the masked directory), the
+   * clinical employment for a doctor, or `'none'` for a doctor without one
+   * (the list is then empty — fail closed, never the masked directory).
+   */
+  private async doctorScope(user: AuthenticatedUser): Promise<ClinicalEmployment | null | 'none'> {
+    if (user.role !== 'doctor') return null;
+    return (await this.scope.clinicalEmployment(principalOf(user))) ?? 'none';
   }
 
   /**
@@ -699,7 +727,7 @@ export class PatientService {
   private async createWithUniqueMrn(input: {
     readonly publicId: string;
     readonly input: CreatePatientInput;
-    readonly doctorId: string;
+    readonly doctor: ClinicalEmployment;
     readonly actorId: string;
     readonly conditionIds: readonly string[];
   }): Promise<PatientRow> {
@@ -716,7 +744,7 @@ export class PatientService {
           email: input.input.email,
           address: input.input.address,
           medicalNotes: input.input.medicalNotes,
-          doctorId: input.doctorId,
+          doctor: input.doctor,
           actorId: input.actorId,
           allergies: input.input.allergies.map((allergy) => ({
             allergen: allergy.allergen,
@@ -737,6 +765,23 @@ export class PatientService {
 }
 
 /** 404 with no patient id in it (MG §11.6 forbids PHI in error messages). */
+/** An empty page: the fail-closed answer for a doctor with no clinical employment. */
+function emptyPage<T>(query: { page: number; pageSize: number }): PaginatedPatients<T> {
+  return { items: [], page: query.page, pageSize: query.pageSize, totalItems: 0, totalPages: 0 };
+}
+
+/**
+ * The row with only the active hospital's allergies (S3). Allergies are
+ * hospital-owned rows (DR-04); another hospital's, and a legacy allergy
+ * with no hospital (#17), are not part of this doctor's chart.
+ */
+function ownedAllergies(row: PatientRow, hospitalId: string): PatientRow {
+  return {
+    ...row,
+    allergies: row.allergies.filter((allergy) => allergy.hospitalId === hospitalId),
+  };
+}
+
 function notFound(): AppException {
   return AppException.notFound('Patient not found');
 }
@@ -805,7 +850,8 @@ const CLEAR_EXPORT_COLUMNS: readonly CsvColumn<PatientView>[] = [
   { header: 'hasSevereAllergy', value: (row) => row.hasSevereAllergy },
   {
     header: 'allergies',
-    value: (row) => row.allergies.map((allergy) => `${allergy.allergen} (${allergy.severity})`).join('; '),
+    value: (row) =>
+      row.allergies.map((allergy) => `${allergy.allergen} (${allergy.severity})`).join('; '),
   },
   { header: 'registeredAt', value: (row) => row.registeredAt },
   { header: 'lastVisit', value: (row) => row.lastVisit },

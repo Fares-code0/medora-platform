@@ -9,6 +9,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned, deletePatients } from './support/hospital-fixture';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
 /**
@@ -139,12 +140,18 @@ async function givePrescription(input: {
   const publicId = `RX-S${String(Date.now() % 1_000_000)}${String(sequence)}`;
   const signed = input.status !== 'DRAFT';
 
+  // Owned by the prescriber's hospital (S3/S4).
+  const care = await assignOwned(harness.prisma, {
+    doctorId: input.doctorId,
+    patientId: input.patientId,
+  });
   const created = await harness.prisma.prescription.create({
     data: {
       publicId,
       patientId: input.patientId,
       medicationId: amoxilId,
       prescribingDoctorId: input.doctorId,
+      ...care,
       strength: '500 mg',
       dosage: '1 capsule',
       frequency: 'Three times daily',
@@ -168,6 +175,8 @@ async function givePrescription(input: {
     await harness.prisma.patientMedication.create({
       data: {
         patientId: input.patientId,
+        hospitalId: care.hospitalId,
+        hospitalMedicalRecordId: care.hospitalMedicalRecordId,
         prescriptionId: created.id,
         name: 'Amoxil',
         dosage: '1 capsule',
@@ -192,7 +201,7 @@ async function statusOf(publicId: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-sweep');
+  harness = await createAuthHarness('rx-sweep', { clinicalDoctors: true });
   sweeper = harness.app.get(PrescriptionSweepService);
 
   amoxilId = (
@@ -213,7 +222,7 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();

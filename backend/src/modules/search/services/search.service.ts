@@ -33,6 +33,7 @@ import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
+import { PatientScopeService, principalOf } from '../../../shared/authz';
 import {
   ADMIN_DESTINATIONS,
   DOCTOR_DESTINATIONS,
@@ -46,7 +47,10 @@ import { SearchRepository } from '../repositories/search.repository';
 
 @Injectable()
 export class SearchService {
-  constructor(private readonly search: SearchRepository) {}
+  constructor(
+    private readonly search: SearchRepository,
+    private readonly scope: PatientScopeService,
+  ) {}
 
   async run(user: AuthenticatedUser, query: SearchQuery): Promise<SearchResponse> {
     const scope = this.scopeFor(user, query.scope);
@@ -95,12 +99,13 @@ export class SearchService {
     term: string,
     limit: number,
   ): Promise<SearchGroup[]> {
-    const doctorId = await this.search.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
-    // An account with the doctor role but no `doctors` row has no
-    // patients by construction — the destinations still answer, so the
-    // command palette works before the profile does.
-    if (doctorId === null) {
+    // An account with the doctor role but no clinical employment — no
+    // `doctors` row, no active employment, unverified, suspended or deleted
+    // (S3/S4, #18) — has no patients by construction. The destinations
+    // still answer, so the command palette works before the profile does.
+    if (doctor === null) {
       return [
         group('patients', 'Patients', []),
         group('appointments', 'Appointments', []),
@@ -110,9 +115,9 @@ export class SearchService {
     }
 
     const [patients, appointments, records] = await Promise.all([
-      this.search.patients(doctorId, term, limit),
-      this.search.appointments(doctorId, term, limit),
-      this.search.records(doctorId, term, limit),
+      this.search.patients(doctor, term, limit),
+      this.search.appointments(doctor, term, limit),
+      this.search.records(doctor, term, limit),
     ]);
 
     return [

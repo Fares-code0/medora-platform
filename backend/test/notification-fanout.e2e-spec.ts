@@ -116,7 +116,7 @@ afterAll(async () => {
 });
 
 beforeAll(async () => {
-  harness = await createAuthHarness('notify-fanout');
+  harness = await createAuthHarness('notify-fanout', { clinicalDoctors: true });
   dispatch = harness.app.get(NotificationDispatchService);
   outbox = harness.app.get<OutboxPort>(OUTBOX);
 

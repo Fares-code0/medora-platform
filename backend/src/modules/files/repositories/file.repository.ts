@@ -33,6 +33,8 @@ export interface FileRow {
   readonly checksumSha256: string;
   readonly kind: string;
   readonly uploadedBy: string | null;
+  /** The owning hospital of a clinical upload (S3/S4); `null` until owned. */
+  readonly hospitalId: string | null;
   readonly scannedAt: Date | null;
   readonly scanResult: string | null;
   readonly createdAt: Date;
@@ -47,6 +49,8 @@ const FILE_SELECT = {
   checksumSha256: true,
   kind: true,
   uploadedBy: true,
+  /** The owning hospital of a clinical upload (S3/S4); `null` until owned. */
+  hospitalId: true,
   scannedAt: true,
   scanResult: true,
   createdAt: true,
@@ -76,6 +80,7 @@ export class FileRepository {
     readonly checksumSha256: string;
     readonly kind: string;
     readonly uploadedBy: string;
+    readonly hospitalId?: string | null;
   }): Promise<FileRow> {
     return this.prisma.db.file.create({
       data: { ...input, sizeBytes: BigInt(input.sizeBytes) },

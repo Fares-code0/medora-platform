@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients, assignOwned } from './support/hospital-fixture';
 
 /**
  * The ADR-001 transition matrix through the API (RM M11.3, M11.4).
@@ -187,6 +188,8 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
       durationMin: 30,
       status: 'PENDING',
       reason: 'Requested by the patient',
+      // Owned by the doctor's hospital (S4): the book is that hospital's.
+      ...(await assignOwned(harness.prisma, { doctorId: doctorRow.id, patientId: patient.id })),
     },
   });
 
@@ -201,12 +204,7 @@ async function backdate(publicId: string): Promise<void> {
   });
 }
 
-function act(
-  token: string,
-  reference: string,
-  action: string,
-  body: Record<string, unknown> = {},
-) {
+function act(token: string, reference: string, action: string, body: Record<string, unknown> = {}) {
   return request(harness.server)
     .post(`${APPOINTMENTS}/${reference}/${action}`)
     .set('Authorization', `Bearer ${token}`)
@@ -220,7 +218,7 @@ function detail(token: string, reference: string) {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('appointments-transitions');
+  harness = await createAuthHarness('appointments-transitions', { clinicalDoctors: true });
 }, 60_000);
 
 afterAll(async () => {
@@ -230,7 +228,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -310,13 +308,15 @@ describe('cancel (§5.7) — P4', () => {
     const doctor = await seedDoctor('cancel');
     const reference = await book(doctor.token, await seedPatient(doctor.token));
 
-    const response = await act(doctor.token, reference, 'cancel', { reason: 'Patient moved abroad' });
+    const response = await act(doctor.token, reference, 'cancel', {
+      reason: 'Patient moved abroad',
+    });
 
     expect(response.status).toBe(200);
     expect(dataOf<AppointmentView>(response).status).toBe('cancelled');
-    expect(dataOf<AppointmentDetailView>(await detail(doctor.token, reference)).cancelledReason).toBe(
-      'Patient moved abroad',
-    );
+    expect(
+      dataOf<AppointmentDetailView>(await detail(doctor.token, reference)).cancelledReason,
+    ).toBe('Patient moved abroad');
   });
 
   it('refuses a cancellation with no reason', async () => {
@@ -388,7 +388,9 @@ describe('complete and no-show (§5.7) — the slot-date gate', () => {
     await backdate(reference);
     await act(doctor.token, reference, 'complete');
 
-    expect((await act(doctor.token, reference, 'cancel', { reason: 'Changed mind' })).status).toBe(409);
+    expect((await act(doctor.token, reference, 'cancel', { reason: 'Changed mind' })).status).toBe(
+      409,
+    );
     expect((await act(doctor.token, reference, 'no-show')).status).toBe(409);
   });
 });
@@ -573,7 +575,10 @@ describe('concurrency — compare-and-set', () => {
     const doctor = await seedDoctor('race-events');
     const reference = await seedPending(doctor, await seedPatient(doctor.token));
 
-    await Promise.all([act(doctor.token, reference, 'approve'), act(doctor.token, reference, 'approve')]);
+    await Promise.all([
+      act(doctor.token, reference, 'approve'),
+      act(doctor.token, reference, 'approve'),
+    ]);
 
     const events = dataOf<AppointmentDetailView>(await detail(doctor.token, reference)).events;
     // An event row for a transition that did not happen is a lie in the

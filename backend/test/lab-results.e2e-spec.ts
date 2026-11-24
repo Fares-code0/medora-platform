@@ -79,7 +79,7 @@ async function processingOrder(): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-results');
+  harness = await createAuthHarness('lab-results', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'results-doctor');
   const patient = await seedPatient(harness, doctorToken);
@@ -153,9 +153,7 @@ describe('RM M14.4 verify — a critical-high value sets hasCriticalResult', () 
     const corrected = await enterResults(reference, [{ analyte: 'Potassium', value: '4.4' }]);
 
     expect(corrected.hasCriticalResult).toBe(false);
-    expect(corrected.results.find((result) => result.analyte === 'Potassium')?.flag).toBe(
-      'normal',
-    );
+    expect(corrected.results.find((result) => result.analyte === 'Potassium')?.flag).toBe('normal');
   });
 });
 
@@ -330,10 +328,7 @@ describe('the batch is all-or-nothing', () => {
     });
 
     expect(response.status).toBe(422);
-    expect(Object.keys(errorBody(response).fieldErrors ?? {})).toEqual([
-      'results.0',
-      'results.1',
-    ]);
+    expect(Object.keys(errorBody(response).fieldErrors ?? {})).toEqual(['results.0', 'results.1']);
   });
 
   it('refuses a non-numeric value for a numeric analyte', async () => {
@@ -439,9 +434,7 @@ describe('releasing the order verifies its results (§8.6 `verified`)', () => {
     await enterResults(reference, normalPanel());
 
     const completed = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${reference}/transition`, { to: 'completed' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${reference}/transition`, { to: 'completed' }).expect(200),
     );
 
     expect(completed.status).toBe('completed');

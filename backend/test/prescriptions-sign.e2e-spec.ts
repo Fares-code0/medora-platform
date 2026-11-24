@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned, deletePatients, ownedChart } from './support/hospital-fixture';
 
 /**
  * Create a draft, then sign it (RM M13.3 — API §7.6, §7.7).
@@ -119,7 +120,11 @@ async function seedPatient(
   return id;
 }
 
-function draftBody(patientId: string, medicationId: string, overrides: Record<string, unknown> = {}) {
+function draftBody(
+  patientId: string,
+  medicationId: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     patientId,
     medicationId,
@@ -209,6 +214,8 @@ async function livePrescriptionFor(
       patientId: patient.id,
       medicationId,
       prescribingDoctorId: doctor.id,
+      // Owned by the prescriber's hospital (S3/S4), so the screen sees it.
+      ...(await assignOwned(harness.prisma, { doctorId: doctor.id, patientId: patient.id })),
       strength: '5 mg',
       dosage: '1 tablet',
       frequency: 'Once daily',
@@ -225,7 +232,7 @@ async function livePrescriptionFor(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-sign');
+  harness = await createAuthHarness('rx-sign', { clinicalDoctors: true });
 
   const byName = async (name: string): Promise<string> =>
     (await harness.prisma.medication.findFirstOrThrow({ where: { name }, select: { id: true } }))
@@ -246,7 +253,7 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -460,6 +467,8 @@ describe('409 branch 1 — allergy_conflict, with no override path', () => {
     await harness.prisma.patientAllergy.create({
       data: {
         patientId: patient.id,
+        // On the patient's chart at the suite's hospital (S3).
+        ...(await ownedChart(harness.prisma, patient.id)),
         allergen: 'Penicillin',
         severity: 'SEVERE',
         reaction: 'Anaphylaxis',
@@ -568,9 +577,8 @@ describe('409 branch 3 + the chaos test — safety_check_unavailable', () => {
    * behaviour.
    */
   it('cannot sign, but can still save a draft, with the source down', async () => {
-    const { INTERACTION_SOURCE, InteractionSourceUnavailable } = await import(
-      '../src/modules/pharmacy/services/interaction-source'
-    );
+    const { INTERACTION_SOURCE, InteractionSourceUnavailable } =
+      await import('../src/modules/pharmacy/services/interaction-source');
     const { AppModule } = await import('../src/app.module');
     const { PLATFORM_POLICY_SOURCE } = await import('../src/config/policy.types');
 

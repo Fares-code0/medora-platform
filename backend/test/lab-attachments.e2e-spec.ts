@@ -166,7 +166,7 @@ function uploadBody(overrides: Record<string, unknown> = {}): Record<string, unk
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-attachments');
+  harness = await createAuthHarness('lab-attachments', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'attach-doctor');
   strangerToken = await seedDoctor(harness, 'attach-stranger');
@@ -454,9 +454,7 @@ describe('attach-to-record, when the identity agrees (§8.9)', () => {
         .send({ recordId, confirmedPatient: { name: patient.name, mrn: patient.mrn } });
 
       expect(response.status).toBe(422);
-      expect(errorBody(response).fieldErrors?.['labOrderId']?.[0]).toContain(
-        'no released results',
-      );
+      expect(errorBody(response).fieldErrors?.['labOrderId']?.[0]).toContain('no released results');
     });
   });
 

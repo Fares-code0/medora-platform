@@ -37,10 +37,7 @@ import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type { AppointmentStatus } from '../../../generated/prisma/enums';
 import { appointmentStatusToWire, STATUS_FROM_WIRE } from '../dto/appointment-enums';
-import type {
-  AppointmentAdminSummaryView,
-  OversightAppointmentView,
-} from '../dto/appointment.dto';
+import type { AppointmentAdminSummaryView, OversightAppointmentView } from '../dto/appointment.dto';
 import type {
   AdministrativeCancelInput,
   NudgeInput,
@@ -51,6 +48,7 @@ import {
   AppointmentRepository,
   type BookRow,
   type ScheduleTx,
+  HospitalOwnedAppointmentNotReassignable,
 } from '../repositories/appointment.repository';
 
 import { appointmentStatusMachine } from './appointment-status.machine';
@@ -314,9 +312,8 @@ export class AppointmentOversightService {
     // slot between this check and the write, landing the appointment on
     // the receiving doctor at a time nobody checked. Both are locked in
     // one statement in id order, and the row is read again under them.
-    const moved = await this.conflicts.underScheduleLock(
-      [row.doctor.id, receiving.id],
-      async (tx) => {
+    const moved = await this.conflicts
+      .underScheduleLock([row.doctor.id, receiving.id], async (tx) => {
         const locked = await this.appointments.findAny(publicId, tx);
         if (locked === null) throw notFound();
 
@@ -340,8 +337,18 @@ export class AppointmentOversightService {
           },
           tx,
         );
-      },
-    );
+      })
+      .catch((error: unknown) => {
+        // S4: bookings are now hospital-owned, and their employment key is
+        // immutable — a transfer workflow is a Database follow-up.
+        if (error instanceof HospitalOwnedAppointmentNotReassignable) {
+          throw AppException.conflict(
+            'This appointment belongs to a hospital and cannot be reassigned to another doctor yet',
+            'conflict',
+          );
+        }
+        throw error;
+      });
 
     if (moved === null) {
       throw AppException.conflict(

@@ -16,7 +16,7 @@ let doctor = '';
 let chart = '';
 
 beforeAll(async () => {
-  harness = await createAuthHarness('date-range');
+  harness = await createAuthHarness('date-range', { clinicalDoctors: true });
   doctor = await seedDoctor(harness, 'date-doctor');
   chart = (await seedPatient(harness, doctor)).id;
 });

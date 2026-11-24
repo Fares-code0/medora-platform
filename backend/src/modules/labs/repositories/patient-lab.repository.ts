@@ -59,10 +59,10 @@ export type PatientStudyRow = Prisma.LabOrderGetPayload<{ select: typeof STUDY_S
 export class PatientLabRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Every lab order this patient has, newest first. */
-  studiesFor(patientId: string): Promise<readonly PatientStudyRow[]> {
+  /** Every lab order this patient has at the active hospital (S3), newest first. */
+  studiesFor(patientId: string, hospitalId: string): Promise<readonly PatientStudyRow[]> {
     return this.prisma.db.labOrder.findMany({
-      where: { patientId, deletedAt: null },
+      where: { patientId, hospitalId, deletedAt: null },
       select: STUDY_SELECT,
       // Newest first, and by `requested_at` rather than by the resolved
       // display date: the display date falls back through three columns

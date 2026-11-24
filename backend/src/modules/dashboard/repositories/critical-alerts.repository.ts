@@ -18,6 +18,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import { PrismaService } from '../../../shared/database';
 
 export interface CriticalLabRow {
@@ -44,9 +46,14 @@ export class CriticalAlertsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Released, flagged critical, and nobody has looked at it yet. */
-  unreviewedCriticalLabs(doctorId: string): Promise<CriticalLabRow[]> {
+  unreviewedCriticalLabs(doctor: ClinicalEmployment): Promise<CriticalLabRow[]> {
     return this.prisma.db.labOrder.findMany({
-      where: { orderedBy: doctorId, hasCriticalResult: true, reviewedAt: null },
+      where: {
+        orderedBy: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
+        hasCriticalResult: true,
+        reviewedAt: null,
+      },
       select: {
         publicId: true,
         requestedAt: true,
@@ -67,14 +74,25 @@ export class CriticalAlertsRepository {
    * a conflict here would be a second implementation of a
    * patient-safety rule.
    */
-  todaysCriticalAlerts(doctorId: string, dayStart: Date, dayEnd: Date): Promise<AlertRow[]> {
+  todaysCriticalAlerts(
+    doctor: ClinicalEmployment,
+    dayStart: Date,
+    dayEnd: Date,
+  ): Promise<AlertRow[]> {
     return this.prisma.db.patientClinicalAlert.findMany({
       where: {
         active: true,
         severity: 'CRITICAL',
+        // The active hospital's alerts, about today's bookings there (S3/S4).
+        hospitalId: doctor.hospitalId,
         patient: {
           appointments: {
-            some: { doctorId, deletedAt: null, startsAt: { gte: dayStart, lt: dayEnd } },
+            some: {
+              doctorId: doctor.doctorId,
+              hospitalId: doctor.hospitalId,
+              deletedAt: null,
+              startsAt: { gte: dayStart, lt: dayEnd },
+            },
           },
         },
       },
@@ -84,10 +102,11 @@ export class CriticalAlertsRepository {
   }
 
   /** Urgent appointments that were moved and are still ahead. */
-  urgentReschedules(doctorId: string, from: Date): Promise<RescheduleRow[]> {
+  urgentReschedules(doctor: ClinicalEmployment, from: Date): Promise<RescheduleRow[]> {
     return this.prisma.db.appointment.findMany({
       where: {
-        doctorId,
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         priority: 'URGENT',
         status: 'RESCHEDULED',
         startsAt: { gte: from },

@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 
 /**
  * The reference-data cache (RM M31.1) — the formulary, its monographs,
@@ -40,7 +41,7 @@ const PASSWORD = 'Medora123!';
 const auth = () => ({ Authorization: `Bearer ${token}` });
 
 beforeAll(async () => {
-  harness = await createAuthHarness('reference-cache-m311');
+  harness = await createAuthHarness('reference-cache-m311', { clinicalDoctors: true });
 
   const email = testEmail('ref-doctor');
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
@@ -73,7 +74,7 @@ afterAll(async () => {
   await harness.prisma.medicalRecord.deleteMany({
     where: { patient: { publicId: { in: charts } } },
   });
-  await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
+  await deletePatients(harness.prisma, { where: { publicId: { in: charts } } });
   await harness.reset();
   await harness.close();
 });

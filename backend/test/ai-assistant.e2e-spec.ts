@@ -6,8 +6,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import { PLATFORM_POLICY_SOURCE } from '../src/config/policy.types';
-import { AI_GATEWAY, type AiDelta, type AiGatewayPort, type AiGenerationRequest } from '../src/shared/ai';
+import {
+  AI_GATEWAY,
+  type AiDelta,
+  type AiGatewayPort,
+  type AiGenerationRequest,
+} from '../src/shared/ai';
 import { type AuthHarness, createAuthHarness, dataOf, errorBody } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 import { orderTest, seedDoctor, seedPatient } from './support/lab-fixture';
 
 /**
@@ -231,7 +237,7 @@ function parseSse(raw: string): { event: string; data: Record<string, unknown> }
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('ai-assistant');
+  harness = await createAuthHarness('ai-assistant', { clinicalDoctors: true });
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(PLATFORM_POLICY_SOURCE)
@@ -268,7 +274,7 @@ afterAll(async () => {
   await harness.prisma.labOrder.deleteMany({
     where: { patient: { publicId: { in: charts } } },
   });
-  await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
+  await deletePatients(harness.prisma, { where: { publicId: { in: charts } } });
 
   await fakeApp?.close();
   await harness.reset();
@@ -337,8 +343,14 @@ describe('RM M16.2 verify — CRUD round-trip matches the frontend’s types', (
     const thread = await generalThread(doctorToken);
     const path = `${CONVERSATIONS}/${thread.id}`;
 
-    await request(fakeServer).delete(path).set('Authorization', `Bearer ${doctorToken}`).expect(204);
-    await request(fakeServer).delete(path).set('Authorization', `Bearer ${doctorToken}`).expect(404);
+    await request(fakeServer)
+      .delete(path)
+      .set('Authorization', `Bearer ${doctorToken}`)
+      .expect(204);
+    await request(fakeServer)
+      .delete(path)
+      .set('Authorization', `Bearer ${doctorToken}`)
+      .expect(404);
   });
 
   it('keeps a colleague out of the thread, as not found', async () => {
@@ -423,11 +435,7 @@ describe('RM M16.3 verify — context binding is server-authoritative', () => {
 
     const order = await orderTest(harness, doctorToken, other.id);
 
-    await createThread(
-      doctorToken,
-      { mode: 'labs', patientId: patient.id, refId: order.id },
-      409,
-    );
+    await createThread(doctorToken, { mode: 'labs', patientId: patient.id, refId: order.id }, 409);
   });
 
   it('refuses a patient-bound mode with no patient (422, not 409)', async () => {

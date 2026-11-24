@@ -26,6 +26,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import type { InsightView } from '../dto/analytics.dto';
 import {
   SnapshotRepository,
@@ -57,7 +59,7 @@ export class InsightService {
 
   async build(
     userId: string,
-    doctorId: string,
+    doctor: ClinicalEmployment,
     current: Window,
     previous: Window,
     now: Date,
@@ -72,13 +74,13 @@ export class InsightService {
       labBefore,
       aiUsage,
     ] = await Promise.all([
-      this.snapshots.appointmentCount(doctorId, current, ALL, now),
-      this.snapshots.appointmentCount(doctorId, previous, ALL, now),
-      this.snapshots.appointmentsByWeekday(doctorId, current, ALL, now),
-      this.snapshots.criticalPending(doctorId),
-      this.snapshots.prescriptionsByMedication(doctorId, current, 1),
-      this.snapshots.labOrderCount(doctorId, current, ALL, now),
-      this.snapshots.labOrderCount(doctorId, previous, ALL, now),
+      this.snapshots.appointmentCount(doctor, current, ALL, now),
+      this.snapshots.appointmentCount(doctor, previous, ALL, now),
+      this.snapshots.appointmentsByWeekday(doctor, current, ALL, now),
+      this.snapshots.criticalPending(doctor),
+      this.snapshots.prescriptionsByMedication(doctor, current, 1),
+      this.snapshots.labOrderCount(doctor, current, ALL, now),
+      this.snapshots.labOrderCount(doctor, previous, ALL, now),
       this.snapshots.aiUsageByMode(userId, current),
     ]);
 

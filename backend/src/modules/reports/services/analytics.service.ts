@@ -33,6 +33,7 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import { AppException } from '../../../common/errors/app.exception';
 import type { AnalyticsSnapshotView, InsightView, RevenueAlternateView } from '../dto/analytics.dto';
 import type { AnalyticsQuery } from '../dto/analytics.schema';
@@ -52,7 +53,12 @@ import { SnapshotService } from './snapshot.service';
  * administrator asking for *their own* clinical numbers, and is reached
  * without a second code path that could drift from the first.
  */
-const EMPTY_SCOPE = '00000000-0000-0000-0000-000000000000';
+const NONE = '00000000-0000-0000-0000-000000000000';
+const EMPTY_SCOPE: ClinicalEmployment = {
+  doctorId: NONE,
+  doctorEmploymentId: NONE,
+  hospitalId: NONE,
+};
 
 /** Enough to fill the slot the revenue card would have occupied. */
 const TOP_VISIT_TYPES = 5;
@@ -71,6 +77,13 @@ export class AnalyticsService {
     private readonly snapshots: SnapshotService,
     private readonly insightService: InsightService,
     private readonly exports: ReportExportService,
+    /**
+     * S4: "own data" is the doctor's own data **at the active hospital**,
+     * from the clinical employment (server-derived). No employment —
+     * ended, unverified, suspended, deleted, or no doctor at all — is the
+     * empty scope.
+     */
+    private readonly scope: PatientScopeService,
   ) {}
 
   /**
@@ -87,13 +100,13 @@ export class AnalyticsService {
     query: AnalyticsQuery,
   ): Promise<RevenueAlternateView | AnalyticsSnapshotView> {
     if (query.category !== 'revenue') {
-      const doctorId = await this.analytics.doctorIdForUser(user.id);
+      const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
       // An account with no `doctors` row has no practice to report on.
       // §12's scope is "own data only", and an administrator's own
       // clinical data is none — an empty snapshot, not a refusal, for
       // the same reason the revenue alternate answers an empty list.
-      return this.snapshots.build(user.id, doctorId ?? EMPTY_SCOPE, query, new Date());
+      return this.snapshots.build(user.id, doctor ?? EMPTY_SCOPE, query, new Date());
     }
 
     if (isBillingEnabled()) {
@@ -104,7 +117,7 @@ export class AnalyticsService {
     }
 
     const { from, to } = rangeFor(query.range, new Date());
-    const doctorId = await this.analytics.doctorIdForUser(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
     return {
       category: 'revenue',
@@ -115,9 +128,9 @@ export class AnalyticsService {
       // so with an empty list rather than a refusal: §12's doctor scope
       // is "own data only", and an administrator's own data is none.
       topVisitTypes:
-        doctorId === null
+        doctor === null
           ? []
-          : await this.analytics.topVisitTypes(doctorId, from, to, TOP_VISIT_TYPES),
+          : await this.analytics.topVisitTypes(doctor, from, to, TOP_VISIT_TYPES),
       range: { from: from.toISOString(), to: to.toISOString() },
     };
   }
@@ -133,9 +146,9 @@ export class AnalyticsService {
         ? undefined
         : { from: new Date(`${query.from}T00:00:00Z`), to: new Date(`${query.to}T00:00:00Z`) };
     const { current, previous } = resolveRange(query.range ?? 'month', now, custom);
-    const doctorId = await this.analytics.doctorIdForUser(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
-    return this.insightService.build(user.id, doctorId ?? EMPTY_SCOPE, current, previous, now);
+    return this.insightService.build(user.id, doctor ?? EMPTY_SCOPE, current, previous, now);
   }
 
   /**
@@ -146,10 +159,10 @@ export class AnalyticsService {
    * doctor scope to be got right, and the first to drift.
    */
   async exportCsv(user: AuthenticatedUser, body: ExportBody): Promise<CsvExport> {
-    const doctorId = await this.analytics.doctorIdForUser(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     const snapshot = await this.snapshots.build(
       user.id,
-      doctorId ?? EMPTY_SCOPE,
+      doctor ?? EMPTY_SCOPE,
       {
         category: body.category,
         range: body.range,

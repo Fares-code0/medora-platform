@@ -14,6 +14,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment, PatientClinicalScope } from '../../../shared/authz';
+
 import type { Prisma } from '../../../generated/prisma/client';
 import type {
   MedicationRoute,
@@ -65,17 +67,6 @@ export class PrescriptionRepository {
     return tx ?? this.prisma;
   }
 
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    if (!UUID.test(userId)) return null;
-
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
-  }
-
   async displayNameForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
@@ -114,10 +105,22 @@ export class PrescriptionRepository {
     return doctor?.departmentId ?? null;
   }
 
-  /** The visit a prescription was written at (`MR-…`), scoped to its patient. */
-  async recordForPatient(patientId: string, publicId: string): Promise<{ id: string } | null> {
+  /**
+   * The visit a prescription was written at (`MR-…`), scoped to its patient
+   * and to the same hospital medical record — `prescriptions_scoped_link_trg`
+   * refuses any other link (DR-04).
+   */
+  async recordForPatient(
+    scope: PatientClinicalScope,
+    publicId: string,
+  ): Promise<{ id: string } | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, patientId },
+      where: {
+        publicId,
+        patientId: scope.patientId,
+        hospitalId: scope.hospitalId,
+        hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
+      },
       select: { id: true },
     });
   }
@@ -134,9 +137,9 @@ export class PrescriptionRepository {
   /** API §7.6 — the draft. */
   async createDraft(input: {
     readonly publicId: string;
-    readonly patientId: string;
+    /** The chart's scope: patient, hospital, medical record, employment (S4). */
+    readonly scope: PatientClinicalScope;
     readonly medicationId: string;
-    readonly prescribingDoctorId: string;
     readonly departmentId: string | null;
     readonly recordId: string | null;
     readonly strength: string;
@@ -154,9 +157,12 @@ export class PrescriptionRepository {
     const created = await this.prisma.db.prescription.create({
       data: {
         publicId: input.publicId,
-        patientId: input.patientId,
+        patientId: input.scope.patientId,
+        hospitalId: input.scope.hospitalId,
+        hospitalMedicalRecordId: input.scope.hospitalMedicalRecordId,
+        doctorEmploymentId: input.scope.doctorEmploymentId,
         medicationId: input.medicationId,
-        prescribingDoctorId: input.prescribingDoctorId,
+        prescribingDoctorId: input.scope.doctorId,
         ...(input.departmentId === null ? {} : { departmentId: input.departmentId }),
         ...(input.recordId === null ? {} : { recordId: input.recordId }),
         strength: input.strength,
@@ -284,9 +290,17 @@ export class PrescriptionRepository {
     // M13.6 — the patient's current-medication list. Written by the
     // same transaction as the signature, because "signing an Rx adds a
     // `patient_medications` row" is a property, not a follow-up job.
+    // Owned like the prescription (`patient_medications_scoped_link_trg`
+    // requires the same patient, hospital and medical record).
+    const owner = await tx.prescription.findUniqueOrThrow({
+      where: { id: input.prescriptionId },
+      select: { hospitalId: true, hospitalMedicalRecordId: true },
+    });
     await tx.patientMedication.create({
       data: {
         patientId: input.patientId,
+        hospitalId: owner.hospitalId,
+        hospitalMedicalRecordId: owner.hospitalMedicalRecordId,
         prescriptionId: input.prescriptionId,
         name: input.medicationName,
         dosage: input.dosage,
@@ -393,20 +407,24 @@ export class PrescriptionRepository {
     }
   }
 
-  /** One prescription by `RX-…`, scoped to the doctor who wrote it. */
-  findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
+  /**
+   * One prescription by `RX-…`, scoped to the doctor who wrote it **at the
+   * doctor's active hospital** (S3/S4): one written at a previous hospital,
+   * or a legacy one with no hospital (#17), is not reachable from here.
+   */
+  findForDoctor(doctor: ClinicalEmployment, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.prescription.findFirst({
-      where: { publicId, prescribingDoctorId: doctorId, deletedAt: null },
+      where: { publicId, ...mine(doctor) },
       select: DETAIL_SELECT,
     });
   }
 
   /** API §7.3 — the prescriber's own list. */
   async list(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     criteria: ListCriteria,
   ): Promise<{ rows: readonly DetailRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(doctor, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.prescription.findMany({
@@ -535,6 +553,8 @@ export class PrescriptionRepository {
    */
   async renew(input: {
     readonly sourceId: string;
+    /** The renewing doctor's scope on the chart (S4): the draft is owned by it. */
+    readonly scope: PatientClinicalScope;
     readonly publicId: string;
     readonly durationDays: number;
     readonly quantity: number;
@@ -571,6 +591,9 @@ export class PrescriptionRepository {
           patientId: source.patientId,
           medicationId: source.medicationId,
           prescribingDoctorId: source.prescribingDoctorId,
+          hospitalId: input.scope.hospitalId,
+          hospitalMedicalRecordId: input.scope.hospitalMedicalRecordId,
+          doctorEmploymentId: input.scope.doctorEmploymentId,
           ...(source.departmentId === null ? {} : { departmentId: source.departmentId }),
           ...(source.recordId === null ? {} : { recordId: source.recordId }),
           strength: source.strength,
@@ -775,7 +798,7 @@ export class PrescriptionRepository {
    * today, which is what that function counts.
    */
   summaryFor(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     dayStart: Date,
     dayEnd: Date,
   ): Promise<{
@@ -786,26 +809,28 @@ export class PrescriptionRepository {
     highRisk: number;
     newToday: number;
   }> {
-    const mine = { prescribingDoctorId: doctorId, deletedAt: null };
+    const own = mine(doctor);
 
     return this.prisma.$transaction(async (tx) => {
       const [total, active, pendingRefills, expired, highRisk, newToday] = await Promise.all([
-        tx.prescription.count({ where: mine }),
-        tx.prescription.count({ where: { ...mine, status: 'ACTIVE' } }),
-        tx.prescription.count({ where: { ...mine, refillStatus: 'PENDING' } }),
-        tx.prescription.count({ where: { ...mine, status: 'EXPIRED' } }),
-        tx.prescription.count({ where: { ...mine, medication: { isHighRisk: true } } }),
-        tx.prescription.count({ where: { ...mine, createdAt: { gte: dayStart, lt: dayEnd } } }),
+        tx.prescription.count({ where: own }),
+        tx.prescription.count({ where: { ...own, status: 'ACTIVE' } }),
+        tx.prescription.count({ where: { ...own, refillStatus: 'PENDING' } }),
+        tx.prescription.count({ where: { ...own, status: 'EXPIRED' } }),
+        tx.prescription.count({ where: { ...own, medication: { isHighRisk: true } } }),
+        tx.prescription.count({ where: { ...own, createdAt: { gte: dayStart, lt: dayEnd } } }),
       ]);
 
       return { total, active, pendingRefills, expired, highRisk, newToday };
     });
   }
 
-  private whereFor(doctorId: string, criteria: ListCriteria): Prisma.PrescriptionWhereInput {
+  private whereFor(
+    doctor: ClinicalEmployment,
+    criteria: ListCriteria,
+  ): Prisma.PrescriptionWhereInput {
     return {
-      prescribingDoctorId: doctorId,
-      deletedAt: null,
+      ...mine(doctor),
       ...(criteria.status === undefined ? {} : { status: { in: [...criteria.status] } }),
       ...(criteria.refillStatus === undefined
         ? {}
@@ -974,4 +999,16 @@ function toDateOnly(value: Date): Date {
   return new Date(
     Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
   );
+}
+
+/**
+ * The prescriber's own prescriptions at the active hospital (S3/S4). Rows
+ * with no hospital (#17) or another hospital's are excluded.
+ */
+function mine(doctor: ClinicalEmployment): {
+  prescribingDoctorId: string;
+  hospitalId: string;
+  deletedAt: null;
+} {
+  return { prescribingDoctorId: doctor.doctorId, hospitalId: doctor.hospitalId, deletedAt: null };
 }

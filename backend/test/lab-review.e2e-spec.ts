@@ -94,7 +94,7 @@ function bulk(token: string, body: Record<string, unknown>): request.Test {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-review');
+  harness = await createAuthHarness('lab-review', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'review-doctor');
   strangerToken = await seedDoctor(harness, 'review-stranger');
@@ -332,9 +332,7 @@ describe('individual review (§8.7)', () => {
       ],
     }).expect(200);
     const released = dataOf<LabOrderView>(
-      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(
-        200,
-      ),
+      await post(harness, doctorToken, `/${order.id}/transition`, { to: 'completed' }).expect(200),
     );
 
     expect(criticalIds(released)).toHaveLength(2);
@@ -446,9 +444,9 @@ describe('the summary (§8.10)', () => {
     const summary = dataOf<SummaryView>(await get(harness, doctorToken, '/summary').expect(200));
 
     expect(summary.total).toBeGreaterThan(0);
-    expect(
-      summary.pending + summary.inProgress + summary.completed + summary.cancelled,
-    ).toBe(summary.total);
+    expect(summary.pending + summary.inProgress + summary.completed + summary.cancelled).toBe(
+      summary.total,
+    );
   });
 
   it('counts an unreviewed critical result in criticalUnreviewed', async () => {
@@ -483,9 +481,7 @@ describe('the summary (§8.10)', () => {
   });
 
   it('shows another doctor nothing', async () => {
-    const summary = dataOf<SummaryView>(
-      await get(harness, strangerToken, '/summary').expect(200),
-    );
+    const summary = dataOf<SummaryView>(await get(harness, strangerToken, '/summary').expect(200));
 
     expect(summary).toEqual({
       total: 0,

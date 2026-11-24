@@ -49,7 +49,7 @@ import {
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type {
   LabPriority,
@@ -137,10 +137,10 @@ export class LabOrderService {
     user: AuthenticatedUser,
     query: LabOrderListQuery,
   ): Promise<PaginatedLabOrders> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.orders.list(
-      doctorId,
+      doctor,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -166,10 +166,10 @@ export class LabOrderService {
    * the order's own detail serves.
    */
   async export(user: AuthenticatedUser, query: LabOrderExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.orders.list(
-      doctorId,
+      doctor,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
@@ -205,9 +205,9 @@ export class LabOrderService {
    * so the aggregate discloses nothing the list does not.
    */
   async summary(user: AuthenticatedUser): Promise<LabSummaryView> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
-    return this.orders.summaryFor(doctorId);
+    return this.orders.summaryFor(doctor);
   }
 
   /**
@@ -226,8 +226,11 @@ export class LabOrderService {
     user: AuthenticatedUser,
     input: CreateLabOrderInput,
   ): Promise<LabOrderDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    const doctor = await this.requireDoctor(user);
+    // The chart's scope (S3/S4): the order is placed at the active
+    // hospital, on the patient's medical record there, under the doctor's
+    // active employment — server-derived, never client input.
+    const scope = await this.scope.assertCanReach(principalOf(user), input.patientId);
 
     const patient = await this.orders.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
@@ -247,14 +250,13 @@ export class LabOrderService {
       );
     }
 
-    const departmentId = await this.departmentFor(input.department, doctorId);
+    const departmentId = await this.departmentFor(input.department, doctor.doctorId);
 
     const row = await this.orders.create({
       publicId: await this.orders.nextReference(),
-      patientId: patient.id,
+      scope,
       testId: test.id,
       departmentId,
-      orderedBy: doctorId,
       clinicalIndication: input.clinicalIndication,
       priority: LAB_PRIORITY_FROM_WIRE[input.priority] as LabPriority,
       actorId: user.id,
@@ -413,8 +415,8 @@ export class LabOrderService {
    * there is exactly one place an order is resolved.
    */
   async require(user: AuthenticatedUser, publicId: string): Promise<DetailRow> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.orders.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const row = await this.orders.findForDoctor(doctor, publicId);
     if (row === null) throw AppException.notFound('Lab order not found');
 
     await this.scope.assertCanReach(principalOf(user), row.patient.publicId);
@@ -422,14 +424,19 @@ export class LabOrderService {
     return row;
   }
 
-  async requireDoctor(user: AuthenticatedUser): Promise<string> {
-    const doctorId = await this.orders.doctorIdForUser(user.id);
+  /**
+   * The doctor's clinical employment (S3/S4): every order read and write is
+   * scoped to its hospital. No profile, no active employment, or an
+   * unverified, suspended or deleted doctor (#18, OD-12) fail closed here.
+   */
+  async requireDoctor(user: AuthenticatedUser): Promise<ClinicalEmployment> {
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
     // See D-14.2 in the file header: a `laboratory` account stops here,
     // because no care-scoping model exists for it. 404 rather than 403,
     // so the refusal discloses nothing about the roster.
-    if (doctorId === null) throw AppException.notFound('No doctor profile for this account');
+    if (doctor === null) throw AppException.notFound('No doctor profile for this account');
 
-    return doctorId;
+    return doctor;
   }
 
   async actorName(user: AuthenticatedUser): Promise<string> {

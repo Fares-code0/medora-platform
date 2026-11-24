@@ -26,7 +26,7 @@ const charts: string[] = [];
 const NUL = 'Ahmed\u0000Hassan';
 
 beforeAll(async () => {
-  harness = await createAuthHarness('nul-input');
+  harness = await createAuthHarness('nul-input', { clinicalDoctors: true });
   doctor = await seedDoctor(harness, 'nul-doctor');
   chart = (await seedPatient(harness, doctor)).id;
   charts.push(chart);

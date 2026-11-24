@@ -46,6 +46,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment, PatientClinicalScope } from '../../../shared/authz';
+
 import type { Prisma } from '../../../generated/prisma/client';
 
 import type {
@@ -214,6 +216,19 @@ export interface TransitionResult {
   readonly row: BookRow;
 }
 
+/**
+ * A hospital-owned appointment cannot move to another doctor in place: its
+ * `doctor_employment_id` is immutable once set (Phase 21), and the composite
+ * foreign key ties it to the current doctor. Moving it needs a Database
+ * transfer workflow that does not exist yet.
+ */
+export class HospitalOwnedAppointmentNotReassignable extends Error {
+  constructor() {
+    super('A hospital-owned appointment cannot be reassigned in place');
+    this.name = 'HospitalOwnedAppointmentNotReassignable';
+  }
+}
+
 @Injectable()
 export class AppointmentRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -222,8 +237,10 @@ export class AppointmentRepository {
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    // `findFirst`, not `findUnique`: the soft-delete extension filters only
+    // the former, and a soft-deleted doctor is no doctor (#18).
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 
@@ -348,10 +365,10 @@ export class AppointmentRepository {
 
   /** API §5.1 — the doctor's book. */
   async list(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     criteria: BookCriteria,
   ): Promise<{ rows: readonly BookRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(doctor, criteria);
     const orderBy = { startsAt: criteria.sort === 'startsAt:asc' ? 'asc' : 'desc' } as const;
 
     const [rows, totalItems] = await Promise.all([
@@ -378,9 +395,13 @@ export class AppointmentRepository {
    * "Someone else's appointment" and "no such appointment" both produce
    * `null`, which the service turns into the identical 404.
    */
-  findForDoctor(doctorId: string, publicId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
+  findForDoctor(
+    doctor: ClinicalEmployment,
+    publicId: string,
+    tx?: ScheduleTx,
+  ): Promise<DetailRow | null> {
     return this.client(tx).appointment.findFirst({
-      where: { publicId, doctorId, deletedAt: null },
+      where: { publicId, ...ownBook(doctor), deletedAt: null },
       select: this.detailSelect(),
     });
   }
@@ -451,8 +472,8 @@ export class AppointmentRepository {
   async create(
     input: {
       readonly publicId: string;
-      readonly patientId: string;
-      readonly doctorId: string;
+      /** The chart's scope: patient, hospital, medical record, employment (S4). */
+      readonly scope: PatientClinicalScope;
       readonly departmentId: string | null;
       readonly visitTypeId: string;
       readonly startsAt: Date;
@@ -472,8 +493,11 @@ export class AppointmentRepository {
       const created = await tx.appointment.create({
         data: {
           publicId: input.publicId,
-          patientId: input.patientId,
-          doctorId: input.doctorId,
+          patientId: input.scope.patientId,
+          doctorId: input.scope.doctorId,
+          hospitalId: input.scope.hospitalId,
+          hospitalMedicalRecordId: input.scope.hospitalMedicalRecordId,
+          doctorEmploymentId: input.scope.doctorEmploymentId,
           departmentId: input.departmentId,
           visitTypeId: input.visitTypeId,
           startsAt: input.startsAt,
@@ -707,7 +731,7 @@ export class AppointmentRepository {
    * describing tomorrow.
    */
   async summaryFor(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     bounds: {
       readonly todayStart: Date;
       readonly todayEnd: Date;
@@ -720,25 +744,26 @@ export class AppointmentRepository {
     upcoming: number;
     completedThisWeek: number;
   }> {
+    const own = ownBook(doctor);
     const [today, pending, upcoming, completedThisWeek] = await Promise.all([
       this.prisma.db.appointment.count({
         where: {
-          doctorId,
+          ...own,
           startsAt: { gte: bounds.todayStart, lt: bounds.todayEnd },
           status: { in: [...LIVE_STATUSES, 'COMPLETED'] },
         },
       }),
-      this.prisma.db.appointment.count({ where: { doctorId, status: 'PENDING' } }),
+      this.prisma.db.appointment.count({ where: { ...own, status: 'PENDING' } }),
       this.prisma.db.appointment.count({
         where: {
-          doctorId,
+          ...own,
           startsAt: { gte: bounds.now },
           status: { in: ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'] },
         },
       }),
       this.prisma.db.appointment.count({
         where: {
-          doctorId,
+          ...own,
           status: 'COMPLETED',
           startsAt: { gte: bounds.weekStart, lt: bounds.todayEnd },
         },
@@ -934,6 +959,18 @@ export class AppointmentRepository {
     outer?: ScheduleTx,
   ): Promise<BookRow | null> {
     return this.inTransaction(outer, async (tx) => {
+      // A hospital-owned booking is tied to its doctor's employment, and
+      // `prevent_tenant_scope_reassignment` forbids changing that key in
+      // place (Phase 21: "not a transfer workflow"). Refused here, before
+      // the database turns it into a 500.
+      const owner = await tx.appointment.findUnique({
+        where: { id: input.appointmentId },
+        select: { doctorEmploymentId: true },
+      });
+      if (owner !== null && owner.doctorEmploymentId !== null) {
+        throw new HospitalOwnedAppointmentNotReassignable();
+      }
+
       const updated = await tx.appointment.updateMany({
         where: { id: input.appointmentId, doctorId: input.fromDoctorId },
         data: {
@@ -968,8 +1005,10 @@ export class AppointmentRepository {
   ): Promise<{ id: string; specialty: string; fullName: string } | null> {
     if (!UUID.test(doctorId)) return null;
 
-    return this.prisma.db.doctor.findUnique({
-      where: { id: doctorId },
+    // `findFirst` with `deletedAt: null`: a soft-deleted doctor is not a
+    // reassignment target (#18), and `findUnique` bypasses the extension.
+    return this.prisma.db.doctor.findFirst({
+      where: { id: doctorId, deletedAt: null },
       select: { id: true, specialty: true, fullName: true },
     });
   }
@@ -1035,9 +1074,9 @@ export class AppointmentRepository {
     } as const;
   }
 
-  private whereFor(doctorId: string, criteria: BookCriteria) {
+  private whereFor(doctor: ClinicalEmployment, criteria: BookCriteria) {
     return {
-      doctorId,
+      ...ownBook(doctor),
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -1094,4 +1133,12 @@ function patientMatch(q: string) {
       { mrn: { contains: q, mode } },
     ],
   };
+}
+
+/**
+ * The doctor's own book at the active hospital (S4). A booking owned by
+ * another hospital, or a legacy one with no hospital (#17), is not in it.
+ */
+function ownBook(doctor: ClinicalEmployment): { doctorId: string; hospitalId: string } {
+  return { doctorId: doctor.doctorId, hospitalId: doctor.hospitalId };
 }

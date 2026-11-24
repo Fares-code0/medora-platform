@@ -47,6 +47,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/database';
 
@@ -102,9 +104,14 @@ export class ActionQueueRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Pending requests on this doctor's book (§5.1, §5.4). */
-  async appointmentRequests(doctorId: string): Promise<readonly AppointmentRequestRow[]> {
+  async appointmentRequests(doctor: ClinicalEmployment): Promise<readonly AppointmentRequestRow[]> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: { doctorId, status: 'PENDING', deletedAt: null },
+      where: {
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
+        status: 'PENDING',
+        deletedAt: null,
+      },
       select: {
         publicId: true,
         createdAt: true,
@@ -131,35 +138,51 @@ export class ActionQueueRepository {
    * reason DB §14.5-6 permits the column to be stored at all. The scope
    * clause is `OR`ed on top rather than folded in for the same reason.
    */
-  criticalLabs(doctorId: string): Promise<readonly CriticalLabRow[]> {
-    return this.prisma.db.labOrder.findMany({
-      where: {
-        deletedAt: null,
-        hasCriticalResult: true,
-        reviewedAt: null,
-        OR: [
-          { orderedBy: doctorId },
-          { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } },
-        ],
-      },
-      select: {
-        publicId: true,
-        completedAt: true,
-        requestedAt: true,
-        test: { select: { name: true } },
-        patient: QUEUE_PATIENT,
-      },
-      orderBy: { completedAt: 'asc' },
-      take: PER_SOURCE_LIMIT,
-    }).then((rows) =>
-      rows.map((row) => ({
-        publicId: row.publicId,
-        completedAt: row.completedAt,
-        requestedAt: row.requestedAt,
-        testName: row.test.name,
-        patient: row.patient,
-      })),
-    );
+  criticalLabs(doctor: ClinicalEmployment): Promise<readonly CriticalLabRow[]> {
+    return this.prisma.db.labOrder
+      .findMany({
+        where: {
+          deletedAt: null,
+          hasCriticalResult: true,
+          reviewedAt: null,
+          // The active hospital's orders only, through the doctor's own or an
+          // assignment owned by the active employment (S3/S4, #17).
+          hospitalId: doctor.hospitalId,
+          OR: [
+            { orderedBy: doctor.doctorId },
+            {
+              patient: {
+                careAssignments: {
+                  some: {
+                    doctorId: doctor.doctorId,
+                    doctorEmploymentId: doctor.doctorEmploymentId,
+                    hospitalId: doctor.hospitalId,
+                    revokedAt: null,
+                  },
+                },
+              },
+            },
+          ],
+        },
+        select: {
+          publicId: true,
+          completedAt: true,
+          requestedAt: true,
+          test: { select: { name: true } },
+          patient: QUEUE_PATIENT,
+        },
+        orderBy: { completedAt: 'asc' },
+        take: PER_SOURCE_LIMIT,
+      })
+      .then((rows) =>
+        rows.map((row) => ({
+          publicId: row.publicId,
+          completedAt: row.completedAt,
+          requestedAt: row.requestedAt,
+          testName: row.test.name,
+          patient: row.patient,
+        })),
+      );
   }
 
   /**
@@ -170,23 +193,25 @@ export class ActionQueueRepository {
    * would be a row with no action behind it.
    */
   unsignedNotes(userId: string): Promise<readonly UnsignedNoteRow[]> {
-    return this.prisma.db.recordNote.findMany({
-      where: { signed: false, deletedAt: null, authorId: userId },
-      select: {
-        title: true,
-        authoredAt: true,
-        record: { select: { publicId: true, patient: QUEUE_PATIENT } },
-      },
-      orderBy: { authoredAt: 'asc' },
-      take: PER_SOURCE_LIMIT,
-    }).then((rows) =>
-      rows.map((row) => ({
-        recordPublicId: row.record.publicId,
-        title: row.title,
-        authoredAt: row.authoredAt,
-        patient: row.record.patient,
-      })),
-    );
+    return this.prisma.db.recordNote
+      .findMany({
+        where: { signed: false, deletedAt: null, authorId: userId },
+        select: {
+          title: true,
+          authoredAt: true,
+          record: { select: { publicId: true, patient: QUEUE_PATIENT } },
+        },
+        orderBy: { authoredAt: 'asc' },
+        take: PER_SOURCE_LIMIT,
+      })
+      .then((rows) =>
+        rows.map((row) => ({
+          recordPublicId: row.record.publicId,
+          title: row.title,
+          authoredAt: row.authoredAt,
+          patient: row.record.patient,
+        })),
+      );
   }
 
   /**
@@ -248,16 +273,6 @@ export class ActionQueueRepository {
         lastActivityAt: row.lastActivityAt,
         patient: row.patient,
       }));
-  }
-
-  /** The `doctors` row behind an account, or null for a non-clinician. */
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    const doctor = await this.prisma.db.doctor.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
   }
 }
 

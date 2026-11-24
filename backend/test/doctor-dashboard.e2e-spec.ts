@@ -10,6 +10,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
 /**
@@ -72,18 +73,26 @@ interface Composite {
   }[];
   readonly actionQueue: { id: string; kind: string }[];
   readonly trends: { day: string; completed: number; cancelled: number }[];
-  readonly satisfaction: { total: number; average: number; buckets: { rating: number; count: number }[] };
+  readonly satisfaction: {
+    total: number;
+    average: number;
+    buckets: { rating: number; count: number }[];
+  };
   readonly recentActivity: { id: string; kind: string; at: string; text: string }[];
   readonly quickActions: { id: string; label: string; path: string }[];
 }
 
-async function signUpDoctor(local: string): Promise<{ auth: string; doctorId: string; userId: string }> {
+async function signUpDoctor(
+  local: string,
+): Promise<{ auth: string; doctorId: string; userId: string }> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
 
   const auth = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const user = await harness.prisma.user.findUniqueOrThrow({
@@ -108,7 +117,12 @@ const FIXTURE_DAY = new Date();
 /** The fixture day at a fixed UTC hour. */
 function todayAt(hour: number): Date {
   return new Date(
-    Date.UTC(FIXTURE_DAY.getUTCFullYear(), FIXTURE_DAY.getUTCMonth(), FIXTURE_DAY.getUTCDate(), hour),
+    Date.UTC(
+      FIXTURE_DAY.getUTCFullYear(),
+      FIXTURE_DAY.getUTCMonth(),
+      FIXTURE_DAY.getUTCDate(),
+      hour,
+    ),
   );
 }
 
@@ -138,7 +152,7 @@ afterAll(() => {
 });
 
 beforeAll(async () => {
-  harness = await createAuthHarness('dashboard-m27');
+  harness = await createAuthHarness('dashboard-m27', { clinicalDoctors: true });
 
   const doctor = await signUpDoctor('dash-doctor');
   token = doctor.auth;
@@ -149,9 +163,9 @@ beforeAll(async () => {
   const [record] = await createPatientRecords(harness.prisma, TAG, 1);
   patientId = record?.id ?? '';
 
-  await harness.prisma.patientDoctorAssignment.create({
-    data: { patientId, doctorId, role: 'primary' },
-  });
+  // Owned by the doctor's employment at the suite's hospital (S3/S4), and
+  // every row below with it: the dashboard is the active hospital's.
+  const care = await assignOwned(harness.prisma, { patientId, doctorId, role: 'primary' });
 
   const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
   const test = await harness.prisma.labTestCatalogue.findFirstOrThrow({ select: { id: true } });
@@ -166,6 +180,7 @@ beforeAll(async () => {
         publicId: `APT-T${TAG}1`,
         patientId,
         doctorId,
+        ...care,
         visitTypeId: visitType.id,
         startsAt: todayAt(1),
         reason: 'Completed visit',
@@ -175,6 +190,7 @@ beforeAll(async () => {
         publicId: `APT-T${TAG}2`,
         patientId,
         doctorId,
+        ...care,
         visitTypeId: visitType.id,
         startsAt: todayAt(23),
         reason: 'Upcoming visit',
@@ -184,6 +200,7 @@ beforeAll(async () => {
         publicId: `APT-T${TAG}3`,
         patientId,
         doctorId,
+        ...care,
         visitTypeId: visitType.id,
         startsAt: todayAt(22),
         reason: 'Requested visit',
@@ -193,6 +210,7 @@ beforeAll(async () => {
         publicId: `APT-T${TAG}4`,
         patientId,
         doctorId,
+        ...care,
         visitTypeId: visitType.id,
         startsAt: todayAt(20),
         reason: 'Urgent, moved',
@@ -207,6 +225,7 @@ beforeAll(async () => {
         publicId: `APT-T${TAG}5`,
         patientId,
         doctorId,
+        ...care,
         visitTypeId: visitType.id,
         startsAt: new Date(todayAt(20).getTime() + 24 * 60 * 60 * 1000),
         reason: 'Urgent, moved to tomorrow',
@@ -221,6 +240,7 @@ beforeAll(async () => {
       publicId: `MR-T${TAG}1`,
       patientId,
       doctorId,
+      ...care,
       visitDate: todayAt(1),
       visitType: 'Consultation',
       chiefComplaint: 'Shoulder pain',
@@ -247,6 +267,7 @@ beforeAll(async () => {
       patientId,
       medicationId: medication.id,
       prescribingDoctorId: doctorId,
+      ...care,
       strength: '500 mg',
       dosage: '1 tablet',
       frequency: 'twice daily',
@@ -269,6 +290,7 @@ beforeAll(async () => {
       patientId,
       testId: test.id,
       orderedBy: doctorId,
+      ...care,
       clinicalIndication: 'Electrolytes',
       status: 'COMPLETED',
       requestedAt: todayAt(0),
@@ -278,7 +300,14 @@ beforeAll(async () => {
   });
 
   await harness.prisma.patientClinicalAlert.create({
-    data: { patientId, severity: 'CRITICAL', message: 'Anaphylaxis to penicillin', active: true },
+    data: {
+      patientId,
+      hospitalId: care.hospitalId,
+      hospitalMedicalRecordId: care.hospitalMedicalRecordId,
+      severity: 'CRITICAL',
+      message: 'Anaphylaxis to penicillin',
+      active: true,
+    },
   });
 
   await harness.prisma.satisfactionSurvey.create({
@@ -303,10 +332,16 @@ afterAll(async () => {
   await harness.prisma.patientClinicalAlert.deleteMany({ where: { patientId } });
   await harness.prisma.labOrder.deleteMany({ where: { publicId: { startsWith: `LAB-T${TAG}` } } });
   await harness.prisma.patientMedication.deleteMany({ where: { patientId } });
-  await harness.prisma.prescription.deleteMany({ where: { publicId: { startsWith: `RX-T${TAG}` } } });
+  await harness.prisma.prescription.deleteMany({
+    where: { publicId: { startsWith: `RX-T${TAG}` } },
+  });
   await harness.prisma.recordNote.deleteMany({ where: { authorId: userId } });
-  await harness.prisma.medicalRecord.deleteMany({ where: { publicId: { startsWith: `MR-T${TAG}` } } });
-  await harness.prisma.appointment.deleteMany({ where: { publicId: { startsWith: `APT-T${TAG}` } } });
+  await harness.prisma.medicalRecord.deleteMany({
+    where: { publicId: { startsWith: `MR-T${TAG}` } },
+  });
+  await harness.prisma.appointment.deleteMany({
+    where: { publicId: { startsWith: `APT-T${TAG}` } },
+  });
   await harness.prisma.patientDoctorAssignment.deleteMany({ where: { patientId } });
   await destroyPatientRecords(harness.prisma, TAG);
 
@@ -514,9 +549,7 @@ describe('M27.3 — the Row-0 banner fails loud', () => {
           .send({ email, password: PASSWORD, rememberMe: false }),
       ).accessToken;
 
-      const response = await request(failing.server)
-        .get(`${DASH}/critical-alerts`)
-        .set(as(auth));
+      const response = await request(failing.server).get(`${DASH}/critical-alerts`).set(as(auth));
 
       expect(response.status).toBeGreaterThanOrEqual(500);
       expect(JSON.stringify(response.body)).not.toContain('"alerts"');

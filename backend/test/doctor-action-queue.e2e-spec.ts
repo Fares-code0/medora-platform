@@ -2,6 +2,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import {
   destroyLabFixtures,
   orderTest,
@@ -167,6 +168,8 @@ async function seedPendingRequest(
       status: 'PENDING',
       priority: overrides.priority ?? 'NORMAL',
       reason: 'Requested by the patient',
+      // Owned by the doctor's hospital (S4): the queue is that hospital's.
+      ...(await assignOwned(harness.prisma, { doctorId: doctor.id, patientId: patient.id })),
       ...(overrides.createdAt === undefined ? {} : { createdAt: overrides.createdAt }),
     },
   });
@@ -277,7 +280,7 @@ function kinds(view: QueueView): string[] {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('action-queue');
+  harness = await createAuthHarness('action-queue', { clinicalDoctors: true });
   // The stale-thread counterpart — see `seedStaleThread`.
   counterpartUserId = userIdFor(await seedQueueDoctor('queue-counterpart'));
 }, 60_000);
@@ -447,9 +450,7 @@ describe('the sort rule is actually applied to real rows', () => {
     const waitingSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
     await seedPendingRequest(token, patient.id, { createdAt: waitingSince });
 
-    const row = (await readQueue(token)).items.find(
-      (item) => item.kind === 'appointment-request',
-    );
+    const row = (await readQueue(token)).items.find((item) => item.kind === 'appointment-request');
 
     expect(row?.ageHours).toBe(48);
     expect(Date.parse(row?.waitingSince ?? '')).toBeCloseTo(waitingSince.getTime(), -4);

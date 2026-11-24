@@ -177,7 +177,7 @@ async function adminToken(): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('payload-size');
+  harness = await createAuthHarness('payload-size', { clinicalDoctors: true });
 
   const doctor = await seedDoctor(harness, 'payload-doctor');
   for (const fullName of ['Payload One', 'Payload Two', 'Payload Three']) {

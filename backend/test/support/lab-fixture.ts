@@ -1,13 +1,8 @@
 import request from 'supertest';
 import { expect } from 'vitest';
 
-import {
-  type AuthHarness,
-  dataOf,
-  markVerified,
-  registrationBody,
-  testEmail,
-} from './auth-app';
+import { type AuthHarness, dataOf, markVerified, registrationBody, testEmail } from './auth-app';
+import { deletePatients } from './hospital-fixture';
 
 /**
  * The lab suite's shared plumbing (RM M14).
@@ -250,7 +245,8 @@ export async function destroyLabFixtures(
   await harness.prisma.labAttachment.deleteMany({ where: { order: owned } });
   await harness.prisma.labOrder.deleteMany({ where: owned });
   await harness.prisma.medicalRecord.deleteMany({ where: owned });
-  await harness.prisma.patient.deleteMany({ where: patients });
+  // Hospital medical records restrict `patients` (S3/S4).
+  await deletePatients(harness.prisma, { where: patients });
 
   const fileIds = [...new Set([...labFiles, ...recordFiles].map((row) => row.fileId))];
   if (fileIds.length > 0) {

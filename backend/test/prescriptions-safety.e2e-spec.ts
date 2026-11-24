@@ -10,6 +10,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned, deletePatients } from './support/hospital-fixture';
 
 /**
  * The safety screen, end to end (RM M13.2 — API §7.5).
@@ -153,6 +154,8 @@ async function givePatientAMedication(
       patientId: patient.id,
       medicationId,
       prescribingDoctorId: doctorId,
+      // Owned by the prescriber's hospital (S3/S4), so the screen sees it.
+      ...(await assignOwned(harness.prisma, { doctorId, patientId: patient.id })),
       strength: medication.strengths[0]?.strength ?? '500 mg',
       dosage: '1 tablet',
       frequency: 'Once daily',
@@ -187,7 +190,7 @@ async function doctorIdFor(token: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-safety');
+  harness = await createAuthHarness('rx-safety', { clinicalDoctors: true });
 
   const byName = async (name: string): Promise<string> =>
     (
@@ -211,7 +214,7 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -418,11 +421,7 @@ describe('the screen is a scoped clinical read', () => {
     const doctor = await seedDoctor('unknown-med');
     const patientId = await seedPatient(doctor.token);
 
-    const response = await check(
-      doctor.token,
-      patientId,
-      '00000000-0000-4000-8000-000000000000',
-    );
+    const response = await check(doctor.token, patientId, '00000000-0000-4000-8000-000000000000');
 
     expect(response.status).toBe(422);
     expect(errorBody(response).code).toBe('validation_failed');
