@@ -1,6 +1,6 @@
 # Multi-Hospital — API Contract Changes (Proposal)
 
-**Status:** proposal for the Backend team. Implemented so far: the shadow-only `GET /auth/session` fields `activeHospital` and `adminScope` (Phase 22), and the platform-wide admin's doctor employment lifecycle (§8a, #54); everything else is not implemented. Paths and shapes are **TECHNICAL
+**Status:** proposal for the Backend team. Implemented so far: the shadow-only `GET /auth/session` fields `activeHospital` and `adminScope` (Phase 22), the doctor employment lifecycle (§8a, #54) and administrative scope (§8b, S5); everything else is not implemented. Paths and shapes are **TECHNICAL
 RECOMMENDATIONS**; the rules in §0 follow the FINAL owner decisions.
 **Base path:** `/api/v1` (ADR-011). Errors use the machine `code` envelope (ADR-012).
 **Supersedes:** the 2026-10-06 proposals API-W01…W14 (`origin/frontend:frontend/FRONTEND_CHECKLIST.md`
@@ -150,9 +150,8 @@ Insurance (OD-14):
 
 ## 8a. Doctor employment lifecycle — implemented (OD-12, #54)
 
-Platform-wide administrator routes beside the existing `/doctors/*` administration, permission
-`doctors.manage` (today's `admin`, platform-wide per OD-07). Hospital Admin scoping is not implemented
-(S5, #16); the `/hospital-admin/*` home in §8 remains the target once that mapping is decided.
+Administrator routes beside the existing `/doctors/*` administration, permission `doctors.manage`.
+Since S5 (§8b) they are scoped: Platform Admin platform-wide, Hospital Admin its own hospital only.
 `doctorId` is the `doctors.id` uuid, as on every other administrator doctor route; the hospital is
 named by its public id. Responses carry ids and counts only — no patient data.
 
@@ -176,6 +175,53 @@ on the same transaction. Starting writes `doctor.employment_started`. Both rows 
 **Limitations:** legacy assignments with no `doctor_employment_id` are not touched (#17) and are only
 counted (`legacyAssignmentsUntouched` in the audit metadata); published slots and permission caches
 are not revoked.
+
+## 8b. Administrative scope — implemented (S5, OD-07, 2026-11-24)
+
+The existing administrator routes keep their paths; the `/platform/*` and `/hospital-admin/*` split in
+§8 is not introduced. Every administrative route now resolves the caller's **administrative scope**
+from the database on each request (`shared/authz/admin-scope.service.ts`, `AdminScopeGuard`):
+
+| Scope | When |
+|---|---|
+| Platform Admin | `admin` role **and** a live, explicit `platform_admin_assignments` grant (never inferred from the role, M-13) |
+| Hospital Admin | `admin` role, no grant, live hospital `admin` assignments in exactly **one** active hospital |
+| none | anything else: unmapped admin, two hospitals, inactive hospital, both designations |
+
+**Status codes (changed):**
+
+- An administrator with **no** scope is **403 `forbidden`** on every administrative route (previously
+  200 for any `admin`). Same generic body as `AuthorizationGuard`: a missing capability, not a hint.
+- A **Hospital Admin** on a platform-only route is **403 `forbidden`**.
+- A Hospital Admin addressing **another hospital's row** is **404** (ADR-022), as for a missing row.
+- A **Platform Admin** on the queue / waiting-room routes is **403** (their rows name patients; OD-07:
+  no automatic PHI).
+- A **non-admin** account holding an administrative capability by override (e.g. `logs.view`,
+  `roles.manage`) is **403** on these routes: an override is not an administrative scope.
+  Reception's `GET /administration/queue` and `GET /administration/waiting-room` are unchanged.
+
+| Routes | Platform Admin | Hospital Admin |
+|---|---|---|
+| `GET /administration/overview`, `GET /administration/audit-events` | platform-wide | counts/rows with its `hospital_id` |
+| `/administration/staff` (CRUD) | all | staff with an active affiliation there; `POST` creates the affiliation |
+| `GET /administration/departments` | all | catalogue, `staffCount` over its staff only |
+| `POST/PATCH/DELETE /administration/departments` | yes | 403 (catalogue has no `hospital_id`) |
+| `/administration/rooms`, `/administration/resources` (CRUD) | all | its `hospital_id`; stamped on create |
+| `/administration/shifts` | all (legacy, hospital-less create) | its shifts; create needs an active affiliation (else 422 `staffId`), stamped |
+| `/administration/queue*`, `/administration/waiting-room*` | 403 | its rows; `assign-room` only to its rooms (404) |
+| working-days, holidays, announcements, policies, document-templates, platform-status, `/administration/jobs*` | yes | 403 |
+| `/platform-settings*`, `/roles*`, `/permissions`, `/users/:id/permissions` | yes | 403 |
+| `/admin/users*` | all accounts | its staff (active employment / affiliation / live hospital role there), never `admin` or `patient` accounts |
+| `/doctors`, `/doctors/:id*` (admin) | all | doctors with an active employment there |
+| `GET /doctors/:id/employments` | all | its employments only |
+| `POST /doctors/:id/employments` | any hospital | only its own hospital; a doctor employed elsewhere is 404 (not 409) |
+| `POST /doctors/:id/employments/:eid/end` | any | its employments only |
+| `GET /audit-events`, `/:id`, `POST /audit-events/export` | whole metadata-only ledger (unchanged) | rows with its `hospital_id`; export audited under that hospital |
+| `GET /auth/session` `adminScope` | `{ type: 'platform' }` | `{ type: 'hospital', hospital }`; `null` with no scope |
+
+Not scoped by S5 (outside its files): `/admin/appointments*`, `/admin/record-issues*`,
+`/admin/conversations*`, `/admin/message-flags*`, `POST /auth/admin-invitations`, the patient directory
+and reveal (`/patients*`). `/me/incident-bookmarks` stays owner-scoped (no ledger content).
 
 ## 9. Mapping from the 2026-10-06 proposals
 

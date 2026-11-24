@@ -57,11 +57,7 @@ export class AuditController {
     @CurrentAdminScope() scope: ResolvedAdminScope,
     @Query(zodQuery(auditQuerySchema)) query: AuditQuery,
   ) {
-    return this.query.list(
-      query,
-      await this.retention.retentionDays(),
-      hospitalFilterOf(scope),
-    );
+    return this.query.list(query, await this.retention.retentionDays(), hospitalFilterOf(scope));
   }
 
   /**

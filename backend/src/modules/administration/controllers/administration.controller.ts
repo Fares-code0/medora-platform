@@ -357,10 +357,7 @@ export class AdministrationController {
   @Post('queue/:id/advance')
   @AdminScoped('hospital')
   @HttpCode(HttpStatus.NO_CONTENT)
-  advance(
-    @CurrentAdminScope() scope: ResolvedAdminScope,
-    @Param('id') id: string,
-  ): Promise<void> {
+  advance(@CurrentAdminScope() scope: ResolvedAdminScope, @Param('id') id: string): Promise<void> {
     return this.operations.advance(id, hospitalOf(scope));
   }
 

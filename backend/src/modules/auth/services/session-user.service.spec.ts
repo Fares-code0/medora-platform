@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../../common/auth/hospital-context';
-import type {
-  AdminScope,
-  AdminScopeService,
-  HospitalContextService,
-} from '../../../shared/authz';
+import type { AdminScope, AdminScopeService, HospitalContextService } from '../../../shared/authz';
 import { UserStatus } from '../../../generated/prisma/enums';
 import type { IdentityRepository } from '../repositories/identity.repository';
 import { SessionUserService } from './session-user.service';
@@ -150,9 +146,7 @@ describe('SessionUserService hospital context', () => {
     const unused: HospitalContext = { kind: 'unresolved', reason: 'admin_scope_not_mapped' };
 
     it('reports platform scope only for an explicitly marked Platform Admin', async () => {
-      const result = await service(unused, adminRow, { kind: 'platform' }).current(
-        adminPrincipal,
-      );
+      const result = await service(unused, adminRow, { kind: 'platform' }).current(adminPrincipal);
 
       expect(result.adminScope).toEqual({ type: 'platform' });
       expect(result.activeHospital).toBeNull();

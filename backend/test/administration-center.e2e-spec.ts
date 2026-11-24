@@ -649,9 +649,9 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   });
 
   it('answers 404 for an unknown waiting-room entry', async () => {
-    expect((await hpost('/waiting-room/00000000-0000-4000-8000-000000000000/call', {})).status).toBe(
-      404,
-    );
+    expect(
+      (await hpost('/waiting-room/00000000-0000-4000-8000-000000000000/call', {})).status,
+    ).toBe(404);
   });
 });
 

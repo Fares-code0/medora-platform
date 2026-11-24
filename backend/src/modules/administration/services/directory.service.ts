@@ -68,34 +68,41 @@ export class DirectoryService {
     await this.requireDepartment(body.departmentId);
 
     return toStaffView(
-      await this.directory.createStaff({
-        name: body.name,
-        role: STAFF_ROLE_FROM_WIRE[body.role]!,
-        title: body.title,
-        departmentId: body.departmentId,
-        status: PRESENCE_FROM_WIRE[body.status]!,
-        phone: body.phone,
-        email: body.email,
-        workingHours: body.workingHours,
-        permissions: body.permissions,
-      }, hospitalId),
+      await this.directory.createStaff(
+        {
+          name: body.name,
+          role: STAFF_ROLE_FROM_WIRE[body.role]!,
+          title: body.title,
+          departmentId: body.departmentId,
+          status: PRESENCE_FROM_WIRE[body.status]!,
+          phone: body.phone,
+          email: body.email,
+          workingHours: body.workingHours,
+          permissions: body.permissions,
+        },
+        hospitalId,
+      ),
     );
   }
 
   async updateStaff(id: string, body: StaffPatchBody, hospitalId: string | null) {
     if (body.departmentId !== undefined) await this.requireDepartment(body.departmentId);
 
-    const row = await this.directory.updateStaff(id, {
-      ...(body.name === undefined ? {} : { name: body.name }),
-      ...(body.role === undefined ? {} : { role: STAFF_ROLE_FROM_WIRE[body.role]! }),
-      ...(body.title === undefined ? {} : { title: body.title }),
-      ...(body.departmentId === undefined ? {} : { departmentId: body.departmentId }),
-      ...(body.status === undefined ? {} : { status: PRESENCE_FROM_WIRE[body.status]! }),
-      ...(body.phone === undefined ? {} : { phone: body.phone }),
-      ...(body.email === undefined ? {} : { email: body.email }),
-      ...(body.workingHours === undefined ? {} : { workingHours: body.workingHours }),
-      ...(body.permissions === undefined ? {} : { permissions: body.permissions }),
-    }, hospitalId);
+    const row = await this.directory.updateStaff(
+      id,
+      {
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.role === undefined ? {} : { role: STAFF_ROLE_FROM_WIRE[body.role]! }),
+        ...(body.title === undefined ? {} : { title: body.title }),
+        ...(body.departmentId === undefined ? {} : { departmentId: body.departmentId }),
+        ...(body.status === undefined ? {} : { status: PRESENCE_FROM_WIRE[body.status]! }),
+        ...(body.phone === undefined ? {} : { phone: body.phone }),
+        ...(body.email === undefined ? {} : { email: body.email }),
+        ...(body.workingHours === undefined ? {} : { workingHours: body.workingHours }),
+        ...(body.permissions === undefined ? {} : { permissions: body.permissions }),
+      },
+      hospitalId,
+    );
 
     if (row === null) throw AppException.notFound('Staff member not found');
 
@@ -170,28 +177,35 @@ export class DirectoryService {
     await this.requireDepartment(body.departmentId);
 
     return toRoomView(
-      await this.directory.createRoom({
-        name: body.name,
-        kind: ROOM_KIND_FROM_WIRE[body.kind]!,
-        status: ROOM_STATUS_FROM_WIRE[body.status]!,
-        capacity: body.capacity,
-        ...(body.note === undefined ? {} : { note: body.note }),
-        departmentId: body.departmentId,
-      }, hospitalId),
+      await this.directory.createRoom(
+        {
+          name: body.name,
+          kind: ROOM_KIND_FROM_WIRE[body.kind]!,
+          status: ROOM_STATUS_FROM_WIRE[body.status]!,
+          capacity: body.capacity,
+          ...(body.note === undefined ? {} : { note: body.note }),
+          departmentId: body.departmentId,
+        },
+        hospitalId,
+      ),
     );
   }
 
   async updateRoom(id: string, body: RoomPatchBody, hospitalId: string | null) {
     if (body.departmentId !== undefined) await this.requireDepartment(body.departmentId);
 
-    const row = await this.directory.updateRoom(id, {
-      ...(body.name === undefined ? {} : { name: body.name }),
-      ...(body.kind === undefined ? {} : { kind: ROOM_KIND_FROM_WIRE[body.kind]! }),
-      ...(body.status === undefined ? {} : { status: ROOM_STATUS_FROM_WIRE[body.status]! }),
-      ...(body.capacity === undefined ? {} : { capacity: body.capacity }),
-      ...(body.note === undefined ? {} : { note: body.note }),
-      ...(body.departmentId === undefined ? {} : { departmentId: body.departmentId }),
-    }, hospitalId);
+    const row = await this.directory.updateRoom(
+      id,
+      {
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.kind === undefined ? {} : { kind: ROOM_KIND_FROM_WIRE[body.kind]! }),
+        ...(body.status === undefined ? {} : { status: ROOM_STATUS_FROM_WIRE[body.status]! }),
+        ...(body.capacity === undefined ? {} : { capacity: body.capacity }),
+        ...(body.note === undefined ? {} : { note: body.note }),
+        ...(body.departmentId === undefined ? {} : { departmentId: body.departmentId }),
+      },
+      hospitalId,
+    );
 
     if (row === null) throw AppException.notFound('Room not found');
 
@@ -212,18 +226,21 @@ export class DirectoryService {
 
   async createResource(body: ResourceBody, hospitalId: string | null) {
     return toResourceView(
-      await this.directory.createResource({
-        name: body.name,
-        category: body.category,
-        location: body.location,
-        quantity: body.quantity,
-        reorderLevel: body.reorderLevel,
-        // The column is kept in step so the value is filterable —
-        // DB §14.5-6's "index use" exception — while the *response*
-        // always carries the computed answer. A drifted column can
-        // therefore never mislead a reader.
-        status: storedStatus(body.quantity, body.reorderLevel),
-      }, hospitalId),
+      await this.directory.createResource(
+        {
+          name: body.name,
+          category: body.category,
+          location: body.location,
+          quantity: body.quantity,
+          reorderLevel: body.reorderLevel,
+          // The column is kept in step so the value is filterable —
+          // DB §14.5-6's "index use" exception — while the *response*
+          // always carries the computed answer. A drifted column can
+          // therefore never mislead a reader.
+          status: storedStatus(body.quantity, body.reorderLevel),
+        },
+        hospitalId,
+      ),
     );
   }
 
@@ -235,14 +252,18 @@ export class DirectoryService {
     const quantity = body.quantity ?? existing.quantity;
     const reorderLevel = body.reorderLevel ?? existing.reorderLevel;
 
-    const row = await this.directory.updateResource(id, {
-      ...(body.name === undefined ? {} : { name: body.name }),
-      ...(body.category === undefined ? {} : { category: body.category }),
-      ...(body.location === undefined ? {} : { location: body.location }),
-      quantity,
-      reorderLevel,
-      status: storedStatus(quantity, reorderLevel),
-    }, hospitalId);
+    const row = await this.directory.updateResource(
+      id,
+      {
+        ...(body.name === undefined ? {} : { name: body.name }),
+        ...(body.category === undefined ? {} : { category: body.category }),
+        ...(body.location === undefined ? {} : { location: body.location }),
+        quantity,
+        reorderLevel,
+        status: storedStatus(quantity, reorderLevel),
+      },
+      hospitalId,
+    );
 
     if (row === null) throw AppException.notFound('Resource not found');
 
@@ -257,10 +278,7 @@ export class DirectoryService {
 
   private async requireDepartment(id: string): Promise<void> {
     if ((await this.directory.departmentExists(id)) === 0) {
-      throw AppException.validation(
-        { departmentId: ['No such department'] },
-        'No such department',
-      );
+      throw AppException.validation({ departmentId: ['No such department'] }, 'No such department');
     }
   }
 }

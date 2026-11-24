@@ -67,9 +67,7 @@ export interface AdminScopeRepository {
 export class AdminScopeService {
   private readonly logger = new Logger(AdminScopeService.name);
 
-  constructor(
-    @Inject(ADMIN_SCOPE_REPOSITORY) private readonly repository: AdminScopeRepository,
-  ) {}
+  constructor(@Inject(ADMIN_SCOPE_REPOSITORY) private readonly repository: AdminScopeRepository) {}
 
   /**
    * The caller's scope, resolved at most once per request. A failed lookup

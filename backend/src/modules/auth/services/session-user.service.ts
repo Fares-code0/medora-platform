@@ -34,11 +34,7 @@ import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../../common/auth/hospital-context';
 import { UserStatus } from '../../../generated/prisma/enums';
-import {
-  AdminScopeService,
-  HospitalContextService,
-  type AdminScope,
-} from '../../../shared/authz';
+import { AdminScopeService, HospitalContextService, type AdminScope } from '../../../shared/authz';
 import { IdentityRepository } from '../repositories/identity.repository';
 import type { SessionUserPayload } from './login.service';
 
@@ -112,7 +108,10 @@ function sessionAdminScope(
   if (scope.kind === 'hospital') {
     return {
       activeHospital: null,
-      adminScope: { type: 'hospital', hospital: { id: scope.hospitalId, name: scope.hospitalName } },
+      adminScope: {
+        type: 'hospital',
+        hospital: { id: scope.hospitalId, name: scope.hospitalName },
+      },
     };
   }
   return { activeHospital: null, adminScope: null };
