@@ -8,7 +8,7 @@
  * | Hospital Admin | `hospital` of its one assignment |
  * | doctor / staff in clinical standing | `hospital` of the active employment / affiliation |
  * | patient | `patient` (its own rows) |
- * | anyone else | none — every tenant policy fails closed |
+ * | anyone else | `self` — no tenant (every tenant policy fails closed); only rows that are theirs by identity |
  *
  * Only when `DATABASE_TENANT_CONTEXT` is on; otherwise a no-op. The lookups
  * are the caller's own staffing, read under `system` scope.
@@ -39,6 +39,10 @@ export class TenantContextResolver {
   }
 
   async resolve(user: AuthenticatedUser): Promise<TenantContext | undefined> {
+    return (await this.tenantOf(user)) ?? { scope: 'self', userId: user.id };
+  }
+
+  private async tenantOf(user: AuthenticatedUser): Promise<TenantContext | undefined> {
     if (user.role === 'admin') {
       const scope = await this.scopes.scopeOf(user);
       if (scope.kind === 'platform') return { scope: 'platform', userId: user.id };

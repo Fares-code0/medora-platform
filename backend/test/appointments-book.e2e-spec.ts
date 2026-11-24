@@ -12,6 +12,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  deleteWithDependents,
 } from './support/auth-app';
 
 /**
@@ -433,10 +434,17 @@ describe('GET /appointments (§5.1) — the book', () => {
 
   it('refuses a caller with no doctor profile', async () => {
     const doctor = await seedDoctor('no-profile');
-    // Employments restrict their doctor, so they go first.
-    await harness.prisma.doctorEmployment.deleteMany({
+    // Employments restrict their doctor, so they go first — with what is
+    // stamped with them (availability, time off: F-06).
+    const employments = await harness.prisma.doctorEmployment.findMany({
       where: { doctor: { is: { user: { is: { email: doctor.email } } } } },
+      select: { id: true },
     });
+    await deleteWithDependents(
+      harness.prisma,
+      'doctor_employments',
+      employments.map((row) => row.id),
+    );
     await harness.prisma.doctor.deleteMany({ where: { user: { email: doctor.email } } });
 
     const response = await request(harness.server)

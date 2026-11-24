@@ -25,6 +25,12 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'shared/authz/tenant-context.resolver.ts': "the caller's own staffing, deciding the request context",
   'shared/jobs/job-runner.service.ts': 'platform maintenance jobs (no request, no caller input)',
   'modules/patients/services/patient.service.ts': "the masked directory's reach, from the caller's tenant",
+  'modules/appointments/services/appointment-oversight.service.ts': "the overseer's own hospital, from their staffing",
+  'modules/medical-records/services/record-issue.service.ts': "the reviewer's own hospital, from their staffing",
+  'modules/administration/services/operations.service.ts': "the operator's own hospital, from their staffing",
+  'modules/doctors/repositories/admin-doctor.repository.ts': 'per-doctor counts only (patients, appointments) for the doctor directory',
+  'modules/controlled-access/services/controlled-access.service.ts':
+    'whether the target hospital holds the record a grant or request names (ids only), and its admins to notify',
 };
 
 function sources(directory: string): string[] {

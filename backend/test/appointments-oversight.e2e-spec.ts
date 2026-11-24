@@ -176,6 +176,54 @@ async function seedAdmin(local: string): Promise<string> {
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // Appointment oversight is a hospital function (F-01, OD-07): the fixture
+  // hospital's own Hospital Admin, where every doctor here practises.
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
+  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+
+  const login = await request(harness.server)
+    .post(LOGIN)
+    .send({ email, password: PASSWORD, rememberMe: false });
+
+  return dataOf<SessionPayload>(
+    await request(harness.server)
+      .post('/api/v1/auth/otp/verify')
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: currentCode(secret) }),
+  ).accessToken;
+}
+
+/** A Platform Admin — no hospital, no clinical access. */
+async function seedPlatformAdmin(local: string): Promise<string> {
+  const email = testEmail(local);
+  await request(harness.server).post(REGISTER).send(registrationBody({ email }));
+  await markVerified(harness.prisma, email);
+
+  const bootstrap = dataOf<SessionPayload>(
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
+  ).accessToken;
+
+  const secret = dataOf<{ secret: string }>(
+    await request(harness.server)
+      .post('/api/v1/me/2fa/setup')
+      .set('Authorization', `Bearer ${bootstrap}`)
+      .send({ password: PASSWORD }),
+  ).secret;
+
+  await request(harness.server)
+    .post('/api/v1/me/2fa/enable')
+    .set('Authorization', `Bearer ${bootstrap}`)
+    .send({ code: currentCode(secret) });
+
+  const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
   await grantPlatformAdmin(harness.prisma, email);
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
@@ -487,6 +535,30 @@ describe('POST /admin/appointments/{id}/nudge (§5.10)', () => {
 
     expect(response.status).toBe(409);
     expect(errorBody(response).code).toBe('nudge_not_applicable');
+  });
+});
+
+describe('oversight is a hospital function (F-01, OD-07)', () => {
+  it('refuses a Platform Admin, who holds no clinical access', async () => {
+    const platform = await seedPlatformAdmin('oversight-platform');
+    const response = await request(harness.server).get(ADMIN_APPOINTMENTS).set('Authorization', `Bearer ${platform}`);
+    expect(response.status).toBe(403);
+  });
+
+  it('never shows another hospital’s appointments', async () => {
+    const admin = await seedAdmin('oversight-own-hospital');
+    const elsewhere = await seedDoctor('oversight-elsewhere', undefined, 'b');
+    const reference = await book(elsewhere.token, await seedPatient(elsewhere.token));
+    const response = await request(harness.server)
+      .get(`${ADMIN_APPOINTMENTS}?pageSize=100`)
+      .set('Authorization', `Bearer ${admin}`);
+    expect(response.status).toBe(200);
+    expect(dataOf<{ items: { id: string }[] }>(response).items.map((item) => item.id)).not.toContain(reference);
+    const detail = await request(harness.server)
+      .post(`${ADMIN_APPOINTMENTS}/${reference}/nudge`)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ channel: 'push', message: 'Reminder' });
+    expect(detail.status).toBe(404);
   });
 });
 

@@ -183,6 +183,11 @@ export class PatientRepository {
     return { rows, totalItems };
   }
 
+  /** Whether the patient holds a Hospital Medical Record at `hospitalId`. */
+  async hasRecordAt(patientId: string, hospitalId: string): Promise<boolean> {
+    return (await this.prisma.db.hospitalMedicalRecord.count({ where: { patientId, hospitalId } })) > 0;
+  }
+
   /** One patient by the `PT-…` handle. Care scoping is the caller's. */
   findByPublicId(publicId: string): Promise<PatientRow | null> {
     return this.prisma.db.patient.findFirst({

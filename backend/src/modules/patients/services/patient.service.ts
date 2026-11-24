@@ -237,6 +237,10 @@ export class PatientService {
     if (row === null) throw notFound();
 
     if (user.role !== 'doctor') {
+      // The masked directory's reach (F-08, OD-07): a patient holding a
+      // record at the caller's hospital — the same 404 otherwise.
+      const hospitalId = await this.directoryOf(user);
+      if (hospitalId === null || !(await this.patients.hasRecordAt(row.id, hospitalId))) throw notFound();
       await this.recordPhiRead(user, row, 'patient.view_masked');
       return toMasked(row);
     }
@@ -663,17 +667,15 @@ export class PatientService {
   }
 
   /**
-   * The masked directory's reach (F-08), from the caller's own staffing:
-   * a Platform Admin's spans every hospital (`undefined`); a
-   * Hospital Admin's or a staff member's is the patients holding a record
-   * at their hospital; anyone with no tenant (an administrator without a
-   * scope, a doctor without standing) gets none at all (`null`).
+   * The masked directory's reach (F-08), from the caller's own staffing: a
+   * Hospital Admin's or a staff member's is the patients holding a record at
+   * their hospital; anyone else — a Platform Admin (OD-07), an administrator
+   * without a scope, a doctor without standing — gets none at all (`null`).
    */
-  private async directoryOf(
-    user: AuthenticatedUser,
-  ): Promise<string | null | undefined> {
+  private async directoryOf(user: AuthenticatedUser): Promise<string | null> {
     const tenant = await runAsSystem(() => this.tenants.resolve(user));
-    if (tenant?.scope === 'platform') return undefined;
+    // A Platform Admin holds no clinical access (OD-07, §2.1): no patient
+    // directory, masked or not — as Row-Level Security has it too.
     if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
     return null;
   }

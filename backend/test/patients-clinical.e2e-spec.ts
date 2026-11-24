@@ -8,12 +8,12 @@ import {
   dataOf,
   errorBody,
   fixtureHospital,
-  grantPlatformAdmin,
   makeClinicalDoctor,
   markVerified,
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -157,8 +157,16 @@ async function adminToken(local: string): Promise<string> {
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await grantPlatformAdmin(harness.prisma, email);
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // The masked directory is a hospital's own (F-08, OD-07): the fixture
+  // hospital's Hospital Admin, where the patients here are registered.
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
 
   // The account was registered through the doctor branch to get a
   // bootstrap token, so it carries a `doctors` row. A real administrator
@@ -576,6 +584,8 @@ describe('the derived fields (M10.6)', () => {
     for (const startsAt of [later, soon]) {
       await harness.prisma.appointment.create({
         data: {
+          // Stamped as a booking at the doctor's hospital is (F-06).
+          ...(await clinicalStampFor(harness.prisma, doctor.id, record.id)),
           publicId: `APT-NX-${startsAt.getTime().toString(36)}`,
           patientId: record.id,
           doctorId: doctor.id,

@@ -370,13 +370,18 @@ describe('GET /auth/session (M8.1)', () => {
         .get(SESSIONS)
         .set('Authorization', 'Bearer ' + session.accessToken);
       expect(other.status).toBe(200);
-      expect(lookup).not.toHaveBeenCalled();
+      // With tenant context on (the runtime-role mode, and production),
+      // establishing the request's RLS context *is* a read of it — once,
+      // memoised. Without it, a route that does not read it never asks.
+      const tenantContext = (process.env['E2E_RUNTIME_DATABASE_URL'] ?? '') !== '';
+      expect(lookup).toHaveBeenCalledTimes(tenantContext ? 1 : 0);
 
       const response = await request(harness.server)
         .get(SESSION)
         .set('Authorization', 'Bearer ' + session.accessToken);
       expect(response.status).toBe(200);
-      expect(lookup).toHaveBeenCalledTimes(1);
+      // Never twice within one request, whoever reads it.
+      expect(lookup).toHaveBeenCalledTimes(tenantContext ? 2 : 1);
     } finally {
       lookup.mockRestore();
     }

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
 
 import { AppModule } from '../../src/app.module';
+import { loadEnv } from '../../src/config/env';
 import { applyBodyLimits } from '../../src/common/http/body-limits';
 import { applyCachePolicy } from '../../src/common/http/cache-policy';
 import { applyCompression } from '../../src/common/http/compression';
@@ -16,7 +17,7 @@ import {
   type PlatformPolicySource,
   type PolicyOverrides,
 } from '../../src/config';
-import { type HospitalStamp, hospitalStampFor, PrismaService } from '../../src/shared/database';
+import { type HospitalStamp, hospitalStampFor, PrismaService, runAsSystem } from '../../src/shared/database';
 import { MAILER } from '../../src/shared/mail';
 import { SmtpMailer } from '../../src/shared/mail/smtp.mailer';
 
@@ -124,6 +125,23 @@ export async function createAuthHarness(
 
   let builder = Test.createTestingModule({ imports: [AppModule] });
 
+  // The runtime-role mode (multi-hospital §2.15; final verification): the
+  // application connects as the provisioned restricted role, with tenant
+  // context on, while fixtures, cleanup and assertions keep the owner
+  // connection below. `npm run test:e2e:runtime-role` sets it.
+  const ownerEnv = loadEnv();
+  // Only on the database the role was provisioned in: a suite that builds a
+  // database of its own (a fresh deployment, an isolated copy) has no
+  // runtime role there and keeps the owner connection.
+  const runtimeUrl = sameDatabase(process.env['E2E_RUNTIME_DATABASE_URL'], ownerEnv.DATABASE_URL)
+    ? process.env['E2E_RUNTIME_DATABASE_URL']
+    : undefined;
+  if (runtimeUrl !== undefined && runtimeUrl !== '') {
+    builder = builder.overrideProvider(ConfigService).useValue(
+      new ConfigService({ ...ownerEnv, DATABASE_URL: runtimeUrl, DATABASE_TENANT_CONTEXT: true }),
+    );
+  }
+
   if (options.realPolicySource !== true) {
     builder = builder.overrideProvider(PLATFORM_POLICY_SOURCE).useValue(policySource);
   }
@@ -176,7 +194,14 @@ export async function createAuthHarness(
   // `app.close()` in `close()` below releases the port.
   await app.listen(0, '127.0.0.1');
 
-  const prisma = app.get(PrismaService);
+  // Fixtures go through the owner (RLS does not bind it, by design); in the
+  // default mode that is the application's own connection.
+  const ownerPrisma =
+    runtimeUrl !== undefined && runtimeUrl !== ''
+      ? new PrismaService(new ConfigService({ ...ownerEnv, DATABASE_TENANT_CONTEXT: false }))
+      : undefined;
+  if (ownerPrisma !== undefined) await ownerPrisma.$connect();
+  const prisma: PrismaService = ownerPrisma === undefined ? app.get(PrismaService) : ownerPrisma;
 
   const harness: AuthHarness = {
     domain,
@@ -187,6 +212,7 @@ export async function createAuthHarness(
     policy,
     async close(): Promise<void> {
       await app.close();
+      await ownerPrisma?.$disconnect();
       await sink.stop();
     },
     async reset(): Promise<void> {
@@ -634,4 +660,31 @@ export async function soleRecordOf(
     throw new Error('soleRecordOf: the patient must hold exactly one Hospital Medical Record');
   }
   return { hospitalId: record.hospitalId, hospitalMedicalRecordId: record.id };
+}
+
+/**
+ * A job handler service, called the way `JobRunnerService` calls it: every
+ * method runs under `system` RLS scope. Suites that drive a job's unit of
+ * work directly (a sweep, a dispatcher drain, a delivery worker) wrap the
+ * service in this, so they exercise what the scheduler runs — under the
+ * runtime role a direct call outside any scope sees no row at all.
+ */
+export function asJob<T extends object>(service: T): T {
+  return new Proxy(service, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      // Awaited inside the scope: a Prisma query is lazy and would otherwise
+      // run when the caller awaits it, outside `system`.
+      return (...args: unknown[]) =>
+        runAsSystem(async () => await (value as (...a: unknown[]) => unknown).apply(target, args));
+    },
+  });
+}
+
+function sameDatabase(runtimeUrl: string | undefined, ownerUrl: string): boolean {
+  if (runtimeUrl === undefined || runtimeUrl === '') return false;
+  const a = new URL(runtimeUrl);
+  const b = new URL(ownerUrl);
+  return a.host === b.host && a.pathname === b.pathname;
 }

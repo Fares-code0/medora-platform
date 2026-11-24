@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { PhiRead, Roles } from '../../../shared/authz';
+import { HospitalScope, PhiRead, Roles } from '../../../shared/authz';
 import {
   recordIssueListSchema,
   updateRecordIssueSchema,
@@ -22,18 +22,20 @@ import {
  * because M2.2 zone 1 gives `record_issue_reports` to medical records —
  * the path is `/admin/…`, as `/admin/appointments` lives in appointments.
  */
+// A hospital function (F-01, OD-07): its Hospital Admin, confined to it.
+@HospitalScope()
 @Roles('admin')
 @Controller('admin/record-issues')
 export class AdminRecordIssueController {
   constructor(private readonly issues: RecordIssueService) {}
 
   @PhiRead('record_issue')
-
   @Get()
   list(
+    @CurrentUser() user: AuthenticatedUser,
     @Query(zodQuery(recordIssueListSchema)) query: RecordIssueListQuery,
   ): Promise<PaginatedRecordIssues> {
-    return this.issues.list(query);
+    return this.issues.list(user, query);
   }
 
   /** Triage (`investigating`) or close (`resolved`); 409 on an illegal or lost move. */

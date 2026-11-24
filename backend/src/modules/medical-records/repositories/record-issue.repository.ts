@@ -48,10 +48,14 @@ export class RecordIssueRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(
-    criteria: RecordIssueCriteria,
+    criteria: RecordIssueCriteria & { readonly hospitalId: string },
   ): Promise<{ rows: readonly RecordIssueRow[]; totalItems: number }> {
-    const where: Prisma.RecordIssueReportWhereInput =
-      criteria.status === undefined ? {} : { status: criteria.status };
+    // The reviewer's hospital only (F-01, OD-07): an issue belongs to the
+    // hospital that owns the record it is about.
+    const where: Prisma.RecordIssueReportWhereInput = {
+      record: { hospitalId: criteria.hospitalId },
+      ...(criteria.status === undefined ? {} : { status: criteria.status }),
+    };
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.recordIssueReport.findMany({
@@ -73,10 +77,13 @@ export class RecordIssueRepository {
   }
 
   /** One issue, or `null` — a malformed id is a missing one, not a 500. */
-  find(id: string): Promise<RecordIssueRow | null> {
+  find(id: string, hospitalId: string): Promise<RecordIssueRow | null> {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.recordIssueReport.findUnique({ where: { id }, select: ISSUE_SELECT });
+    return this.prisma.db.recordIssueReport.findFirst({
+      where: { id, record: { hospitalId } },
+      select: ISSUE_SELECT,
+    });
   }
 
   /**

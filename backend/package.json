@@ -18,6 +18,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e:runtime-role": "tsx test/support/run-e2e-as-runtime-role.ts",
     "test:coverage": "vitest run --coverage",
     "test:safety": "vitest run --coverage --coverage.include='src/modules/pharmacy/services/safety-screen.ts' --coverage.thresholds.100 src/modules/pharmacy/services/safety-screen.spec.ts",
     "test:labs-safety": "vitest run --coverage --coverage.include='src/modules/labs/services/result-grading.ts' --coverage.include='src/modules/labs/services/lab-review.ts' --coverage.include='src/modules/labs/services/specimen-condition.ts' --coverage.include='src/modules/labs/services/lab-status.machine.ts' --coverage.thresholds.100 src/modules/labs",

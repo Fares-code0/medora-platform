@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
   soleRecordOf,
+  asJob,
 } from './support/auth-app';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
@@ -177,7 +178,7 @@ async function giveExternalEntry(patientId: string, name = 'Aspirin (self-report
 
 beforeAll(async () => {
   harness = await createAuthHarness('rx-medlist');
-  sweeper = harness.app.get(PrescriptionSweepService);
+  sweeper = asJob(harness.app.get(PrescriptionSweepService));
 
   const byName = async (name: string): Promise<string> =>
     (await harness.prisma.medication.findFirstOrThrow({ where: { name }, select: { id: true } }))

@@ -7,6 +7,7 @@ import {
   dataOf,
   purgeHospitalRecords,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 import { seedDoctor, seedPatient } from './support/lab-fixture';
 
@@ -84,6 +85,8 @@ async function bookVisits(
 
     await harness.prisma.appointment.create({
       data: {
+        // Stamped as a booking at the doctor's hospital is (F-06).
+        ...(await clinicalStampFor(harness.prisma, doctor.id, patient.id)),
         publicId: `APT-${String(sequence[0]?.value ?? 0n)}`,
         patientId: patient.id,
         doctorId: doctor.id,

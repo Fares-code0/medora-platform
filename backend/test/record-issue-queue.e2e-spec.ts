@@ -11,8 +11,9 @@ import {
   markVerified,
   registrationBody,
   testEmail,
-  grantPlatformAdmin,
   makeClinicalDoctor,
+  asJob,
+  fixtureHospital,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -117,8 +118,16 @@ async function seedAdmin(local: string): Promise<{ token: string; userId: string
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await grantPlatformAdmin(harness.prisma, email);
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // Record quality review is a hospital function (F-01, OD-07): the
+  // fixture hospital's own Hospital Admin, where the records are.
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
 
   const login = await request(harness.server)
@@ -216,7 +225,7 @@ afterAll(async () => {
 
 beforeAll(async () => {
   harness = await createAuthHarness('record-issue-queue');
-  dispatch = harness.app.get(NotificationDispatchService);
+  dispatch = asJob(harness.app.get(NotificationDispatchService));
 
   doctorToken = await seedDoctor('issue-doctor');
   ({ token: adminToken, userId: adminUserId } = await seedAdmin('issue-admin'));

@@ -17,7 +17,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { sendCsv } from '../../../common/http/csv-export';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can, PhiRead } from '../../../shared/authz';
+import { Can, HospitalScope, PhiRead } from '../../../shared/authz';
 import type { MaskedIdentity } from '../../../shared/phi';
 import type {
   PatientAlertView,
@@ -84,6 +84,9 @@ export class PatientController {
   constructor(private readonly patients: PatientService) {}
 
   /** API §4.1 — the list. Clear for a doctor, masked for anyone else. */
+  // A Hospital Admin reaches its own hospital's masked directory (F-08,
+  // OD-07); a Platform Admin's is empty.
+  @HospitalScope()
   @PhiRead('patient_list')
   @Get()
   list(
@@ -99,6 +102,7 @@ export class PatientController {
    * and wrapping a spreadsheet in `{ data: … }` would make every consumer
    * unwrap one.
    */
+  @HospitalScope()
   @PhiRead('patient_export', { auditedByHandler: true })
   @Get('export')
   async export(
@@ -120,6 +124,7 @@ export class PatientController {
   }
 
   /** API §4.3 — one patient, with the derived fields. */
+  @HospitalScope()
   @PhiRead('patient', { auditedByHandler: true })
   @Get(':patientId')
   detail(
@@ -149,6 +154,7 @@ export class PatientController {
   }
 
   /** API §4.4 — the profile bundle the chart screen loads first. */
+  @HospitalScope()
   @PhiRead('patient_profile', { auditedByHandler: true })
   @Get(':patientId/profile')
   profile(

@@ -27,6 +27,7 @@ import {
   recordPatientAt,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 
 const PASSWORD = 'Medora123!';
@@ -230,7 +231,8 @@ describe('standing ends access, and assignments do not outlive it', () => {
   });
 
   it('a transferred doctor reads the new hospital’s rows only, and the old assignment is revoked', async () => {
-    const staffing = harness.app.get(HospitalStaffingRepository);
+    // An administrative act, run here as the trusted operation it is.
+    const staffing = asJob(harness.app.get(HospitalStaffingRepository));
     const doctorRow = await harness.prisma.doctor.findFirstOrThrow({
       where: { user: { is: { email: testEmail('r5-a') } } },
       select: { id: true, userId: true },
@@ -259,7 +261,8 @@ describe('standing ends access, and assignments do not outlive it', () => {
   });
 
   it('a terminated doctor reaches nothing', async () => {
-    const staffing = harness.app.get(HospitalStaffingRepository);
+    // An administrative act, run here as the trusted operation it is.
+    const staffing = asJob(harness.app.get(HospitalStaffingRepository));
     const doctorRow = await harness.prisma.doctor.findFirstOrThrow({
       where: { user: { is: { email: testEmail('r5-b') } } },
       select: { id: true, userId: true },

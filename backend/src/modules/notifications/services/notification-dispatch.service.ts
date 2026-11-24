@@ -26,6 +26,8 @@
  * in-flight set here that a second replica would not share.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { Injectable, Logger } from '@nestjs/common';
 
 
@@ -156,8 +158,13 @@ export class NotificationDispatchService {
                 select: { hospitalId: true, hospitalMedicalRecordId: true },
               })
             : null;
-      const notification = await tx.notification.create({
+      // Inserted without RETURNING, with the id chosen here: the request
+      // writing a notification for someone else may not read it back under
+      // Row-Level Security (the recipient alone reads it).
+      const notification = { id: randomUUID() };
+      await tx.notification.createMany({
         data: {
+          id: notification.id,
           ...(scope?.hospitalId == null ? {} : { hospitalId: scope.hospitalId }),
           ...(scope?.hospitalMedicalRecordId == null
             ? {}
@@ -178,7 +185,6 @@ export class NotificationDispatchService {
           ...(target.labOrderId === null ? {} : { labOrderId: target.labOrderId }),
           ...(target.appointmentId === null ? {} : { appointmentId: target.appointmentId }),
         },
-        select: { id: true },
       });
 
       await tx.notificationDelivery.createMany({

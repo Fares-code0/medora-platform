@@ -385,10 +385,13 @@ export class AppointmentRepository {
     });
   }
 
-  /** One appointment with no doctor scope — the oversight detail. */
-  findAny(publicId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
+  /**
+   * One appointment with no doctor scope — the oversight detail — at the
+   * overseer's hospital only (F-01, OD-07).
+   */
+  findAny(publicId: string, hospitalId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
     return this.client(tx).appointment.findFirst({
-      where: { publicId, deletedAt: null },
+      where: { publicId, hospitalId, deletedAt: null },
       select: this.detailSelect(),
     });
   }
@@ -765,7 +768,7 @@ export class AppointmentRepository {
    * denominator can decline to draw it.
    */
   async adminSummary(
-    bounds: { readonly weekStart: Date; readonly now: Date },
+    bounds: { readonly weekStart: Date; readonly now: Date; readonly hospitalId: string },
   ): Promise<{
     pendingOverDay: number;
     cancelled7d: number;
@@ -776,16 +779,16 @@ export class AppointmentRepository {
 
     const [pendingOverDay, cancelled7d, noShow7d, window7dTotal] = await Promise.all([
       this.prisma.db.appointment.count({
-        where: { status: 'PENDING', createdAt: { lt: dayAgo } },
+        where: { hospitalId: bounds.hospitalId, status: 'PENDING', createdAt: { lt: dayAgo } },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'CANCELLED', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, status: 'CANCELLED', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'NO_SHOW', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, status: 'NO_SHOW', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
       this.prisma.db.appointment.count({
-        where: { startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
     ]);
 
@@ -802,6 +805,7 @@ export class AppointmentRepository {
    * doctor's book to a caller who asked for their own.
    */
   async oversightList(criteria: {
+    readonly hospitalId: string;
     readonly from?: Date | undefined;
     readonly to?: Date | undefined;
     readonly status?: readonly AppointmentStatus[] | undefined;
@@ -813,6 +817,8 @@ export class AppointmentRepository {
     readonly pageSize: number;
   }): Promise<{ rows: readonly BookRow[]; totalItems: number }> {
     const where = {
+      // The overseer's hospital only (F-01, OD-07).
+      hospitalId: criteria.hospitalId,
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -884,7 +890,7 @@ export class AppointmentRepository {
    * reusing `summaryFor` with a sentinel doctor id would be the kind of
    * "null widens the scope" parameter this repository avoids elsewhere.
    */
-  async platformCounts(bounds: { readonly now: Date }): Promise<{
+  async platformCounts(bounds: { readonly now: Date; readonly hospitalId: string }): Promise<{
     today: number;
     pending: number;
     upcoming: number;
@@ -903,19 +909,21 @@ export class AppointmentRepository {
     const [today, pending, upcoming, completedThisWeek] = await Promise.all([
       this.prisma.db.appointment.count({
         where: {
+          hospitalId: bounds.hospitalId,
           startsAt: { gte: dayStart, lt: dayEnd },
           status: { in: [...LIVE_STATUSES, 'COMPLETED'] },
         },
       }),
-      this.prisma.db.appointment.count({ where: { status: 'PENDING' } }),
+      this.prisma.db.appointment.count({ where: { hospitalId: bounds.hospitalId, status: 'PENDING' } }),
       this.prisma.db.appointment.count({
         where: {
+          hospitalId: bounds.hospitalId,
           startsAt: { gte: bounds.now },
           status: { in: ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'] },
         },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'COMPLETED', startsAt: { gte: weekStart, lt: dayEnd } },
+        where: { hospitalId: bounds.hospitalId, status: 'COMPLETED', startsAt: { gte: weekStart, lt: dayEnd } },
       }),
     ]);
 
@@ -1005,6 +1013,24 @@ export class AppointmentRepository {
         select: BOOK_SELECT,
       });
     });
+  }
+
+  /** Whether the doctor holds an active, clinical employment at `hospitalId` (F-07). */
+  async practisesAt(doctorId: string, hospitalId: string): Promise<boolean> {
+    if (!UUID.test(doctorId)) return false;
+    const row = await this.prisma.db.doctorEmployment.findFirst({
+      where: {
+        doctorId,
+        hospitalId,
+        endedAt: null,
+        hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+        doctor: {
+          is: { deletedAt: null, verificationStatus: 'VERIFIED', practiceStatus: { in: ['ACTIVE', 'VACATION'] } },
+        },
+      },
+      select: { id: true },
+    });
+    return row !== null;
   }
 
   /** A doctor's id and specialty, for the reassign same-specialty rule. */

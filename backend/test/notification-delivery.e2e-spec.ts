@@ -8,6 +8,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -127,7 +128,7 @@ beforeAll(async () => {
 
 beforeAll(async () => {
   harness = await createAuthHarness('notify-delivery');
-  delivery = harness.app.get(NotificationDeliveryService);
+  delivery = asJob(harness.app.get(NotificationDeliveryService));
 
   userEmail = testEmail('delivery-doctor');
   await request(harness.server).post(REGISTER).send(registrationBody({ email: userEmail }));

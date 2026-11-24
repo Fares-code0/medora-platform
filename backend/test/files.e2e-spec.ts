@@ -4,6 +4,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { OrphanSweepService } from '../src/modules/files/services/orphan-sweep.service';
+// A job runs under `system` scope (JobRunnerService); called directly, so does the sweep here.
+import { runAsSystem } from '../src/shared/database';
 import {
   FILE_STORAGE,
   type FileStoragePort,
@@ -517,7 +519,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     await request(harness.server).delete(`${FILES}/${file.id}`).set(as(ownerToken)).expect(204);
 
     const sweep = harness.app.get(OrphanSweepService);
-    const result = await sweep.sweep();
+    const result = await runAsSystem(() => sweep.sweep());
 
     expect(result.removed).toBeGreaterThanOrEqual(1);
     expect(storage.removed).toContain(before.storageKey);
@@ -535,7 +537,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     // Nothing left to collect, and no failure from trying: a swept row
     // is not offered again, which is what makes the sweep resumable
     // after a crash halfway through a batch.
-    expect((await sweep.sweep()).failed).toBe(0);
+    expect((await runAsSystem(() => sweep.sweep())).failed).toBe(0);
   });
 
   it('keeps a row queued when the store refuses, and does not stop the batch', async () => {
@@ -545,7 +547,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     await request(harness.server).delete(`${FILES}/${file.id}`).set(as(ownerToken)).expect(204);
 
     storage.failRemoval = true;
-    const failing = await harness.app.get(OrphanSweepService).sweep();
+    const failing = await runAsSystem(() => harness.app.get(OrphanSweepService).sweep());
     storage.failRemoval = false;
 
     // At least this file's row, not exactly it: the sweep reads the whole
@@ -562,7 +564,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     const row = await harness.prisma.file.findUniqueOrThrow({ where: { id: file.id } });
     expect(row.storageKey).not.toBe('');
 
-    expect((await harness.app.get(OrphanSweepService).sweep()).removed).toBeGreaterThanOrEqual(1);
+    expect((await runAsSystem(() => harness.app.get(OrphanSweepService).sweep())).removed).toBeGreaterThanOrEqual(1);
     const swept = await harness.prisma.file.findUniqueOrThrow({ where: { id: file.id } });
     expect(swept.storageKey).toBe('');
   });

@@ -44,6 +44,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { AppException } from '../../../common/errors/app.exception';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
+import { runAsSystem } from '../../../shared/database';
 import {
   AdminScopeService,
   HospitalContextService,
@@ -143,7 +144,10 @@ export class ControlledAccessService {
     // with the shared lockout budget).
     await this.reauth.verify(user, input.password);
 
-    const record = await this.access.recordAt(input.patientId, input.hospitalId);
+    // The target hospital's record, read to decide the request (yes/no and
+    // its ids) — a trusted lookup across the boundary it governs, so under
+    // `system` scope (F-15 reviewed call site). No clinical row is read.
+    const record = await runAsSystem(() => this.access.recordAt(input.patientId, input.hospitalId));
     if (record === null) throw AppException.notFound('Patient not found');
 
     const emergency = input.kind === 'EMERGENCY';
@@ -184,7 +188,7 @@ export class ControlledAccessService {
     if (emergency) {
       // Notification (§2.11): every administrator of the hospital learns of
       // the override at once; the retrospective review follows.
-      for (const adminId of await this.access.hospitalAdminIds(input.hospitalId)) {
+      for (const adminId of await runAsSystem(() => this.access.hospitalAdminIds(input.hospitalId))) {
         await this.activity.record({
           userId: adminId,
           kind: 'security',
@@ -282,7 +286,7 @@ export class ControlledAccessService {
     if (requesterHospitalId !== null && requesterHospitalId === input.targetHospitalId) {
       throw AppException.validation({ targetHospitalId: ['Request another hospital’s information'] });
     }
-    const record = await this.access.recordAt(input.patientId, input.targetHospitalId);
+    const record = await runAsSystem(() => this.access.recordAt(input.patientId, input.targetHospitalId));
     if (record === null) throw AppException.notFound('Patient not found');
 
     const request = await this.access.createRequest({
@@ -408,9 +412,10 @@ export class ControlledAccessService {
     input: DecisionInput,
   ): Promise<GrantView> {
     const grant = await this.grantOrNotFound(id);
-    await this.assertHospitalAdminOf(user, grant.hospitalId);
-    // An independent approver: never the requester (also a CHECK).
+    // An independent approver: never the requester (also a CHECK). The
+    // requester knows the grant exists, so they are told why.
     if (grant.requesterUserId === user.id) throw AppException.forbidden('You cannot decide your own request');
+    await this.assertHospitalAdminOf(user, grant.hospitalId);
     if (!(await this.access.decideGrant(grant, user.id, approve, input.note))) {
       throw AppException.conflict('The request is no longer pending');
     }
@@ -438,11 +443,16 @@ export class ControlledAccessService {
     throw AppException.forbidden('Not eligible for Exceptional Access');
   }
 
-  /** Only the hospital's own Hospital Admin (never a Platform Admin). */
+  /**
+   * Only the hospital's own Hospital Admin (never a Platform Admin). Anyone
+   * else gets the same 404 as an unknown id — the answer Row-Level Security
+   * gives too, since the row is not theirs to see — so the response never
+   * confirms that a grant or request exists.
+   */
   private async assertHospitalAdminOf(user: AuthenticatedUser, hospitalId: string): Promise<void> {
     const scope = await this.scopes.scopeOf(user);
     if (scope.kind === 'hospital' && scope.hospitalId === hospitalId) return;
-    throw AppException.forbidden('Only this hospital’s administrator may decide');
+    throw AppException.notFound('Not found');
   }
 
   private async assertOwningHospitalAdmin(

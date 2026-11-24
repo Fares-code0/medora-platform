@@ -240,7 +240,8 @@ describe('Exceptional Access (Break-Glass)', () => {
       const approve = (token: string) =>
         request(harness.server).post(`/api/v1/exceptional-access/${grant.id}/approve`).set(as(token)).send({});
       expect((await approve(doctorB)).status).toBe(403);
-      expect((await approve(platformAdmin)).status).toBe(403);
+      // Not theirs to decide — and not theirs to know of: the same 404 as an unknown id.
+      expect((await approve(platformAdmin)).status).toBe(404);
       const approved = await approve(hospitalAdminA);
       expect(approved.status, JSON.stringify(approved.body)).toBe(200);
       expect(dataOf<{ status: string }>(approved).status).toBe('ACTIVE');
@@ -340,7 +341,7 @@ describe('cross-hospital information requests', () => {
     // Platform Admin.
     const approve = (token: string, body: Record<string, unknown>) =>
       request(harness.server).post(`/api/v1/information-requests/${id}/approve`).set(as(token)).send(body);
-    expect((await approve(platformAdmin, { approvedItems: ['allergies'] })).status).toBe(403);
+    expect((await approve(platformAdmin, { approvedItems: ['allergies'] })).status).toBe(404);
     expect((await approve(hospitalAdminA, { approvedItems: ['identity'] })).status).toBe(422);
     const approved = await approve(hospitalAdminA, { approvedItems: ['allergies'], shareDays: 3 });
     expect(approved.status, JSON.stringify(approved.body)).toBe(200);

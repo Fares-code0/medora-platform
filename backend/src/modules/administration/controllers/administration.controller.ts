@@ -16,7 +16,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { NotPhi, PhiRead, Roles } from '../../../shared/authz';
+import { HospitalScope, NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
   announcementPatchSchema,
   announcementSchema,
@@ -280,48 +280,62 @@ export class AdministrationController {
    * class's `@Roles('admin')` (the guard reads `getAllAndOverride`), so this
    * widens these two routes only; every write below stays admin-only.
    */
+  // The queue and the waiting room are a hospital's own (F-01, OD-07): a
+  // Hospital Admin (or a receptionist) reaches them, confined to that
+  // hospital by the service; a Platform Admin is refused there.
   @Roles('admin', 'reception')
+  @HospitalScope()
   @PhiRead('patient_queue')
   @Get('queue')
-  queue() {
-    return this.operations.queue();
+  queue(@CurrentUser() user: AuthenticatedUser) {
+    return this.operations.queue(user);
   }
 
+  @HospitalScope()
   @Post('queue/:id/advance')
   @HttpCode(HttpStatus.NO_CONTENT)
-  advance(@Param('id') id: string): Promise<void> {
-    return this.operations.advance(id);
+  advance(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<void> {
+    return this.operations.advance(user, id);
   }
 
+  @HospitalScope()
   @Post('queue/:id/assign-room')
   @HttpCode(HttpStatus.OK)
-  assignRoom(@Param('id') id: string, @Body(zodBody(assignRoomSchema)) body: AssignRoomBody) {
-    return this.operations.assignRoom(id, body.roomId);
+  assignRoom(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body(zodBody(assignRoomSchema)) body: AssignRoomBody,
+  ) {
+    return this.operations.assignRoom(user, id, body.roomId);
   }
 
+  @HospitalScope()
   @Post('queue/:id/remove')
   @HttpCode(HttpStatus.NO_CONTENT)
-  removeFromQueue(@Param('id') id: string): Promise<void> {
-    return this.operations.removeFromQueue(id);
+  removeFromQueue(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<void> {
+    return this.operations.removeFromQueue(user, id);
   }
 
   @Roles('admin', 'reception')
+  @HospitalScope()
   @PhiRead('waiting_room')
   @Get('waiting-room')
-  waitingRoom() {
-    return this.operations.waitingRoom();
+  waitingRoom(@CurrentUser() user: AuthenticatedUser) {
+    return this.operations.waitingRoom(user);
   }
 
+  @HospitalScope()
   @Post('waiting-room/:id/call')
   @HttpCode(HttpStatus.OK)
-  call(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'call');
+  call(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.operations.moveWaiting(user, id, 'call');
   }
 
+  @HospitalScope()
   @Post('waiting-room/:id/seat')
   @HttpCode(HttpStatus.OK)
-  seat(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'seat');
+  seat(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.operations.moveWaiting(user, id, 'seat');
   }
 
   /* ── M23.5 — announcements, policies, templates ────────────── */

@@ -37,6 +37,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { TenantContextResolver } from '../../../shared/authz';
+import { runAsSystem } from '../../../shared/database';
 import { AppException } from '../../../common/errors/app.exception';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { defineStatusMachine } from '../../../shared/status';
@@ -97,10 +99,24 @@ export class RecordIssueService {
   constructor(
     private readonly issues: RecordIssueRepository,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
+    private readonly tenants: TenantContextResolver,
   ) {}
 
-  async list(query: RecordIssueListQuery): Promise<PaginatedRecordIssues> {
+  /**
+   * The reviewer's hospital (F-01, OD-07). Record quality review is a
+   * hospital function: a Platform Admin holds no clinical access, so a
+   * caller without a hospital is refused rather than shown every
+   * hospital's (or, under RLS, no) issues.
+   */
+  private async hospitalOf(user: AuthenticatedUser): Promise<string> {
+    const tenant = await runAsSystem(() => this.tenants.resolve(user));
+    if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
+    throw AppException.forbidden('Record issue review is a hospital function', 'hospital_scope_required');
+  }
+
+  async list(user: AuthenticatedUser, query: RecordIssueListQuery): Promise<PaginatedRecordIssues> {
     const { rows, totalItems } = await this.issues.list({
+      hospitalId: await this.hospitalOf(user),
       status: query.status,
       sort: query.sort,
       page: query.page,
@@ -121,7 +137,8 @@ export class RecordIssueService {
     id: string,
     input: UpdateRecordIssueInput,
   ): Promise<RecordIssueView> {
-    const current = await this.issues.find(id);
+    const hospitalId = await this.hospitalOf(user);
+    const current = await this.issues.find(id, hospitalId);
     if (current === null) throw AppException.notFound('Record issue not found');
 
     const from = asStatus(current.status);
@@ -137,7 +154,7 @@ export class RecordIssueService {
     // Lost the race: someone else moved it between the read and the write.
     // Re-read so the 409 names the status it is actually in now.
     if (!moved) {
-      const now = await this.issues.find(id);
+      const now = await this.issues.find(id, hospitalId);
       const status = now === null ? from : asStatus(now.status);
       throw AppException.conflict(
         `Record issue is now ${status}; reload the queue`,
@@ -153,7 +170,7 @@ export class RecordIssueService {
       metadata: { from, to: input.status, recordId: current.record.publicId },
     });
 
-    const updated = await this.issues.find(id);
+    const updated = await this.issues.find(id, hospitalId);
     if (updated === null) throw AppException.notFound('Record issue not found');
 
     return toView(updated);

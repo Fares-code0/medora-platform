@@ -10,7 +10,6 @@ import {
   dataOf,
   errorBody,
   fixtureHospital,
-  grantPlatformAdmin,
   makeClinicalDoctor,
   markVerified,
   registrationBody,
@@ -122,8 +121,16 @@ async function seedAdmin(local: string): Promise<{ token: string; userId: string
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await grantPlatformAdmin(harness.prisma, email);
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // A Hospital Admin of the fixture hospital: the masked directory is a
+  // hospital's own (F-08, OD-07 — a Platform Admin has none).
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
 
   const login = await request(harness.server)

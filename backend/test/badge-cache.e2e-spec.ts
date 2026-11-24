@@ -11,6 +11,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -202,7 +203,7 @@ describe('every notification writer invalidates the badge', () => {
         dedupeKey: `badge-cache:${doctor.id}:${String(Date.now())}`,
       },
     });
-    const dispatch = harness.app.get(NotificationDispatchService);
+    const dispatch = asJob(harness.app.get(NotificationDispatchService));
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const written = await harness.prisma.db.notification.count({
         where: { recipientId: alice.userId },

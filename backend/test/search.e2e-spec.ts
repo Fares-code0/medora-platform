@@ -523,15 +523,14 @@ describe('F-08 — the masked patient directory is the administrator’s scope',
     return (ids.includes(minePatient.publicId) ? 1 : 0) + (ids.includes(theirsPatient.publicId) ? 2 : 0);
   };
 
-  it('spans every hospital for a Platform Admin', async () => {
-    expect(await directory(adminToken)).toBe(3);
+  it('holds nobody for a Platform Admin, who has no clinical access (OD-07)', async () => {
+    expect([0, -403]).toContain(await directory(adminToken));
   });
 
   it('holds only the Hospital Admin’s own hospital’s patients', async () => {
     const hospitalAdmin = await signUpAdmin('search-directory-ha', { hospitalId: mineHospital });
-    // Refused outright by the admin tier, or confined to hospital A: never
-    // hospital B's patient.
-    expect([1, -403]).toContain(await directory(hospitalAdmin));
+    // Confined to hospital A: never hospital B's patient.
+    expect(await directory(hospitalAdmin)).toBe(1);
   });
 
   it('holds nobody for an administrator with no scope', async () => {

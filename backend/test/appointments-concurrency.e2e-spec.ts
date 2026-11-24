@@ -20,9 +20,9 @@ import {
   markVerified,
   registrationBody,
   testEmail,
-  grantPlatformAdmin,
   makeClinicalDoctor,
   purgeHospitalRecords,
+  fixtureHospital,
 } from './support/auth-app';
 import { createGate, scheduleLockWaiters, waitUntil } from './support/barrier';
 
@@ -758,8 +758,15 @@ async function seedAdmin(local: string): Promise<string> {
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await grantPlatformAdmin(harness.prisma, email);
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // Appointment oversight is a hospital function (F-01, OD-07).
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
 
   const login = await request(harness.server)

@@ -13,7 +13,14 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-export type TenantScope = 'hospital' | 'platform' | 'patient' | 'system';
+/**
+ * `self`: a signed-in caller with no tenant (an administrator without a
+ * scope, a doctor or staff member outside clinical standing). The database
+ * treats it as no scope at all — every tenant clause is false — but knows
+ * the user, so the rows that are theirs by identity (their own uploads,
+ * notifications, conversations) still work.
+ */
+export type TenantScope = 'hospital' | 'platform' | 'patient' | 'system' | 'self';
 
 export interface TenantContext {
   readonly scope: TenantScope;

@@ -1,7 +1,13 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { type AuthHarness, createAuthHarness, dataOf, errorBody } from './support/auth-app';
+import {
+  type AuthHarness,
+  createAuthHarness,
+  dataOf,
+  errorBody,
+  clinicalStampFor,
+} from './support/auth-app';
 import {
   destroyLabFixtures,
   orderTest,
@@ -79,6 +85,8 @@ async function bookAppointment(token: string, patient: string, at: Date): Promis
 
   await harness.prisma.db.appointment.create({
     data: {
+      // Stamped as a booking at the doctor's hospital is (F-06).
+      ...(await clinicalStampFor(harness.prisma, me.id, doctor.id)),
       publicId: `APT-R${Math.floor(Math.random() * 1_000_000)}`,
       patientId: doctor.id,
       doctorId: me.id,

@@ -27,7 +27,7 @@ import type {
   DoctorPracticeStatus,
   DoctorVerificationStatus,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { PrismaService, runAsSystem } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -171,7 +171,10 @@ export class AdminDoctorRepository {
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    const [patients, appointments] = await Promise.all([
+    // Counts about a doctor, not rows about a patient: read under `system`
+    // scope (a reviewed call site, F-15), because Row-Level Security gives a
+    // Platform Admin no clinical row to count — only the numbers leave here.
+    const [patients, appointments] = await runAsSystem(async () => await Promise.all([
       this.prisma.db.patient.groupBy({
         by: ['assignedDoctorId'],
         where: { assignedDoctorId: { in: [...doctorIds] } },
@@ -182,7 +185,7 @@ export class AdminDoctorRepository {
         where: { doctorId: { in: [...doctorIds] }, startsAt: { gte: since } },
         _count: { _all: true },
       }),
-    ]);
+    ]));
 
     const stats: Record<string, { patientsCount: number; appointments30d: number }> = {};
     for (const id of doctorIds) stats[id] = { patientsCount: 0, appointments30d: 0 };
@@ -210,13 +213,18 @@ export class AdminDoctorRepository {
    * that has nothing to do with the decision being taken.
    */
   upcomingAppointmentCount(doctorId: string): Promise<number> {
-    return this.prisma.db.appointment.count({
-      where: {
-        doctorId,
-        startsAt: { gte: new Date() },
-        status: { in: [...LIVE_APPOINTMENT_STATUSES] },
-      },
-    });
+    // A count, under `system` scope for the same reason as `statsFor`.
+    // Awaited inside the scope: a Prisma query is lazy and runs when awaited,
+    // so returning it unawaited would run it under the caller's context.
+    return runAsSystem(async () =>
+      await this.prisma.db.appointment.count({
+        where: {
+          doctorId,
+          startsAt: { gte: new Date() },
+          status: { in: [...LIVE_APPOINTMENT_STATUSES] },
+        },
+      }),
+    );
   }
 
   async setVerificationStatus(input: {

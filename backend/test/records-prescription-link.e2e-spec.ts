@@ -10,6 +10,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
@@ -215,7 +216,7 @@ async function prescribeFromRecord(
 
 beforeAll(async () => {
   harness = await createAuthHarness('rx-record-link');
-  sweeper = harness.app.get(PrescriptionSweepService);
+  sweeper = asJob(harness.app.get(PrescriptionSweepService));
 
   amoxilId = (
     await harness.prisma.medication.findFirstOrThrow({

@@ -138,8 +138,12 @@ export class OperationsRepository {
 
   /* ── Queue ─────────────────────────────────────────────────── */
 
-  queue() {
+  /* Every queue and waiting-room read and write is confined to one hospital
+   * (F-01, OD-07): the operator's own. */
+
+  queue(hospitalId: string) {
     return this.prisma.db.queueEntry.findMany({
+      where: { hospitalId },
       select: QUEUE_SELECT,
       // Urgent first, then longest waiting — the order a receptionist
       // works the list in, and the one the estimate assumes.
@@ -147,23 +151,24 @@ export class OperationsRepository {
     });
   }
 
-  queueEntry(id: string) {
+  queueEntry(id: string, hospitalId: string) {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.queueEntry.findUnique({ where: { id }, select: QUEUE_SELECT });
+    return this.prisma.db.queueEntry.findFirst({ where: { id, hospitalId }, select: QUEUE_SELECT });
   }
 
-  async assignRoom(id: string, roomId: string) {
-    const moved = await this.prisma.db.queueEntry.updateMany({ where: { id }, data: { roomId } });
+  async assignRoom(id: string, roomId: string, hospitalId: string) {
+    if (!UUID.test(id)) return null;
+    const moved = await this.prisma.db.queueEntry.updateMany({ where: { id, hospitalId }, data: { roomId } });
 
-    return moved.count === 0 ? null : this.queueEntry(id);
+    return moved.count === 0 ? null : this.queueEntry(id, hospitalId);
   }
 
-  async removeFromQueue(id: string): Promise<number> {
+  async removeFromQueue(id: string, hospitalId: string): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.queueEntry.updateMany({
-      where: { id },
+      where: { id, hospitalId },
       data: { deletedAt: new Date() },
     });
 
@@ -172,17 +177,18 @@ export class OperationsRepository {
 
   /* ── Waiting room ──────────────────────────────────────────── */
 
-  waitingRoom() {
+  waitingRoom(hospitalId: string) {
     return this.prisma.db.waitingRoomEntry.findMany({
+      where: { hospitalId },
       select: WAITING_SELECT,
       orderBy: { checkedInAt: 'asc' },
     });
   }
 
-  waitingEntry(id: string) {
+  waitingEntry(id: string, hospitalId: string) {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.waitingRoomEntry.findUnique({ where: { id }, select: WAITING_SELECT });
+    return this.prisma.db.waitingRoomEntry.findFirst({ where: { id, hospitalId }, select: WAITING_SELECT });
   }
 
   /**
@@ -193,11 +199,11 @@ export class OperationsRepository {
    * write and one 409 — rather than the second silently overwriting a
    * transition the first had already made.
    */
-  async transitionWaiting(id: string, from: WaitingStatus, to: WaitingStatus): Promise<number> {
+  async transitionWaiting(id: string, from: WaitingStatus, to: WaitingStatus, hospitalId: string): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.waitingRoomEntry.updateMany({
-      where: { id, status: from },
+      where: { id, hospitalId, status: from },
       data: { status: to },
     });
 
