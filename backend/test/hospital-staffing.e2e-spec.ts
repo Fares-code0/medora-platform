@@ -535,3 +535,26 @@ describe('custom roles belong to one hospital (F-17)', () => {
     expect((response.body as { code?: string }).code).toBe('clinical_standing_required');
   });
 });
+
+describe('authorization is fresh: a hospital status change applies on the next request (F-20)', () => {
+  it('stops a doctor and a Hospital Admin at once, same token, when their hospital is suspended', async () => {
+    const a = await hospital('F20 A');
+    const doctor = await seedDoctor('f20-doctor');
+    await harness.prisma.doctorEmployment.create({ data: { doctorId: doctor.doctorId, hospitalId: a } });
+    const doctorToken = (await signIn(doctor.email)).token;
+    const hospitalAdmin = await seedAdmin('f20-ha', { hospitalId: a });
+
+    expect((await request(harness.server).get('/api/v1/patients').set(as(doctorToken))).status).toBe(200);
+    expect((await request(harness.server).get('/api/v1/roles').set(as(hospitalAdmin.token))).status).toBe(200);
+
+    await harness.prisma.hospital.update({ where: { id: a }, data: { status: 'SUSPENDED' } });
+    try {
+      expect((await request(harness.server).get('/api/v1/patients').set(as(doctorToken))).status).toBe(403);
+      expect((await request(harness.server).get('/api/v1/roles').set(as(hospitalAdmin.token))).status).toBe(403);
+    } finally {
+      await harness.prisma.hospital.update({ where: { id: a }, data: { status: 'ACTIVE' } });
+    }
+    // And back, equally at once.
+    expect((await request(harness.server).get('/api/v1/patients').set(as(doctorToken))).status).toBe(200);
+  });
+});
