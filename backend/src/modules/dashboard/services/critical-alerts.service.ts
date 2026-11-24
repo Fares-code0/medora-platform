@@ -22,8 +22,8 @@
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { CriticalAlertsRepository } from '../repositories/critical-alerts.repository';
-import { DashboardRepository } from '../repositories/dashboard.repository';
 
 /** The three sources §16.3 names, as the banner spells them. */
 export type CriticalAlertKind = 'unreviewed-critical-lab' | 'allergy-conflict' | 'urgent-reschedule';
@@ -42,19 +42,20 @@ export interface CriticalAlertView {
 export class CriticalAlertsService {
   constructor(
     private readonly alerts: CriticalAlertsRepository,
-    private readonly dashboard: DashboardRepository,
+    /** S4: alerts are the doctor's active hospital's (server-derived). */
+    private readonly scope: PatientScopeService,
   ) {}
 
   async forDoctor(user: AuthenticatedUser, now = new Date()): Promise<{
     readonly alerts: readonly CriticalAlertView[];
     readonly generatedAt: string;
   }> {
-    const doctorId = await this.dashboard.doctorIdFor(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
     // No practice, no alerts — and this is the one empty answer that is
     // honest, because there is nothing to be alerted about rather than a
     // query that did not run.
-    if (doctorId === null) return { alerts: [], generatedAt: now.toISOString() };
+    if (doctor === null) return { alerts: [], generatedAt: now.toISOString() };
 
     const dayStart = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -65,9 +66,9 @@ export class CriticalAlertsService {
     // whole thing. `allSettled` here would be the defect: it would
     // return the two that worked and say nothing about the third.
     const [labs, conflicts, reschedules] = await Promise.all([
-      this.alerts.unreviewedCriticalLabs(doctorId),
-      this.alerts.todaysCriticalAlerts(doctorId, dayStart, dayEnd),
-      this.alerts.urgentReschedules(doctorId, now),
+      this.alerts.unreviewedCriticalLabs(doctor),
+      this.alerts.todaysCriticalAlerts(doctor, dayStart, dayEnd),
+      this.alerts.urgentReschedules(doctor, now),
     ]);
 
     const alerts: CriticalAlertView[] = [

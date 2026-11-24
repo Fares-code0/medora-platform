@@ -10,6 +10,14 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import {
+  assignOwned,
+  createTestHospital,
+  destroyTestHospitals,
+  employUser,
+  releaseOwnership,
+  type TestHospital,
+} from './support/hospital-fixture';
 
 /**
  * The chart's tabs and their child CRUD (RM M10.3, M10.6 — API §4.5–4.6).
@@ -27,6 +35,9 @@ import {
  *    database's generated column rather than from a client value.
  */
 let harness: AuthHarness;
+/** The suite's hospital: every doctor here is employed at it (S3/S4). */
+let hospital: TestHospital;
+const HOSPITAL_TAG = 'ptabs';
 
 const REGISTER = '/api/v1/auth/register';
 const LOGIN = '/api/v1/auth/login';
@@ -78,6 +89,13 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // A clinically usable doctor (S3/S4): verified and employed at the
+  // suite's hospital, so the charts they register are owned there.
+  const user = await harness.prisma.user.findFirstOrThrow({
+    where: { email },
+    select: { id: true },
+  });
+  await employUser(harness.prisma, user.id, hospital.id);
 
   const response = await request(harness.server)
     .post(LOGIN)
@@ -110,6 +128,7 @@ async function createPatient(token: string): Promise<string> {
 
 beforeAll(async () => {
   harness = await createAuthHarness('patients-tabs');
+  hospital = await createTestHospital(harness.prisma, HOSPITAL_TAG);
 }, 60_000);
 
 /**
@@ -135,12 +154,18 @@ async function clearCharts(): Promise<void> {
   // `TypeError` and hide it.
   if (harness === undefined || createdCharts.length === 0) return;
 
+  const charts = await harness.prisma.patient.findMany({
+    where: { publicId: { in: createdCharts } },
+    select: { id: true },
+  });
+  await releaseOwnership(harness.prisma, { patientIds: charts.map((chart) => chart.id) });
   await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   createdCharts.length = 0;
 }
 
 afterAll(async () => {
   await clearCharts();
+  if (harness !== undefined) await destroyTestHospitals(harness.prisma, HOSPITAL_TAG);
   await harness.reset();
   await harness.close();
 });
@@ -545,9 +570,8 @@ describe('notes (§4.6)', () => {
       where: { user: { email: testEmail('note-colleague') } },
       select: { id: true },
     });
-    await harness.prisma.patientDoctorAssignment.create({
-      data: { patientId: patient.id, doctorId: colleagueDoctor.id },
-    });
+    // Owned by the colleague's employment at the same hospital (S3).
+    await assignOwned(harness.prisma, { patientId: patient.id, doctorId: colleagueDoctor.id });
 
     const created = await request(harness.server)
       .post(`${PATIENTS}/${patientId}/notes`)

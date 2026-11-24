@@ -1,5 +1,7 @@
 import type { PrismaService } from '../../src/shared/database';
 
+import { releaseOwnership } from './hospital-fixture';
+
 /**
  * A minimal but complete clinic, for the schema specs from M5.6 onward.
  *
@@ -92,6 +94,10 @@ export async function destroyClinicFixture(
   prisma: PrismaService,
   fixture: ClinicFixture,
 ): Promise<void> {
+  await releaseOwnership(prisma, {
+    patientIds: [fixture.patientId],
+    doctorIds: [fixture.doctorId],
+  });
   await prisma.appointment.deleteMany({ where: { patientId: fixture.patientId } });
   await prisma.patient.deleteMany({ where: { id: fixture.patientId } });
   await prisma.doctor.deleteMany({ where: { id: fixture.doctorId } });

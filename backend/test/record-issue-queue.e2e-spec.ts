@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deleteDoctors } from './support/hospital-fixture';
 import {
   acquireDeliveryWorkerLock,
   DELIVERY_WORKER_LOCK_TIMEOUT_MS,
@@ -114,7 +115,7 @@ async function seedAdmin(local: string): Promise<{ token: string; userId: string
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+  await deleteDoctors(harness.prisma, { where: { user: { email } } });
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -210,7 +211,7 @@ afterAll(async () => {
 });
 
 beforeAll(async () => {
-  harness = await createAuthHarness('record-issue-queue');
+  harness = await createAuthHarness('record-issue-queue', { clinicalDoctors: true });
   dispatch = harness.app.get(NotificationDispatchService);
 
   doctorToken = await seedDoctor('issue-doctor');

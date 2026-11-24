@@ -1,5 +1,7 @@
 import type { PrismaService } from '../../src/shared/database';
 
+import { releaseOwnership } from './hospital-fixture';
+
 /**
  * Clinical records owned by one spec file.
  *
@@ -130,6 +132,8 @@ export async function destroyPatientRecords(prisma: PrismaService, tag: string):
 
   if (ids.length === 0) return;
 
+  // Hospital medical records restrict `patients` (S3/S4).
+  await releaseOwnership(prisma, { patientIds: ids });
   await prisma.appointment.deleteMany({ where: { patientId: { in: ids } } });
   await prisma.patient.deleteMany({ where: { id: { in: ids } } });
 }

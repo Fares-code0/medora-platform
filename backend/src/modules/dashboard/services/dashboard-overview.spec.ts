@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CacheService } from '../../../shared/cache';
 import type { DashboardRepository } from '../repositories/dashboard.repository';
 
+import type { PatientScopeService } from '../../../shared/authz';
 import type { ActionQueueService } from './action-queue.service';
 import { DashboardService } from './dashboard.service';
 
@@ -23,6 +24,7 @@ function service() {
     {} as DashboardRepository,
     {} as ActionQueueService,
     cache,
+    {} as PatientScopeService,
   );
   const composite = vi
     .spyOn(dashboard, 'composite')

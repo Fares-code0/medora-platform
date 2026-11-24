@@ -166,7 +166,7 @@ async function adminToken(): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('timestamps-utc');
+  harness = await createAuthHarness('timestamps-utc', { clinicalDoctors: true });
 
   // A doctor with a chart and a lab order part-way through its pipeline,
   // so the clinical lists carry timeline and workflow instants.

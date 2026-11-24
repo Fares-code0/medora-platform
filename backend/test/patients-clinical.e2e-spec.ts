@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned, deleteDoctors, deletePatients } from './support/hospital-fixture';
 
 /**
  * The clinician's patient surface (RM M10 — API §4.1–4.6, §4.8).
@@ -136,7 +137,9 @@ async function adminToken(local: string): Promise<string> {
   await markVerified(harness.prisma, email);
 
   const bootstrap = dataOf<SessionPayload>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const setup = await request(harness.server)
@@ -160,7 +163,7 @@ async function adminToken(local: string): Promise<string> {
   // a practitioner" is what the row answers. Leaving it in place would
   // make this fixture a doctor wearing an admin role and would test
   // nothing about administrators.
-  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+  await deleteDoctors(harness.prisma, { where: { user: { email } } });
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -204,7 +207,7 @@ async function createPatient(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('patients-clinical');
+  harness = await createAuthHarness('patients-clinical', { clinicalDoctors: true });
 }, 60_000);
 
 /**
@@ -230,7 +233,7 @@ async function clearCharts(): Promise<void> {
   // `TypeError` and hide it.
   if (harness === undefined || createdCharts.length === 0) return;
 
-  await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+  await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   createdCharts.length = 0;
 }
 
@@ -565,6 +568,8 @@ describe('the derived fields (M10.6)', () => {
           durationMin: 30,
           status: 'CONFIRMED',
           reason: 'Review',
+          // The chart's own hospital's book (S3): nextAppointment reads only it.
+          ...(await assignOwned(harness.prisma, { doctorId: doctor.id, patientId: record.id })),
         },
       });
     }
@@ -687,9 +692,7 @@ describe('allergy CRUD (§4.6, M10.4)', () => {
       .send({ allergen: 'Injected', severity: 'severe', reaction: 'None' });
 
     expect(response.status).toBe(404);
-    expect(
-      await harness.prisma.patientAllergy.count({ where: { allergen: 'Injected' } }),
-    ).toBe(0);
+    expect(await harness.prisma.patientAllergy.count({ where: { allergen: 'Injected' } })).toBe(0);
   });
 });
 
@@ -847,7 +850,12 @@ describe('PATCH and DELETE /patients/{id} (§4.8)', () => {
     await request(harness.server)
       .patch(`${PATIENTS}/${patient.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ fullName: 'Someone Else', mrn: '0000-00', dateOfBirth: '1900-01-01', status: 'active' });
+      .send({
+        fullName: 'Someone Else',
+        mrn: '0000-00',
+        dateOfBirth: '1900-01-01',
+        status: 'active',
+      });
 
     const after = await request(harness.server)
       .get(`${PATIENTS}/${patient.id}`)

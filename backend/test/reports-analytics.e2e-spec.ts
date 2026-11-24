@@ -2,6 +2,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { type AuthHarness, createAuthHarness, dataOf, errorBody } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import {
   destroyLabFixtures,
   orderTest,
@@ -87,12 +88,14 @@ async function bookAppointment(token: string, patient: string, at: Date): Promis
       status: 'COMPLETED',
       durationMin: 30,
       reason: 'Follow-up consultation',
+      // Owned by the doctor's hospital (S4): the report is that hospital's.
+      ...(await assignOwned(harness.prisma, { doctorId: me.id, patientId: doctor.id })),
     },
   });
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('reports-m21');
+  harness = await createAuthHarness('reports-m21', { clinicalDoctors: true });
 
   busyToken = await seedDoctor(harness, 'reports-busy');
   idleToken = await seedDoctor(harness, 'reports-idle');

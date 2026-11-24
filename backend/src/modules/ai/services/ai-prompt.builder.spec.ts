@@ -18,18 +18,20 @@ import type { ResolvedContext } from './ai-context.service';
  * builder started appending the patient's MRN, their chart, or the
  * contents of the bound record.
  */
-const GENERAL: ResolvedContext = { mode: 'general', patient: null, entity: null };
+const GENERAL: ResolvedContext = { mode: 'general', patient: null, entity: null, scope: null };
 
 const PATIENT: ResolvedContext = {
   mode: 'patient',
   patient: { id: 'uuid-1', publicId: 'PT-1004', fullName: 'Layla Morsi' },
   entity: null,
+  scope: null,
 };
 
 const LABS: ResolvedContext = {
   mode: 'labs',
   patient: PATIENT.patient,
   entity: { refId: 'LAB-100429', summary: 'Basic Metabolic Panel (completed)' },
+  scope: null,
 };
 
 const BALANCED = { responseLength: 'balanced', language: 'en' };

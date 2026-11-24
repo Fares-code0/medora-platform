@@ -124,7 +124,10 @@ async function adminToken(): Promise<string> {
 
   const bootstrap = (await login(email)).accessToken ?? '';
   const { secret } = dataOf<{ secret: string }>(
-    await request(harness.server).post(`${PREFIX}/me/2fa/setup`).set(auth(bootstrap)).send({ password: PASSWORD }),
+    await request(harness.server)
+      .post(`${PREFIX}/me/2fa/setup`)
+      .set(auth(bootstrap))
+      .send({ password: PASSWORD }),
   );
   await request(harness.server)
     .post(`${PREFIX}/me/2fa/enable`)
@@ -229,7 +232,7 @@ beforeAll(async () => {
     return (originalQuery as (...params: unknown[]) => unknown).apply(this, args);
   } as typeof originalQuery;
 
-  harness = await createAuthHarness('query-count');
+  harness = await createAuthHarness('query-count', { clinicalDoctors: true });
 
   amoxilId = (
     await harness.prisma.medication.findFirstOrThrow({

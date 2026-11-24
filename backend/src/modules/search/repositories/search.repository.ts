@@ -26,6 +26,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import { PrismaService } from '../../../shared/database';
 
 export interface PatientHit {
@@ -59,34 +61,30 @@ export interface NamedHit {
 export class SearchRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * The caller's `doctors` row, or `null`.
-   *
-   * `null` is not an error: an account with the doctor role and no
-   * profile row is the state immediately after an administrator changes
-   * someone's role, and the command palette should still route them
-   * around the app.
-   */
-  async doctorIdFor(userId: string): Promise<string | null> {
-    const row = await this.prisma.db.doctor.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return row?.id ?? null;
-  }
-
   /* ── Doctor scope (M26.1) ──────────────────────────────────── */
 
-  /** Live assignments only — a revoked one is not a care relationship. */
-  private scopedToDoctor(doctorId: string) {
-    return { careAssignments: { some: { doctorId, revokedAt: null } } };
+  /**
+   * Live assignments only — a revoked one is not a care relationship — and,
+   * since S3/S4, only those owned by the doctor's active employment at the
+   * active hospital (a legacy assignment with no hospital grants nothing, #17).
+   */
+  private scopedToDoctor(doctor: ClinicalEmployment) {
+    return {
+      careAssignments: {
+        some: {
+          doctorId: doctor.doctorId,
+          doctorEmploymentId: doctor.doctorEmploymentId,
+          hospitalId: doctor.hospitalId,
+          revokedAt: null,
+        },
+      },
+    };
   }
 
-  patients(doctorId: string, term: string, limit: number): Promise<PatientHit[]> {
+  patients(doctor: ClinicalEmployment, term: string, limit: number): Promise<PatientHit[]> {
     return this.prisma.db.patient.findMany({
       where: {
-        ...this.scopedToDoctor(doctorId),
+        ...this.scopedToDoctor(doctor),
         OR: [
           { fullName: { contains: term, mode: 'insensitive' } },
           { mrn: { contains: term, mode: 'insensitive' } },
@@ -109,10 +107,12 @@ export class SearchRepository {
    * also treat is their encounter, not mine, and the roster page it
    * links to would not show it.
    */
-  appointments(doctorId: string, term: string, limit: number): Promise<AppointmentHit[]> {
+  appointments(doctor: ClinicalEmployment, term: string, limit: number): Promise<AppointmentHit[]> {
     return this.prisma.db.appointment.findMany({
       where: {
-        doctorId,
+        // The active hospital's book only (S4).
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         OR: [
           { publicId: { contains: term, mode: 'insensitive' } },
           { reason: { contains: term, mode: 'insensitive' } },
@@ -131,10 +131,12 @@ export class SearchRepository {
     });
   }
 
-  records(doctorId: string, term: string, limit: number): Promise<RecordHit[]> {
+  records(doctor: ClinicalEmployment, term: string, limit: number): Promise<RecordHit[]> {
     return this.prisma.db.medicalRecord.findMany({
       where: {
-        doctorId,
+        // The active hospital's records only (S4).
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         OR: [
           { publicId: { contains: term, mode: 'insensitive' } },
           { visitType: { contains: term, mode: 'insensitive' } },

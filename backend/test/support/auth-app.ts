@@ -21,6 +21,13 @@ import { MAILER } from '../../src/shared/mail';
 import { SmtpMailer } from '../../src/shared/mail/smtp.mailer';
 
 import { SmtpSink } from './smtp-sink';
+import {
+  createTestHospital,
+  destroyTestHospitals,
+  employUser,
+  releaseOwnership,
+  type TestHospital,
+} from './hospital-fixture';
 
 /**
  * A booted application for the M6 auth specs.
@@ -81,6 +88,18 @@ export interface AuthHarness {
   close(): Promise<void>;
   /** Removes every account this suite created, and its cascade. */
   reset(): Promise<void>;
+  /**
+   * The suite's own `ACTIVE` hospital (S3/S4), created on first use and
+   * removed, with everything it owns, by `close()`. `suffix` names a second
+   * hospital, for cross-hospital negatives.
+   */
+  hospital(suffix?: string): Promise<TestHospital>;
+  /**
+   * Makes the doctor account with this email clinically usable (S3/S4,
+   * #18): verified and employed at the suite's hospital (or `suffix`'s).
+   * Returns the employment id.
+   */
+  employ(email: string, suffix?: string): Promise<string>;
 }
 
 /**
@@ -109,7 +128,19 @@ export interface HarnessOptions {
    * is *about* the layering turns this on.
    */
   readonly realPolicySource?: boolean;
+  /**
+   * S3/S4: every doctor account this suite verifies with `markVerified` is
+   * made **clinically usable** — its practice `VERIFIED` and an active
+   * employment at the suite's hospital — so the charts, records, orders and
+   * bookings it creates through the API are owned by that hospital, as they
+   * are in production. Off by default: suites about the doctor lifecycle
+   * itself (verification, employment) keep full control of those states.
+   */
+  readonly clinicalDoctors?: boolean;
 }
+
+/** The harness whose doctors `markVerified` employs (`clinicalDoctors`). */
+let clinicalHarness: AuthHarness | null = null;
 
 export async function createAuthHarness(
   suite: string,
@@ -177,6 +208,9 @@ export async function createAuthHarness(
   await app.listen(0, '127.0.0.1');
 
   const prisma = app.get(PrismaService);
+  // `hospitals.public_id` is VarChar(40): the suite name, shortened.
+  const hospitalTag = suite.replace(/[^a-z0-9]/gi, '').slice(0, 28);
+  const hospitals = new Map<string, Promise<TestHospital>>();
 
   const harness: AuthHarness = {
     domain,
@@ -185,7 +219,22 @@ export async function createAuthHarness(
     prisma,
     sink,
     policy,
+    hospital(suffix = 'a'): Promise<TestHospital> {
+      let hospital = hospitals.get(suffix);
+      if (hospital === undefined) {
+        hospital = createTestHospital(prisma, hospitalTag, suffix);
+        hospitals.set(suffix, hospital);
+      }
+      return hospital;
+    },
+    async employ(email: string, suffix = 'a'): Promise<string> {
+      const hospital = await harness.hospital(suffix);
+      const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+      return employUser(prisma, user.id, hospital.id);
+    },
     async close(): Promise<void> {
+      if (clinicalHarness === harness) clinicalHarness = null;
+      if (hospitals.size > 0) await destroyTestHospitals(prisma, hospitalTag);
       await app.close();
       await sink.stop();
     },
@@ -193,6 +242,13 @@ export async function createAuthHarness(
       // `deleteMany` on the base client, not `db`: a soft-deleted row is
       // still a row holding the unique email, and leaving it behind
       // would make the next run's registration a 409.
+      // Hospital employments restrict `doctors` (S3/S4), so the suite's
+      // doctors give up their hospital-owned rows before the cascade.
+      const doctors = await prisma.doctor.findMany({
+        where: { user: { email: { endsWith: `@${domain}` } } },
+        select: { id: true },
+      });
+      await releaseOwnership(prisma, { doctorIds: doctors.map((doctor) => doctor.id) });
       await prisma.user.deleteMany({ where: { email: { endsWith: `@${domain}` } } });
       // `login_events` survives its user by design (SET NULL), so the
       // rows have to go by address or they accumulate across runs and the
@@ -206,6 +262,7 @@ export async function createAuthHarness(
   };
 
   await harness.reset();
+  if (options.clinicalDoctors === true) clinicalHarness = harness;
   return harness;
 }
 
@@ -312,6 +369,16 @@ export function professionalNumberFor(email: string): string {
  */
 export async function markVerified(prisma: PrismaService, email: string): Promise<void> {
   await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
+
+  // `clinicalDoctors` suites: a doctor is verified and employed at the
+  // suite's hospital (S3/S4). Non-doctor accounts are left as they are.
+  if (clinicalHarness !== null) {
+    const doctor = await prisma.doctor.findFirst({
+      where: { user: { email } },
+      select: { id: true },
+    });
+    if (doctor !== null) await clinicalHarness.employ(email);
+  }
 }
 
 /**

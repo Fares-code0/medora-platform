@@ -10,6 +10,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients, ownedChart } from './support/hospital-fixture';
 
 /**
  * The prescription lifecycle (RM M13.4 — API §7.3, §7.8, §7.9, §7.10).
@@ -115,7 +116,11 @@ async function seedPatient(token: string): Promise<string> {
   return id;
 }
 
-function draftBody(patientId: string, medicationId: string, overrides: Record<string, unknown> = {}) {
+function draftBody(
+  patientId: string,
+  medicationId: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     patientId,
     medicationId,
@@ -177,7 +182,7 @@ function detail(token: string, reference: string) {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-lifecycle');
+  harness = await createAuthHarness('rx-lifecycle', { clinicalDoctors: true });
 
   const byName = async (name: string): Promise<string> =>
     (await harness.prisma.medication.findFirstOrThrow({ where: { name }, select: { id: true } }))
@@ -197,7 +202,7 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -449,6 +454,8 @@ describe('RM M13.4 verify — renew copies the source Rx correctly', () => {
     await harness.prisma.patientAllergy.create({
       data: {
         patientId: patient.id,
+        // On the patient's chart at the suite's hospital (S3).
+        ...(await ownedChart(harness.prisma, patient.id)),
         allergen: 'Penicillin',
         severity: 'SEVERE',
         reaction: 'Anaphylaxis',
@@ -510,9 +517,7 @@ describe('POST /prescriptions/{id}/discontinue and /cancel (§7.9)', () => {
     expect(discontinued.status).toBe('discontinued');
     expect(cancelled.status).toBe('discontinued');
 
-    expect(discontinued.timeline[0]?.detail).toBe(
-      'discontinue: Adverse reaction reported.',
-    );
+    expect(discontinued.timeline[0]?.detail).toBe('discontinue: Adverse reaction reported.');
     expect(cancelled.timeline[0]?.detail).toBe('cancel: Issued to the wrong patient.');
   });
 

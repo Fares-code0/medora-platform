@@ -23,11 +23,13 @@ export const ACTIVE_HOSPITAL_FILTER = {
  * (audit F4, issue #22). An allow-list for the same reason as the hospital
  * filter: `SUSPENDED`, and any state a later migration adds, fail closed.
  *
- * `VACATION` stays on the list only because it is on the Database reference
- * rule (`app_rls.effective_doctor_hospital` in
- * `prisma/rls-proposal/phase22-rls-proposal.sql`) and resolved today; the
- * owner decision on vacation and verification is still open (#18). This list
- * and that function must change together when #18 is decided.
+ * #18 (decided): `VACATION` keeps clinical access; `SUSPENDED` loses it. The
+ * Database reference rule (`app_rls.effective_doctor_hospital` in
+ * `prisma/rls-proposal/phase22-rls-proposal.sql`) uses the same list. #18
+ * also denies an unverified doctor clinical access; that predicate lives in
+ * the clinical-employment read (`prisma-hospital-patient-scope.repository.ts`),
+ * not here, because this context is also the session display and the
+ * session rules for these states are decided separately.
  */
 export const CLINICAL_PRACTICE_STATUSES: readonly DoctorPracticeStatus[] = [
   DoctorPracticeStatus.ACTIVE,

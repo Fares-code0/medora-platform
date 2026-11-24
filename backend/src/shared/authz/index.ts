@@ -71,6 +71,7 @@ export {
 export { AuthorizationGuard } from './authorization.guard';
 export { PermissionResolver } from './permission-resolver.service';
 export { PatientScopeService } from './patient-scope.service';
+export type { ClinicalEmployment, PatientClinicalScope } from './hospital-patient-scope';
 export {
   HOSPITAL_CONTEXT_REPOSITORY,
   HospitalContextService,

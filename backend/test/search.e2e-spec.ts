@@ -12,6 +12,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
 /**
@@ -83,7 +84,9 @@ async function signUpDoctor(local: string): Promise<{ token: string; doctorId: s
   await markVerified(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const user = await harness.prisma.user.findUniqueOrThrow({
@@ -104,7 +107,9 @@ async function signUpAdmin(local: string): Promise<string> {
   await markVerified(harness.prisma, email);
 
   const bootstrap = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const secret = dataOf<{ secret: string }>(
@@ -134,7 +139,7 @@ async function signUpAdmin(local: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('search-m26');
+  harness = await createAuthHarness('search-m26', { clinicalDoctors: true });
 
   const mine = await signUpDoctor('search-mine');
   const theirs = await signUpDoctor('search-theirs');
@@ -170,11 +175,16 @@ beforeAll(async () => {
     data: { fullName: `Theirs ${UNIQUE}` },
   });
 
-  await harness.prisma.patientDoctorAssignment.createMany({
-    data: [
-      { patientId: minePatient.id, doctorId: mine.doctorId, role: 'primary' },
-      { patientId: theirsPatient.id, doctorId: theirs.doctorId, role: 'primary' },
-    ],
+  // Owned by each doctor's employment at the suite's hospital (S3/S4).
+  const care = await assignOwned(harness.prisma, {
+    patientId: minePatient.id,
+    doctorId: mine.doctorId,
+    role: 'primary',
+  });
+  await assignOwned(harness.prisma, {
+    patientId: theirsPatient.id,
+    doctorId: theirs.doctorId,
+    role: 'primary',
   });
 
   const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
@@ -187,6 +197,7 @@ beforeAll(async () => {
       visitTypeId: visitType.id,
       startsAt: new Date('2026-09-20T09:00:00Z'),
       reason: `${UNIQUE} follow-up`,
+      ...care,
     },
     select: { publicId: true },
   });
@@ -202,6 +213,7 @@ beforeAll(async () => {
       chiefComplaint: `${UNIQUE} shoulder pain`,
       historyOfPresentIllness: 'n/a',
       physicalExamination: 'n/a',
+      ...care,
     },
     select: { publicId: true },
   });
@@ -211,8 +223,12 @@ beforeAll(async () => {
 afterAll(async () => {
   if (harness === undefined) return;
 
-  await harness.prisma.medicalRecord.deleteMany({ where: { publicId: { startsWith: `MR-T${TAG}` } } });
-  await harness.prisma.appointment.deleteMany({ where: { publicId: { startsWith: `APT-T${TAG}` } } });
+  await harness.prisma.medicalRecord.deleteMany({
+    where: { publicId: { startsWith: `MR-T${TAG}` } },
+  });
+  await harness.prisma.appointment.deleteMany({
+    where: { publicId: { startsWith: `APT-T${TAG}` } },
+  });
   await harness.prisma.patientDoctorAssignment.deleteMany({
     where: { patientId: { in: [minePatient.id, theirsPatient.id] } },
   });
@@ -274,9 +290,9 @@ describe('M26.1 — the doctor scope is the doctor’s own panel', () => {
     // An MRN is what a clinician reads off a wristband or a requisition,
     // and it is not on screen to copy from.
     expect(groupOf(await search(mineToken, `q=${patient.mrn}`), 'patients')).toHaveLength(1);
-    expect(
-      groupOf(await search(mineToken, `q=${minePatient.publicId}`), 'patients'),
-    ).toHaveLength(1);
+    expect(groupOf(await search(mineToken, `q=${minePatient.publicId}`), 'patients')).toHaveLength(
+      1,
+    );
   });
 
   it('carries the clear MRN, which this doctor already sees on their roster', async () => {

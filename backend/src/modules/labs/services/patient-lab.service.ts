@@ -69,12 +69,13 @@ export class PatientLabService {
     user: AuthenticatedUser,
     patientPublicId: string,
   ): Promise<PatientLabStudiesView> {
-    await this.scope.assertCanReach(principalOf(user), patientPublicId);
+    const scope = await this.scope.assertCanReach(principalOf(user), patientPublicId);
 
     const patient = await this.orders.patientByPublicId(patientPublicId);
     if (patient === null) throw AppException.notFound('Patient not found');
 
-    const rows = await this.studies.studiesFor(patient.id);
+    // The active hospital's orders only (S3, #17).
+    const rows = await this.studies.studiesFor(patient.id, scope.hospitalId);
     const truncated = rows.length > MAX_STUDIES;
     const kept = truncated ? rows.slice(0, MAX_STUDIES) : rows;
 

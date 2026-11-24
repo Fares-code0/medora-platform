@@ -116,10 +116,7 @@ async function medications(patientId: string): Promise<MedicationEntry[]> {
 }
 
 /** Drives one order all the way to a released, gradeable potassium. */
-async function releasedOrder(
-  patientId: string,
-  potassium: string,
-): Promise<StudyView['labId']> {
+async function releasedOrder(patientId: string, potassium: string): Promise<StudyView['labId']> {
   const order = await orderTest(harness, doctorToken, patientId);
   await toProcessing(harness, doctorToken, order.id, specimenBody());
 
@@ -136,7 +133,7 @@ async function releasedOrder(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('profile-agg');
+  harness = await createAuthHarness('profile-agg', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'agg-owner');
   strangerToken = await seedDoctor(harness, 'agg-stranger');

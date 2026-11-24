@@ -46,7 +46,7 @@ const SENSITIVE: readonly string[] = [
 const REFERENCE: readonly string[] = ['/meta/enums', '/medications?q=Am', '/lab-tests/catalogue'];
 
 beforeAll(async () => {
-  harness = await createAuthHarness('cache-policy-m32');
+  harness = await createAuthHarness('cache-policy-m32', { clinicalDoctors: true });
 
   const email = testEmail('cache-policy');
   await request(harness.server).post(`${API}/auth/register`).send(registrationBody({ email }));

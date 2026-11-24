@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deleteDoctors, deletePatients, assignOwned } from './support/hospital-fixture';
 
 /**
  * Appointment oversight and the time-off resolution (RM M11.5, M11.6 —
@@ -166,7 +167,7 @@ async function seedAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+  await deleteDoctors(harness.prisma, { where: { user: { email } } });
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -256,6 +257,8 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
       durationMin: 30,
       status: 'PENDING',
       reason: 'Requested by the patient',
+      // Owned by the doctor's hospital (S4): the book is that hospital's.
+      ...(await assignOwned(harness.prisma, { doctorId: doctorRow.id, patientId: patient.id })),
     },
   });
 
@@ -263,7 +266,7 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('appointments-oversight');
+  harness = await createAuthHarness('appointments-oversight', { clinicalDoctors: true });
 }, 60_000);
 
 afterAll(async () => {
@@ -273,7 +276,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -470,7 +473,17 @@ describe('POST /admin/appointments/{id}/nudge (§5.10)', () => {
 });
 
 describe('POST /admin/appointments/{id}/reassign (§5.10)', () => {
-  it('moves the appointment to another doctor of the same specialty', async () => {
+  /**
+   * Changed by S4 (owner decisions #17, DR-04, DR-07). A doctor's booking is
+   * now owned by the doctor's hospital employment, and Phase 21 makes that
+   * key immutable in place (`prevent_tenant_scope_reassignment`: "not a
+   * transfer workflow"). Before S4 this test moved an unowned booking and
+   * found it in the receiving doctor's book; an unowned booking is now in
+   * no doctor's book at all (#17). So the move is refused, cleanly, and
+   * nothing changes — moving an owned booking needs a Database transfer
+   * workflow, which is a follow-up.
+   */
+  it('refuses to move a hospital-owned booking in place, and changes nothing', async () => {
     const admin = await seedAdmin('reassign-admin');
     const from = await seedDoctor('reassign-from', 'Cardiology');
     const to = await seedDoctor('reassign-to', 'Cardiology');
@@ -481,24 +494,23 @@ describe('POST /admin/appointments/{id}/reassign (§5.10)', () => {
       .set('Authorization', `Bearer ${admin}`)
       .send({ doctorId: to.id, reason: 'Original doctor on emergency leave' });
 
-    expect(response.status).toBe(200);
-    expect(dataOf<OversightView>(response).doctorId).toBe(to.id);
+    expect(response.status).toBe(409);
+    expect(errorBody(response).code).toBe('conflict');
 
-    // The appointment is now in the receiving doctor's book, and out of
-    // the original's — the move is a scope change, not a copy.
+    // Still the original doctor's, in their book, and not the receiver's.
     const receiving = dataOf<{ items: { id: string }[] }>(
-      await request(harness.server)
-        .get(APPOINTMENTS)
-        .set('Authorization', `Bearer ${to.token}`),
+      await request(harness.server).get(APPOINTMENTS).set('Authorization', `Bearer ${to.token}`),
     );
     const original = dataOf<{ items: { id: string }[] }>(
-      await request(harness.server)
-        .get(APPOINTMENTS)
-        .set('Authorization', `Bearer ${from.token}`),
+      await request(harness.server).get(APPOINTMENTS).set('Authorization', `Bearer ${from.token}`),
     );
 
-    expect(receiving.items.map((item) => item.id)).toContain(reference);
-    expect(original.items.map((item) => item.id)).not.toContain(reference);
+    expect(receiving.items.map((item) => item.id)).not.toContain(reference);
+    expect(original.items.map((item) => item.id)).toContain(reference);
+    const events = await harness.prisma.appointmentEvent.count({
+      where: { appointment: { publicId: reference }, action: 'REASSIGNED' },
+    });
+    expect(events).toBe(0);
   });
 
   it('refuses a reassignment across specialties', async () => {
@@ -606,7 +618,10 @@ describe('POST /admin/appointments/{id}/cancel-administratively (§5.10)', () =>
 
 describe('POST /me/time-off/{id}/resolve (§5.9) — the blast radius', () => {
   /** Books a block covering the whole Monday, over `count` appointments. */
-  async function blockWith(local: string, count: number): Promise<{
+  async function blockWith(
+    local: string,
+    count: number,
+  ): Promise<{
     doctor: Doctor;
     timeOffId: string;
     references: string[];

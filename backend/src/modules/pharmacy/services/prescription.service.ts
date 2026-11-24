@@ -22,7 +22,7 @@ import {
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type {
   PrescriptionStatus,
@@ -156,8 +156,11 @@ export class PrescriptionService {
     user: AuthenticatedUser,
     input: CreatePrescriptionInput,
   ): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    await this.requireDoctor(user);
+    // The chart's scope (S3/S4): the prescription is written at the active
+    // hospital, on the patient's medical record there, under the doctor's
+    // active employment — server-derived, never client input.
+    const scope = await this.scope.assertCanReach(principalOf(user), input.patientId);
 
     const patient = await this.prescriptions.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
@@ -193,7 +196,7 @@ export class PrescriptionService {
     const record =
       input.recordId === undefined
         ? null
-        : await this.prescriptions.recordForPatient(patient.id, input.recordId);
+        : await this.prescriptions.recordForPatient(scope, input.recordId);
 
     if (input.recordId !== undefined && record === null) {
       throw AppException.validation(
@@ -208,10 +211,9 @@ export class PrescriptionService {
 
     const row = await this.prescriptions.createDraft({
       publicId: await this.prescriptions.nextReference(),
-      patientId: patient.id,
+      scope,
       medicationId: medication.id,
-      prescribingDoctorId: doctorId,
-      departmentId: await this.prescriptions.departmentIdForDoctor(doctorId),
+      departmentId: await this.prescriptions.departmentIdForDoctor(scope.doctorId),
       recordId: record?.id ?? null,
       strength: input.strength,
       dosage: input.dosage,
@@ -276,8 +278,8 @@ export class PrescriptionService {
     publicId: string,
     input: SignPrescriptionInput,
   ): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const current = await this.prescriptions.findForDoctor(doctor, publicId);
     if (current === null) throw AppException.notFound('Prescription not found');
 
     // The machine first: "this is already signed" is a different failure
@@ -301,12 +303,7 @@ export class PrescriptionService {
     // Everything below runs in one transaction, and every refusal throws
     // out of it — so a refused signature leaves no trace at all.
     const signed = await this.prescriptions.runInTransaction(async (tx) => {
-      const outcome = await this.screenForSigning(
-        user,
-        current.patient.publicId,
-        current,
-        tx,
-      );
+      const outcome = await this.screenForSigning(user, current.patient.publicId, current, tx);
 
       // 1. Allergy — no override path exists (API §7.7, UX §2.7).
       const blocking = blockingWarnings(outcome.warnings);
@@ -351,7 +348,7 @@ export class PrescriptionService {
           dosage: current.dosage,
           frequency: current.frequency,
           patientId: current.patient.id,
-          prescribingDoctorId: doctorId,
+          prescribingDoctorId: doctor.doctorId,
           startDate: current.startDate,
           endDate: current.endDate,
           // M15.2 — the visit §7.6 bound, if any. Null is the ordinary
@@ -424,10 +421,10 @@ export class PrescriptionService {
     user: AuthenticatedUser,
     query: PrescriptionListQuery,
   ): Promise<PaginatedPrescriptions> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.prescriptions.list(
-      doctorId,
+      doctor,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -451,17 +448,20 @@ export class PrescriptionService {
    * read, with the row count and the filter *names*.
    */
   async export(user: AuthenticatedUser, query: PrescriptionExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
 
     const { rows, totalItems } = await this.prescriptions.list(
-      doctorId,
+      doctor,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
     if (totalItems > EXPORT_ROW_LIMIT) throw exportTooLarge(totalItems);
 
     const now = new Date();
-    const body = toCsv(EXPORT_COLUMNS, rows.map((row) => toPrescriptionView(row, now)));
+    const body = toCsv(
+      EXPORT_COLUMNS,
+      rows.map((row) => toPrescriptionView(row, now)),
+    );
 
     await this.audit.record({
       action: 'prescription.export',
@@ -495,8 +495,8 @@ export class PrescriptionService {
     input: DiscontinuePrescriptionInput,
     act: 'cancel' | 'discontinue',
   ): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const current = await this.prescriptions.findForDoctor(doctor, publicId);
     if (current === null) throw AppException.notFound('Prescription not found');
 
     await this.scope.assertCanReach(principalOf(user), current.patient.publicId);
@@ -528,7 +528,11 @@ export class PrescriptionService {
       entityId: row.publicId,
       // The act and the reason, because the status column cannot hold
       // either: both routes write `discontinued`.
-      metadata: { act, reason: input.reason, previousStatus: prescriptionStatusToWire(current.status) },
+      metadata: {
+        act,
+        reason: input.reason,
+        previousStatus: prescriptionStatusToWire(current.status),
+      },
     });
 
     await this.outbox.publish({
@@ -556,8 +560,8 @@ export class PrescriptionService {
    * which keep the record a pharmacist may already have acted on.
    */
   async discard(user: AuthenticatedUser, publicId: string): Promise<void> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const current = await this.prescriptions.findForDoctor(doctor, publicId);
     if (current === null) throw AppException.notFound('Prescription not found');
 
     await this.scope.assertCanReach(principalOf(user), current.patient.publicId);
@@ -609,11 +613,11 @@ export class PrescriptionService {
     publicId: string,
     input: RenewPrescriptionInput,
   ): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const source = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const source = await this.prescriptions.findForDoctor(doctor, publicId);
     if (source === null) throw AppException.notFound('Prescription not found');
 
-    await this.scope.assertCanReach(principalOf(user), source.patient.publicId);
+    const scope = await this.scope.assertCanReach(principalOf(user), source.patient.publicId);
 
     // A draft is not a course that can be renewed — it was never
     // prescribed. Renewing one would produce a second draft identical to
@@ -643,6 +647,7 @@ export class PrescriptionService {
 
     const row = await this.prescriptions.renew({
       sourceId: source.id,
+      scope,
       publicId: await this.prescriptions.nextReference(),
       durationDays,
       quantity: input.quantity ?? source.quantity,
@@ -671,8 +676,8 @@ export class PrescriptionService {
     publicId: string,
     input: CreatePrescriptionNoteInput,
   ): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const current = await this.prescriptions.findForDoctor(doctor, publicId);
     if (current === null) throw AppException.notFound('Prescription not found');
 
     await this.scope.assertCanReach(principalOf(user), current.patient.publicId);
@@ -700,8 +705,8 @@ export class PrescriptionService {
 
   /** API §7.4 — the full document. */
   async detail(user: AuthenticatedUser, publicId: string): Promise<PrescriptionDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.prescriptions.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const row = await this.prescriptions.findForDoctor(doctor, publicId);
     if (row === null) throw AppException.notFound('Prescription not found');
 
     await this.scope.assertCanReach(principalOf(user), row.patient.publicId);
@@ -763,23 +768,26 @@ export class PrescriptionService {
    * dashboard it sits beside.
    */
   async summary(user: AuthenticatedUser, now = new Date()): Promise<PrescriptionSummaryView> {
-    const doctorId = await this.requireDoctor(user);
-    const dayStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
+    const doctor = await this.requireDoctor(user);
+    const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     return this.prescriptions.summaryFor(
-      doctorId,
+      doctor,
       dayStart,
       new Date(dayStart.getTime() + 24 * 60 * 60 * 1000),
     );
   }
 
-  private async requireDoctor(user: AuthenticatedUser): Promise<string> {
-    const doctorId = await this.prescriptions.doctorIdForUser(user.id);
-    if (doctorId === null) throw AppException.notFound('No doctor profile for this account');
+  /**
+   * The doctor's clinical employment (S3/S4): every prescription read and
+   * write is scoped to its hospital. No profile, no active employment, or an
+   * unverified, suspended or deleted doctor (#18, OD-12) fail closed here.
+   */
+  private async requireDoctor(user: AuthenticatedUser): Promise<ClinicalEmployment> {
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
+    if (doctor === null) throw AppException.notFound('No doctor profile for this account');
 
-    return doctorId;
+    return doctor;
   }
 
   private async actorName(user: AuthenticatedUser): Promise<string> {
@@ -788,15 +796,15 @@ export class PrescriptionService {
 }
 
 /** One translation of the wire filters, shared by the list and the export. */
-function criteriaFor(
-  query: PrescriptionExportQuery,
-  page: number,
-  pageSize: number,
-): ListCriteria {
+function criteriaFor(query: PrescriptionExportQuery, page: number, pageSize: number): ListCriteria {
   return {
     q: query.q,
-    status: query.status?.map((value) => PRESCRIPTION_STATUS_FROM_WIRE[value] as PrescriptionStatus),
-    refillStatus: query.refillStatus?.map((value) => REFILL_STATUS_FROM_WIRE[value] as RefillStatus),
+    status: query.status?.map(
+      (value) => PRESCRIPTION_STATUS_FROM_WIRE[value] as PrescriptionStatus,
+    ),
+    refillStatus: query.refillStatus?.map(
+      (value) => REFILL_STATUS_FROM_WIRE[value] as RefillStatus,
+    ),
     patientId: query.patientId,
     medication: query.medication,
     department: query.department,
@@ -838,7 +846,8 @@ const EXPORT_COLUMNS: readonly CsvColumn<PrescriptionView>[] = [
   { header: 'prescribingDoctor', value: (row) => row.prescribingDoctor },
   {
     header: 'warnings',
-    value: (row) => row.warnings.map((warning) => `${warning.severity}: ${warning.title}`).join('; '),
+    value: (row) =>
+      row.warnings.map((warning) => `${warning.severity}: ${warning.title}`).join('; '),
   },
   { header: 'signedAt', value: (row) => row.signedAt },
 ];

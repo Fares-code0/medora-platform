@@ -13,6 +13,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deleteDoctors } from './support/hospital-fixture';
 import { destroyLabFixtures, orderTest } from './support/lab-fixture';
 
 /**
@@ -115,7 +116,7 @@ async function seedAdmin(local: string): Promise<{ token: string; userId: string
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
-  await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
+  await deleteDoctors(harness.prisma, { where: { user: { email } } });
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -230,7 +231,7 @@ function expectCsvFile(response: { status: number; headers: Record<string, strin
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('clinical-exports');
+  harness = await createAuthHarness('clinical-exports', { clinicalDoctors: true });
 
   ({ token: doctorToken, userId: doctorUserId } = await seedDoctor('export-doctor'));
   ({ token: strangerToken } = await seedDoctor('export-stranger'));

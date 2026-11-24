@@ -101,6 +101,9 @@ export class LabAttachmentService {
 
     const attachment = await this.attachments.attachToOrder({
       labOrderId: current.id,
+      // The order is the doctor's active hospital's (`require` scopes it),
+      // and its report file belongs to that hospital too (DR-04).
+      hospitalId: (await this.context.requireDoctor(user)).hospitalId,
       storageKey: stored.key,
       name: input.name,
       kind: LAB_ATTACHMENT_KIND_FROM_WIRE[input.kind] as LabAttachmentKind,
@@ -156,7 +159,12 @@ export class LabAttachmentService {
       );
     }
 
-    const record = await this.attachments.recordByPublicId(input.recordId);
+    // A record at the order's hospital only (S3): the report file is that
+    // hospital's, and `validate_clinical_file_owner` refuses any other.
+    const record = await this.attachments.recordByPublicId(
+      input.recordId,
+      (await this.context.requireDoctor(user)).hospitalId,
+    );
 
     // A record on **another patient** is the same refusal as a record
     // that does not exist, and deliberately so: confirming that `MR-…`

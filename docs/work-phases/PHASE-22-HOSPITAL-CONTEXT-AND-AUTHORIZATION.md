@@ -5,6 +5,7 @@
 **Origin:** audit-derived; reconciled with the FINAL owner decisions on 2026-10-07
 **Primary Area:** Backend + Security
 **Status:** IN PROGRESS — shadow slice under review from `claude/phase22-backend-hospital-authorization` (Phase 21 merged to `main` in PR #13)
+**Enforcement (2026-11-24):** S3 and S4 are implemented (`afa04af`, `e9e3494`). The hospital-aware patient scope is authoritative, and the shadow and its flags are retired. Doctor reads, lists and writes are scoped to and stamped with the active hospital. Exact rule, coverage and gaps: `docs/multi-hospital/BACKEND_ENFORCEMENT_INVENTORY.md` §6. The "shadow mode" wording in the progress line below is historical.
 **Implementation progress:** Hospital context is server-derived, in shadow mode, and resolved lazily — only where read, at most once per request (no global interceptor). Doctor → the one active `DoctorEmployment`; Hospital Admin → the one active hospital `admin` role assignment; only an `ACTIVE`, non-deleted hospital counts; missing, ambiguous, conflicting or unmapped scope stays unresolved; Platform Admin scope is never inferred (OD-07 mapping pending); patient scope stays unresolved until a resource is known. `GET /auth/session` adds `activeHospital` / `adminScope`. `PatientScopeService` compares its unchanged legacy decision with a fail-closed hospital-aware shadow rule and logs divergence only, behind `HOSPITAL_SCOPE_SHADOW_COMPARISON`, **opt-in (default off)**: enabling it under real load requires bounded shadow query execution first (condition C1, below). No guard, query or access decision changes.
 **Valid after the final decisions:** yes
 **Depends On:** 20, 21
@@ -49,7 +50,15 @@ DR-01, DR-02, DR-04, DR-05, DR-07, DR-08, OD-07, OD-12, all FINAL.
     tests pin the legacy decisions; PostgreSQL tests cover isolation, legacy unowned assignments,
     former-hospital and ended-employment assignments, suspended/inactive/soft-deleted hospitals and
     Hospital Admin separation.
-  - [ ] Permissions in the hospital-aware rule, and switching enforcement on (needs owner approval)
+  - [x] **S3 (2026-11-24): the hospital-aware rule is authoritative.** Owner decisions #17 (legacy
+    ownership stays isolated) and #18 (VACATION allowed; unverified, suspended, terminated and deleted
+    doctors denied) applied. `PatientScopeService.canReach`/`assertCanReach` decide with
+    `decidePatientReach` (`backend/src/shared/authz/hospital-patient-scope.ts`); `assertCanReach`
+    returns the chart's scope (hospital, employment, hospital medical record). The shadow comparison,
+    its C1 bounds and the `HOSPITAL_SCOPE_SHADOW_*` variables are retired. Child rows read through a
+    reachable patient are filtered to the active hospital (`hospital_id`, never NULL).
+  - [ ] Permissions in the hospital-aware rule (DR-05 "active hospital + role + permissions" without
+    the assignment anchor) — not part of S3, which keeps the owned assignment as the anchor
 - [ ] [BACKEND] Data-access-layer enforcement across ids, lists, search, filters, exports, aggregates,
   admin endpoints, assignments, messages, AI context and caches; 404 rule; stamping; mismatch rejection
 - [ ] [BACKEND] Platform Admin vs Hospital Admin guards; explicit, audited clinical permission only
@@ -57,7 +66,13 @@ DR-01, DR-02, DR-04, DR-05, DR-07, DR-08, OD-07, OD-12, all FINAL.
   dependent grants, Break-Glass sessions and AI access; no grace period
 - [ ] [BACKEND] Server-side PHI withholding with audited reveal
 - [ ] [BACKEND] Fix F33; lock-screen re-authentication endpoint
-- [ ] [TESTING] N-1, N-6, N-7, N-8, N-9, N-10, N-11, N-23
+- [x] [BACKEND] **S4 (2026-11-24):** doctor-own lists (appointments, medical records, lab orders,
+  prescriptions, reports, dashboard, search, patient directory) filtered to the active hospital; rows
+  with no hospital excluded. Writes stamp the server-derived hospital, employment and hospital medical
+  record (patients, chart children, records, lab orders and their files, prescriptions and their
+  medication rows, appointments, AI threads, notifications pointing at owned rows)
+- [ ] [TESTING] N-1, N-6, N-7, N-8, N-9, N-10, N-11 done in `backend/test/hospital-clinical-isolation.e2e-spec.ts`
+  and `backend/test/hospital-patient-scope.e2e-spec.ts`; N-23 open
 
 ## Open findings — PR #14 security audit (2026-11-23)
 
@@ -76,9 +91,9 @@ comparison is detached from `canReach`/`assertCanReach`. F2 (log wording) is cor
 **Resource-safety audit (2026-11-23).** Shadow queries share the application's Prisma pool (10
 connections per process by default), with no enforced statement timeout and an unbounded
 connection-wait queue; because the comparison is detached, a slow database lets them accumulate.
-`HOSPITAL_SCOPE_SHADOW_COMPARISON` therefore defaults to **off**. **Condition C1 (open, #26):** before the
-shadow is enabled in any environment with real load, bound its execution — a statement timeout on the
-shadow queries and/or an in-flight cap that skips comparisons — without changing authorization.
+`HOSPITAL_SCOPE_SHADOW_COMPARISON` therefore defaulted to **off**, and C1 bounded it. **Superseded by
+S3 (2026-11-24):** the rule is authoritative, the shadow comparison and its variables are removed, and
+its query runs as an ordinary authorization query (like the legacy `isAssigned` it replaced).
 
 ## Database work package after PR #14 (2026-11-23, PR #15)
 

@@ -90,6 +90,9 @@ export class AiConversationService {
       contextMode: modeToEnum(input.context.mode),
       patientId: resolved.patient?.id ?? null,
       refPublicId: resolved.entity?.refId ?? null,
+      // S4: a patient-bound thread is owned by the chart's hospital.
+      hospitalId: resolved.scope?.hospitalId ?? null,
+      hospitalMedicalRecordId: resolved.scope?.hospitalMedicalRecordId ?? null,
     });
 
     // Audited because binding a patient to an assistant thread is an

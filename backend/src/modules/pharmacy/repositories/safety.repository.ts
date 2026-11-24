@@ -96,9 +96,13 @@ export class SafetyRepository {
   }
 
   /** Every allergy on file. Soft-deleted rows are not allergies. */
-  async allergiesFor(patientId: string, tx?: Db): Promise<readonly AllergyRow[]> {
+  async allergiesFor(
+    patientId: string,
+    hospitalId: string,
+    tx?: Db,
+  ): Promise<readonly AllergyRow[]> {
     const rows = await this.client(tx).patientAllergy.findMany({
-      where: { patientId, deletedAt: null },
+      where: { patientId, hospitalId, deletedAt: null },
       select: { allergen: true, severity: true },
       orderBy: { allergen: 'asc' },
     });
@@ -117,12 +121,14 @@ export class SafetyRepository {
    */
   async currentMedicationsFor(
     patientId: string,
+    hospitalId: string,
     options: { readonly excludePrescriptionId?: string | undefined } = {},
     tx?: Db,
   ): Promise<readonly CurrentMedicationRow[]> {
     const rows = await this.client(tx).prescription.findMany({
       where: {
         patientId,
+        hospitalId,
         deletedAt: null,
         status: { in: [...LIVE_PRESCRIPTION_STATUSES] },
         ...(options.excludePrescriptionId === undefined

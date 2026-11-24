@@ -16,6 +16,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 
 /**
  * Patient documents — API §4.7, the Documents tab's write and read paths.
@@ -176,6 +177,7 @@ async function markScanned(fileId: string, result: 'clean' | 'infected'): Promis
 
 beforeAll(async () => {
   harness = await createAuthHarness('patient-documents-d04', {
+    clinicalDoctors: true,
     overrides: [{ token: FILE_STORAGE, value: storage }],
   });
 
@@ -191,7 +193,7 @@ afterAll(async () => {
   // Charts first: `patient_documents` cascades from the patient and
   // restricts the file, so the files can go only after.
   if (createdCharts.length > 0) {
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
   await harness.prisma.file.deleteMany({ where: { originalName: { startsWith: NAME_PREFIX } } });
 

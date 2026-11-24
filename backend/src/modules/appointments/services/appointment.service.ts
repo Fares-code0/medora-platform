@@ -38,7 +38,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { AppException } from '../../../common/errors/app.exception';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { PatientScopeService, principalOf, type ClinicalEmployment } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type { AppointmentPriority, AppointmentStatus } from '../../../generated/prisma/enums';
 import {
@@ -93,13 +93,13 @@ export class AppointmentService {
 
   /** API §5.1 — the book, in list or calendar form. */
   async list(user: AuthenticatedUser, query: AppointmentListQuery): Promise<PaginatedAppointments> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
     const [timeZone, window] = await Promise.all([
       this.timezone.current(),
       Promise.resolve(calendarWindow(query)),
     ]);
 
-    const { rows, totalItems } = await this.appointments.list(doctorId, {
+    const { rows, totalItems } = await this.appointments.list(doctor, {
       from: window.from,
       to: window.to,
       status: query.status?.map((value) => STATUS_FROM_WIRE[value] as AppointmentStatus),
@@ -127,8 +127,8 @@ export class AppointmentService {
 
   /** API §5.2 — one appointment with its full history. */
   async detail(user: AuthenticatedUser, publicId: string): Promise<AppointmentDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.appointments.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const row = await this.appointments.findForDoctor(doctor, publicId);
     if (row === null) throw notFound();
 
     return toDetailView(row, await this.timezone.current(), new Date());
@@ -144,10 +144,13 @@ export class AppointmentService {
    * person who just created it.
    */
   async create(user: AuthenticatedUser, input: CreateAppointmentInput): Promise<AppointmentView> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
+    const doctorId = doctor.doctorId;
 
-    // The care relationship, before anything is resolved or written.
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    // The care relationship, before anything is resolved or written. Its
+    // scope is where the booking lives (S4): the active hospital, the
+    // patient's medical record there and the doctor's active employment.
+    const scope = await this.scope.assertCanReach(principalOf(user), input.patientId);
 
     const patient = await this.appointments.patientByPublicId(input.patientId);
     // Unreachable in practice — `assertCanReach` already 404s for a
@@ -192,8 +195,7 @@ export class AppointmentService {
       return this.appointments.create(
         {
           publicId: await this.appointments.nextReference(tx),
-          patientId: patient.id,
-          doctorId,
+          scope,
           departmentId,
           visitTypeId,
           startsAt: input.dateTime,
@@ -319,8 +321,9 @@ export class AppointmentService {
     publicId: string,
     input: RescheduleAppointmentInput,
   ): Promise<AppointmentView> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.appointments.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const doctorId = doctor.doctorId;
+    const current = await this.appointments.findForDoctor(doctor, publicId);
     if (current === null) throw notFound();
 
     const scheduling = await this.appointments.schedulingFor(doctorId);
@@ -337,7 +340,7 @@ export class AppointmentService {
     // the slot being vacated are the ones that are true now — not as of
     // the read above, which another request may have overtaken.
     const { result, previous } = await this.conflicts.underScheduleLock([doctorId], async (tx) => {
-      const locked = await this.appointments.findForDoctor(doctorId, publicId, tx);
+      const locked = await this.appointments.findForDoctor(doctor, publicId, tx);
       if (locked === null) throw notFound();
       appointmentStatusMachine.assert(locked.status, 'RESCHEDULED');
 
@@ -408,8 +411,9 @@ export class AppointmentService {
     publicId: string,
     input: ProposeSlotsInput,
   ): Promise<AppointmentDetailView> {
-    const doctorId = await this.requireDoctor(user);
-    const current = await this.appointments.findForDoctor(doctorId, publicId);
+    const doctor = await this.requireDoctor(user);
+    const doctorId = doctor.doctorId;
+    const current = await this.appointments.findForDoctor(doctor, publicId);
     if (current === null) throw notFound();
 
     appointmentStatusMachine.assert(current.status, 'AWAITING_PATIENT');
@@ -462,7 +466,7 @@ export class AppointmentService {
       metadata: { slots: input.slots.length },
     });
 
-    const refreshed = await this.appointments.findForDoctor(doctorId, publicId);
+    const refreshed = await this.appointments.findForDoctor(doctor, publicId);
     if (refreshed === null) throw notFound();
 
     return toDetailView(refreshed, timeZone, new Date());
@@ -470,11 +474,11 @@ export class AppointmentService {
 
   /** API §5.11 — the cards above the book. */
   async summary(user: AuthenticatedUser): Promise<AppointmentSummaryView> {
-    const doctorId = await this.requireDoctor(user);
+    const doctor = await this.requireDoctor(user);
     const now = new Date();
     const bounds = clinicDayBounds(await this.timezone.current(), now);
 
-    return this.appointments.summaryFor(doctorId, bounds);
+    return this.appointments.summaryFor(doctor, bounds);
   }
 
   /**
@@ -499,8 +503,8 @@ export class AppointmentService {
     readonly detail?: Readonly<Record<string, unknown>>;
     readonly metadata?: Readonly<Record<string, string | number | boolean | null>>;
   }): Promise<AppointmentView> {
-    const doctorId = await this.requireDoctor(input.user);
-    const current = await this.appointments.findForDoctor(doctorId, input.publicId);
+    const doctor = await this.requireDoctor(input.user);
+    const current = await this.appointments.findForDoctor(doctor, input.publicId);
     if (current === null) throw notFound();
 
     const timeZone = await this.timezone.current();
@@ -599,11 +603,18 @@ export class AppointmentService {
     return (await this.appointments.displayNameForUser(user.id)) ?? user.publicId;
   }
 
-  private async requireDoctor(user: AuthenticatedUser): Promise<string> {
-    const doctorId = await this.appointments.doctorIdForUser(user.id);
-    if (doctorId === null) throw notADoctor();
+  /**
+   * The doctor's clinical employment (S3/S4): the book a doctor reads and
+   * writes is the active hospital's. No profile, no active employment, or
+   * an unverified, suspended or deleted doctor (#18, OD-12) fail closed.
+   * Schedule conflicts still use the doctor's id: a doctor's time is one
+   * timeline whichever hospital a booking belongs to.
+   */
+  private async requireDoctor(user: AuthenticatedUser): Promise<ClinicalEmployment> {
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
+    if (doctor === null) throw notADoctor();
 
-    return doctorId;
+    return doctor;
   }
 
   private async resolveDepartment(name: string): Promise<string> {

@@ -154,6 +154,9 @@ export class AiConversationRepository {
     readonly contextMode: AiContextMode;
     readonly patientId: string | null;
     readonly refPublicId: string | null;
+    /** The bound chart's hospital and medical record (S4); both or neither. */
+    readonly hospitalId?: string | null;
+    readonly hospitalMedicalRecordId?: string | null;
   }): Promise<ConversationDetailRow> {
     return this.prisma.db.aiConversation.create({
       data: {
@@ -162,6 +165,15 @@ export class AiConversationRepository {
         contextMode: input.contextMode,
         ...(input.patientId === null ? {} : { patientId: input.patientId }),
         ...(input.refPublicId === null ? {} : { refPublicId: input.refPublicId }),
+        ...(input.hospitalId === undefined ||
+        input.hospitalId === null ||
+        input.hospitalMedicalRecordId === undefined ||
+        input.hospitalMedicalRecordId === null
+          ? {}
+          : {
+              hospitalId: input.hospitalId,
+              hospitalMedicalRecordId: input.hospitalMedicalRecordId,
+            }),
       },
       select: DETAIL_SELECT,
     });

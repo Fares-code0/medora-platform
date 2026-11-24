@@ -55,6 +55,8 @@ export class LabAttachmentRepository {
    */
   async attachToOrder(input: {
     readonly labOrderId: string;
+    /** The order's hospital, which owns the stored report (DR-04). */
+    readonly hospitalId: string;
     readonly storageKey: string;
     readonly name: string;
     readonly kind: LabAttachmentKind;
@@ -74,6 +76,7 @@ export class LabAttachmentRepository {
           sizeBytes: BigInt(input.sizeBytes),
           checksumSha256: input.checksumSha256,
           kind: 'lab_attachment',
+          hospitalId: input.hospitalId,
           ...uploader,
         },
         select: { id: true },
@@ -96,9 +99,9 @@ export class LabAttachmentRepository {
   }
 
   /** A record by `MR-…`, with the patient it belongs to. */
-  async recordByPublicId(publicId: string): Promise<RecordTarget | null> {
+  async recordByPublicId(publicId: string, hospitalId: string): Promise<RecordTarget | null> {
     const row = await this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, deletedAt: null },
+      where: { publicId, hospitalId, deletedAt: null },
       select: { id: true, publicId: true, patientId: true },
     });
 

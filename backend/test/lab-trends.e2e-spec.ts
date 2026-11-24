@@ -98,7 +98,7 @@ async function releaseValues(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-trends');
+  harness = await createAuthHarness('lab-trends', { clinicalDoctors: true });
 
   doctorToken = await seedDoctor(harness, 'trends-doctor');
   strangerToken = await seedDoctor(harness, 'trends-stranger');
@@ -267,8 +267,11 @@ describe('a trend is one patient history', () => {
 
   it('refuses an unauthenticated request', async () => {
     expect(
-      (await request(harness.server).get(`/api/v1/patients/${patientId}/lab-trends?analytes=Potassium`))
-        .status,
+      (
+        await request(harness.server).get(
+          `/api/v1/patients/${patientId}/lab-trends?analytes=Potassium`,
+        )
+      ).status,
     ).toBe(401);
   });
 
@@ -329,9 +332,7 @@ describe('only released, numeric results are plotted', () => {
     const released = dataOf<LabTrendsView>(
       await trends(doctorToken, patientId, '?analytes=Sodium').expect(200),
     );
-    expect(released.series[0]?.points).toHaveLength(
-      (before.series[0]?.points.length ?? 0) + 1,
-    );
+    expect(released.series[0]?.points).toHaveLength((before.series[0]?.points.length ?? 0) + 1);
   });
 
   it('windows the series by from and to', async () => {

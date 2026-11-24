@@ -16,15 +16,31 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ConfigModule } from '../src/config';
 import {
   PATIENT_ASSIGNMENT_REPOSITORY,
+  PATIENT_SELF_REPOSITORY,
   ROLE_REPOSITORY,
   AuthzKernelModule,
   PLATFORM_ROLES,
   SEEDED_MATRIX,
   normalizeMatrix,
   type PatientAssignmentRepository,
+  type PatientSelfRepository,
   type RoleRepository,
 } from '../src/shared/authz';
 import { PrismaService } from '../src/shared/database';
+
+const CLINICAL_ASSIGNMENT = {
+  revokedAt: null,
+  doctorEmployment: {
+    is: { endedAt: null, hospital: { is: { status: 'ACTIVE', deletedAt: null } } },
+  },
+  doctor: {
+    is: {
+      deletedAt: null,
+      verificationStatus: 'VERIFIED' as const,
+      practiceStatus: { in: ['ACTIVE' as const, 'VACATION' as const] },
+    },
+  },
+};
 
 describe('the authorization repositories', () => {
   let app: INestApplication;
@@ -113,7 +129,10 @@ describe('the authorization repositories', () => {
       // asserts the doctor's *user* id reaches it, which is the join the
       // port hides.
       const assignment = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
+        // S3: only an assignment the hospital-aware rule grants — owned by
+        // an active employment at an active hospital, held by a clinically
+        // usable doctor. A legacy row with no hospital answers no (#17).
+        where: CLINICAL_ASSIGNMENT,
         select: {
           doctor: { select: { userId: true } },
           patient: { select: { id: true, publicId: true } },
@@ -127,7 +146,10 @@ describe('the authorization repositories', () => {
 
     it('accepts the raw uuid as well as the public handle', async () => {
       const assignment = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
+        // S3: only an assignment the hospital-aware rule grants — owned by
+        // an active employment at an active hospital, held by a clinically
+        // usable doctor. A legacy row with no hospital answers no (#17).
+        where: CLINICAL_ASSIGNMENT,
         select: {
           doctor: { select: { userId: true } },
           patient: { select: { id: true } },
@@ -164,7 +186,10 @@ describe('the authorization repositories', () => {
       // Revocation is what ends a care relationship; a revoked row that
       // still granted access would make removing a doctor meaningless.
       const live = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
+        // S3: only an assignment the hospital-aware rule grants — owned by
+        // an active employment at an active hospital, held by a clinically
+        // usable doctor. A legacy row with no hospital answers no (#17).
+        where: CLINICAL_ASSIGNMENT,
         select: {
           id: true,
           doctor: { select: { userId: true } },
@@ -187,6 +212,18 @@ describe('the authorization repositories', () => {
       }
     });
 
+    it('answers no for a legacy assignment with no hospital (#17)', async () => {
+      const legacy = await prisma.db.patientDoctorAssignment.findFirst({
+        where: { revokedAt: null, hospitalId: null },
+        select: { doctor: { select: { userId: true } }, patient: { select: { publicId: true } } },
+      });
+      if (legacy === null) return;
+
+      expect(await assignments.isAssigned(legacy.doctor.userId, legacy.patient.publicId)).toBe(
+        false,
+      );
+    });
+
     it('answers no rather than throwing for ids that match nothing', async () => {
       const nobody = '00000000-0000-4000-8000-000000000099';
 
@@ -195,6 +232,52 @@ describe('the authorization repositories', () => {
       // "not assigned" into a 500.
       expect(await assignments.isAssigned(nobody, 'PT-DOES-NOT-EXIST')).toBe(false);
       expect(await assignments.isAssigned(nobody, nobody)).toBe(false);
+    });
+  });
+
+  describe('PrismaPatientSelfRepository', () => {
+    it('does not resolve a soft-deleted chart as the account’s own (#18 audit)', async () => {
+      const self = app.get<PatientSelfRepository>(PATIENT_SELF_REPOSITORY);
+      const suffix = String(Date.now() % 1_000_000);
+      const role = await prisma.role.findUniqueOrThrow({ where: { code: 'patient' } });
+      const user = await prisma.user.create({
+        data: {
+          publicId: `usr_selfdel${suffix}`,
+          firstName: 'Self',
+          lastName: 'Deleted',
+          displayName: 'Self Deleted',
+          email: `self-deleted-${suffix}@authz-repositories.fixture.test`,
+          phone: '+1 555 010 0001',
+          roleId: role.id,
+          termsAcceptedAt: new Date(),
+          privacyAcceptedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      const patient = await prisma.patient.create({
+        data: {
+          publicId: `PT-TSD${suffix}`,
+          mrn: `MRN-TSD${suffix}`,
+          fullName: 'Self Deleted',
+          dateOfBirth: new Date('1990-01-01'),
+          gender: 'FEMALE',
+          bloodType: 'O_POSITIVE',
+          phone: '+1 555 010 0001',
+          userId: user.id,
+        },
+        select: { id: true, publicId: true },
+      });
+
+      try {
+        expect(await self.findPatientIdByUserId(user.id)).toBe(patient.publicId);
+
+        await prisma.patient.update({ where: { id: patient.id }, data: { deletedAt: new Date() } });
+
+        expect(await self.findPatientIdByUserId(user.id)).toBeNull();
+      } finally {
+        await prisma.patient.deleteMany({ where: { id: patient.id } });
+        await prisma.user.deleteMany({ where: { id: user.id } });
+      }
     });
   });
 });

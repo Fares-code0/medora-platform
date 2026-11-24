@@ -19,6 +19,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
 /**
@@ -98,6 +99,8 @@ let ownerId = '';
 let strangerToken = '';
 let carerToken = '';
 let carerDoctorId = '';
+/** The patient's chart at the suite's hospital (S3/S4). */
+let chart = { hospitalId: '', hospitalMedicalRecordId: '' };
 let patientId = '';
 
 const as = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -133,7 +136,9 @@ async function signUpDoctor(local: string): Promise<{ token: string; userId: str
   await markVerified(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false }),
   ).accessToken;
 
   const user = await harness.prisma.user.findUniqueOrThrow({
@@ -154,6 +159,7 @@ async function markClean(fileId: string, result = 'clean'): Promise<void> {
 
 beforeAll(async () => {
   harness = await createAuthHarness('files-m25', {
+    clinicalDoctors: true,
     overrides: [{ token: FILE_STORAGE, value: storage }],
   });
 
@@ -175,9 +181,14 @@ beforeAll(async () => {
   const [record] = await createPatientRecords(harness.prisma, 'f25', 1);
   patientId = record?.id ?? '';
 
-  await harness.prisma.patientDoctorAssignment.create({
-    data: { patientId, doctorId: carerDoctorId, role: 'primary' },
+  // Owned by the carer's employment at the suite's hospital (S3), which is
+  // also where the owner's clinical uploads belong (S4).
+  const care = await assignOwned(harness.prisma, {
+    patientId,
+    doctorId: carerDoctorId,
+    role: 'primary',
   });
+  chart = { hospitalId: care.hospitalId, hospitalMedicalRecordId: care.hospitalMedicalRecordId };
 }, 90_000);
 
 afterAll(async () => {
@@ -194,7 +205,13 @@ afterAll(async () => {
 
 describe('M25.1 — upload validates per kind and stores a checksum', () => {
   it('stores the file and the hash of the bytes that arrived', async () => {
-    const response = await upload(ownerToken, 'patient_document', 'M25 referral.pdf', 'application/pdf', PDF);
+    const response = await upload(
+      ownerToken,
+      'patient_document',
+      'M25 referral.pdf',
+      'application/pdf',
+      PDF,
+    );
 
     expect(response.status, JSON.stringify(response.body)).toBe(201);
 
@@ -215,7 +232,13 @@ describe('M25.1 — upload validates per kind and stores a checksum', () => {
 
   it('refuses a MIME type the kind does not allow, and stores nothing', async () => {
     const before = storage.objects.size;
-    const response = await upload(ownerToken, 'branding_asset', 'M25 logo.pdf', 'application/pdf', PDF);
+    const response = await upload(
+      ownerToken,
+      'branding_asset',
+      'M25 logo.pdf',
+      'application/pdf',
+      PDF,
+    );
 
     expect(response.status).toBe(422);
     expect(errorBody(response).fieldErrors?.['file']?.[0]).toContain('image/png');
@@ -232,7 +255,9 @@ describe('M25.1 — upload validates per kind and stores a checksum', () => {
     const response = await upload(ownerToken, 'branding_asset', 'M25 logo.png', 'image/png', svg);
 
     expect(response.status).toBe(422);
-    expect(errorBody(response).fieldErrors?.['file']).toEqual(["The file's content is not image/png"]);
+    expect(errorBody(response).fieldErrors?.['file']).toEqual([
+      "The file's content is not image/png",
+    ]);
     expect(storage.objects.size).toBe(before);
   });
 
@@ -249,7 +274,13 @@ describe('M25.1 — upload validates per kind and stores a checksum', () => {
   });
 
   it('refuses an unknown kind', async () => {
-    const response = await upload(ownerToken, 'backup_artifact', 'M25 dump.pdf', 'application/pdf', PDF);
+    const response = await upload(
+      ownerToken,
+      'backup_artifact',
+      'M25 dump.pdf',
+      'application/pdf',
+      PDF,
+    );
 
     // `backup_artifact` is in the `files_kind_check` constraint but not
     // in API §17.1's seven — no client may mint one.
@@ -337,9 +368,9 @@ describe('API §17.2 — who may read a file', () => {
       await upload(ownerToken, 'patient_document', 'M25 mine.pdf', 'application/pdf', PDF),
     );
 
-    expect((await request(harness.server).get(`${FILES}/${file.id}`).set(as(ownerToken))).status).toBe(
-      200,
-    );
+    expect(
+      (await request(harness.server).get(`${FILES}/${file.id}`).set(as(ownerToken))).status,
+    ).toBe(200);
   });
 
   it('hides an unlinked file from everyone else', async () => {
@@ -360,6 +391,7 @@ describe('API §17.2 — who may read a file', () => {
     await harness.prisma.patientDocument.create({
       data: {
         patientId,
+        ...chart,
         name: 'Referral',
         category: 'REFERRAL',
         sizeKb: 1,
@@ -370,9 +402,9 @@ describe('API §17.2 — who may read a file', () => {
 
     // The care relationship is the authority — `PatientScopeService`,
     // the same one every clinical read goes through.
-    expect((await request(harness.server).get(`${FILES}/${file.id}`).set(as(carerToken))).status).toBe(
-      200,
-    );
+    expect(
+      (await request(harness.server).get(`${FILES}/${file.id}`).set(as(carerToken))).status,
+    ).toBe(200);
     // A doctor with no assignment to this patient is refused, and the
     // refusal does not confirm the file exists.
     expect(
@@ -439,7 +471,14 @@ describe('API §17.3 — delete is the owner’s, and is a soft delete', () => {
     );
 
     await harness.prisma.patientDocument.create({
-      data: { patientId, name: 'Scan', category: 'REPORT', sizeKb: 1, fileId: file.id },
+      data: {
+        patientId,
+        ...chart,
+        name: 'Scan',
+        category: 'REPORT',
+        sizeKb: 1,
+        fileId: file.id,
+      },
     });
 
     // The carer can read this file — asserted above for its sibling —

@@ -57,13 +57,14 @@ export class LabTrendService {
   ): Promise<LabTrendsView> {
     // A trend is patient-child data: same gate, same non-disclosing
     // refusal as every other chart read (RM M7.2, ADR-022).
-    await this.scope.assertCanReach(principalOf(user), patientPublicId);
+    const scope = await this.scope.assertCanReach(principalOf(user), patientPublicId);
 
     const patient = await this.orders.patientByPublicId(patientPublicId);
     if (patient === null) throw AppException.notFound('Patient not found');
 
     const rows = await this.trends.pointsFor({
       patientId: patient.id,
+      hospitalId: scope.hospitalId,
       analytes: query.analytes,
       from: query.from,
       to: query.to,

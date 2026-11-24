@@ -29,6 +29,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 
+import type { Prisma } from '../../../generated/prisma/client';
+
 import { BADGE_COUNTS, CacheService } from '../../../shared/cache';
 import { PrismaService } from '../../../shared/database';
 import { DomainEventRepository, type ClaimedEvent } from '../repositories/domain-event.repository';
@@ -141,6 +143,10 @@ export class NotificationDispatchService {
     });
 
     await this.prisma.$transaction(async (tx) => {
+      // A notification pointing at a hospital-owned row carries that row's
+      // patient, hospital and medical record (S4): the database's
+      // `notifications_scoped_link_trg` refuses any other combination.
+      const owner = await ownerOf(tx, target);
       const notification = await tx.notification.create({
         data: {
           recipientId: target.userId,
@@ -158,6 +164,7 @@ export class NotificationDispatchService {
           ...(target.patientId === null ? {} : { patientId: target.patientId }),
           ...(target.labOrderId === null ? {} : { labOrderId: target.labOrderId }),
           ...(target.appointmentId === null ? {} : { appointmentId: target.appointmentId }),
+          ...owner,
         },
         select: { id: true },
       });
@@ -305,4 +312,30 @@ function bodyFor(event: ClaimedEvent): string {
 
 function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * The hospital scope of the row a notification deep-links to, when that row
+ * is hospital-owned; nothing for a legacy row with no hospital (#17).
+ */
+async function ownerOf(
+  tx: Prisma.TransactionClient,
+  target: Target,
+): Promise<
+  { patientId: string; hospitalId: string; hospitalMedicalRecordId: string } | Record<string, never>
+> {
+  const select = { patientId: true, hospitalId: true, hospitalMedicalRecordId: true } as const;
+  const row =
+    target.labOrderId !== null
+      ? await tx.labOrder.findUnique({ where: { id: target.labOrderId }, select })
+      : target.appointmentId !== null
+        ? await tx.appointment.findUnique({ where: { id: target.appointmentId }, select })
+        : null;
+
+  if (row === null || row.hospitalId === null || row.hospitalMedicalRecordId === null) return {};
+  return {
+    patientId: row.patientId,
+    hospitalId: row.hospitalId,
+    hospitalMedicalRecordId: row.hospitalMedicalRecordId,
+  };
 }

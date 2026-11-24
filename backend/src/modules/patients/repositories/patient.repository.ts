@@ -52,6 +52,8 @@ const LIVE_APPOINTMENT_STATUSES = [
 
 const ALLERGY_SELECT = {
   id: true,
+  // The owning hospital, so a doctor's view keeps only its own (S3, #17).
+  hospitalId: true,
   allergen: true,
   severity: true,
   reaction: true,
@@ -133,6 +135,35 @@ export interface PatientListCriteria {
   readonly pageSize: number;
 }
 
+/** The doctor's clinical employment, from `PatientScopeService` (S3/S4). */
+export interface DoctorListScope {
+  readonly doctorId: string;
+  readonly doctorEmploymentId: string;
+  readonly hospitalId: string;
+}
+
+/** The reachable chart, from `PatientScopeService.assertCanReach`. */
+export interface ChartScope {
+  /** `patients.id` (uuid). */
+  readonly patientId: string;
+  readonly hospitalId: string;
+  readonly hospitalMedicalRecordId: string;
+}
+
+/** Read filter: this patient's rows owned by the active hospital only. */
+function owned(scope: ChartScope): { patientId: string; hospitalId: string } {
+  return { patientId: scope.patientId, hospitalId: scope.hospitalId };
+}
+
+/** Write stamp: the patient, the active hospital and its medical record. */
+function stamp(scope: ChartScope): ChartScope {
+  return {
+    patientId: scope.patientId,
+    hospitalId: scope.hospitalId,
+    hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
+  };
+}
+
 @Injectable()
 export class PatientRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -140,18 +171,18 @@ export class PatientRepository {
   /**
    * A page of patients.
    *
-   * `doctorId` is the care scope: a uuid restricts the set to that
-   * doctor's live assignments, `null` is the deliberately unscoped
-   * administrator directory. Required and nullable rather than optional,
-   * so a forgotten argument is a compile error rather than a disclosure.
+   * `doctor` is the care scope: it restricts the set to the live
+   * assignments owned by the doctor's active employment at the active
+   * hospital (S3/S4; legacy assignments with no hospital never count, #17).
+   * `null` is the deliberately unscoped administrator directory. Required
+   * and nullable rather than optional, so a forgotten argument is a compile
+   * error rather than a disclosure.
    */
   async list(
-    doctorId: string | null,
+    doctor: DoctorListScope | null,
     criteria: PatientListCriteria,
   ): Promise<{ rows: readonly PatientRow[]; totalItems: number }> {
-    if (doctorId !== null && !UUID.test(doctorId)) return { rows: [], totalItems: 0 };
-
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(doctor, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patient.findMany({
@@ -215,6 +246,7 @@ export class PatientRepository {
    */
   async nextAppointments(
     patientIds: readonly string[],
+    hospitalId: string,
   ): Promise<Readonly<Record<string, Date>>> {
     if (patientIds.length === 0) return {};
 
@@ -222,6 +254,9 @@ export class PatientRepository {
       by: ['patientId'],
       where: {
         patientId: { in: [...patientIds] },
+        // Only the active hospital's book (S3): another hospital's, or an
+        // unowned legacy appointment (#17), is not this chart's.
+        hospitalId,
         startsAt: { gte: new Date() },
         status: { in: [...LIVE_APPOINTMENT_STATUSES] },
       },
@@ -240,6 +275,13 @@ export class PatientRepository {
    * Creates the chart, its allergies and its conditions, and assigns the
    * creating doctor — all in one transaction.
    *
+   * Since S4 the chart is opened **at the doctor's active hospital**: the
+   * patient's hospital medical record there is created (OD-09: on the first
+   * real interaction), and the allergies and the care assignment are owned
+   * by it and by the doctor's employment — server-derived, never client
+   * input. An assignment created without that ownership would be invisible
+   * to the hospital-aware patient scope.
+   *
    * The assignment is not an afterthought: `PatientScopeService` decides
    * access from `patient_doctor_assignments`, so a patient created
    * without one is a chart the clinician who just registered it cannot
@@ -257,7 +299,7 @@ export class PatientRepository {
     readonly email?: string | undefined;
     readonly address?: string | undefined;
     readonly medicalNotes?: string | undefined;
-    readonly doctorId: string;
+    readonly doctor: DoctorListScope;
     readonly actorId: string;
     readonly allergies: readonly {
       readonly allergen: string;
@@ -280,7 +322,7 @@ export class PatientRepository {
           ...(input.email === undefined ? {} : { email: input.email }),
           ...(input.address === undefined ? {} : { address: input.address }),
           ...(input.medicalNotes === undefined ? {} : { medicalNotes: input.medicalNotes }),
-          assignedDoctorId: input.doctorId,
+          assignedDoctorId: input.doctor.doctorId,
           ...(UUID.test(input.actorId)
             ? { createdBy: input.actorId, updatedBy: input.actorId }
             : {}),
@@ -288,10 +330,20 @@ export class PatientRepository {
         select: { id: true },
       });
 
+      const record = await tx.hospitalMedicalRecord.create({
+        data: { patientId: patient.id, hospitalId: input.doctor.hospitalId },
+        select: { id: true },
+      });
+      const scope: ChartScope = {
+        patientId: patient.id,
+        hospitalId: input.doctor.hospitalId,
+        hospitalMedicalRecordId: record.id,
+      };
+
       if (input.allergies.length > 0) {
         await tx.patientAllergy.createMany({
           data: input.allergies.map((allergy) => ({
-            patientId: patient.id,
+            ...stamp(scope),
             allergen: allergy.allergen,
             severity: allergy.severity,
             reaction: allergy.reaction,
@@ -319,8 +371,9 @@ export class PatientRepository {
       // their primary care relationship until someone changes it.
       await tx.patientDoctorAssignment.create({
         data: {
-          patientId: patient.id,
-          doctorId: input.doctorId,
+          ...stamp(scope),
+          doctorId: input.doctor.doctorId,
+          doctorEmploymentId: input.doctor.doctorEmploymentId,
           role: 'primary',
           ...(UUID.test(input.actorId) ? { grantedBy: input.actorId } : {}),
         },
@@ -396,7 +449,7 @@ export class PatientRepository {
   }
 
   createAllergy(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly actorId: string;
     readonly allergen: string;
     readonly severity: AllergySeverity;
@@ -405,7 +458,7 @@ export class PatientRepository {
   }): Promise<AllergyRow> {
     return this.prisma.db.patientAllergy.create({
       data: {
-        patientId: input.patientId,
+        ...stamp(input.scope),
         allergen: input.allergen,
         severity: input.severity,
         reaction: input.reaction,
@@ -420,7 +473,7 @@ export class PatientRepository {
 
   /** Scoped by patient: an allergy id from another chart matches nothing. */
   async updateAllergy(
-    patientId: string,
+    scope: ChartScope,
     allergyId: string,
     actorId: string,
     data: {
@@ -433,7 +486,7 @@ export class PatientRepository {
     if (!UUID.test(allergyId)) return null;
 
     const moved = await this.prisma.db.patientAllergy.updateMany({
-      where: { id: allergyId, patientId },
+      where: { id: allergyId, ...owned(scope) },
       data: {
         ...(data.allergen === undefined ? {} : { allergen: data.allergen }),
         ...(data.severity === undefined ? {} : { severity: data.severity }),
@@ -458,46 +511,44 @@ export class PatientRepository {
    * withdrawn is a clinical fact, and the safety screen's history needs
    * to be able to say it was once believed.
    */
-  async removeAllergy(patientId: string, allergyId: string, actorId: string): Promise<number> {
+  async removeAllergy(scope: ChartScope, allergyId: string, actorId: string): Promise<number> {
     if (!UUID.test(allergyId)) return 0;
 
     const result = await this.prisma.db.patientAllergy.updateMany({
-      where: { id: allergyId, patientId },
+      where: { id: allergyId, ...owned(scope) },
       data: { deletedAt: new Date(), ...(UUID.test(actorId) ? { updatedBy: actorId } : {}) },
     });
 
     return result.count;
   }
 
-  alerts(patientId: string, activeOnly: boolean): Promise<readonly AlertRow[]> {
+  alerts(scope: ChartScope, activeOnly: boolean): Promise<readonly AlertRow[]> {
     return this.prisma.db.patientClinicalAlert.findMany({
-      where: { patientId, ...(activeOnly ? { active: true } : {}) },
+      where: { ...owned(scope), ...(activeOnly ? { active: true } : {}) },
       select: ALERT_SELECT,
       orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }],
     });
   }
 
   createAlert(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly actorId: string;
     readonly severity: AlertSeverity;
     readonly message: string;
   }): Promise<AlertRow> {
     return this.prisma.db.patientClinicalAlert.create({
       data: {
-        patientId: input.patientId,
+        ...stamp(input.scope),
         severity: input.severity,
         message: input.message,
-        ...(UUID.test(input.actorId)
-          ? { createdBy: input.actorId, updatedBy: input.actorId }
-          : {}),
+        ...(UUID.test(input.actorId) ? { createdBy: input.actorId, updatedBy: input.actorId } : {}),
       },
       select: ALERT_SELECT,
     });
   }
 
   async updateAlert(
-    patientId: string,
+    scope: ChartScope,
     alertId: string,
     actorId: string,
     data: {
@@ -510,7 +561,7 @@ export class PatientRepository {
     if (!UUID.test(alertId)) return null;
 
     const moved = await this.prisma.db.patientClinicalAlert.updateMany({
-      where: { id: alertId, patientId },
+      where: { id: alertId, ...owned(scope) },
       data: {
         ...(data.severity === undefined ? {} : { severity: data.severity }),
         ...(data.message === undefined ? {} : { message: data.message }),
@@ -531,8 +582,12 @@ export class PatientRepository {
     });
   }
 
-  /** The profile bundle's satellites, in one round trip each (API §4.4). */
-  async bundleFor(patientId: string): Promise<{
+  /**
+   * The profile bundle's satellites, in one round trip each (API §4.4).
+   * Hospital-owned satellites (vitals, medications, alerts) are the active
+   * hospital's only; conditions and contacts are patient-level.
+   */
+  async bundleFor(scope: ChartScope): Promise<{
     latestVitals: Prisma.PatientVitalSignGetPayload<{
       select: {
         recordedAt: true;
@@ -567,7 +622,7 @@ export class PatientRepository {
   }> {
     const [latestVitals, medications, conditions, emergencyContacts, alerts] = await Promise.all([
       this.prisma.db.patientVitalSign.findFirst({
-        where: { patientId },
+        where: owned(scope),
         select: {
           recordedAt: true,
           bloodPressureSystolic: true,
@@ -583,7 +638,7 @@ export class PatientRepository {
         orderBy: { recordedAt: 'desc' },
       }),
       this.prisma.db.patientMedication.findMany({
-        where: { patientId, status: 'ACTIVE' },
+        where: { ...owned(scope), status: 'ACTIVE' },
         select: {
           id: true,
           name: true,
@@ -602,15 +657,15 @@ export class PatientRepository {
         take: 10,
       }),
       this.prisma.db.patientChronicCondition.findMany({
-        where: { patientId },
+        where: { patientId: scope.patientId },
         select: { condition: { select: { name: true } } },
       }),
       this.prisma.db.patientEmergencyContact.findMany({
-        where: { patientId },
+        where: { patientId: scope.patientId },
         select: { id: true, name: true, relationship: true, phone: true, isPrimary: true },
         orderBy: { isPrimary: 'desc' },
       }),
-      this.alerts(patientId, true),
+      this.alerts(scope, true),
     ]);
 
     return {
@@ -620,18 +675,6 @@ export class PatientRepository {
       emergencyContacts,
       alerts,
     };
-  }
-
-  /** The `doctors.id` behind a user, for care scoping on the list. */
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    if (!UUID.test(userId)) return null;
-
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
   }
 
   /** The next free sequence value behind the `PT-…` handle and the MRN. */
@@ -644,7 +687,7 @@ export class PatientRepository {
   }
 
   private whereFor(
-    doctorId: string | null,
+    doctor: DoctorListScope | null,
     criteria: PatientListCriteria,
   ): Prisma.PatientWhereInput {
     const now = Date.now();
@@ -652,9 +695,18 @@ export class PatientRepository {
     return {
       // The care scope. `revokedAt: null` is what makes removing a doctor
       // from a patient's care actually remove their access.
-      ...(doctorId === null
+      ...(doctor === null
         ? {}
-        : { careAssignments: { some: { doctorId, revokedAt: null } } }),
+        : {
+            careAssignments: {
+              some: {
+                doctorId: doctor.doctorId,
+                doctorEmploymentId: doctor.doctorEmploymentId,
+                hospitalId: doctor.hospitalId,
+                revokedAt: null,
+              },
+            },
+          }),
       ...searchWhere(criteria.q, criteria.scope),
       ...(criteria.status === undefined ? {} : { status: criteria.status }),
       ...(criteria.gender === undefined ? {} : { gender: criteria.gender }),
@@ -767,9 +819,7 @@ function detectScope(q: string): NonNullable<PatientListCriteria['scope']> {
 /** The birth date of someone turning exactly `age` today, in UTC. */
 function birthDateForAge(age: number, now: number): Date {
   const today = new Date(now);
-  return new Date(
-    Date.UTC(today.getUTCFullYear() - age, today.getUTCMonth(), today.getUTCDate()),
-  );
+  return new Date(Date.UTC(today.getUTCFullYear() - age, today.getUTCMonth(), today.getUTCDate()));
 }
 
 function orderFor(sort: PatientListCriteria['sort']): Prisma.PatientOrderByWithRelationInput {

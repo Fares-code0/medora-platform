@@ -10,6 +10,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deleteDoctors, deletePatients } from './support/hospital-fixture';
 
 /**
  * The doctor's appointment book (RM M11.1–M11.4, M11.11 — API §5).
@@ -171,7 +172,7 @@ async function book(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('appointments-book');
+  harness = await createAuthHarness('appointments-book', { clinicalDoctors: true });
 }, 60_000);
 
 afterAll(async () => {
@@ -181,7 +182,7 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
-    await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
+    await deletePatients(harness.prisma, { where: { publicId: { in: createdCharts } } });
   }
 
   await harness.reset();
@@ -354,9 +355,7 @@ describe('GET /appointments (§5.1) — the book', () => {
     await book(theirs.token, theirsPatient);
 
     const page = dataOf<Page<AppointmentView>>(
-      await request(harness.server)
-        .get(APPOINTMENTS)
-        .set('Authorization', `Bearer ${mine.token}`),
+      await request(harness.server).get(APPOINTMENTS).set('Authorization', `Bearer ${mine.token}`),
     );
 
     expect(page.items).toHaveLength(1);
@@ -419,7 +418,7 @@ describe('GET /appointments (§5.1) — the book', () => {
 
   it('refuses a caller with no doctor profile', async () => {
     const doctor = await seedDoctor('no-profile');
-    await harness.prisma.doctor.deleteMany({ where: { user: { email: doctor.email } } });
+    await deleteDoctors(harness.prisma, { where: { user: { email: doctor.email } } });
 
     const response = await request(harness.server)
       .get(APPOINTMENTS)

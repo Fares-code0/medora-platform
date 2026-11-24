@@ -50,6 +50,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { PatientScopeService, principalOf } from '../../../shared/authz';
 import type {
   ActionQueueCountsView,
   ActionQueueItemView,
@@ -77,22 +78,26 @@ const MAX_ITEMS = 20;
 
 @Injectable()
 export class ActionQueueService {
-  constructor(private readonly queue: ActionQueueRepository) {}
+  constructor(
+    private readonly queue: ActionQueueRepository,
+    /** S4: the queue is the doctor's active hospital's (server-derived). */
+    private readonly scope: PatientScopeService,
+  ) {}
 
   /** API §16.2 — `GET /dashboard/doctor/action-queue`. */
   async forDoctor(user: AuthenticatedUser, now = new Date()): Promise<ActionQueueView> {
-    const doctorId = await this.queue.doctorIdForUser(user.id);
+    const doctor = await this.scope.clinicalEmployment(principalOf(user));
 
     // The four queries run together. Serially this endpoint would pay
     // four round trips for a widget UX §2.1 priority-fetches, and the
     // sources share no data, so there is nothing to sequence them for.
     const [requests, labs, notes, messages] = await Promise.all([
-      doctorId === null
+      doctor === null
         ? Promise.resolve<readonly AppointmentRequestRow[]>([])
-        : this.queue.appointmentRequests(doctorId),
-      doctorId === null
+        : this.queue.appointmentRequests(doctor),
+      doctor === null
         ? Promise.resolve<readonly CriticalLabRow[]>([])
-        : this.queue.criticalLabs(doctorId),
+        : this.queue.criticalLabs(doctor),
       // Keyed by the **user**, not the doctor: authorship is a user fact
       // (`record_notes.author_id` references `users`), and only the
       // author may sign.

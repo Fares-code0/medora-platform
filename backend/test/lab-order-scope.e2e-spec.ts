@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import { assignOwned } from './support/hospital-fixture';
 import {
   destroyLabFixtures,
   get,
@@ -72,15 +73,19 @@ async function patientUuid(publicId: string): Promise<string> {
 
 /** A consulting assignment, live or already revoked. */
 async function consult(patientPublicId: string, doctor: Doctor, revoked: boolean): Promise<string> {
-  const row = await harness.prisma.patientDoctorAssignment.create({
-    data: {
-      patientId: await patientUuid(patientPublicId),
-      doctorId: doctorIds[doctor],
-      role: 'consulting',
-      ...(revoked ? { revokedAt: new Date() } : {}),
-    },
+  // Owned by the doctor's employment at the suite's hospital (S3/S4).
+  const patientId = await patientUuid(patientPublicId);
+  await assignOwned(harness.prisma, { patientId, doctorId: doctorIds[doctor], role: 'consulting' });
+  const row = await harness.prisma.patientDoctorAssignment.findFirstOrThrow({
+    where: { patientId, doctorId: doctorIds[doctor], revokedAt: null },
     select: { id: true },
   });
+  if (revoked) {
+    await harness.prisma.patientDoctorAssignment.update({
+      where: { id: row.id },
+      data: { revokedAt: new Date() },
+    });
+  }
 
   return row.id;
 }
@@ -146,7 +151,7 @@ async function walk(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('lab-scope-m32');
+  harness = await createAuthHarness('lab-scope-m32', { clinicalDoctors: true });
 
   for (const doctor of ['A', 'B', 'C'] as const) {
     tokens[doctor] = await seedDoctor(harness, `scope-${doctor.toLowerCase()}`);

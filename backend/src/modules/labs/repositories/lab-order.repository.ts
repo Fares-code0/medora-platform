@@ -32,6 +32,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment, PatientClinicalScope } from '../../../shared/authz';
+
 import type { Prisma } from '../../../generated/prisma/client';
 import type {
   LabPriority,
@@ -79,17 +81,6 @@ export class LabOrderRepository {
     return tx ?? this.prisma;
   }
 
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    if (!UUID.test(userId)) return null;
-
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
-  }
-
   async displayNameForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
@@ -121,8 +112,10 @@ export class LabOrderRepository {
 
   /** A department by name — §8.4's optional `department` field. */
   async departmentIdByName(name: string): Promise<string | null> {
-    const row = await this.prisma.db.department.findUnique({
-      where: { name },
+    // `findFirst` with `deletedAt: null`: `findUnique` bypasses the
+    // soft-delete extension, and a deleted department files no orders.
+    const row = await this.prisma.db.department.findFirst({
+      where: { name, deletedAt: null },
       select: { id: true },
     });
 
@@ -148,10 +141,10 @@ export class LabOrderRepository {
    */
   async create(input: {
     readonly publicId: string;
-    readonly patientId: string;
+    /** The chart's scope: patient, hospital, medical record, employment (S4). */
+    readonly scope: PatientClinicalScope;
     readonly testId: string;
     readonly departmentId: string | null;
-    readonly orderedBy: string;
     readonly clinicalIndication: string;
     readonly priority: LabPriority;
     readonly actorId: string;
@@ -162,10 +155,13 @@ export class LabOrderRepository {
       const order = await tx.labOrder.create({
         data: {
           publicId: input.publicId,
-          patientId: input.patientId,
+          patientId: input.scope.patientId,
+          hospitalId: input.scope.hospitalId,
+          hospitalMedicalRecordId: input.scope.hospitalMedicalRecordId,
+          doctorEmploymentId: input.scope.doctorEmploymentId,
           testId: input.testId,
           ...(input.departmentId === null ? {} : { departmentId: input.departmentId }),
-          orderedBy: input.orderedBy,
+          orderedBy: input.scope.doctorId,
           clinicalIndication: input.clinicalIndication,
           priority: input.priority,
           status: 'ORDERED',
@@ -191,30 +187,30 @@ export class LabOrderRepository {
   }
 
   /** One order by `LAB-…`, within the caller's scope. */
-  findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
+  findForDoctor(doctor: ClinicalEmployment, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.labOrder.findFirst({
-      where: { publicId, deletedAt: null, ...visibleTo(doctorId) },
+      where: { publicId, deletedAt: null, ...visibleTo(doctor) },
       select: DETAIL_SELECT,
     });
   }
 
   /** The same lookup for a set of references — the bulk review's read. */
   findManyForDoctor(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     publicIds: readonly string[],
   ): Promise<readonly DetailRow[]> {
     return this.prisma.db.labOrder.findMany({
-      where: { publicId: { in: [...publicIds] }, deletedAt: null, ...visibleTo(doctorId) },
+      where: { publicId: { in: [...publicIds] }, deletedAt: null, ...visibleTo(doctor) },
       select: DETAIL_SELECT,
     });
   }
 
   /** API §8.2 — the worklist, one page of it. */
   async list(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     criteria: LabOrderCriteria,
   ): Promise<{ rows: readonly DetailRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(doctor, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.labOrder.findMany({
@@ -242,7 +238,7 @@ export class LabOrderRepository {
    * and `reviewedAt: null`, no extra clause that would take the query
    * off it.
    */
-  async summaryFor(doctorId: string): Promise<{
+  async summaryFor(doctor: ClinicalEmployment): Promise<{
     readonly total: number;
     readonly pending: number;
     readonly inProgress: number;
@@ -251,7 +247,7 @@ export class LabOrderRepository {
     readonly criticalUnreviewed: number;
     readonly unreviewed: number;
   }> {
-    const scope: Prisma.LabOrderWhereInput = { deletedAt: null, ...visibleTo(doctorId) };
+    const scope: Prisma.LabOrderWhereInput = { deletedAt: null, ...visibleTo(doctor) };
     const count = (where: Prisma.LabOrderWhereInput): Promise<number> =>
       this.prisma.db.labOrder.count({ where: { ...scope, ...where } });
 
@@ -313,9 +309,7 @@ export class LabOrderRepository {
           status: input.to,
           ...(input.to === 'COLLECTED' ? { collectedAt: input.at } : {}),
           ...(input.to === 'COMPLETED' ? { completedAt: input.at } : {}),
-          ...(input.interpretation === undefined
-            ? {}
-            : { interpretation: input.interpretation }),
+          ...(input.interpretation === undefined ? {} : { interpretation: input.interpretation }),
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
       });
@@ -404,11 +398,7 @@ export class LabOrderRepository {
    * blank is a compliance problem, not a cosmetic one, so the name is
    * written as well as the id.
    */
-  private async writeSpecimen(
-    tx: Db,
-    labOrderId: string,
-    specimen: SpecimenInput,
-  ): Promise<void> {
+  private async writeSpecimen(tx: Db, labOrderId: string, specimen: SpecimenInput): Promise<void> {
     const data = {
       type: specimen.type,
       container: specimen.container,
@@ -514,7 +504,7 @@ export class LabOrderRepository {
   }
 
   private whereFor(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     criteria: LabOrderCriteria,
   ): Prisma.LabOrderWhereInput {
     return {
@@ -523,7 +513,7 @@ export class LabOrderRepository {
       // `q` search below: spread side by side, the second `OR` key
       // replaced the first, and a search returned every order on the
       // platform (found at M32.3, `test/lab-order-scope.e2e-spec.ts`).
-      AND: [visibleTo(doctorId)],
+      AND: [visibleTo(doctor)],
       ...(criteria.status === undefined ? {} : { status: { in: [...criteria.status] } }),
       ...(criteria.priority === undefined ? {} : { priority: { in: [...criteria.priority] } }),
       ...(criteria.patientId === undefined ? {} : { patient: { publicId: criteria.patientId } }),
@@ -596,12 +586,29 @@ export interface SpecimenInput {
  * Both arms, because either alone loses a real case — see the file
  * header. `revokedAt: null` is what makes a revoked assignment stop
  * granting access, which is the whole point of revocation.
+ *
+ * Hospital-aware since S3/S4: only orders owned by the doctor's active
+ * hospital (`hospital_id`, never NULL — #17), and the care arm only through
+ * an assignment owned by the doctor's active employment. An order the
+ * doctor placed at a previous hospital is that hospital's (OD-12).
  */
-function visibleTo(doctorId: string): Prisma.LabOrderWhereInput {
+function visibleTo(doctor: ClinicalEmployment): Prisma.LabOrderWhereInput {
   return {
+    hospitalId: doctor.hospitalId,
     OR: [
-      { orderedBy: doctorId },
-      { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } },
+      { orderedBy: doctor.doctorId },
+      {
+        patient: {
+          careAssignments: {
+            some: {
+              doctorId: doctor.doctorId,
+              doctorEmploymentId: doctor.doctorEmploymentId,
+              hospitalId: doctor.hospitalId,
+              revokedAt: null,
+            },
+          },
+        },
+      },
     ],
   };
 }
@@ -612,9 +619,7 @@ function visibleTo(doctorId: string): Prisma.LabOrderWhereInput {
  * not the same as `unreviewed`: an order still in the analyser is in
  * nobody's inbox (the frontend's `reviewState` makes the same split).
  */
-function reviewClause(
-  reviewStatus: LabOrderCriteria['reviewStatus'],
-): Prisma.LabOrderWhereInput {
+function reviewClause(reviewStatus: LabOrderCriteria['reviewStatus']): Prisma.LabOrderWhereInput {
   switch (reviewStatus) {
     case 'reviewed':
       return { reviewedAt: { not: null } };
@@ -627,9 +632,7 @@ function reviewClause(
   }
 }
 
-function orderByFor(
-  sort: LabOrderCriteria['sort'],
-): Prisma.LabOrderOrderByWithRelationInput[] {
+function orderByFor(sort: LabOrderCriteria['sort']): Prisma.LabOrderOrderByWithRelationInput[] {
   if (sort === 'requestedAt:asc') return [{ requestedAt: 'asc' }];
 
   if (sort === 'priority:desc') {

@@ -186,12 +186,12 @@ export class LabReviewService {
     user: AuthenticatedUser,
     input: ReviewLabOrdersInput,
   ): Promise<LabReviewResult> {
-    const doctorId = await this.context.requireDoctor(user);
+    const doctor = await this.context.requireDoctor(user);
 
     // Care-scoped by the repository's own clause, so an id outside the
     // caller's scope simply does not come back — and is then reported as
     // unknown below, which discloses nothing about whether it exists.
-    const rows = await this.orders.findManyForDoctor(doctorId, input.ids);
+    const rows = await this.orders.findManyForDoctor(doctor, input.ids);
     const found = new Map(rows.map((row) => [row.publicId, row]));
 
     const missing = input.ids.filter((id) => !found.has(id));
@@ -256,7 +256,7 @@ export class LabReviewService {
       metadata: { bulk: true, references: moved.join(', '), count: moved.length, hadCritical: false },
     });
 
-    const reviewed = await this.orders.findManyForDoctor(doctorId, moved);
+    const reviewed = await this.orders.findManyForDoctor(doctor, moved);
     const now = new Date();
 
     return { reviewed: reviewed.map((row) => toLabOrderView(row, now)) };

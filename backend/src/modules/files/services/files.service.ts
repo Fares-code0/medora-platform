@@ -102,6 +102,9 @@ export class FilesService {
       checksumSha256: createHash('sha256').update(file.buffer).digest('hex'),
       kind,
       uploadedBy: user.id,
+      // S4: a doctor's clinical upload belongs to the doctor's active
+      // hospital from the start, server-derived (DR-04).
+      hospitalId: await this.access.uploadHospital(user, kind),
     });
 
     await this.audit.record({

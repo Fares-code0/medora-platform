@@ -81,18 +81,36 @@ export class FileAccessService {
     return file;
   }
 
+  /**
+   * The hospital a new upload belongs to (S4): the uploader's active
+   * hospital for a doctor's clinical upload, otherwise none. Never client
+   * input. An unowned upload can still be claimed when it is filed under a
+   * chart, record or order (the link sets it to that parent's hospital).
+   */
+  async uploadHospital(user: AuthenticatedUser, kind: string): Promise<string | null> {
+    if (!CLINICAL_KINDS.has(kind)) return null;
+    return (await this.patientScope.clinicalEmployment(principalOf(user)))?.hospitalId ?? null;
+  }
+
   private async canRead(user: AuthenticatedUser, file: FileRow): Promise<boolean> {
-    // The uploader, always. Checked first because it needs no query.
-    if (file.uploadedBy === user.id) return true;
+    // The uploader, checked first because it usually needs no query. A
+    // doctor's clinical upload already owned by a hospital stays readable
+    // only from that hospital (S3, OD-12): after the employment ends, the
+    // file is the hospital's, not the former employee's.
+    if (file.uploadedBy === user.id) return this.uploaderStillInScope(user, file);
     if (PUBLICLY_READABLE.has(file.kind)) return true;
 
     switch (file.kind) {
       case 'patient_document':
-        return this.reachesPatient(user, await this.files.patientForDocument(file.id));
+        return this.reachesPatient(user, await this.files.patientForDocument(file.id), file);
       case 'record_attachment':
-        return this.reachesPatient(user, await this.files.patientForRecordAttachment(file.id));
+        return this.reachesPatient(
+          user,
+          await this.files.patientForRecordAttachment(file.id),
+          file,
+        );
       case 'lab_attachment':
-        return this.reachesPatient(user, await this.files.patientForLabAttachment(file.id));
+        return this.reachesPatient(user, await this.files.patientForLabAttachment(file.id), file);
       case 'message_attachment':
         return (await this.files.participantsForMessageAttachment(file.id)).includes(user.id);
       case 'verification_document':
@@ -111,20 +129,41 @@ export class FileAccessService {
     }
   }
 
-  /** Care relationship, or the patient reading their own file. */
+  /**
+   * Care relationship **at the file's hospital** (S3: a chart reachable at
+   * hospital A does not open hospital B's attachment, nor an unowned one,
+   * #17), or the patient reading their own file.
+   */
   private async reachesPatient(
     user: AuthenticatedUser,
     patientId: string | null,
+    file: FileRow,
   ): Promise<boolean> {
     if (patientId === null) return false;
 
     const principal = principalOf(user);
 
-    if (await this.patientScope.canReach(principal, patientId)) return true;
+    const decision = await this.patientScope.decide(principal, patientId);
+    if (decision.allowed) return file.hospitalId === decision.scope.hospitalId;
 
     return (await this.selfScope.patientIdFor(principal)) === patientId;
   }
+
+  private async uploaderStillInScope(user: AuthenticatedUser, file: FileRow): Promise<boolean> {
+    if (file.hospitalId === null || user.role !== 'doctor' || !CLINICAL_KINDS.has(file.kind)) {
+      return true;
+    }
+    const employment = await this.patientScope.clinicalEmployment(principalOf(user));
+    return employment?.hospitalId === file.hospitalId;
+  }
 }
+
+/** Kinds that hang off a patient's chart and are therefore hospital-owned (DR-04). */
+const CLINICAL_KINDS: ReadonlySet<string> = new Set([
+  'patient_document',
+  'record_attachment',
+  'lab_attachment',
+]);
 
 function notFound(): AppException {
   return AppException.notFound('File not found');

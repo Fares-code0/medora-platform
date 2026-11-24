@@ -9,6 +9,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { deletePatients } from './support/hospital-fixture';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
 /**
@@ -210,7 +211,7 @@ async function prescribeFromRecord(
 }
 
 beforeAll(async () => {
-  harness = await createAuthHarness('rx-record-link');
+  harness = await createAuthHarness('rx-record-link', { clinicalDoctors: true });
   sweeper = harness.app.get(PrescriptionSweepService);
 
   amoxilId = (
@@ -234,7 +235,7 @@ afterAll(async () => {
     // CASCADE and the rows would otherwise outlive nothing.
     await harness.prisma.prescription.deleteMany({ where: owned });
     await harness.prisma.medicalRecord.deleteMany({ where: owned });
-    await harness.prisma.patient.deleteMany({
+    await deletePatients(harness.prisma, {
       where: { publicId: { in: createdCharts } },
     });
   }
@@ -454,9 +455,7 @@ describe('a hand-documented medication is nobody’s to move', () => {
 
     const record = await readRecord(token, recordId);
 
-    expect(
-      record.medications.map((entry) => [entry.name, entry.prescriptionId]).sort(),
-    ).toEqual([
+    expect(record.medications.map((entry) => [entry.name, entry.prescriptionId]).sort()).toEqual([
       ['Amoxil', draft.id],
       ['Vitamin D', null],
     ]);

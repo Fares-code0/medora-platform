@@ -1,5 +1,7 @@
 import type { PrismaService } from '../../src/shared/database';
 
+import { releaseOwnership } from './hospital-fixture';
+
 /**
  * A `doctors` row owned by one spec file.
  *
@@ -63,10 +65,7 @@ export interface DoctorRecord {
  * away mid-file, which is the very failure the helper exists to prevent,
  * only self-inflicted. Teardown is explicit instead.
  */
-export async function createTestDoctor(
-  prisma: PrismaService,
-  tag: string,
-): Promise<DoctorRecord> {
+export async function createTestDoctor(prisma: PrismaService, tag: string): Promise<DoctorRecord> {
   const licenseNumber = `${TEST_DOCTOR_PREFIX}${tag}`;
   const contactEmail = `doctor@${tag}.doctor.fixture.test`;
 
@@ -138,6 +137,8 @@ export async function destroyTestDoctor(prisma: PrismaService, tag: string): Pro
 
   if (doctor === null) return;
 
+  // Hospital employments restrict `doctors` (S3/S4).
+  await releaseOwnership(prisma, { doctorIds: [doctor.id] });
   await prisma.appointment.deleteMany({ where: { doctorId: doctor.id } });
   await prisma.doctor.deleteMany({ where: { id: doctor.id } });
   await prisma.user.deleteMany({ where: { id: doctor.userId } });
