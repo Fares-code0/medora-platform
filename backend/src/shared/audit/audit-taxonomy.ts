@@ -23,11 +23,7 @@
 
 /** API §14.1's five categories. */
 export type AuditCategory =
-  | 'authentication'
-  | 'security'
-  | 'user_action'
-  | 'admin_activity'
-  | 'system';
+  'authentication' | 'security' | 'user_action' | 'admin_activity' | 'system';
 
 /** API §14.1's three severities. */
 export type AuditSeverity = 'info' | 'warning' | 'critical';
@@ -52,6 +48,10 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // Unmasking a patient's identity (M7.3) is reaching past the masking
   // boundary — the same kind of act as reading message content.
   patient_identity: 'security',
+  // Reading a record of unknown ownership under the prescription-safety
+  // exception to #17 (owner decision 2026-11-24) is reaching past the
+  // hospital-isolation boundary — the same kind of act as unmasking.
+  legacy_clinical_record: 'security',
   // Re-sealing stored second factors under a new envelope key (M37 key
   // rotation) changes nothing about who may sign in, but it rewrites the
   // ciphertext every second factor depends on.
@@ -166,6 +166,10 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
 
   // Clinical acts whose reversal is expensive or whose subject is gone.
   'patient.deactivate': 'warning',
+  // A record with no owning hospital, read under the prescription-safety
+  // exception to #17 (owner decision 2026-11-24): an exception path, so an
+  // investigator finds it first.
+  'legacy_clinical_record.read': 'warning',
   'appointment.cancel_administratively': 'warning',
   'medical_record.report_issue': 'warning',
   'file.delete': 'warning',
@@ -193,6 +197,7 @@ const PARTICIPLES: Readonly<Record<string, string>> = {
   reauthenticate: 're-authenticated',
   reauthenticate_failed: 're-authentication failed',
   add: 'added',
+  read: 'read',
   download: 'downloaded',
   export: 'exported',
   reassign: 'reassigned',

@@ -469,6 +469,19 @@ How the #16 questions are settled by this and by OD-07:
   returns them). Historical content is preserved.
 - Unknown legacy rows do **not** block S3, S4 or RLS.
 
+**Clinical-safety exception (decided 2026-11-24).**
+- Prescription safety checks (allergy and drug-interaction screening) **must** include legacy
+  allergies and medications with no hospital, for a doctor who already has a live care assignment to
+  that patient. Never silently drop them.
+- They are shown marked "legacy record, source hospital unknown".
+- Every read of a legacy allergy or medication record is audited.
+- The exception covers only allergies and active medications, for safety. All other legacy rows stay
+  hidden.
+- It must not grant access to any patient the doctor cannot already reach.
+
+**Hard deployment prerequisite (decided 2026-11-24).** The S2 ownership backfill must run, and its
+results must be reviewed by the Product Owner, **before any deployment**.
+
 ### Doctor lifecycle (#18)
 
 | State | Login | Clinical access |

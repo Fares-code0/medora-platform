@@ -74,18 +74,43 @@ export const LIVE_PRESCRIPTION_STATUSES: readonly PrescriptionStatus[] = [
 ];
 
 export interface AllergyRow {
+  readonly id: string;
   readonly allergen: string;
   readonly severity: string;
+  /**
+   * A legacy row with no owning hospital (#17), read only under the
+   * prescription-safety exception (owner decision 2026-11-24).
+   */
+  readonly legacy: boolean;
 }
 
 export interface CurrentMedicationRow {
+  /** Internal id, for the legacy-read audit. */
+  readonly id: string;
   readonly prescriptionId: string;
   readonly medicationId: string;
   readonly name: string;
   readonly genericName: string;
   readonly category: string;
   readonly isHighRisk: boolean;
+  /** See `AllergyRow.legacy`. */
+  readonly legacy: boolean;
 }
+
+/**
+ * The owner's clinical-safety exception to #17 (2026-11-24):
+ *
+ * > Prescription safety checks (allergy and drug-interaction screening) MUST
+ * > include legacy allergies and medications with no hospital, for a doctor
+ * > who already has a live care assignment to that patient. Never silently
+ * > drop them.
+ *
+ * `hospital_id IS NULL` is the legacy marker. These reads exist only for the
+ * screen, run only after `assertCanReach` has passed (so they never reach a
+ * patient the doctor cannot already reach), and are audited by the caller.
+ * Every other legacy row stays hidden.
+ */
+const LEGACY = { hospitalId: null } as const;
 
 @Injectable()
 export class SafetyRepository {
@@ -101,13 +126,31 @@ export class SafetyRepository {
     hospitalId: string,
     tx?: Db,
   ): Promise<readonly AllergyRow[]> {
+    return this.allergies({ patientId, hospitalId }, false, tx);
+  }
+
+  /** The patient's legacy allergies (no owning hospital) — the safety exception. */
+  async legacyAllergiesFor(patientId: string, tx?: Db): Promise<readonly AllergyRow[]> {
+    return this.allergies({ patientId, ...LEGACY }, true, tx);
+  }
+
+  private async allergies(
+    where: { patientId: string; hospitalId: string | null },
+    legacy: boolean,
+    tx?: Db,
+  ): Promise<readonly AllergyRow[]> {
     const rows = await this.client(tx).patientAllergy.findMany({
-      where: { patientId, hospitalId, deletedAt: null },
-      select: { allergen: true, severity: true },
+      where: { ...where, deletedAt: null },
+      select: { id: true, allergen: true, severity: true },
       orderBy: { allergen: 'asc' },
     });
 
-    return rows.map((row) => ({ allergen: row.allergen, severity: row.severity }));
+    return rows.map((row) => ({
+      id: row.id,
+      allergen: row.allergen,
+      severity: row.severity,
+      legacy,
+    }));
   }
 
   /**
@@ -125,10 +168,27 @@ export class SafetyRepository {
     options: { readonly excludePrescriptionId?: string | undefined } = {},
     tx?: Db,
   ): Promise<readonly CurrentMedicationRow[]> {
+    return this.medications({ patientId, hospitalId }, false, options, tx);
+  }
+
+  /** The patient's live legacy prescriptions (no owning hospital) — the safety exception. */
+  async legacyCurrentMedicationsFor(
+    patientId: string,
+    options: { readonly excludePrescriptionId?: string | undefined } = {},
+    tx?: Db,
+  ): Promise<readonly CurrentMedicationRow[]> {
+    return this.medications({ patientId, ...LEGACY }, true, options, tx);
+  }
+
+  private async medications(
+    where: { patientId: string; hospitalId: string | null },
+    legacy: boolean,
+    options: { readonly excludePrescriptionId?: string | undefined },
+    tx?: Db,
+  ): Promise<readonly CurrentMedicationRow[]> {
     const rows = await this.client(tx).prescription.findMany({
       where: {
-        patientId,
-        hospitalId,
+        ...where,
         deletedAt: null,
         status: { in: [...LIVE_PRESCRIPTION_STATUSES] },
         ...(options.excludePrescriptionId === undefined
@@ -136,6 +196,7 @@ export class SafetyRepository {
           : { NOT: { id: options.excludePrescriptionId } }),
       },
       select: {
+        id: true,
         publicId: true,
         medicationId: true,
         medication: {
@@ -146,13 +207,14 @@ export class SafetyRepository {
     });
 
     return rows.map((row) => ({
+      id: row.id,
       prescriptionId: row.publicId,
       medicationId: row.medicationId,
       name: row.medication.name,
       genericName: row.medication.genericName,
       category: row.medication.category,
       isHighRisk: row.medication.isHighRisk,
+      legacy,
     }));
   }
-
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   blockingWarnings,
+  LEGACY_MARK,
   screenPrescription,
   warningsNeedingAcknowledgment,
   type CurrentMedication,
@@ -382,9 +383,7 @@ describe('rule 3 — duplicate therapy', () => {
     expect(result.warnings[0]?.kind).toBe('duplicate');
     expect(result.warnings[0]?.severity).toBe('critical');
     expect(result.warnings[0]?.blocking).toBe(false);
-    expect(result.warnings[0]?.title).toBe(
-      'Duplicate therapy — Amoxicillin is already active',
-    );
+    expect(result.warnings[0]?.title).toBe('Duplicate therapy — Amoxicillin is already active');
     expect(result.warnings[0]?.detail).toContain('doubles the dose');
     expect(result.warnings[0]?.against).toEqual(['Trimox · RX-200007']);
     expect(result.blocking).toBe(false);
@@ -407,9 +406,7 @@ describe('rule 3 — duplicate therapy', () => {
 
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0]?.severity).toBe('warning');
-    expect(result.warnings[0]?.title).toBe(
-      'Duplicate therapy — another antibiotics is active',
-    );
+    expect(result.warnings[0]?.title).toBe('Duplicate therapy — another antibiotics is active');
     expect(result.warnings[0]?.against).toEqual(['Zithromax (Azithromycin)']);
   });
 
@@ -472,9 +469,7 @@ describe('rule 3 — duplicate therapy', () => {
   it('reports nothing when nothing overlaps', () => {
     const result = screenPrescription(
       subject({
-        currentMedications: [
-          medication({ genericName: 'Warfarin', category: 'Anticoagulants' }),
-        ],
+        currentMedications: [medication({ genericName: 'Warfarin', category: 'Anticoagulants' })],
       }),
     );
 
@@ -625,5 +620,88 @@ describe('the selectors M13.3 signs against', () => {
 
   it('reports no blocking warnings on a clear screen', () => {
     expect(blockingWarnings(screenPrescription(subject()).warnings)).toEqual([]);
+  });
+});
+
+describe('legacy rows — the prescription-safety exception (owner decision 2026-11-24)', () => {
+  const MARK = `(${LEGACY_MARK})`;
+
+  it('blocks on a legacy allergy exactly as on any other, and names it as legacy', () => {
+    const result = screenPrescription(
+      subject({ allergies: [{ allergen: 'Penicillin', severity: 'severe', legacy: true }] }),
+    );
+
+    expect(result.blocking).toBe(true);
+    expect(result.warnings[0]?.kind).toBe('allergy');
+    expect(result.warnings[0]?.severity).toBe('critical');
+    expect(result.warnings[0]?.against).toEqual([`Recorded allergy: Penicillin ${MARK}`]);
+    expect(result.warnings[0]?.detail).toContain(`Penicillin ${MARK}`);
+  });
+
+  it('marks only the legacy allergy when an owned one matches too', () => {
+    const result = screenPrescription(
+      subject({
+        allergies: [
+          { allergen: 'Penicillin', severity: 'moderate' },
+          { allergen: 'Amoxicillin', severity: 'mild', legacy: true },
+        ],
+      }),
+    );
+
+    expect(result.warnings[0]?.against).toEqual([
+      'Recorded allergy: Penicillin',
+      `Recorded allergy: Amoxicillin ${MARK}`,
+    ]);
+  });
+
+  it('names a legacy interaction partner as legacy', () => {
+    const result = screenPrescription(
+      subject({
+        currentMedications: [medication({ legacy: true })],
+        interactions: [
+          {
+            partnerMedicationId: 'med-warfarin',
+            severity: 'critical',
+            title: 'Warfarin × Amoxicillin',
+            detail: 'Broad-spectrum antibiotics raise INR.',
+            management: null,
+          },
+        ],
+      }),
+    );
+
+    expect(result.warnings[0]?.against).toEqual([`Coumadin (Warfarin) ${MARK}`]);
+    expect(result.warnings[0]?.detail).toContain(MARK);
+  });
+
+  it('names a legacy duplicate — exact and same-class — as legacy', () => {
+    const exact = screenPrescription(
+      subject({
+        currentMedications: [
+          medication({
+            medicationId: 'med-amoxil-2',
+            name: 'Amoxil',
+            genericName: 'Amoxicillin',
+            legacy: true,
+          }),
+        ],
+      }),
+    );
+    expect(exact.warnings[0]?.against).toEqual([`Amoxil · RX-200001 ${MARK}`]);
+
+    const sameClass = screenPrescription(
+      subject({
+        currentMedications: [
+          medication({
+            medicationId: 'med-augmentin',
+            name: 'Augmentin',
+            genericName: 'Co-amoxiclav',
+            category: 'Antibiotics',
+            legacy: true,
+          }),
+        ],
+      }),
+    );
+    expect(sameClass.warnings[0]?.against).toEqual([`Augmentin (Co-amoxiclav) ${MARK}`]);
   });
 });

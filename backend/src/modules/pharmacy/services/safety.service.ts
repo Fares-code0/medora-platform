@@ -21,12 +21,25 @@
  * That is PHI, so `assertCanReach` runs before any of it is read, and a
  * patient outside the caller's care answers 404 identically to one that
  * does not exist (ADR-022).
+ *
+ * ## Legacy allergies and medications (owner decision 2026-11-24)
+ *
+ * A clinical-safety exception to #17: the screen also reads the patient's
+ * allergies and live prescriptions that have **no owning hospital** (legacy
+ * rows), because silently dropping a known allergy from an allergy check is
+ * the worse failure. Only after `assertCanReach` has passed — the doctor
+ * already holds a live care assignment, so no patient becomes reachable that
+ * was not — and only allergies and active medications. Every warning names
+ * them as "legacy record, source hospital unknown", and every run that read
+ * one writes a `legacy_clinical_record.read` audit event listing them. Every
+ * other legacy row stays hidden.
  */
 
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
+import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { MedicationRepository } from '../repositories/medication.repository';
 import { PrescriptionRepository, type Db } from '../repositories/prescription.repository';
@@ -74,6 +87,7 @@ export class SafetyService {
     private readonly safety: SafetyRepository,
     private readonly scope: PatientScopeService,
     @Inject(INTERACTION_SOURCE) private readonly interactions: InteractionSource,
+    @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
   ) {}
 
   /**
@@ -84,11 +98,7 @@ export class SafetyService {
    * means: §7.5 reports it as a 503-class failure, §7.7 turns it into
    * 409 `safety_check_unavailable` and leaves the prescription in draft.
    */
-  async screen(
-    user: AuthenticatedUser,
-    request: ScreenRequest,
-    tx?: Db,
-  ): Promise<ScreenOutcome> {
+  async screen(user: AuthenticatedUser, request: ScreenRequest, tx?: Db): Promise<ScreenOutcome> {
     // The screen reads the active hospital's allergies and prescriptions
     // only (S3, DR-04; #17 isolates rows with no hospital).
     const scope = await this.scope.assertCanReach(principalOf(user), request.patientId);
@@ -100,21 +110,39 @@ export class SafetyService {
 
     const medication = await this.medications.findById(request.medicationId);
     if (medication === null) {
-      throw AppException.validation(
-        { medicationId: ['Unknown medication'] },
-        'Unknown medication',
-      );
+      throw AppException.validation({ medicationId: ['Unknown medication'] }, 'Unknown medication');
     }
 
-    const [allergies, current] = await Promise.all([
+    const exclude = { excludePrescriptionId: request.excludePrescriptionId };
+    const [owned, legacyAllergies, ownedCurrent, legacyCurrent] = await Promise.all([
       this.safety.allergiesFor(patient.id, scope.hospitalId, tx),
-      this.safety.currentMedicationsFor(
-        patient.id,
-        scope.hospitalId,
-        { excludePrescriptionId: request.excludePrescriptionId },
-        tx,
-      ),
+      // The safety exception: reached only past `assertCanReach` above.
+      this.safety.legacyAllergiesFor(patient.id, tx),
+      this.safety.currentMedicationsFor(patient.id, scope.hospitalId, exclude, tx),
+      this.safety.legacyCurrentMedicationsFor(patient.id, exclude, tx),
     ]);
+    const allergies = [...owned, ...legacyAllergies];
+    const current = [...ownedCurrent, ...legacyCurrent];
+
+    if (legacyAllergies.length > 0 || legacyCurrent.length > 0) {
+      // Every read of a legacy allergy or medication is audited — under the
+      // reader's hospital, naming each record read. Metadata only: ids and
+      // counts, never the allergen or drug.
+      await this.audit.record({
+        action: 'legacy_clinical_record.read',
+        actor: { userId: user.id, role: user.role },
+        entityType: 'patient',
+        entityId: patient.publicId,
+        hospitalId: scope.hospitalId,
+        metadata: {
+          purpose: 'prescription_safety_screen',
+          legacyAllergyCount: legacyAllergies.length,
+          legacyAllergyIds: legacyAllergies.map((row) => row.id).join(','),
+          legacyPrescriptionCount: legacyCurrent.length,
+          legacyPrescriptionIds: legacyCurrent.map((row) => row.prescriptionId).join(','),
+        },
+      });
+    }
 
     const currentMedications: readonly CurrentMedication[] = current.map((row) => ({
       prescriptionId: row.prescriptionId,
@@ -123,6 +151,7 @@ export class SafetyService {
       genericName: row.genericName,
       category: row.category,
       isHighRisk: row.isHighRisk,
+      legacy: row.legacy,
     }));
 
     // Throws on failure. Deliberately not caught here — see the docblock.
@@ -148,6 +177,7 @@ export class SafetyService {
       allergies: allergies.map((allergy) => ({
         allergen: allergy.allergen,
         severity: allergy.severity,
+        legacy: allergy.legacy,
       })),
       medicationId: medication.id,
       brandName: medication.name,

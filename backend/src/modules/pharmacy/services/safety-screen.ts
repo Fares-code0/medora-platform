@@ -82,6 +82,17 @@ export interface ScreenWarning {
   readonly blocking: boolean;
 }
 
+/**
+ * How a legacy row (no owning hospital, #17) is named wherever a warning
+ * shows it — the owner's safety exception of 2026-11-24 requires it to be
+ * shown, never dropped, and marked as such.
+ */
+export const LEGACY_MARK = 'legacy record, source hospital unknown';
+
+function marked(name: string, legacy: boolean | undefined): string {
+  return legacy === true ? `${name} (${LEGACY_MARK})` : name;
+}
+
 /** A medication the patient is already on, as the screen compares to it. */
 export interface CurrentMedication {
   /** The `RX-…` reference, so a warning can name the offending script. */
@@ -91,6 +102,8 @@ export interface CurrentMedication {
   readonly genericName: string;
   readonly category: string;
   readonly isHighRisk: boolean;
+  /** A legacy prescription with no owning hospital (safety exception). */
+  readonly legacy?: boolean;
 }
 
 /** One `drug_interactions` row, already resolved to the partner drug. */
@@ -106,6 +119,8 @@ export interface PatientAllergy {
   readonly allergen: string;
   /** `mild | moderate | severe`, wire form. */
   readonly severity: string;
+  /** A legacy allergy with no owning hospital (safety exception). */
+  readonly legacy?: boolean;
 }
 
 export interface ScreenSubject {
@@ -186,7 +201,7 @@ function allergyWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
   // (`patient.service.ts:665`), and this mirrors it so one patient does
   // not get two different answers from two surfaces.
   const hasSevere = subject.allergies.some((allergy) => sameTerm(allergy.severity, 'severe'));
-  const names = matched.map((allergy) => allergy.allergen);
+  const names = matched.map((allergy) => marked(allergy.allergen, allergy.legacy));
   const label = subject.allergyClass ?? subject.genericName;
 
   return [
@@ -232,7 +247,7 @@ function interactionWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
     // pairs drawn from that list, so this is a guard, not a path.
     if (partner === undefined) return [];
 
-    const label = `${partner.name} (${partner.genericName})`;
+    const label = marked(`${partner.name} (${partner.genericName})`, partner.legacy);
 
     return [
       {
@@ -266,8 +281,8 @@ function duplicateWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
   );
 
   if (sameDrug.length > 0) {
-    const names = sameDrug.map(
-      (medication) => `${medication.name} · ${medication.prescriptionId}`,
+    const names = sameDrug.map((medication) =>
+      marked(`${medication.name} · ${medication.prescriptionId}`, medication.legacy),
     );
 
     return [
@@ -292,7 +307,9 @@ function duplicateWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
 
   if (sameClass.length === 0) return [];
 
-  const names = sameClass.map((medication) => `${medication.name} (${medication.genericName})`);
+  const names = sameClass.map((medication) =>
+    marked(`${medication.name} (${medication.genericName})`, medication.legacy),
+  );
 
   return [
     {
@@ -345,8 +362,6 @@ export function warningsNeedingAcknowledgment(
 }
 
 /** The blocking subset — allergy conflicts, and nothing else today. */
-export function blockingWarnings(
-  warnings: readonly ScreenWarning[],
-): readonly ScreenWarning[] {
+export function blockingWarnings(warnings: readonly ScreenWarning[]): readonly ScreenWarning[] {
   return warnings.filter((warning) => warning.blocking);
 }

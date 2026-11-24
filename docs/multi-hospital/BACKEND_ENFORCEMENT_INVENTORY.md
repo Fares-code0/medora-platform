@@ -190,8 +190,19 @@ variable is ignored.
 
 ### Not covered
 
-- **The S2 backfill must run before deployment.** Until it does, charts reachable only through legacy
-  assignments, including the demo seed's, are unreachable (#17, by design).
+- **Hard deployment prerequisite (owner decision 2026-11-24): the S2 backfill must run, and its
+  results must be reviewed by the Product Owner, before any deployment.** Until it does, charts
+  reachable only through legacy assignments, including the demo seed's, are unreachable (#17, by
+  design).
+- **Legacy allergies and active medications — safety exception (owner decision 2026-11-24).** The
+  prescription safety screen (`SafetyService.screen`, advisory and in the signing transaction) reads
+  the patient's allergies and live prescriptions with `hospital_id IS NULL` **after**
+  `assertCanReach` has passed, so no patient becomes reachable that was not. Warnings name them
+  "legacy record, source hospital unknown"; each run that read one writes a
+  `legacy_clinical_record.read` audit event (category `security`, severity `warning`, under the
+  reader's hospital, listing the record ids). Nothing else is exempt: the chart's allergy strip and
+  every other read still hide legacy rows. Tests: `legacy-safety-exception.e2e-spec.ts`,
+  `safety-screen.spec.ts`.
 - **Admin surfaces (S5, #16).** The masked directory, oversight list, nudge and administrative cancel
   remain platform-wide.
 - **Admin reassignment of a hospital-owned booking is refused with 409.** Phase 21 makes

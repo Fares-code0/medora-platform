@@ -5,6 +5,10 @@ Tooling for enforcement stage **S2** of
 `patient_doctor_assignments` rows their `hospital_id`, `doctor_employment_id` and
 `hospital_medical_record_id` **only where the data already proves them**.
 
+> **Hard deployment prerequisite (owner decision 2026-11-24).** This backfill must run, and its
+> results must be reviewed by the Product Owner, **before any deployment** of the S3/S4 enforcement.
+> Until it has, charts reachable only through legacy assignments are unreachable (#17).
+
 > **Not authorized against any real environment.** Which hospital owns a legacy row is an open
 > owner decision (GitHub issue **#17**, RLS blocker **B3**). Running `--apply` against development
 > shared data, staging or production requires that decision first. `--apply` refuses
