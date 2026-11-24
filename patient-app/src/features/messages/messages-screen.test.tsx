@@ -50,6 +50,7 @@ const Stack = createNativeStackNavigator();
 
 async function renderMessages(
   conversations: readonly ConversationSummary[] | (() => Promise<readonly ConversationSummary[]>),
+  locale: 'en' | 'ar' = 'en',
 ) {
   const list = jest
     .spyOn(messagingService, 'listConversations')
@@ -76,6 +77,7 @@ async function renderMessages(
         </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>,
+    { locale },
   );
   await act(async () => undefined);
   return { ...view, list };
@@ -227,5 +229,26 @@ describe('refreshing', () => {
     });
 
     expect(view.list).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the urgency notice in Arabic (W-10 translation approval, 2026-11-23)', () => {
+  it('reads in Arabic, and points at the Arabic emergency label', async () => {
+    const view = await renderMessages([], 'ar');
+
+    expect(view.getByTestId('messages-urgency-notice')).toBeTruthy();
+    expect(view.getByText(/^الرسائل ليست رعاية عاجلة\./)).toBeTruthy();
+    expect(view.getByText(/«مساعدة طارئة»/)).toBeTruthy();
+    expect(view.queryByText(/Messages are not urgent care/)).toBeNull();
+  });
+
+  it('keeps the English notice word for word', async () => {
+    const view = await renderMessages([]);
+
+    expect(
+      view.getByText(
+        'Messages are not urgent care. A clinician may not read this for a day or more. If something is urgent, call the clinic; if it is an emergency, use Emergency help.',
+      ),
+    ).toBeTruthy();
   });
 });

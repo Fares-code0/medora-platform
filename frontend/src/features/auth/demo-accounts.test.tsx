@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AuthProvider } from '@/app/providers/AuthProvider';
 import { QueryProvider } from '@/app/providers/QueryProvider';
-import { LocaleProvider } from '@/i18n';
+import { LocaleProvider, translate } from '@/i18n';
 
 import { demoAccounts, seededUsers } from './mock/users';
 import LoginPage from './pages/LoginPage';
@@ -67,6 +67,16 @@ describe('the demoAccounts roster', () => {
       'Email unverified — see the verification screen',
     );
     expect(noteFor('secure@medora.health')).toBe('2FA enabled — see the OTP step-up');
+  });
+
+  it('renders the same English through its catalogue keys', () => {
+    // `label`/`note` are the readable English; the hint renders the keys.
+    for (const account of demoAccounts) {
+      expect(translate('en', account.labelKey)).toBe(account.label);
+      expect(account.noteKey === undefined ? undefined : translate('en', account.noteKey)).toBe(
+        account.note,
+      );
+    }
   });
 
   it('leaves the two straight-in accounts without a note', () => {

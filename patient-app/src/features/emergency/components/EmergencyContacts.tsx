@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Card, Section, Text } from '@/components';
 import { useOptionalSession } from '@/features/auth/SessionProvider';
 import { useEmergencyContacts } from '@/features/health/hooks';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 import { EmergencyCallButton } from './EmergencyCallButton';
@@ -39,9 +40,13 @@ import { EmergencyCallButton } from './EmergencyCallButton';
  * (`patient_emergency_contacts`), and a patient editing a clinician's
  * record through a screen designed for a crisis is not an improvement.
  * RA-030.2 is the decision that would change that, and it is open.
+ *
+ * The names and relationships are the clinic's record and are shown as
+ * recorded, never translated; only the sentences around them are keys.
  */
 export function EmergencyContacts() {
   const theme = useTheme();
+  const t = useT();
   const session = useOptionalSession();
   const authenticated = session?.state.status === 'authenticated';
   const contacts = useEmergencyContacts(authenticated);
@@ -52,18 +57,22 @@ export function EmergencyContacts() {
   if (contacts.data === undefined || contacts.data.length === 0) return null;
 
   return (
-    <Section title="Your emergency contacts" subtitle="Recorded by your clinic">
+    <Section title={t('emergency.contacts.title')} subtitle={t('emergency.contacts.subtitle')}>
       <View style={{ rowGap: theme.space[3] }}>
         {contacts.data.map((contact) => (
           <Card key={contact.id} testID={`emergency-contact-${contact.id}`}>
-            <Text critical variant="bodyStrong">{contact.name}</Text>
+            <Text critical variant="bodyStrong">
+              {contact.name}
+            </Text>
             <Text critical variant="bodySm" color="textTertiary">
               {contact.relationship === null
                 ? contact.primary
-                  ? 'First to call'
-                  : 'Emergency contact'
+                  ? t('emergency.contacts.primary')
+                  : t('emergency.contacts.other')
                 : contact.primary
-                  ? `${contact.relationship} · first to call`
+                  ? t('emergency.contacts.relationshipPrimary', {
+                      relationship: contact.relationship,
+                    })
                   : contact.relationship}
             </Text>
             <EmergencyCallButton

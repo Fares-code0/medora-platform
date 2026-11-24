@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { Chip } from '@/components/ui/Chip';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 /**
@@ -34,6 +35,7 @@ export function FilterBar({
   actions,
   className,
 }: FilterBarProps) {
+  const t = useT();
   return (
     <div className={cn('flex flex-col gap-3', className)}>
       {search !== undefined || actions !== undefined ? (
@@ -52,14 +54,14 @@ export function FilterBar({
           <div
             className="flex flex-wrap items-center gap-2"
             role="list"
-            aria-label="Active filters"
+            aria-label={t('ui.activeFilters')}
           >
             {filters.map((filter) => (
               <div key={filter.id} role="listitem">
                 <Chip
                   label={filter.label}
                   onRemove={() => onRemove(filter.id)}
-                  removeLabel={`Remove filter: ${filter.label}`}
+                  removeLabel={t('ui.removeFilter', { label: filter.label })}
                 />
               </div>
             ))}
@@ -70,7 +72,7 @@ export function FilterBar({
               onClick={onClearAll}
               className="rounded-control px-2 text-body-sm font-medium text-primary transition-colors duration-fast hover:text-primary-hover"
             >
-              Clear all
+              {t('ui.clearAll')}
             </button>
           ) : null}
         </div>

@@ -11,6 +11,7 @@ import {
   usePatientLabStudiesQuery,
   type PatientLabStudy,
 } from '@/features/shared-domain/lab-studies';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 import { formatDate } from '@/utils/dates';
 
@@ -36,6 +37,7 @@ export interface PatientLabStudiesTabProps {
 }
 
 function StudyRow({ study }: { study: PatientLabStudy }) {
+  const t = useT();
   const status = LAB_STATUS_META[study.status];
   const released = study.resultCount > 0;
 
@@ -84,7 +86,7 @@ function StudyRow({ study }: { study: PatientLabStudy }) {
             <Badge variant="warning">Awaiting review</Badge>
           )
         ) : (
-          <StatusBadge status={status.kind} label={status.label} />
+          <StatusBadge status={status.kind} label={t(status.labelKey)} />
         )}
 
         <Link

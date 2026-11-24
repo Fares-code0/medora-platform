@@ -11,7 +11,7 @@ import { routes } from '@/routes';
 export const notificationsRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.notifications,
-    handle: { crumb: 'Notifications' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.notifications' } satisfies RouteHandle,
     lazy: async () => {
       const { NotificationsPage } = await import('./pages/NotificationsPage');
       return { Component: NotificationsPage };

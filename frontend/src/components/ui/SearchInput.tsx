@@ -2,6 +2,8 @@ import { forwardRef } from 'react';
 
 import { Search, X } from 'lucide-react';
 
+import { useT } from '@/i18n';
+
 import { Input, type InputProps } from './Input';
 import { FIELD_ACTION_CLASSES } from './internal/styles';
 
@@ -23,6 +25,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
   { onClear, value, onKeyDown, className, ...rest },
   ref,
 ) {
+  const t = useT();
   const hasValue = typeof value === 'string' && value.length > 0;
 
   return (
@@ -44,7 +47,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
         hasValue && onClear ? (
           <button
             type="button"
-            aria-label="Clear search"
+            aria-label={t('ui.clearSearch')}
             onClick={onClear}
             className={FIELD_ACTION_CLASSES}
           >

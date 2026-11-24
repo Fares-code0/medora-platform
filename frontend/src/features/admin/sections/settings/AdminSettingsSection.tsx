@@ -2,6 +2,7 @@ import { Navigate, NavLink, useNavigate, useParams } from 'react-router-dom';
 
 import { SettingsLayout } from '@/components/layout';
 import { Select } from '@/components/ui';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 import { cn } from '@/utils/cn';
 
@@ -42,6 +43,7 @@ function panelPath(panel: AdminSettingsPanelId): string {
 }
 
 export function AdminSettingsSection() {
+  const t = useT();
   const { panel } = useParams<{ panel: string }>();
   const navigate = useNavigate();
 
@@ -60,8 +62,8 @@ export function AdminSettingsSection() {
 
   return (
     <SettingsLayout
-      title={meta.label}
-      caption={meta.description}
+      title={t(meta.labelKey)}
+      caption={t(meta.descriptionKey)}
       icon={meta.icon}
       tone="primary"
       backHref={routes.admin.root}

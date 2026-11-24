@@ -16,27 +16,27 @@
  *
  * ── The line: what does NOT get a key ───────────────────────────────
  *
- * Three things, and only three:
+ * Until 2026-11-23 there were three exclusions: the emergency guidance,
+ * the affordances leading to it, and the clinical vocabulary the record
+ * is written in (allergy severity, medication and prescription status,
+ * lab flags, history kinds). On that date the W-10 owner APPROVED
+ * localizing all application-controlled copy, those three included. They
+ * now have keys here — `emergency.*`, `crash.*`, `support.urgent.*`,
+ * `upgrade.emergency`, `messages.urgencyNotice`, `health.allergy.severity.*`,
+ * `health.medication.status.*`, `health.history.kind.*`,
+ * `health.labs.flag.*`, `health.prescriptions.status.*` — with English
+ * byte-identical to what the screens showed before.
  *
- * 1. **Anything telling a patient what to do in a medical emergency.**
- *    `features/emergency/content/`, and the one card on the support
- *    screen that says to call the emergency number. It is clinically
- *    reviewed material under N-07 and W-10, and an unreviewed Arabic
- *    rendering of it is exactly what those rows exist to prevent.
- * 2. **The affordances that lead to it** — the "Emergency help" cards and
- *    buttons on Welcome, Sign in, Home and every signed-in header.
- *    Whether the label on the way in is inside that review is the W-10
- *    owner's call and not a translator's; `docs/A11Y_AUDIT.md` §6 carries
- *    it as an open question and `auth-i18n.test.tsx` pins the current
- *    answer so it is changed deliberately.
- * 3. **Clinical vocabulary the record itself is written in** — allergy
- *    severity ("Severe"), medication status, lab-result flags
- *    ("Critically high"), prescription status. These are the words a
- *    clinician chose, and the one a paramedic reads off a phone in an
- *    emergency (J-02). Getting "severe" wrong in a language nobody here
- *    speaks natively is a different class of mistake from getting a
- *    button label wrong, and it is W-10's to sign off. The surrounding
- *    screens ARE translated; the badges are not.
+ * ⚠ **The approval covers translating only.** The W-10 clinical and legal
+ * sign-off (`docs/SIGNOFF.md`) is still NOT given. The Arabic of every
+ * emergency and clinical key is an engineering draft awaiting the named
+ * clinical reviewer; `i18n.test.tsx` lists those namespaces so the
+ * review has a definite scope.
+ *
+ * What still gets no key is **data**: patient-entered text, names, doctor
+ * names, the clinic's records, server-supplied notification text, and
+ * operator-configured emergency number labels (`whenToUse`, `label`).
+ * "Medora" is a name and is not a key either.
  *
  * **Disclaimers are on the near side of the line and DO get keys** — "does
  * not give medical advice", "not monitored around the clock", "support is
@@ -114,7 +114,6 @@ export const en = {
   'capability.reschedule': 'Rescheduling an appointment',
   'capability.acceptProposal': 'Accepting a proposed time',
 
-
   'state.error.unavailable.body':
     '{capability} is still being built. It will appear here once it is ready.',
 
@@ -157,6 +156,9 @@ export const en = {
 
   // ── Accessibility labels that are not visible text ─────────────────
   'a11y.loading': 'Loading, please wait',
+  // A read-only row, as a screen reader announces it.
+  'a11y.readOnly': '{value}, read only',
+  'a11y.listSeparator': '{title}, {value}',
   'a11y.password.show': 'Show password',
   'a11y.password.hide': 'Hide password',
   // Announced when a "Show more" brings a page in. Nothing moves focus
@@ -947,8 +949,9 @@ export const en = {
     'This phone cannot check your fingerprint or face right now. Sign in with your password to continue.',
   'biometric.unlock': 'Unlock',
   'biometric.usePassword': 'Use your password instead',
-  // `{method}` is the platform's own name for the sensor — "Face ID",
-  // "Fingerprint" — supplied by the OS, so it is not translated here.
+  // `{method}` names the sensor: "Face ID" is Apple's product name and
+  // stays as written; "Fingerprint" and the fallback are keys
+  // (`biometric.method.fingerprint`, below).
   'biometric.setting.fallbackName': 'Biometrics',
   'biometric.setting.toggle': 'Unlock with {method}',
   'biometric.setting.body':
@@ -1112,4 +1115,173 @@ export const en = {
   'nav.title.assistantSymptoms': 'Describe a symptom',
   'nav.title.assistantImage': 'Show a photo',
   'security.section.unlock': 'Unlocking this app',
+  // ── Emergency (N-07, W-10) ────────────────────────────────────────
+  //
+  // Translation approved by the owner on 2026-11-23 (W-10). The CLINICAL
+  // sign-off is still not given: every `emergency.*` key, and the clinical
+  // vocabulary below, is an engineering draft in Arabic awaiting the named
+  // clinical reviewer (`docs/SIGNOFF.md`). Recognition only — no key here
+  // may carry a treatment instruction (`test/signoff.test.ts`).
+  'emergency.help': 'Emergency help',
+  'emergency.short': 'Emergency',
+  'emergency.entry.hint': 'Opens emergency guidance. It does not place a call.',
+  'emergency.entry.welcomeDetail': 'Available without signing in, and without a connection.',
+  'emergency.entry.homeDetail': 'What to do, and who to call. Works offline.',
+  'emergency.entry.threadHint': 'Messages are not urgent care',
+  'emergency.disclaimer':
+    'Medora is not an emergency service. Nobody is monitoring this app right now. If this is a life-threatening emergency, call your local emergency number immediately.',
+  'emergency.numbers.title': 'Call for help',
+  'emergency.numbers.subtitle': 'Numbers provided by your clinic for this region',
+  'emergency.unconfigured.title': 'Call your local emergency number',
+  'emergency.unconfigured.body':
+    "This copy of Medora has not been given emergency numbers for your region, so it will not show one. Use the emergency number for the country you are in — it is usually on the back of your phone's SIM card, and every mobile phone can dial it even when locked or out of credit.",
+  'emergency.redFlags.title': 'Call immediately if you see any of these',
+  'emergency.redFlag.breathing.title': 'Trouble breathing',
+  'emergency.redFlag.breathing.detail':
+    'Struggling for breath, choking, or unable to speak a full sentence.',
+  'emergency.redFlag.chest.title': 'Chest pain or pressure',
+  'emergency.redFlag.chest.detail':
+    'Pain, tightness or heaviness in the chest, especially with sweating or nausea.',
+  'emergency.redFlag.stroke.title': 'Signs of a stroke',
+  'emergency.redFlag.stroke.detail':
+    'A drooping face, weakness on one side, or sudden trouble speaking or understanding.',
+  'emergency.redFlag.consciousness.title': 'Unconscious or unresponsive',
+  'emergency.redFlag.consciousness.detail':
+    'Someone who cannot be woken, or who has had a seizure that is not stopping.',
+  'emergency.redFlag.bleeding.title': 'Severe bleeding',
+  'emergency.redFlag.bleeding.detail':
+    'Bleeding that does not slow, or a serious injury after a fall or accident.',
+  'emergency.redFlag.allergy.title': 'A severe allergic reaction',
+  'emergency.redFlag.allergy.detail':
+    'Swelling of the face, lips or throat, a spreading rash, or sudden difficulty breathing.',
+  'emergency.redFlag.selfharm.title': 'Thoughts of harming yourself',
+  'emergency.redFlag.selfharm.detail':
+    'You are not alone and this is an emergency. Call now, or ask someone near you to.',
+  'emergency.contacts.title': 'Your emergency contacts',
+  'emergency.contacts.subtitle': 'Recorded by your clinic',
+  'emergency.contacts.primary': 'First to call',
+  'emergency.contacts.other': 'Emergency contact',
+  'emergency.contacts.relationshipPrimary': '{relationship} · first to call',
+  'emergency.clinic.title': 'Your clinic',
+  'emergency.clinic.subtitle': 'For urgent problems that are not emergencies',
+  'emergency.clinic.target': 'the clinic',
+  'emergency.clinic.openMaps': 'Open in maps',
+  'emergency.when.title': 'When to call, and when to book',
+  'emergency.when.callNow.label': 'Call the emergency number',
+  'emergency.when.callNow.body':
+    'Any of the signs above, or anything you believe is life-threatening.',
+  'emergency.when.callClinic.label': 'Call the clinic',
+  'emergency.when.callClinic.body':
+    'Worsening symptoms, a reaction to a medicine, or a wound that needs looking at today.',
+  'emergency.when.book.label': 'Book an appointment',
+  'emergency.when.book.body':
+    'A new symptom that is not getting worse, a follow-up, a repeat prescription, or a routine check.',
+  'emergency.when.neverMessage':
+    'Do not use Medora messages for anything urgent. A clinician may not read a message for a day or more.',
+  'emergency.source.unconfigured': 'No emergency numbers are configured for this deployment.',
+  'emergency.source.operator': 'Emergency numbers are supplied by your clinic.',
+  'emergency.call.label': 'Call {label}',
+  'emergency.call.hint': 'Opens a confirmation before calling {number}',
+  'emergency.call.failedAnnouncement': 'Could not open the dialler. The number is {number}.',
+  'emergency.call.failedA11y': 'This device cannot place calls. Dial {number} from another phone.',
+  'emergency.call.failedText':
+    'This device cannot place calls. Dial this number from another phone:',
+  'emergency.call.confirmTitle': 'Call {label}?',
+  'emergency.call.confirmDetail':
+    "Medora will open your phone's dialler with {number}. Only continue if you need emergency help now.",
+  'emergency.call.confirmAction': 'Call {number}',
+  'emergency.call.notNow': 'Not now',
+
+  // ── Urgent-help lines outside the emergency screen (W-10 review) ──
+  'crash.title': 'Medora ran into a problem',
+  'crash.body':
+    'This screen stopped working. Nothing you entered was sent. If you need urgent help, call your local emergency number.',
+  'support.urgent.title': 'If you need urgent medical help',
+  'support.urgent.body':
+    "Call your local emergency number from your phone's dialler. Do not wait for a reply here — this inbox is not monitored for medical emergencies.",
+  'upgrade.emergency':
+    "If you need urgent help, call your local emergency number from your phone's dialler.",
+
+  // ── Clinical vocabulary of the record (W-10 review) ───────────────
+  //
+  // The words the record is written in. Keyed by the wire literal in
+  // `types/vocabularies.ts`; the literal itself never reaches a screen.
+  'health.allergy.severity.mild': 'Mild',
+  'health.allergy.severity.moderate': 'Moderate',
+  'health.allergy.severity.severe': 'Severe',
+  'health.medication.status.active': 'Active',
+  'health.medication.status.completed': 'Completed',
+  'health.medication.status.discontinued': 'Discontinued',
+  'health.history.kind.diagnosis': 'Diagnosis',
+  'health.history.kind.surgery': 'Surgery',
+  'health.history.kind.procedure': 'Procedure',
+  'health.history.kind.hospitalization': 'Hospitalization',
+  'health.history.kind.vaccination': 'Vaccination',
+  'health.labs.flag.normal': 'Normal',
+  'health.labs.flag.low': 'Low',
+  'health.labs.flag.high': 'High',
+  'health.labs.flag.criticalLow': 'Critically low',
+  'health.labs.flag.criticalHigh': 'Critically high',
+  'health.labs.flag.abnormal': 'Abnormal',
+  'health.prescriptions.status.draft': 'Draft',
+  'health.prescriptions.status.pendingApproval': 'Awaiting approval',
+  'health.prescriptions.status.active': 'Active',
+  'health.prescriptions.status.dispensed': 'Dispensed',
+  'health.prescriptions.status.completed': 'Finished',
+  'health.prescriptions.status.discontinued': 'Stopped',
+  'health.prescriptions.status.expired': 'Expired',
+
+  // ── Form validation (C-09) ────────────────────────────────────────
+  //
+  // `features/auth/schemas.ts` keeps its English messages — they mirror
+  // the backend DTOs word for word. These keys are the same sentences,
+  // and `i18n/validation.ts` maps a schema message to its key at render.
+  // The English value of each key MUST equal the schema's message.
+  'validation.password.length': 'Use at least {count} characters',
+  'validation.password.lower': 'Add a lowercase letter',
+  'validation.password.upper': 'Add an uppercase letter',
+  'validation.password.digit': 'Add a number',
+  'validation.password.symbol': 'Add a symbol',
+  'validation.password.required': 'Enter your password',
+  'validation.password.mismatch': 'Passwords do not match',
+  'validation.password.reused': 'Choose a password you have not used here before',
+  'validation.confirmPassword.required': 'Re-enter your password',
+  'validation.currentPassword.required': 'Enter your current password',
+  'validation.confirmNewPassword.required': 'Re-enter your new password',
+  'validation.email.required': 'Enter your email',
+  'validation.email.invalid': 'Enter a valid email address',
+  'validation.code.length': 'Enter the 6-digit code',
+  'validation.code.digits': 'Code must be digits only',
+  'validation.firstName.required': 'Enter your first name',
+  'validation.lastName.required': 'Enter your last name',
+  'validation.name.max': 'Use {count} characters or fewer',
+  'validation.phone.required': 'Enter your phone number',
+  'validation.phone.invalid': 'Enter a valid phone number',
+  'validation.terms.required': 'You must accept the Terms & Conditions',
+  'validation.privacy.required': 'You must accept the Privacy Policy',
+  'validation.token.required': 'Paste the code from your email',
+
+  // ── Profile fields (P-03) ─────────────────────────────────────────
+  'profile.field.fullName': 'Full name',
+  'profile.field.dateOfBirth': 'Date of birth',
+  'profile.field.bloodType': 'Blood type',
+  'profile.field.email': 'Email',
+  'profile.field.phone': 'Phone',
+  'profile.field.address': 'Address',
+  // Lower-case: they complete "Kept by {owner}".
+  'profile.field.owner.clinic': 'your clinic',
+  // Whole sentences, not owners: see `keptByLine` in EditProfileScreen.
+  'profile.field.keptInAccount': 'Kept by your account',
+  'profile.field.keptByYou': 'Kept by you',
+
+  // ── The OS biometric sheet (JS-controlled text inside it) ─────────
+  'biometric.prompt': 'Unlock Medora',
+  'biometric.method.fingerprint': 'Fingerprint',
+
+  // ── The app-switcher privacy cover (T-05) ─────────────────────────
+  'privacy.cover': 'Medora is hidden while you are in another app.',
+
+  // ── The Messages screen's urgency notice (W-10 review) ────────────
+  'messages.urgencyNotice':
+    'Messages are not urgent care. A clinician may not read this for a day or more. If something is urgent, call the clinic; if it is an emergency, use Emergency help.',
 } as const;

@@ -62,7 +62,7 @@ export function Pagination({
       className={cn('flex flex-wrap items-center justify-between gap-4', className)}
     >
       <p className="text-body-sm text-text-secondary tabular-nums">
-        Showing {rangeStart}–{rangeEnd} of {totalItems}
+        {t('ui.showingRange', { from: rangeStart, to: rangeEnd, total: totalItems })}
       </p>
       {/* Wraps on a 320px phone, where the rows-per-page group and the
           page controls together are wider than the row. */}
@@ -99,7 +99,7 @@ export function Pagination({
           size="sm"
         />
         <span className="text-body-sm text-text-secondary tabular-nums sm:hidden">
-          Page {clampedPage} of {pageCount}
+          {t('ui.pageOf', { page: clampedPage, total: pageCount })}
         </span>
         <div className="hidden items-center gap-1 sm:flex">
           {pageTokens(clampedPage, pageCount).map((token) =>
@@ -108,7 +108,7 @@ export function Pagination({
                 key={token}
                 type="button"
                 disabled={disabled}
-                aria-label={`Page ${String(token)}`}
+                aria-label={t('ui.pageNumber', { page: token })}
                 aria-current={token === clampedPage ? 'page' : undefined}
                 onClick={() => onPageChange(token)}
                 className={cn(

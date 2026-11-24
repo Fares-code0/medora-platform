@@ -36,27 +36,31 @@
  * bare English literal, with a per-file allow-list of the decisions
  * below.
  *
- * ── Three exclusions, each a decision rather than a gap ─────────────
+ * ── No exclusions left (W-10 translation approval, 2026-11-23) ──────
  *
- * - **The emergency feature and the affordances that lead to it.**
- *   Clinically reviewed material (N-07, W-10). Whether the label on the
- *   way IN is inside that review is the W-10 owner's call, not a
- *   translator's; `docs/A11Y_AUDIT.md` §6 carries it as an open
- *   question.
- * - **The clinical vocabulary the record is written in** — allergy
- *   severity, medication and prescription status, lab flags. This was
- *   the reason the row said the rest of C-09 "is not a mechanical
- *   change", and it was right about exactly this part: an Arabic
- *   rendering of a lab flag needs the review the English got. So the
- *   screens around those badges are translated and the badges are not.
- * - **Zod schema messages.** A module-level schema cannot read a hook,
- *   and moving them needs a decision about whether schemas take a `t`
- *   or forms map issue codes.
+ * There used to be three, each a decision: the emergency feature and
+ * the affordances leading to it, the clinical vocabulary the record is
+ * written in, and Zod schema messages. The owner approved translating
+ * ALL application-controlled copy on 2026-11-23, so:
  *
- * `ErrorBoundary` keeps its own copy for a different reason: it is the
- * one screen that has to render when the tree below it has just failed,
- * and giving it a context dependency for its own words is the wrong
- * trade.
+ * - **Emergency and clinical copy** are catalogue keys (`emergency.*`,
+ *   `crash.*`, `support.urgent.*`, `health.allergy.severity.*`,
+ *   `health.labs.flag.*` …). The approval covers translating only: the
+ *   W-10 clinical sign-off is still NOT given, and the Arabic of those
+ *   keys is an engineering draft awaiting the named clinical reviewer
+ *   (`docs/SIGNOFF.md`, `docs/A11Y_AUDIT.md` §6).
+ * - **Zod messages** stay English in `features/auth/schemas.ts`, where
+ *   they mirror the backend DTOs, and `./validation.ts` maps each one to
+ *   its `validation.*` key at render.
+ *
+ * What is NOT translated is data: patient-entered text, names, doctor
+ * names, the clinic's records, server-supplied notification text, and
+ * operator-configured emergency number labels.
+ *
+ * `ErrorBoundary` reads its words through `useOptionalT`: it is the one
+ * screen that has to render when the tree below it has just failed, so it
+ * uses the provider's locale when there is one and the stored preference
+ * when there is not, rather than throwing for want of a context.
  *
  * ── Two things to know before writing a test ────────────────────────
  *
@@ -77,6 +81,7 @@ export {
   useLocale,
   useIsRtl,
   useT,
+  useOptionalT,
   interpolate,
   applyNativeDirection,
   type LocaleContextValue,
@@ -99,3 +104,5 @@ export {
 export { catalogues, type MessageKey, type Messages } from './messages';
 
 export { useDateFormat, type DateFormatters } from './useDateFormat';
+
+export { translateValidation, useValidationMessage, validationMessageKey } from './validation';

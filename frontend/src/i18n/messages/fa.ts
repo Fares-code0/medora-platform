@@ -1,4 +1,4 @@
-import type { Messages } from './en';
+import type { PartialMessages } from './en';
 
 /**
  * Persian / Farsi (فارسی) — right-to-left.
@@ -10,7 +10,7 @@ import type { Messages } from './en';
  * «بیمار ها» with a space, or «بیمارها» joined, are both wrong. Both are
  * used correctly below.
  */
-export const fa: Messages = {
+export const fa: PartialMessages = {
   // Brand panel
   'brand.welcome': 'به مدورا خوش آمدید',
   'brand.tagline': 'پلتفرم مبتنی بر هوش مصنوعی برای تیم‌های درمانی امروز.',
@@ -308,4 +308,15 @@ export const fa: Messages = {
   'invitation.error.taken': 'حسابی با این ایمیل از پیش وجود دارد.',
   'invitation.error.weakPassword': 'گذرواژهٔ قوی‌تری انتخاب کنید.',
   'invitation.error.generic': 'تکمیل دعوت شما ممکن نشد. دوباره تلاش کنید.',
+
+  /* ── Unread counts (plural; were concatenated before the Arabic foundation) ── */
+  'shell.unreadCount': { one: '{count} خوانده‌نشده', other: '{count} خوانده‌نشده' },
+  'shell.notificationsUnread': {
+    one: 'اعلان‌ها ({count} خوانده‌نشده)',
+    other: 'اعلان‌ها ({count} خوانده‌نشده)',
+  },
+  'shell.unreadNotificationsBadge': {
+    one: '{count} خوانده‌نشده — اعلان‌ها',
+    other: '{count} خوانده‌نشده — اعلان‌ها',
+  },
 };

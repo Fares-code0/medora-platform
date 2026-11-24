@@ -12,7 +12,7 @@ import { routes } from '@/routes';
 export const medicalRecordsRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.medicalRecords,
-    handle: { crumb: 'Medical records' } satisfies RouteHandle,
+    handle: { titleKey: 'route.medicalRecords' } satisfies RouteHandle,
     lazy: async () => {
       const { MedicalRecordsPage } = await import('./pages/MedicalRecordsPage');
       return { Component: MedicalRecordsPage };
@@ -33,7 +33,7 @@ export const medicalRecordsRoutes: readonly RouteObject[] = [
          * explicit because a reader should not have to know that to be sure.
          */
         path: `${routes.doctor.medicalRecords}/new`,
-        handle: { crumb: 'New record' } satisfies RouteHandle,
+        handle: { titleKey: 'route.newRecord' } satisfies RouteHandle,
         lazy: async () => {
           const { NewMedicalRecordPage } = await import('./pages/NewMedicalRecordPage');
           return { Component: NewMedicalRecordPage };
@@ -43,7 +43,7 @@ export const medicalRecordsRoutes: readonly RouteObject[] = [
   },
   {
     path: `${routes.doctor.medicalRecords}/:recordId`,
-    handle: { crumb: 'Record' } satisfies RouteHandle,
+    handle: { titleKey: 'route.record' } satisfies RouteHandle,
     lazy: async () => {
       const { MedicalRecordDetailPage } = await import('./pages/MedicalRecordDetailPage');
       return { Component: MedicalRecordDetailPage };

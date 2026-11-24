@@ -12,7 +12,7 @@ import { routes } from '@/routes';
 export const pharmacyRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.pharmacy,
-    handle: { crumb: 'Pharmacy' } satisfies RouteHandle,
+    handle: { titleKey: 'nav.pharmacy' } satisfies RouteHandle,
     lazy: async () => {
       const { PharmacyPage } = await import('./pages/PharmacyPage');
       return { Component: PharmacyPage };
@@ -34,7 +34,7 @@ export const pharmacyRoutes: readonly RouteObject[] = [
          * whose id happens to be "new".
          */
         path: `${routes.doctor.pharmacy}/new`,
-        handle: { crumb: 'New prescription' } satisfies RouteHandle,
+        handle: { titleKey: 'route.newPrescription' } satisfies RouteHandle,
         lazy: async () => {
           const { NewPrescriptionPage } = await import('./pages/NewPrescriptionPage');
           return { Component: NewPrescriptionPage };
@@ -44,7 +44,7 @@ export const pharmacyRoutes: readonly RouteObject[] = [
   },
   {
     path: `${routes.doctor.pharmacy}/:prescriptionId`,
-    handle: { crumb: 'Prescription' } satisfies RouteHandle,
+    handle: { titleKey: 'route.prescription' } satisfies RouteHandle,
     lazy: async () => {
       const { PrescriptionDetailPage } = await import('./pages/PrescriptionDetailPage');
       return { Component: PrescriptionDetailPage };

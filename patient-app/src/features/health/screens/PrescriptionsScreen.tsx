@@ -6,6 +6,7 @@ import { useT, useDateFormat } from '@/i18n';
 import { useTheme } from '@/theme';
 import type { PrescriptionStatus } from '@/types/vocabularies';
 
+import { PRESCRIPTION_STATUS_KEY } from '../clinical-word';
 import { ReleaseNotice } from '../components/ReleaseNotice';
 import { usePrescriptions } from '../hooks';
 
@@ -19,16 +20,6 @@ import { usePrescriptions } from '../hooks';
  * prescription request wearing a different name, with none of the
  * safety checks a real one has (OOS-2).
  */
-const STATUS_LABEL: Record<PrescriptionStatus, string> = {
-  draft: 'Draft',
-  'pending-approval': 'Awaiting approval',
-  active: 'Active',
-  dispensed: 'Dispensed',
-  completed: 'Finished',
-  discontinued: 'Stopped',
-  expired: 'Expired',
-};
-
 const STATUS_TONE: Record<PrescriptionStatus, 'success' | 'warning' | 'neutral'> = {
   draft: 'neutral',
   'pending-approval': 'warning',
@@ -82,7 +73,7 @@ export function PrescriptionsScreen() {
                     {prescription.medicationName}
                   </Text>
                   <Badge
-                    label={STATUS_LABEL[prescription.status]}
+                    label={t(PRESCRIPTION_STATUS_KEY[prescription.status])}
                     tone={STATUS_TONE[prescription.status]}
                   />
                 </View>

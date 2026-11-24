@@ -1,5 +1,6 @@
 import { Stack } from '@/components/layout';
 import { Button, Drawer, Input, Select, Switch, type SelectOption } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import { isValidDateKey, type PharmacyListFilters } from '../model/filters';
 import {
@@ -46,6 +47,7 @@ export function PharmacyFiltersDrawer({
   onBooleanChange,
   onClear,
 }: PharmacyFiltersDrawerProps) {
+  const t = useT();
   const bindSelect = <K extends 'status' | 'category' | 'doctor' | 'refillStatus'>(key: K) => ({
     value: filters[key] ?? ALL,
     onChange: (value: string) =>
@@ -82,7 +84,7 @@ export function PharmacyFiltersDrawer({
             'All statuses',
             PRESCRIPTION_STATUSES.map((status) => ({
               value: status,
-              label: PRESCRIPTION_STATUS_META[status].label,
+              label: t(PRESCRIPTION_STATUS_META[status].labelKey),
             })),
           )}
           {...bindSelect('status')}
@@ -109,7 +111,7 @@ export function PharmacyFiltersDrawer({
             'All refill states',
             REFILL_STATUSES.map((status) => ({
               value: status,
-              label: REFILL_STATUS_META[status].label,
+              label: t(REFILL_STATUS_META[status].labelKey),
             })),
           )}
           {...bindSelect('refillStatus')}

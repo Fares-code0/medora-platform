@@ -11,6 +11,7 @@ import type { CSSProperties, ReactNode } from 'react';
 
 import { ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { CountBadge } from './Badge';
@@ -46,14 +47,15 @@ export function Sidebar({
   header,
   footer,
   footerClassName,
-  'aria-label': ariaLabel = 'Main',
+  'aria-label': ariaLabel,
   className,
   children,
 }: SidebarProps) {
+  const t = useT();
   return (
     <SidebarContext.Provider value={{ collapsed }}>
       <nav
-        aria-label={ariaLabel}
+        aria-label={ariaLabel ?? t('ui.mainNavigation')}
         className={cn(
           'flex h-full shrink-0 flex-col border-e border-border bg-surface',
           // The rail resizes the page beside it, so it moves on the entrance

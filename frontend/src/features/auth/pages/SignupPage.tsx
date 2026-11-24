@@ -7,11 +7,12 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '@/app/providers';
 import { Button, Checkbox, Input, PasswordInput, Select } from '@/components/ui';
-import { useT, type TranslateFn } from '@/i18n';
+import { translateIfKey, useT, type TranslateFn } from '@/i18n';
 import { routes } from '@/routes';
 
 import { AuthCard, AuthFormError, PasswordStrengthMeter } from '../components';
 import { authErrorKey } from '../error-message';
+import { PASSWORD_MIN_LENGTH } from '../schemas/password';
 import {
   PROFESSIONAL_CATEGORIES,
   PROFESSIONAL_CATEGORY_LABELS,
@@ -131,13 +132,13 @@ export default function SignupPage() {
             autoComplete="given-name"
             autoFocus
             leadingIcon={User}
-            error={errors.firstName?.message}
+            error={translateIfKey(t, errors.firstName?.message)}
             {...register('firstName')}
           />
           <Input
             label={t('signup.lastName')}
             autoComplete="family-name"
-            error={errors.lastName?.message}
+            error={translateIfKey(t, errors.lastName?.message)}
             {...register('lastName')}
           />
         </div>
@@ -148,7 +149,7 @@ export default function SignupPage() {
           autoComplete="email"
           leadingIcon={Mail}
           placeholder={t('common.emailPlaceholder')}
-          error={errors.email?.message}
+          error={translateIfKey(t, errors.email?.message)}
           {...register('email')}
         />
         <Input
@@ -156,7 +157,7 @@ export default function SignupPage() {
           type="tel"
           autoComplete="tel"
           leadingIcon={Phone}
-          error={errors.phone?.message}
+          error={translateIfKey(t, errors.phone?.message)}
           {...register('phone')}
         />
 
@@ -164,7 +165,7 @@ export default function SignupPage() {
           <PasswordInput
             label={t('common.password')}
             autoComplete="new-password"
-            error={errors.password?.message}
+            error={translateIfKey(t, errors.password?.message, { count: PASSWORD_MIN_LENGTH })}
             {...register('password')}
           />
           <PasswordStrengthMeter password={password} />
@@ -172,7 +173,7 @@ export default function SignupPage() {
         <PasswordInput
           label={t('common.confirmPassword')}
           autoComplete="new-password"
-          error={errors.confirmPassword?.message}
+          error={translateIfKey(t, errors.confirmPassword?.message)}
           {...register('confirmPassword')}
         />
 
@@ -186,7 +187,7 @@ export default function SignupPage() {
             label={t('signup.professionalNumber')}
             helperText={t('signup.professionalNumberHelp')}
             leadingIcon={BadgeCheck}
-            error={errors.professionalRegistrationNumber?.message}
+            error={translateIfKey(t, errors.professionalRegistrationNumber?.message)}
             {...register('professionalRegistrationNumber')}
           />
 
@@ -199,10 +200,10 @@ export default function SignupPage() {
                 name={field.name}
                 value={field.value}
                 onChange={field.onChange}
-                error={errors.professionalCategory?.message}
+                error={translateIfKey(t, errors.professionalCategory?.message)}
                 options={PROFESSIONAL_CATEGORIES.map((category) => ({
                   value: category,
-                  label: PROFESSIONAL_CATEGORY_LABELS[category],
+                  label: t(PROFESSIONAL_CATEGORY_LABELS[category]),
                 }))}
               />
             )}
@@ -211,7 +212,7 @@ export default function SignupPage() {
           <Input
             label={t('signup.specialty')}
             leadingIcon={Stethoscope}
-            error={errors.specialty?.message}
+            error={translateIfKey(t, errors.specialty?.message)}
             {...register('specialty')}
           />
 
@@ -219,7 +220,7 @@ export default function SignupPage() {
             label={t('signup.registrationExpiry')}
             type="date"
             helperText={t('signup.registrationExpiryHelp')}
-            error={errors.registrationExpiresOn?.message}
+            error={translateIfKey(t, errors.registrationExpiresOn?.message)}
             {...register('registrationExpiresOn')}
           />
 
@@ -232,12 +233,12 @@ export default function SignupPage() {
         <div className="flex flex-col gap-3">
           <Checkbox
             label={t('signup.terms')}
-            error={errors.acceptTerms?.message}
+            error={translateIfKey(t, errors.acceptTerms?.message)}
             {...register('acceptTerms')}
           />
           <Checkbox
             label={t('signup.privacy')}
-            error={errors.acceptPrivacy?.message}
+            error={translateIfKey(t, errors.acceptPrivacy?.message)}
             {...register('acceptPrivacy')}
           />
         </div>

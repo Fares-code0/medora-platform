@@ -52,3 +52,19 @@ function arabicMinutes(minutes: number): string {
   if (minutes <= 10) return `${minutes} دقائق`;
   return `${minutes} دقيقة`;
 }
+
+/**
+ * A lab order's result count, in Arabic — the second message that needed
+ * a count (2026-11-23, Arabic review L-9). `{count} نتائج` in the
+ * catalogue is right only for 3–10; "1 نتائج" and "11 نتائج" are wrong.
+ * Same rule as the minutes above, keyed on the last two digits so 103
+ * takes the paucal form like 3. English keeps its catalogue sentence
+ * (`health.labs.resultCount`), unchanged.
+ */
+export function arabicResultCount(count: number): string {
+  if (count === 1) return 'نتيجة واحدة';
+  if (count === 2) return 'نتيجتان';
+  const lastTwo = count % 100;
+  if (lastTwo >= 3 && lastTwo <= 10) return `${count} نتائج`;
+  return `${count} نتيجة`;
+}

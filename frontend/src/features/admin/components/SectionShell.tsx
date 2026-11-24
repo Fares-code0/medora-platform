@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { ContentHeader, PageContainer, PageSections } from '@/components/layout';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { SECTION_META } from '../administration.meta';
@@ -40,13 +41,14 @@ export interface SectionShellProps {
 }
 
 export function SectionShell({ slug, actions, toolbar, children }: SectionShellProps) {
+  const t = useT();
   const meta = SECTION_META[slug];
   return (
     <PageContainer width="2xl">
       <PageSections>
         <ContentHeader
-          title={meta.label}
-          caption={meta.description}
+          title={t(meta.labelKey)}
+          caption={t(meta.descriptionKey)}
           icon={meta.icon}
           actions={actions}
         />

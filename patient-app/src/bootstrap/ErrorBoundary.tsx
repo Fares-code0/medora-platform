@@ -5,6 +5,7 @@ import { StyleSheet, View } from 'react-native';
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Text } from '@/components/Text';
+import { useOptionalT } from '@/i18n';
 import { logger } from '@/utils/logger';
 import { reportCrash } from '@/utils/monitoring';
 
@@ -33,13 +34,53 @@ interface State {
 }
 
 /**
- * Fixed copy. Held here rather than inline because the screen-reader
- * label is the same two sentences and a drifted copy is a screen reader
+ * The fallback's words, read once and used twice: the screen-reader label
+ * is the same two sentences, and a drifted copy is a screen reader
  * announcing something the screen does not say.
+ *
+ * A function component inside the class, because the class cannot call a
+ * hook. `useOptionalT` reads the locale from the provider when there is
+ * one and from the stored preference when there is not, so the crash
+ * screen never depends on a context to render (`crash.*`; the body is an
+ * urgent-help line inside the W-10 review).
  */
-const TITLE = 'Medora ran into a problem';
-const BODY =
-  'This screen stopped working. Nothing you entered was sent. If you need urgent help, call your local emergency number.';
+function CrashFallback({ onRetry }: { readonly onRetry: () => void }) {
+  const t = useOptionalT();
+  const title = t('crash.title');
+  const body = t('crash.body');
+
+  return (
+    <View style={styles.container} testID="error-boundary-fallback">
+      {/*
+        The message is one grouped live region so a screen reader
+        announces it whole, the way `ErrorState` does — a patient who
+        cannot see the crash screen otherwise hears three fragments in
+        whatever order focus lands.
+
+        The Button is deliberately OUTSIDE the group. `accessible` on
+        a View collapses its subtree into a single element on iOS, so
+        a Try again inside it stops being focusable — the one control
+        on the one screen that has no other way out.
+      */}
+      <View
+        testID="error-boundary-message"
+        accessible
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={`${title}. ${body}`}
+        style={styles.message}
+      >
+        <Icon name="alert" size={40} color="error" />
+        <Text variant="h2" align="center">
+          {title}
+        </Text>
+        <Text variant="bodySm" color="textTertiary" align="center">
+          {body}
+        </Text>
+      </View>
+      <Button label={t('action.retry')} onPress={onRetry} testID="error-boundary-retry" />
+    </View>
+  );
+}
 
 export class ErrorBoundary extends Component<Props, State> {
   override state: State = { hasError: false };
@@ -90,37 +131,7 @@ export class ErrorBoundary extends Component<Props, State> {
   override render(): ReactNode {
     if (!this.state.hasError) return this.props.children;
 
-    return (
-      <View style={styles.container} testID="error-boundary-fallback">
-        {/*
-          The message is one grouped live region so a screen reader
-          announces it whole, the way `ErrorState` does — a patient who
-          cannot see the crash screen otherwise hears three fragments in
-          whatever order focus lands.
-
-          The Button is deliberately OUTSIDE the group. `accessible` on
-          a View collapses its subtree into a single element on iOS, so
-          a Try again inside it stops being focusable — the one control
-          on the one screen that has no other way out.
-        */}
-        <View
-          testID="error-boundary-message"
-          accessible
-          accessibilityLiveRegion="polite"
-          accessibilityLabel={`${TITLE}. ${BODY}`}
-          style={styles.message}
-        >
-          <Icon name="alert" size={40} color="error" />
-          <Text variant="h2" align="center">
-            {TITLE}
-          </Text>
-          <Text variant="bodySm" color="textTertiary" align="center">
-            {BODY}
-          </Text>
-        </View>
-        <Button label="Try again" onPress={this.reset} testID="error-boundary-retry" />
-      </View>
-    );
+    return <CrashFallback onRetry={this.reset} />;
   }
 }
 

@@ -98,16 +98,15 @@ export function SupportScreen({ address = env.supportEmail }: SupportScreenProps
       {/* First, above everything, because getting this wrong costs more
           than every other thing on this screen put together.
 
-          It is also the one card on this screen with no catalogue key.
           It tells a patient what to do in a medical emergency, which is
-          clinically reviewed material under N-07 and W-10 — the same
-          line `messages/en.ts` draws around the Emergency affordances.
-          Everything else here, disclaimers included, is translated. */}
+          inside the W-10 review. It was the one card here with no
+          catalogue key until the owner approved translating emergency
+          copy (2026-11-23); the Arabic is an engineering draft awaiting
+          the named clinical reviewer (`docs/SIGNOFF.md`). */}
       <Card tone="sunken" testID="support-urgent-notice">
-        <Text variant="bodyStrong">If you need urgent medical help</Text>
+        <Text variant="bodyStrong">{t('support.urgent.title')}</Text>
         <Text variant="bodySm" color="textSecondary">
-          Call your local emergency number from your phone&apos;s dialler. Do not wait for a reply
-          here — this inbox is not monitored for medical emergencies.
+          {t('support.urgent.body')}
         </Text>
       </Card>
 

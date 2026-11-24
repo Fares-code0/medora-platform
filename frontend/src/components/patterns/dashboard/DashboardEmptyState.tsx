@@ -4,6 +4,7 @@ import { LayoutDashboard } from 'lucide-react';
 
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { Button } from '@/components/ui/Button';
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { DashboardWidgetAddIcon } from './DashboardWidgetAddIcon';
@@ -44,9 +45,10 @@ export function DashboardEmptyState({
   customizeRef,
   secondaryAction,
 }: DashboardEmptyStateProps) {
+  const t = useT();
   return (
     <section
-      aria-label="Dashboard"
+      aria-label={t('dashboard.label')}
       // A card like every other on the page — a solid hairline and a soft
       // shadow — not a dashed placeholder outline.
       className="rounded-surface border border-border bg-surface shadow-popover"
@@ -60,7 +62,7 @@ export function DashboardEmptyState({
         action={
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button ref={customizeRef} leadingIcon={DashboardWidgetAddIcon} onClick={onCustomize}>
-              Customize
+              {t('dashboard.customize')}
             </Button>
             {secondaryAction}
           </div>
@@ -89,6 +91,7 @@ export function CustomizeDashboardButton({
   buttonRef?: Ref<HTMLButtonElement> | undefined;
   widgetCount: number;
 }) {
+  const t = useT();
   const iconOnly = widgetCount > 0;
   return (
     <Button
@@ -98,7 +101,7 @@ export function CustomizeDashboardButton({
       onClick={onClick}
       className={cn(iconOnly && 'w-8 px-0 [--touch-x:6px] touch:min-w-0')}
     >
-      <span className={cn(iconOnly && 'sr-only')}>Customize</span>
+      <span className={cn(iconOnly && 'sr-only')}>{t('dashboard.customize')}</span>
     </Button>
   );
 }

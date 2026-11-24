@@ -23,12 +23,24 @@
  *
  * If you are adding a step-by-step treatment instruction here: stop, and
  * take it to the clinical owner named in docs/SIGNOFF.md.
+ *
+ * ── Where the words live (W-10 translation approval, 2026-11-23) ─────
+ * The owner approved translating this copy into Arabic. The words are
+ * catalogue keys (`emergency.*` in `i18n/messages/en.ts` and `ar.ts`)
+ * and this module holds only the KEYS and their order, so the screen
+ * renders them in the patient's language. The English text is unchanged.
+ * The Arabic is an engineering draft: the W-10 clinical sign-off is still
+ * NOT given, and the named clinical reviewer in docs/SIGNOFF.md must read
+ * both languages before a build ships. `test/signoff.test.ts` scans those
+ * catalogue values, in both languages, for treatment instructions.
  */
+
+import type { MessageKey } from '@/i18n';
 
 export interface RedFlag {
   readonly id: string;
-  readonly title: string;
-  readonly detail: string;
+  readonly titleKey: MessageKey;
+  readonly detailKey: MessageKey;
 }
 
 /**
@@ -39,39 +51,38 @@ export interface RedFlag {
 export const RED_FLAGS: readonly RedFlag[] = [
   {
     id: 'breathing',
-    title: 'Trouble breathing',
-    detail: 'Struggling for breath, choking, or unable to speak a full sentence.',
+    titleKey: 'emergency.redFlag.breathing.title',
+    detailKey: 'emergency.redFlag.breathing.detail',
   },
   {
     id: 'chest',
-    title: 'Chest pain or pressure',
-    detail: 'Pain, tightness or heaviness in the chest, especially with sweating or nausea.',
+    titleKey: 'emergency.redFlag.chest.title',
+    detailKey: 'emergency.redFlag.chest.detail',
   },
   {
     id: 'stroke',
-    title: 'Signs of a stroke',
-    detail: 'A drooping face, weakness on one side, or sudden trouble speaking or understanding.',
+    titleKey: 'emergency.redFlag.stroke.title',
+    detailKey: 'emergency.redFlag.stroke.detail',
   },
   {
     id: 'consciousness',
-    title: 'Unconscious or unresponsive',
-    detail: 'Someone who cannot be woken, or who has had a seizure that is not stopping.',
+    titleKey: 'emergency.redFlag.consciousness.title',
+    detailKey: 'emergency.redFlag.consciousness.detail',
   },
   {
     id: 'bleeding',
-    title: 'Severe bleeding',
-    detail: 'Bleeding that does not slow, or a serious injury after a fall or accident.',
+    titleKey: 'emergency.redFlag.bleeding.title',
+    detailKey: 'emergency.redFlag.bleeding.detail',
   },
   {
     id: 'allergy',
-    title: 'A severe allergic reaction',
-    detail:
-      'Swelling of the face, lips or throat, a spreading rash, or sudden difficulty breathing.',
+    titleKey: 'emergency.redFlag.allergy.title',
+    detailKey: 'emergency.redFlag.allergy.detail',
   },
   {
     id: 'selfharm',
-    title: 'Thoughts of harming yourself',
-    detail: 'You are not alone and this is an emergency. Call now, or ask someone near you to.',
+    titleKey: 'emergency.redFlag.selfharm.title',
+    detailKey: 'emergency.redFlag.selfharm.detail',
   },
 ];
 
@@ -79,17 +90,23 @@ export const RED_FLAGS: readonly RedFlag[] = [
  * The disclaimer. Rendered at the top of the Emergency screen, always
  * visible, never behind a scroll or a dismiss control (checklist N-02).
  */
-export const EMERGENCY_DISCLAIMER =
-  'Medora is not an emergency service. Nobody is monitoring this app right now. ' +
-  'If this is a life-threatening emergency, call your local emergency number immediately.';
+export const EMERGENCY_DISCLAIMER_KEY: MessageKey = 'emergency.disclaimer';
 
 /** Guidance for the case that is urgent but not an emergency (N-09). */
 export const WHEN_TO_CALL_VS_BOOK = {
-  callNow: 'Any of the signs above, or anything you believe is life-threatening.',
-  callClinic:
-    'Worsening symptoms, a reaction to a medicine, or a wound that needs looking at today.',
-  bookAppointment:
-    'A new symptom that is not getting worse, a follow-up, a repeat prescription, or a routine check.',
-  neverMessage:
-    'Do not use Medora messages for anything urgent. A clinician may not read a message for a day or more.',
-} as const;
+  callNow: 'emergency.when.callNow.body',
+  callClinic: 'emergency.when.callClinic.body',
+  bookAppointment: 'emergency.when.book.body',
+  neverMessage: 'emergency.when.neverMessage',
+} as const satisfies Record<string, MessageKey>;
+
+/**
+ * Every catalogue key this module and the Emergency screen render, for
+ * the tests and the clinical review list: the whole of what a clinician
+ * signs for under item 1 of docs/SIGNOFF.md.
+ */
+export const EMERGENCY_CONTENT_KEYS: readonly MessageKey[] = [
+  EMERGENCY_DISCLAIMER_KEY,
+  ...RED_FLAGS.flatMap((flag) => [flag.titleKey, flag.detailKey]),
+  ...Object.values(WHEN_TO_CALL_VS_BOOK),
+];

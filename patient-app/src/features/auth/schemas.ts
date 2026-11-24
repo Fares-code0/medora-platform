@@ -64,6 +64,16 @@ export const otpFormSchema = z.object({
 });
 export type OtpForm = z.infer<typeof otpFormSchema>;
 
+/**
+ * The backend's name bound (`register.schema.ts`: `.max(60)`). The
+ * backend gives it no message, so Zod's default — "String must contain at
+ * most 60 character(s)" — was what a patient read, in English in either
+ * language. This client names it instead, and `i18n/validation.ts` maps
+ * the sentence to `validation.name.max`. The bound itself is unchanged.
+ */
+export const NAME_MAX_LENGTH = 60;
+const NAME_TOO_LONG = `Use ${String(NAME_MAX_LENGTH)} characters or fewer`;
+
 /** The frontend's `phoneRegex`, verbatim. */
 const phoneRegex = /^\+?[0-9][0-9\s-]{6,18}$/;
 
@@ -84,8 +94,8 @@ const phoneRegex = /^\+?[0-9][0-9\s-]{6,18}$/;
  */
 export const registerFormSchema = z
   .object({
-    firstName: z.string().min(1, 'Enter your first name').max(60),
-    lastName: z.string().min(1, 'Enter your last name').max(60),
+    firstName: z.string().min(1, 'Enter your first name').max(NAME_MAX_LENGTH, NAME_TOO_LONG),
+    lastName: z.string().min(1, 'Enter your last name').max(NAME_MAX_LENGTH, NAME_TOO_LONG),
     email: z.string().min(1, 'Enter your email').email('Enter a valid email address'),
     phone: z
       .string()

@@ -1,27 +1,72 @@
+import type { MessageKey } from '@/i18n';
+import type {
+  AllergySeverity,
+  HistoryEventKind,
+  LabResultFlag,
+  MedicationStatus,
+  PrescriptionStatus,
+} from '@/types/vocabularies';
+
 /**
  * A clinical literal, as a patient reads it.
  *
  * ── The rule this implements, and where it is written ───────────────
  *
- * `messages/en.ts` draws one line and this is the far side of it:
- * **clinical vocabulary the record itself is written in** — allergy
- * severity, medication status, lab-result flags, the kind of a history
- * entry — stays in English until W-10's clinical owner signs off on a
- * translation. These are the words a clinician chose and the one a
- * paramedic reads off a phone; getting "severe" subtly wrong in a
- * language nobody on this project speaks natively is a different class
- * of mistake from a mistranslated button.
+ * The clinical vocabulary the record itself is written in — allergy
+ * severity, medication status, lab-result flags, prescription status,
+ * the kind of a history entry — was kept in English until W-10's owner
+ * decided. On 2026-11-23 the owner approved translating it. These maps
+ * are that decision: each wire literal names a catalogue key, and the
+ * screen renders `t(key)`.
  *
- * Not translating them is a decision. Rendering the *wire literal* is
- * not, and that is the defect this function closes: the medical-history
- * row read `hospitalization · 14 September 2026`, a lower-case database
- * value on a screen, while the two badges beside it had each
- * capitalised their own literal inline. One implementation, three
- * callers, and a place for the rule to be written down.
+ * ⚠ The approval covers translating only. The W-10 clinical sign-off is
+ * still **not given**: the Arabic values of these keys are an
+ * engineering draft awaiting the named clinical reviewer in
+ * `docs/SIGNOFF.md`. "Severe" and "Critically high" are the words a
+ * paramedic reads off a phone, which is why they are on that list.
  *
- * A-07's "field names are law" is untouched: the literal is still what
- * this client sends and compares. This is only what it draws.
+ * Rendering the *wire literal* is still the defect this file exists to
+ * close: the medical-history row once read `hospitalization · 14
+ * September 2026`. A-07's "field names are law" is untouched: the
+ * literal is still what this client sends and compares. This is only
+ * what it draws. The English values are the capitalised literals the
+ * screens showed before, word for word.
  */
-export function clinicalWord(literal: string): string {
-  return literal.charAt(0).toUpperCase() + literal.slice(1);
-}
+export const ALLERGY_SEVERITY_KEY: Record<AllergySeverity, MessageKey> = {
+  mild: 'health.allergy.severity.mild',
+  moderate: 'health.allergy.severity.moderate',
+  severe: 'health.allergy.severity.severe',
+};
+
+export const MEDICATION_STATUS_KEY: Record<MedicationStatus, MessageKey> = {
+  active: 'health.medication.status.active',
+  completed: 'health.medication.status.completed',
+  discontinued: 'health.medication.status.discontinued',
+};
+
+export const HISTORY_KIND_KEY: Record<HistoryEventKind, MessageKey> = {
+  diagnosis: 'health.history.kind.diagnosis',
+  surgery: 'health.history.kind.surgery',
+  procedure: 'health.history.kind.procedure',
+  hospitalization: 'health.history.kind.hospitalization',
+  vaccination: 'health.history.kind.vaccination',
+};
+
+export const LAB_FLAG_KEY: Record<LabResultFlag, MessageKey> = {
+  normal: 'health.labs.flag.normal',
+  low: 'health.labs.flag.low',
+  high: 'health.labs.flag.high',
+  'critical-low': 'health.labs.flag.criticalLow',
+  'critical-high': 'health.labs.flag.criticalHigh',
+  abnormal: 'health.labs.flag.abnormal',
+};
+
+export const PRESCRIPTION_STATUS_KEY: Record<PrescriptionStatus, MessageKey> = {
+  draft: 'health.prescriptions.status.draft',
+  'pending-approval': 'health.prescriptions.status.pendingApproval',
+  active: 'health.prescriptions.status.active',
+  dispensed: 'health.prescriptions.status.dispensed',
+  completed: 'health.prescriptions.status.completed',
+  discontinued: 'health.prescriptions.status.discontinued',
+  expired: 'health.prescriptions.status.expired',
+};

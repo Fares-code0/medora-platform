@@ -226,14 +226,17 @@ future reader should know these were looked at rather than skipped.
 
 Four claims cannot be settled here. Each is named with the row that would
 unblock it rather than being quietly counted as passed. The fourth is not a
-measurement — it is a decision nobody with the authority to make it has made.
+measurement — it was a decision; the owner made the translation half of it on
+2026-11-23, and the clinical sign-off half is still not given. A fifth row
+records the digit decision made with it.
 
 | Check | Blocked by | Why it cannot be done here |
 |---|---|---|
 | VoiceOver / TalkBack walkthrough of the P0 flows | **B-07**, **W-03** | Needs a build on hardware. Jest asserts that labels and roles *exist*; only a screen reader shows whether the resulting narration is usable |
 | Largest dynamic-type size on every P0 screen | **B-07** | Clipping is a layout measurement. The ceiling, the scale and the absence of fixed widths are asserted; the pixels are not |
 | RTL laid out in Arabic | **B-07** | The layout direction is asserted and, since C-09 landed on 2026-09-08, the content is genuinely Arabic — the two suites above render it. Overflow at the largest text size is still a measurement on hardware, not a test |
-| Whether the **Emergency affordance** is translated | **W-10** | Not a defect and not an oversight: emergency guidance is clinically reviewed material and is excluded from the catalogue, so the label leading to it was left in English rather than translated by a route that has no clinical review in it. An Arabic-reading patient in a crisis meeting an English button is a real cost; so is an unreviewed Arabic rendering of the way in. The owner who signs off W-10 decides, and `auth-i18n.test.tsx` pins the current answer so it is changed deliberately |
+| Whether the **Emergency affordance** is translated | **W-10** (clinical sign-off) | **Translation approved by the owner on 2026-11-23** — all application-controlled copy, including the Emergency affordances, the emergency guidance, urgent-help lines, AI disclaimers and the clinical vocabulary (lab flags, allergy severity, medication and prescription status, history kinds). It is now in the catalogue in both languages (`emergency.*` and the namespaces listed in `i18n.test.tsx`), and `auth-i18n.test.tsx`, `shell-i18n.test.tsx` and the emergency suites pin the Arabic in Arabic and the unchanged English in English. **The W-10 clinical and legal sign-off is still not given**: the Arabic emergency and clinical wording is an engineering draft awaiting the named clinical reviewer (`docs/SIGNOFF.md`). What stays open is that review, not the translation |
+| Interpolated numbers in Arabic | — (decision recorded 2026-11-23) | **Western digits (0-9).** A count, a step or a phone number interpolated into an Arabic sentence is written with Western digits, and phone numbers are bidi-isolated (LRI…PDI) so they read left-to-right. This matches what `Intl` produces for `ar` in current CLDR, which is what every date on screen already uses (`useDateFormat`), so a screen does not mix two digit systems. Some static Arabic sentences written earlier spell a digit in Arabic-Indic form (`٦` in "the 6-digit code"); that is copy, not formatting. Whether a device's ICU agrees with CLDR for `ar` is part of the B-07 device check |
 
 None of the four is a defect. Three are unverified claims and one is an open
 decision, and the difference from a defect matters: this document does not
@@ -247,7 +250,7 @@ assert them.
 |---|---|
 | **Audit performed** | 2026-09-07, against `patient-app` + S-08; F-5 added 2026-09-08 |
 | **Findings** | 5, all fixed |
-| **Open, triaged** | S-08's remaining half is a device measurement, not a translation (C-09 closed 2026-09-08); the Emergency affordance's language → W-10; three device checks → B-07 / W-03 |
+| **Open, triaged** | S-08's remaining half is a device measurement, not a translation (C-09 closed 2026-09-08); the Emergency affordance's language — translation approved 2026-11-23, clinical review of the Arabic → W-10; three device checks → B-07 / W-03 |
 | **Owner sign-off** | ⛔ **not given.** W-10 is the row that carries it, and it also covers the emergency copy and the AI disclaimers |
 
 **No build ships to a store on this document alone.** It records the state of

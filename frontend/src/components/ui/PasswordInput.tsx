@@ -2,6 +2,7 @@ import { forwardRef, useState } from 'react';
 
 import { Eye, EyeOff } from 'lucide-react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { Input, type InputProps } from './Input';
@@ -18,6 +19,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
   function PasswordInput({ disabled, autoComplete, ...rest }, ref) {
     const [visible, setVisible] = useState(false);
     const Icon = visible ? EyeOff : Eye;
+    const t = useT();
 
     return (
       <Input
@@ -29,7 +31,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
           <button
             type="button"
             disabled={disabled}
-            aria-label={visible ? 'Hide password' : 'Show password'}
+            aria-label={visible ? t('common.hidePassword') : t('common.showPassword')}
             aria-pressed={visible}
             onClick={() => setVisible((v) => !v)}
             className={cn(FIELD_ACTION_CLASSES, 'disabled:text-text-disabled')}

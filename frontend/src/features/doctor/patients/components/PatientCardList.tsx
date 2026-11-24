@@ -8,6 +8,7 @@ import {
   RISK_LEVEL_META,
   type Patient,
 } from '@/features/shared-domain/patient-identity';
+import { useT } from '@/i18n';
 import { formatDate, formatTime, dayDiffFromToday } from '@/utils/dates';
 
 import { PatientNameCell } from './PatientNameCell';
@@ -29,6 +30,7 @@ function PatientCard({
   selected: boolean;
   onToggleSelect: (id: string) => void;
 }) {
+  const t = useT();
   const next = patient.nextAppointment;
   return (
     <Card padding="compact" className={selected ? 'border-primary' : undefined}>
@@ -52,11 +54,13 @@ function PatientCard({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <StatusBadge
           status={PATIENT_STATUS_META[patient.status].kind}
-          label={PATIENT_STATUS_META[patient.status].label}
+          label={t(PATIENT_STATUS_META[patient.status].labelKey)}
         />
         <StatusBadge
           status={RISK_LEVEL_META[patient.riskLevel].kind}
-          label={`Risk: ${RISK_LEVEL_META[patient.riskLevel].label}`}
+          label={t('patient.riskLabel', {
+            level: t(RISK_LEVEL_META[patient.riskLevel].labelKey),
+          })}
         />
       </div>
 

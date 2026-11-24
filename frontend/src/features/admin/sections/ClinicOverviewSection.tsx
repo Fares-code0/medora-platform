@@ -18,6 +18,7 @@ import { CircularProgress } from '@/components/feedback';
 import { ContentHeader, PageContainer, PageSections } from '@/components/layout';
 import { StatisticCard } from '@/components/patterns';
 import { Badge, Button } from '@/components/ui';
+import { useT } from '@/i18n';
 import { routes } from '@/routes';
 import { cn } from '@/utils/cn';
 
@@ -47,6 +48,7 @@ import { MaskedIdentifier } from '../phi';
 const BAR_HEIGHTS = ['h-3', 'h-5', 'h-7', 'h-10', 'h-14', 'h-16', 'h-20', 'h-24'] as const;
 
 export function ClinicOverviewSection() {
+  const t = useT();
   const overview = useOverview();
   const queue = useQueue();
   const announcements = useAnnouncements();
@@ -92,7 +94,7 @@ export function ClinicOverviewSection() {
             */}
             <ContentHeader
               title={overview.data.clinicName}
-              caption={SECTION_META.clinic.description}
+              caption={t(SECTION_META.clinic.descriptionKey)}
               icon={SECTION_META.clinic.icon}
             />
 

@@ -18,6 +18,7 @@ import { pharmacyRoutes } from '@/features/doctor/pharmacy';
 import { reportsRoutes } from '@/features/doctor/reports';
 import { settingsRoutes } from '@/features/doctor/settings';
 import { StaffHomePage, type StaffRole } from '@/features/staff';
+import { useT } from '@/i18n';
 import {
   adminNavigation,
   AppShell,
@@ -110,9 +111,10 @@ const AdminContentAccessProvider =
       );
 
 function AreaFallback() {
+  const t = useT();
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background">
-      <Spinner size="lg" label="Loading the administration area" />
+      <Spinner size="lg" label={t('shell.loadingAdministration')} />
     </div>
   );
 }
@@ -143,8 +145,8 @@ const adminPreferencesRoute: RouteObject = {
   path: 'preferences',
   // "Preferences", not "Settings": the sidebar's Settings is Platform
   // Settings (/admin/settings). Two pages both titled Settings was the
-  // ambiguity this naming removes.
-  handle: { crumb: 'My Preferences' } satisfies RouteHandle,
+  // ambiguity this naming removes. The crumb is the localized section label.
+  handle: { titleKey: 'admin.section.preferences' } satisfies RouteHandle,
   children: [
     {
       index: true,
@@ -194,7 +196,7 @@ function staffSettingsRoute(role: StaffRole): RouteObject {
   const workspace = workspaceFor(role);
   return {
     path: 'settings',
-    handle: { crumb: 'Settings' } satisfies RouteHandle,
+    handle: { titleKey: 'shell.settings' } satisfies RouteHandle,
     children: [
       { index: true, element: <Navigate to={workspace.settings()} replace /> },
       {
@@ -225,7 +227,7 @@ const staffDirectoryRoute: RouteObject = {
   children: [
     {
       path: 'patients',
-      handle: { crumb: 'Patient directory' } satisfies RouteHandle,
+      handle: { titleKey: 'route.patientDirectory' } satisfies RouteHandle,
       lazy: async () => {
         const { MaskedDirectoryPage } = await import('@/features/staff');
         return { Component: MaskedDirectoryPage };
@@ -274,7 +276,7 @@ const receptionWorkspace = staffWorkspace(
           // ADM-05's screen, unchanged: its actions are capability-gated, so a
           // role without `appointments.cancelAdministratively` gets no cancel.
           path: 'appointments',
-          handle: { crumb: 'Appointments' } satisfies RouteHandle,
+          handle: { titleKey: 'nav.appointments' } satisfies RouteHandle,
           lazy: async () => {
             const { AppointmentOversightSection } = await import(
               '@/features/admin/appointments/AppointmentOversightSection'
@@ -292,12 +294,12 @@ const receptionWorkspace = staffWorkspace(
      */
     {
       path: 'queue',
-      handle: { crumb: 'Queue Management' } satisfies RouteHandle,
+      handle: { titleKey: 'admin.section.queue' } satisfies RouteHandle,
       lazy: clinicOperationsLoaders.queue,
     },
     {
       path: 'waiting-room',
-      handle: { crumb: 'Waiting Room' } satisfies RouteHandle,
+      handle: { titleKey: 'admin.section.waitingRoom' } satisfies RouteHandle,
       lazy: clinicOperationsLoaders.waitingRoom,
     },
   ],
@@ -312,7 +314,7 @@ const laboratoryWorkspace = staffWorkspace('laboratory', laboratoryNavigation, [
     children: [
       {
         path: 'catalogue',
-        handle: { crumb: 'Test catalogue' } satisfies RouteHandle,
+        handle: { titleKey: 'nav.testCatalogue' } satisfies RouteHandle,
         lazy: async () => {
           const { loadLabCataloguePage } = await import('@/features/doctor/labs');
           return { Component: await loadLabCataloguePage() };

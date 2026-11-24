@@ -112,13 +112,26 @@ describe('Help and feedback (W-11)', () => {
     expect(screen.queryByText(en['support.care.body'])).toBeNull();
   });
 
-  it('leaves the urgent-medical-help card in English, pending W-10', () => {
-    // Deliberate. It tells a patient what to do in a medical emergency,
-    // which is clinically reviewed material — the same line drawn around
-    // the Emergency affordances in `auth-i18n.test.tsx`.
+  it('translates the urgent-medical-help card (W-10 translation approval, 2026-11-23)', () => {
+    // It was pinned in English pending W-10. The owner approved
+    // translating emergency copy; the Arabic awaits the clinical
+    // reviewer, and the English twin below holds the wording unchanged.
     renderWithProviders(<SupportScreen />, { locale: 'ar' });
 
+    expect(screen.getByText('إذا كنت بحاجة إلى مساعدة طبية عاجلة')).toBeTruthy();
+    expect(screen.getByText(ar['support.urgent.body'])).toBeTruthy();
+    expect(screen.queryByText('If you need urgent medical help')).toBeNull();
+  });
+
+  it('keeps the urgent-medical-help card word for word in English', () => {
+    renderWithProviders(<SupportScreen />, { locale: 'en' });
+
     expect(screen.getByText('If you need urgent medical help')).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Call your local emergency number from your phone's dialler. Do not wait for a reply here — this inbox is not monitored for medical emergencies.",
+      ),
+    ).toBeTruthy();
   });
 });
 
@@ -195,13 +208,25 @@ describe('The forced-upgrade wall, in Arabic (W-06)', () => {
     expect(screen.queryByText(en['upgrade.noStoreLink'])).toBeNull();
   });
 
-  it('leaves the emergency line in English, pending W-10', () => {
-    // The same deliberate exception the support screen carries, on the
-    // same screen as four strings that are now translated — which is why
-    // it is pinned rather than left to read as an oversight.
+  it('translates the emergency line (W-10 translation approval, 2026-11-23)', () => {
     renderWithProviders(<UpgradeRequiredScreen />, { locale: 'ar' });
 
-    expect(screen.getByText(/If you need urgent help/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        'إذا كنت بحاجة إلى مساعدة عاجلة، فاتصل برقم الطوارئ المحلي من تطبيق الهاتف.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/If you need urgent help/)).toBeNull();
+  });
+
+  it('keeps the emergency line word for word in English', () => {
+    renderWithProviders(<UpgradeRequiredScreen />, { locale: 'en' });
+
+    expect(
+      screen.getByText(
+        "If you need urgent help, call your local emergency number from your phone's dialler.",
+      ),
+    ).toBeTruthy();
   });
 });
 

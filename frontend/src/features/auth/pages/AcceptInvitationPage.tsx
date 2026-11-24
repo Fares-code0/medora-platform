@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Alert } from '@/components/feedback';
 import { Button, PasswordInput } from '@/components/ui';
-import { useT, type TranslateFn } from '@/i18n';
+import { translateIfKey, useT, type TranslateFn } from '@/i18n';
 import { routes } from '@/routes';
 import type { InvitationEnrolment } from '@/types/auth';
 
@@ -17,6 +17,7 @@ import {
   acceptInvitationSchema,
   type AcceptInvitationValues,
 } from '../schemas/invitation';
+import { PASSWORD_MIN_LENGTH } from '../schemas/password';
 
 /**
  * Accepting an administrator invitation (ADR-035 §5).
@@ -114,7 +115,7 @@ function PasswordStep({
             label={t('common.password')}
             autoComplete="new-password"
             autoFocus
-            error={errors.password?.message}
+            error={translateIfKey(t, errors.password?.message, { count: PASSWORD_MIN_LENGTH })}
             {...register('password')}
           />
           <PasswordStrengthMeter password={password} />
@@ -122,7 +123,7 @@ function PasswordStep({
         <PasswordInput
           label={t('common.confirmPassword')}
           autoComplete="new-password"
-          error={errors.confirmPassword?.message}
+          error={translateIfKey(t, errors.confirmPassword?.message)}
           {...register('confirmPassword')}
         />
 

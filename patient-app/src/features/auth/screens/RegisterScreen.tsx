@@ -10,12 +10,12 @@ import { Button, Card, Screen, Text } from '@/components';
 import { Checkbox } from '@/components/form/Checkbox';
 import { ControlledInput } from '@/components/form/ControlledInput';
 import { useFieldChain } from '@/components/form/useFieldChain';
-import { useT } from '@/i18n';
+import { useT, useValidationMessage } from '@/i18n';
 import type { AuthStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
 
 import { FormBanner } from '../components/FormBanner';
-import { registerFormSchema, type RegisterForm } from '../schemas';
+import { NAME_MAX_LENGTH, registerFormSchema, type RegisterForm } from '../schemas';
 import { authService } from '../service';
 import { useAuthError } from '../useAuthErrorMessage';
 
@@ -53,6 +53,7 @@ export function RegisterScreen({ navigation }: Props) {
   const authError = useAuthError();
   const theme = useTheme();
   const t = useT();
+  const validationMessage = useValidationMessage();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -122,6 +123,7 @@ export function RegisterScreen({ navigation }: Props) {
           label={t('auth.field.firstName')}
           testID="register-first-name"
           autoComplete="given-name"
+          maxLength={NAME_MAX_LENGTH}
           required
         />
         <ControlledInput
@@ -131,6 +133,7 @@ export function RegisterScreen({ navigation }: Props) {
           label={t('auth.field.lastName')}
           testID="register-last-name"
           autoComplete="family-name"
+          maxLength={NAME_MAX_LENGTH}
           required
         />
         <ControlledInput
@@ -204,7 +207,7 @@ export function RegisterScreen({ navigation }: Props) {
               onChange={field.onChange}
               {...(fieldState.error?.message === undefined
                 ? {}
-                : { error: fieldState.error.message })}
+                : { error: validationMessage(fieldState.error.message) })}
             />
           )}
         />
@@ -219,7 +222,7 @@ export function RegisterScreen({ navigation }: Props) {
               onChange={field.onChange}
               {...(fieldState.error?.message === undefined
                 ? {}
-                : { error: fieldState.error.message })}
+                : { error: validationMessage(fieldState.error.message) })}
             />
           )}
         />

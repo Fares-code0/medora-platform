@@ -4,7 +4,7 @@ import { Check, ChevronDown } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { useOutsideClick } from '@/hooks/useOutsideClick';
-import { withoutIsolates } from '@/i18n';
+import { useT, withoutIsolates } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import { FieldWrapper, useFieldA11y } from './internal/Field';
@@ -63,7 +63,7 @@ export function Select({
   label,
   helperText,
   error,
-  placeholder = 'Select…',
+  placeholder: placeholderProp,
   disabled = false,
   required = false,
   size = 'md',
@@ -73,6 +73,8 @@ export function Select({
   className,
   containerClassName,
 }: SelectProps) {
+  const t = useT();
+  const placeholder = placeholderProp ?? t('ui.select');
   const { inputId, helperId, errorId } = useFieldA11y(id);
   const listboxId = `${inputId}-listbox`;
   const [open, setOpen] = useState(false);

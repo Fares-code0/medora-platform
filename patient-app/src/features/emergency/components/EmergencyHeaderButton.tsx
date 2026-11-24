@@ -3,6 +3,7 @@ import { Pressable, StyleSheet } from 'react-native';
 
 import { pressableA11y } from '@/accessibility/a11y';
 import { Icon, Text } from '@/components';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 /**
@@ -34,13 +35,12 @@ import { useTheme } from '@/theme';
  * before the emergency. `hitSlop` widens the target well past the 44pt
  * minimum inside a header that cannot give it more room.
  *
- * ── Why it is not in the message catalogue ──────────────────────────
+ * ── Language ────────────────────────────────────────────────────────
  *
- * The same decision `WelcomeScreen` documents. Emergency material is
- * clinically reviewed (N-07, W-10), and whether the wording on the way
- * IN is inside that review is the W-10 owner's call rather than a
- * translator's; `docs/A11Y_AUDIT.md` §6 carries it as an open question.
- * `i18n/no-inline-copy.test.ts` exempts this directory for that reason.
+ * The W-10 owner approved translating the emergency affordances on
+ * 2026-11-23, so the label and hint are `emergency.*` catalogue keys.
+ * The Arabic is an engineering draft awaiting the named clinical
+ * reviewer (`docs/SIGNOFF.md`); the W-10 sign-off itself is not given.
  *
  * ── The navigation type ─────────────────────────────────────────────
  *
@@ -54,6 +54,7 @@ type EmergencyReachable = { Emergency: undefined };
 
 export function EmergencyHeaderButton() {
   const theme = useTheme();
+  const t = useT();
   const navigation = useNavigation<NavigationProp<EmergencyReachable>>();
 
   return (
@@ -62,14 +63,14 @@ export function EmergencyHeaderButton() {
       hitSlop={12}
       onPress={() => navigation.navigate('Emergency')}
       {...pressableA11y({
-        label: 'Emergency help',
-        hint: 'Opens emergency guidance. It does not place a call.',
+        label: t('emergency.help'),
+        hint: t('emergency.entry.hint'),
       })}
       style={[styles.headerButton, { columnGap: theme.space[1] }]}
     >
       <Icon name="alert" size={18} color="error" />
       <Text variant="label" color="error">
-        Emergency
+        {t('emergency.short')}
       </Text>
     </Pressable>
   );

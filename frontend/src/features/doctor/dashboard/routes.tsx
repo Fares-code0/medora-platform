@@ -10,7 +10,7 @@ import { routes } from '@/routes';
  */
 export const dashboardRoutes: RouteObject = {
   path: routes.doctor.overview,
-  handle: { crumb: 'Overview' } satisfies RouteHandle,
+  handle: { titleKey: 'nav.overview' } satisfies RouteHandle,
   lazy: async () => {
     const { OverviewPage } = await import('./pages/OverviewPage');
     return { Component: OverviewPage };

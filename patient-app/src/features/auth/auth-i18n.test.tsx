@@ -28,13 +28,13 @@ import { createTokenStorage } from './storage';
  * not. The second half is what catches a missed `useT`; without it a
  * screen that renders both would pass.
  *
- * ── The one thing deliberately still in English ─────────────────────
+ * ── The Emergency affordance ────────────────────────────────────────
  *
- * The Emergency affordance. `messages/en.ts` excludes emergency copy
- * because it is clinically reviewed material (N-07, W-10), and whether
- * the label on the way in is inside that review is the W-10 owner's
- * call rather than a translator's. The last test pins that as a decision
- * so it cannot be "fixed" by someone who reads it as an oversight.
+ * It was pinned in English, pending W-10, until the owner approved
+ * translating emergency copy on 2026-11-23. The pin is now a pair: the
+ * Arabic label in Arabic, and the unchanged English label in English.
+ * The Arabic is an engineering draft awaiting the clinical reviewer; the
+ * W-10 sign-off is not given (`docs/SIGNOFF.md`).
  */
 
 function navigationStub() {
@@ -75,17 +75,32 @@ describe('Welcome (E-01)', () => {
     expect(queryByText(en['auth.action.createAccount'])).toBeNull();
   });
 
-  it('keeps the emergency affordance in English, pending W-10', () => {
-    // Not an oversight. An unreviewed Arabic label on the entry point to
-    // clinically reviewed guidance is the decision this row does not get
-    // to make; `WelcomeScreen`'s docblock and `docs/A11Y_AUDIT.md` §6
-    // carry it.
-    const { getByText } = renderWithProviders(
+  it('translates the emergency affordance in Arabic (W-10 translation approval)', () => {
+    const { getByText, getByTestId, queryByText } = renderWithProviders(
       <WelcomeScreen {...screenProps('Welcome', undefined)} />,
       { locale: 'ar' },
     );
 
+    expect(getByText('مساعدة طارئة')).toBeTruthy();
+    expect(getByText('متاحة دون تسجيل الدخول، ودون اتصال بالإنترنت.')).toBeTruthy();
+    expect(getByTestId('welcome-emergency-card').props.accessibilityHint).toBe(
+      'يفتح إرشادات الطوارئ. ولا يُجري مكالمة.',
+    );
+    expect(queryByText('Emergency help')).toBeNull();
+  });
+
+  it('keeps the emergency affordance word for word in English', () => {
+    const { getByText, getByTestId } = renderWithProviders(
+      <WelcomeScreen {...screenProps('Welcome', undefined)} />,
+      { locale: 'en' },
+    );
+
     expect(getByText('Emergency help')).toBeTruthy();
+    expect(getByText('Available without signing in, and without a connection.')).toBeTruthy();
+    expect(getByTestId('welcome-emergency-card').props.accessibilityLabel).toBe('Emergency help');
+    expect(getByTestId('welcome-emergency-card').props.accessibilityHint).toBe(
+      'Opens emergency guidance. It does not place a call.',
+    );
   });
 });
 
@@ -129,5 +144,17 @@ describe('Forgot password (D-10)', () => {
     // 202 the backend pays for is undone by a translation that promises
     // delivery, so the Arabic is asserted here and not only reviewed.
     expect(ar['auth.forgot.sent']).toContain('إذا كان هناك حساب');
+  });
+});
+
+describe('Register, the name length bound (review M-6)', () => {
+  it('caps both name inputs at the schema’s 60 characters', () => {
+    const { getByTestId } = renderWithProviders(
+      <RegisterScreen {...screenProps('Register', undefined)} />,
+      { locale: 'ar' },
+    );
+
+    expect(getByTestId('register-first-name').props.maxLength).toBe(60);
+    expect(getByTestId('register-last-name').props.maxLength).toBe(60);
   });
 });

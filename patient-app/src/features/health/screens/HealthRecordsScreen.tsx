@@ -18,7 +18,7 @@ import type { ProfileStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
 import type { AllergySeverity, MedicationStatus } from '@/types/vocabularies';
 
-import { clinicalWord } from '../clinical-word';
+import { ALLERGY_SEVERITY_KEY, HISTORY_KIND_KEY, MEDICATION_STATUS_KEY } from '../clinical-word';
 import { ReleaseNotice } from '../components/ReleaseNotice';
 import { useAllergies, useConditions, useHistory, useMedications } from '../hooks';
 
@@ -136,9 +136,8 @@ export function HealthRecordsScreen({ navigation }: Props) {
                       {allergy.allergen}
                     </Text>
                     <Badge
-                      // Clinical vocabulary, not translated — see the
-                      // docblock and `messages/en.ts`.
-                      label={clinicalWord(allergy.severity)}
+                      // Clinical vocabulary — see `clinical-word.ts`.
+                      label={t(ALLERGY_SEVERITY_KEY[allergy.severity])}
                       tone={SEVERITY_TONE[allergy.severity]}
                     />
                   </View>
@@ -198,7 +197,7 @@ export function HealthRecordsScreen({ navigation }: Props) {
                       {medication.name}
                     </Text>
                     <Badge
-                      label={clinicalWord(medication.status)}
+                      label={t(MEDICATION_STATUS_KEY[medication.status])}
                       tone={MEDICATION_TONE[medication.status]}
                     />
                   </View>
@@ -241,7 +240,7 @@ export function HealthRecordsScreen({ navigation }: Props) {
                       {event.title}
                     </Text>
                     {/* `clinical-word.ts` owns this rule — see its docblock. */}
-                    <Badge label={clinicalWord(event.kind)} tone="neutral" />
+                    <Badge label={t(HISTORY_KIND_KEY[event.kind])} tone="neutral" />
                   </View>
                   <Text variant="bodySm" color="textSecondary">
                     {formatLongDate(event.occurredOn)}
@@ -291,7 +290,6 @@ export function HealthRecordsScreen({ navigation }: Props) {
           </View>
         </Card>
       </Section>
-
     </Screen>
   );
 }

@@ -298,7 +298,15 @@
    * "trending up", a chart convention that reads the same in every script,
    * and mirroring it would turn growth into decline. Only icons whose
    * meaning is *reading order* belong.
+   *
+   * Two more do, by context: `undo2` ("Undo changes" in the admin settings
+   * forms and the permission matrix) is an arrow turning back against the
+   * reading direction, and `panel-left` (the navbar's sidebar toggle) draws
+   * the sidebar on the side it sits — the right, in Arabic. Lucide spells the
+   * first class without a hyphen (`Undo2` → `lucide-undo2`).
    */
+  [dir='rtl'] .lucide-undo2,
+  [dir='rtl'] .lucide-panel-left,
   [dir='rtl'] .lucide-chevron-left,
   [dir='rtl'] .lucide-chevron-right,
   [dir='rtl'] .lucide-chevrons-left,

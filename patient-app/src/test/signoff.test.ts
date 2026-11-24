@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { catalogues } from '@/i18n';
+
 /**
  * The clinical and legal sign-off gate — checklist W-10.
  *
@@ -178,6 +180,67 @@ describe('item 1 — Emergency copy (N-07)', () => {
 
     // Failing here does not mean the guidance is wrong. It means it
     // needs item 1 of docs/SIGNOFF.md signed before a patient reads it.
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * Since the W-10 owner approved translating the emergency copy
+   * (2026-11-23) the words live in the catalogue, not in `content/`, so
+   * the scan above reads only keys there. This is the same gate on the
+   * words themselves, in BOTH languages: an Arabic treatment step is the
+   * same release blocker as an English one. The Arabic list is the
+   * first-aid instruction vocabulary a translator would reach for.
+   */
+  const TREATMENT_INSTRUCTION_AR = [
+    'إنعاش',
+    'ضغطات',
+    'تنفس اصطناعي',
+    'من الفم إلى الفم',
+    'وضعية الإفاقة',
+    'هايمليك',
+    'ضربات على الظهر',
+    'رباط ضاغط',
+    'عاصبة',
+    'اضغط على',
+    'ارفع ال',
+    'إبينفرين',
+    'أدرينالين',
+    'حقنة',
+    'أسبرين',
+    'مضاد الهيستامين',
+    'جرعة',
+    'ملغ',
+    'مزيل الرجفان',
+    'صدمة كهربائية',
+    'أمل الرأس',
+    'رفع الذقن',
+    'تحريض القيء',
+    'ثلج',
+    'ماء بارد',
+  ];
+
+  it('carries no treatment instruction in the emergency catalogue keys, in either language', () => {
+    if (isSigned('Emergency copy')) return;
+
+    const offenders: string[] = [];
+    const emergencyKeys = Object.keys(catalogues.en).filter((key) =>
+      key.startsWith('emergency.'),
+    ) as (keyof typeof catalogues.en)[];
+    expect(emergencyKeys.length).toBeGreaterThan(20);
+
+    for (const key of emergencyKeys) {
+      const english = catalogues.en[key].toLowerCase();
+      for (const phrase of TREATMENT_INSTRUCTION) {
+        // `aed` is matched as a word: inside another word it is noise.
+        const hit = phrase === 'aed' ? /\baed\b/.test(english) : english.includes(phrase);
+        if (hit) offenders.push(`${key} (en): "${phrase.trim()}"`);
+      }
+      const arabic = catalogues.ar[key];
+      for (const phrase of TREATMENT_INSTRUCTION_AR) {
+        if (arabic.includes(phrase)) offenders.push(`${key} (ar): "${phrase}"`);
+      }
+    }
+
     expect(offenders).toEqual([]);
   });
 });

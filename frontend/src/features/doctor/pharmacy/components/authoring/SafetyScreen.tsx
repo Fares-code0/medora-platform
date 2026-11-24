@@ -4,6 +4,7 @@ import { Alert, Spinner } from '@/components/feedback';
 import { Stack } from '@/components/layout';
 import { StatusBadge } from '@/components/patterns';
 import { Button, Card, Textarea } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import {
   SAFETY_EVIDENCE_META,
@@ -86,6 +87,7 @@ export function SafetyScreen(props: SafetyScreenProps) {
     children,
   } = props;
 
+  const t = useT();
   const headingRef = useRef<HTMLSpanElement>(null);
 
   /*
@@ -191,11 +193,11 @@ export function SafetyScreen(props: SafetyScreenProps) {
                     : `Checked — ${String(completed.warnings.length)} warning${completed.warnings.length === 1 ? '' : 's'}`
                 }
               />
-              {evidence.isDemo ? <StatusBadge status="info" label={evidence.label} /> : null}
+              {evidence.isDemo ? <StatusBadge status="info" label={t(evidence.labelKey)} /> : null}
             </div>
 
             {evidence.isDemo ? (
-              <p className="text-caption text-text-tertiary">{evidence.detail}</p>
+              <p className="text-caption text-text-tertiary">{t(evidence.detailKey)}</p>
             ) : null}
 
             {completed.warnings.length === 0 ? (

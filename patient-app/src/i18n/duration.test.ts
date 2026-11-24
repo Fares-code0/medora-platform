@@ -1,4 +1,4 @@
-import { formatMinutes } from './duration';
+import { arabicResultCount, formatMinutes } from './duration';
 
 /**
  * The one message in the tree that needs a count agreeing with a noun
@@ -34,5 +34,17 @@ describe('both', () => {
     expect(formatMinutes('en', 0)).toBe('1 minute');
     expect(formatMinutes('en', 1)).toBe('1 minute');
     expect(formatMinutes('ar', 0)).toBe('دقيقة واحدة');
+  });
+});
+
+describe('a lab order’s result count in Arabic (review L-9)', () => {
+  it('uses the singular, dual, paucal and the singular after 11', () => {
+    expect(arabicResultCount(1)).toBe('نتيجة واحدة');
+    expect(arabicResultCount(2)).toBe('نتيجتان');
+    expect(arabicResultCount(3)).toBe('3 نتائج');
+    expect(arabicResultCount(10)).toBe('10 نتائج');
+    expect(arabicResultCount(11)).toBe('11 نتيجة');
+    expect(arabicResultCount(100)).toBe('100 نتيجة');
+    expect(arabicResultCount(103)).toBe('103 نتائج');
   });
 });

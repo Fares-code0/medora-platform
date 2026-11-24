@@ -6,6 +6,7 @@ import {
   PATIENT_STATUSES,
   PATIENT_STATUS_META,
 } from '@/features/shared-domain/patient-identity';
+import { useT } from '@/i18n';
 
 import {
   AGE_RANGE_LABELS,
@@ -50,6 +51,7 @@ export function PatientFiltersDrawer({
   onFilterChange,
   onClear,
 }: PatientFiltersDrawerProps) {
+  const t = useT();
   const bind = <K extends keyof PatientListFilters>(key: K) => ({
     value: filters[key] ?? ALL,
     onChange: (value: string) =>
@@ -99,7 +101,7 @@ export function PatientFiltersDrawer({
             'All statuses',
             PATIENT_STATUSES.map((status) => ({
               value: status,
-              label: PATIENT_STATUS_META[status].label,
+              label: t(PATIENT_STATUS_META[status].labelKey),
             })),
           )}
           {...bind('status')}

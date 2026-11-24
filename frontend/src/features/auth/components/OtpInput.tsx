@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ClipboardEvent, KeyboardEvent } from 'react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 /**
@@ -28,8 +29,9 @@ export function OtpInput({
   disabled = false,
   invalid = false,
   autoFocus = true,
-  'aria-label': ariaLabel = 'Verification code',
+  'aria-label': ariaLabel,
 }: OtpInputProps) {
+  const t = useT();
   const refs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
@@ -95,7 +97,11 @@ export function OtpInput({
   };
 
   return (
-    <div role="group" aria-label={ariaLabel} className="flex justify-between gap-2 sm:gap-3">
+    <div
+      role="group"
+      aria-label={ariaLabel ?? t('otp.codeLabel')}
+      className="flex justify-between gap-2 sm:gap-3"
+    >
       {digits.map((digit, index) => (
         <input
           key={index}
@@ -108,7 +114,7 @@ export function OtpInput({
           maxLength={1}
           value={digit}
           disabled={disabled}
-          aria-label={`Digit ${String(index + 1)} of ${String(length)}`}
+          aria-label={t('otp.digitOf', { index: index + 1, total: length })}
           aria-invalid={invalid || undefined}
           onChange={(event) => handleChange(index, event.target.value)}
           onKeyDown={(event) => handleKeyDown(index, event)}

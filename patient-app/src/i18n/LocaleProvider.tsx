@@ -183,3 +183,25 @@ export function useT(): TranslateFn {
     [locale],
   );
 }
+
+/**
+ * The translation hook for the one screen that must render with **no**
+ * provider guaranteed above it: `ErrorBoundary`'s crash fallback.
+ *
+ * `useT` throws without a `LocaleProvider`, deliberately (see above).
+ * The crash screen cannot take that dependency — it is what renders when
+ * the tree has just failed — so this reads the provider's locale when
+ * there is one and the stored preference when there is not. Either way
+ * it reads the same total catalogue; there is still no English fallback
+ * for a missing key, because there is no missing key.
+ */
+export function useOptionalT(): TranslateFn {
+  const context = useContext(LocaleContext);
+  const locale = context?.locale ?? readStoredLocale();
+
+  return useCallback(
+    (key: MessageKey, params?: MessageParams) =>
+      interpolate(catalogues[locale][key] ?? key, params),
+    [locale],
+  );
+}

@@ -1,12 +1,12 @@
 import type { ReactNode } from 'react';
 
 import { ContentHeader } from '@/components/layout';
-import { formatDateWith } from '@/i18n';
+import { formatDateWith, useT, type MessageKey } from '@/i18n';
 
-function greetingForHour(hour: number): string {
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+function greetingForHour(hour: number): MessageKey {
+  if (hour < 12) return 'dashboard.greeting.morning';
+  if (hour < 18) return 'dashboard.greeting.afternoon';
+  return 'dashboard.greeting.evening';
 }
 
 export interface DashboardGreetingProps {
@@ -29,6 +29,7 @@ export interface DashboardGreetingProps {
  * the role supplies the name and the summary, nothing else.
  */
 export function DashboardGreeting({ name, summary, actions }: DashboardGreetingProps) {
+  const t = useT();
   const now = new Date();
   const today = formatDateWith(now, { weekday: 'long', month: 'long', day: 'numeric' });
 
@@ -37,7 +38,7 @@ export function DashboardGreeting({ name, summary, actions }: DashboardGreetingP
     // gradient used to start from, laid flat.
     <div className="rounded-surface border border-border bg-primary-subtle px-4 py-4 md:px-5">
       <ContentHeader
-        title={`${greetingForHour(now.getHours())}, ${name}`}
+        title={t(greetingForHour(now.getHours()), { name })}
         caption={summary === undefined ? today : `${today} · ${summary}`}
         actions={actions}
       />

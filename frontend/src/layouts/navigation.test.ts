@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { LOCALE_CODES } from '@/i18n/locales';
-import { loadAllCatalogues, type Messages } from '@/i18n/messages';
+import { loadAllCatalogues, type PartialMessages } from '@/i18n/messages';
 import { workspaceFor } from '@/routes/workspaces';
 
 import { adminNavigation, doctorNavigation, receptionNavigation } from './navigation';
@@ -94,7 +94,7 @@ describe('doctorNavigation Appointments group', () => {
  * Records children are the area’s own name and "New Medical Record".
  */
 describe('doctor sidebar group labels in every locale', () => {
-  let catalogues: Record<(typeof LOCALE_CODES)[number], Messages>;
+  let catalogues: Record<(typeof LOCALE_CODES)[number], PartialMessages>;
   beforeAll(async () => {
     catalogues = await loadAllCatalogues();
   });
@@ -215,7 +215,7 @@ describe('doctorNavigation Patients group', () => {
     const catalogues = await loadAllCatalogues();
     for (const code of LOCALE_CODES) {
       expect(catalogues[code]['nav.patientsNew']).toEqual(expect.any(String));
-      expect(catalogues[code]['nav.patientsNew'].length).toBeGreaterThan(0);
+      expect((catalogues[code]['nav.patientsNew'] ?? '').length).toBeGreaterThan(0);
     }
     expect(catalogues.en['nav.patientsNew']).toBe('Add Patient');
   });
@@ -236,7 +236,7 @@ describe('doctorNavigation Labs group', () => {
   it('labels New Order in every locale', async () => {
     const catalogues = await loadAllCatalogues();
     for (const code of LOCALE_CODES) {
-      expect(catalogues[code]['nav.labsNew'].length).toBeGreaterThan(0);
+      expect((catalogues[code]['nav.labsNew'] ?? '').length).toBeGreaterThan(0);
     }
     expect(catalogues.en['nav.labsNew']).toBe('New Order');
   });

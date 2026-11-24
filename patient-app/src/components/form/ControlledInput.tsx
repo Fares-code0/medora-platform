@@ -1,5 +1,7 @@
 import { Controller, type Control, type FieldValues, type Path } from 'react-hook-form';
 
+import { useValidationMessage } from '@/i18n';
+
 import { Input, type InputProps } from '../Input';
 
 /**
@@ -12,6 +14,9 @@ import { Input, type InputProps } from '../Input';
  * The field error is passed through to `Input`, which renders it with an
  * icon, a colour AND an `aria-invalid` — three carriers, so it survives a
  * colour-vision deficiency and a screen reader (checklist S-02).
+ *
+ * The schema's message is English by design (it mirrors the backend
+ * DTO); `useValidationMessage` renders it in the patient's language.
  */
 export interface ControlledInputProps<TValues extends FieldValues> extends Omit<
   InputProps,
@@ -26,6 +31,7 @@ export function ControlledInput<TValues extends FieldValues>({
   name,
   ...inputProps
 }: ControlledInputProps<TValues>) {
+  const message = useValidationMessage();
   return (
     <Controller
       control={control}
@@ -36,7 +42,9 @@ export function ControlledInput<TValues extends FieldValues>({
           value={typeof field.value === 'string' ? field.value : ''}
           onChangeText={field.onChange}
           onBlur={field.onBlur}
-          {...(fieldState.error?.message === undefined ? {} : { error: fieldState.error.message })}
+          {...(fieldState.error?.message === undefined
+            ? {}
+            : { error: message(fieldState.error.message) })}
         />
       )}
     />

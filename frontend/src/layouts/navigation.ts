@@ -95,16 +95,17 @@ export interface NavigationConfig {
 
 /** Route handle contract consumed by the shell breadcrumb (§4). */
 export interface RouteHandle {
+  /**
+   * A literal page name — the fallback for a route that has no `titleKey`.
+   * Every shell and auth route uses `titleKey` now; `crumb` remains for
+   * routes declared outside the catalogue (tests, a feature mid-migration).
+   */
   readonly crumb?: string;
   /**
-   * A `MessageKey` naming the page, for surfaces that must be translated.
-   *
-   * `crumb` is a literal, which is right inside the shell — its breadcrumbs
-   * and titles come from `navigation.ts`'s own English strings, and the ~2,045
-   * untranslated feature-interior literals (`docs/handoff/i18n.md` §6) are the
-   * wider gap it belongs to. The auth branch is the one area that *is* fully
-   * translated, so its route names have to be keys rather than strings or the
-   * document title would be the only English thing on an Arabic sign-in page.
+   * A `MessageKey` naming the page: the breadcrumb level, the document title
+   * and the route announcer all read it through `useT`, so all three follow
+   * the active language (Arabic localization, foundation phase — before it,
+   * only the auth branch used keys and every shell title was English).
    *
    * Typed as `string` rather than `MessageKey` because `src/layouts` is a
    * platform layer that may not depend on the catalogue's key union; the

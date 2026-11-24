@@ -1,6 +1,7 @@
 import { Download, FileSpreadsheet, FileText, Printer, Table } from 'lucide-react';
 
 import { Button, Dropdown, type MenuEntry , type ButtonSize, type ButtonVariant } from '@/components/ui';
+import { useT, type MessageKey } from '@/i18n';
 import { runExport, type ExportDataset, type ExportFormat } from '@/utils/export';
 
 /**
@@ -19,24 +20,25 @@ export interface ExportButtonProps {
   onExported?: ((format: ExportFormat) => void) | undefined;
 }
 
-const FORMAT_META: readonly { id: ExportFormat; label: string; icon: typeof Table }[] = [
-  { id: 'csv', label: 'Export as CSV', icon: Table },
-  { id: 'excel', label: 'Export as Excel', icon: FileSpreadsheet },
-  { id: 'pdf', label: 'Export as PDF', icon: FileText },
-  { id: 'print', label: 'Print', icon: Printer },
+const FORMAT_META: readonly { id: ExportFormat; labelKey: MessageKey; icon: typeof Table }[] = [
+  { id: 'csv', labelKey: 'ui.exportCsv', icon: Table },
+  { id: 'excel', labelKey: 'ui.exportExcel', icon: FileSpreadsheet },
+  { id: 'pdf', labelKey: 'ui.exportPdf', icon: FileText },
+  { id: 'print', labelKey: 'ui.print', icon: Printer },
 ];
 
 export function ExportButton({
   getDataset,
-  label = 'Export',
+  label,
   variant = 'secondary',
   size = 'md',
   disabled = false,
   onExported,
 }: ExportButtonProps) {
+  const t = useT();
   const entries: readonly MenuEntry[] = FORMAT_META.map((format) => ({
     id: format.id,
-    label: format.label,
+    label: t(format.labelKey),
     icon: format.icon,
     onSelect: () => {
       runExport(format.id, getDataset());
@@ -47,11 +49,11 @@ export function ExportButton({
   return (
     <Dropdown
       align="end"
-      menuLabel="Export options"
+      menuLabel={t('ui.exportOptions')}
       entries={entries}
       trigger={
         <Button variant={variant} size={size} leadingIcon={Download} disabled={disabled}>
-          {label}
+          {label ?? t('ui.export')}
         </Button>
       }
     />

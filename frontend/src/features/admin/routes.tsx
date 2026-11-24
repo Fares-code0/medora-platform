@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { Navigate, type RouteObject } from 'react-router-dom';
 
 import { selectService } from '@/api/seam';
+import type { MessageKey } from '@/i18n';
 import type { RouteHandle } from '@/layouts';
 import { routes } from '@/routes';
 
@@ -13,10 +14,10 @@ import type { AdminSectionSlug } from './administration.types';
  * into the shared AppShell in Phase B). These are ordinary child routes of
  * the admin shell rather than a descendant <Routes>, so `useMatches()` sees
  * them — which is what makes the breadcrumb and the document title work from
- * `handle.crumb` like every other area of the app.
+ * `handle.titleKey` like every other area of the app.
  *
  * Each section is its own `route.lazy` boundary (the house pattern, §5.3),
- * so the paths and crumbs stay cheap and static while the section code
+ * so the paths and title keys stay cheap and static while the section code
  * splits per route instead of arriving as one large area chunk.
  */
 
@@ -60,14 +61,14 @@ function demoOnly(slug: AdminSectionSlug, load: SectionLoader): SectionLoader {
 
 type SectionSlug = Exclude<Parameters<typeof routes.admin.section>[0], undefined>;
 
-/** Declares one demo-backed section route: static path + crumb, lazily loaded component. */
-function section(slug: SectionSlug, crumb: string, load: SectionLoader): RouteObject {
-  return { path: slug, handle: { crumb } satisfies RouteHandle, lazy: demoOnly(slug, load) };
+/** Declares one demo-backed section route: static path + title key, lazily loaded component. */
+function section(slug: SectionSlug, titleKey: MessageKey, load: SectionLoader): RouteObject {
+  return { path: slug, handle: { titleKey } satisfies RouteHandle, lazy: demoOnly(slug, load) };
 }
 
 /** Declares one section the live API serves — the same shape, never `demoOnly`. */
-function liveSection(slug: SectionSlug, crumb: string, load: SectionLoader): RouteObject {
-  return { path: slug, handle: { crumb } satisfies RouteHandle, lazy: load };
+function liveSection(slug: SectionSlug, titleKey: MessageKey, load: SectionLoader): RouteObject {
+  return { path: slug, handle: { titleKey } satisfies RouteHandle, lazy: load };
 }
 
 const loadQueue: SectionLoader = async () => {
@@ -94,15 +95,15 @@ export const clinicOperationsLoaders = {
 export const adminRoutes: readonly RouteObject[] = [
   {
     index: true,
-    // Kept identical to SECTION_META.overview.label by
+    // Kept identical to SECTION_META.overview.labelKey by
     // `administration.meta.test.ts`.
-    handle: { crumb: 'Overview' } satisfies RouteHandle,
+    handle: { titleKey: 'admin.section.overview' } satisfies RouteHandle,
     lazy: demoOnly('overview', async () => {
       const { AdminOverviewSection } = await import('./overview/AdminOverviewSection');
       return { Component: AdminOverviewSection };
     }),
   },
-  section('clinic', 'Clinic Overview', async () => {
+  section('clinic', 'admin.section.clinic', async () => {
     const { ClinicOverviewSection } = await import('./sections/ClinicOverviewSection');
     return { Component: ClinicOverviewSection };
   }),
@@ -124,7 +125,7 @@ export const adminRoutes: readonly RouteObject[] = [
    */
   {
     path: 'doctors',
-    handle: { crumb: 'Doctors' } satisfies RouteHandle,
+    handle: { titleKey: 'admin.section.doctors' } satisfies RouteHandle,
     children: [
       {
         index: true,
@@ -135,7 +136,7 @@ export const adminRoutes: readonly RouteObject[] = [
       },
       {
         path: ':doctorId',
-        handle: { crumb: 'Doctor profile' } satisfies RouteHandle,
+        handle: { titleKey: 'route.doctorProfile' } satisfies RouteHandle,
         lazy: async () => {
           const { DoctorProfilePage } = await import('./doctors/DoctorProfilePage');
           return { Component: DoctorProfilePage };
@@ -150,7 +151,7 @@ export const adminRoutes: readonly RouteObject[] = [
    */
   {
     path: 'patients',
-    handle: { crumb: 'Patients' } satisfies RouteHandle,
+    handle: { titleKey: 'admin.section.patients' } satisfies RouteHandle,
     children: [
       {
         index: true,
@@ -161,7 +162,7 @@ export const adminRoutes: readonly RouteObject[] = [
       },
       {
         path: ':patientId',
-        handle: { crumb: 'Patient account' } satisfies RouteHandle,
+        handle: { titleKey: 'route.patientAccount' } satisfies RouteHandle,
         lazy: demoOnly('patients', async () => {
           const { PatientProfilePage } = await import('./patients/PatientProfilePage');
           return { Component: PatientProfilePage };
@@ -175,50 +176,50 @@ export const adminRoutes: readonly RouteObject[] = [
    * its own, the same shape `phi/` took for ADM-10, not another
    * clinic-management section.
    */
-  liveSection('appointments', 'Appointment Oversight', async () => {
+  liveSection('appointments', 'admin.section.appointments', async () => {
     const { AppointmentOversightSection } =
       await import('./appointments/AppointmentOversightSection');
     return { Component: AppointmentOversightSection };
   }),
-  section('queue', 'Queue Management', loadQueue),
-  section('waiting-room', 'Waiting Room', loadWaitingRoom),
-  section('staff', 'Staff Management', async () => {
+  section('queue', 'admin.section.queue', loadQueue),
+  section('waiting-room', 'admin.section.waitingRoom', loadWaitingRoom),
+  section('staff', 'admin.section.staff', async () => {
     const { StaffSection } = await import('./sections/StaffSection');
     return { Component: StaffSection };
   }),
-  section('departments', 'Departments', async () => {
+  section('departments', 'admin.section.departments', async () => {
     const { DepartmentsSection } = await import('./sections/DepartmentsSection');
     return { Component: DepartmentsSection };
   }),
-  section('shifts', 'Shift Management', async () => {
+  section('shifts', 'admin.section.shifts', async () => {
     const { ShiftsSection } = await import('./sections/ShiftsSection');
     return { Component: ShiftsSection };
   }),
-  section('schedule', 'Working Schedule', async () => {
+  section('schedule', 'admin.section.schedule', async () => {
     const { ScheduleSection } = await import('./sections/ScheduleSection');
     return { Component: ScheduleSection };
   }),
-  section('holidays', 'Holidays', async () => {
+  section('holidays', 'admin.section.holidays', async () => {
     const { HolidaysSection } = await import('./sections/HolidaysSection');
     return { Component: HolidaysSection };
   }),
-  section('rooms', 'Room Management', async () => {
+  section('rooms', 'admin.section.rooms', async () => {
     const { RoomsSection } = await import('./sections/RoomsSection');
     return { Component: RoomsSection };
   }),
-  section('resources', 'Resources', async () => {
+  section('resources', 'admin.section.resources', async () => {
     const { ResourcesSection } = await import('./sections/ResourcesSection');
     return { Component: ResourcesSection };
   }),
-  section('announcements', 'Announcements', async () => {
+  section('announcements', 'admin.section.announcements', async () => {
     const { AnnouncementsSection } = await import('./sections/AnnouncementsSection');
     return { Component: AnnouncementsSection };
   }),
-  section('policies', 'Clinic Policies', async () => {
+  section('policies', 'admin.section.policies', async () => {
     const { PoliciesSection } = await import('./sections/PoliciesSection');
     return { Component: PoliciesSection };
   }),
-  section('templates', 'Document Templates', async () => {
+  section('templates', 'admin.section.templates', async () => {
     const { TemplatesSection } = await import('./sections/TemplatesSection');
     return { Component: TemplatesSection };
   }),
@@ -244,11 +245,11 @@ export const adminRoutes: readonly RouteObject[] = [
     path: 'communications',
     // 'Communication Monitoring', not the shorter 'Communications' the task
     // brief's own snippet used — `administration.meta.test.ts` asserts every
-    // inlined crumb is identical to its `SECTION_META` label (added when
+    // inlined title key is identical to its `SECTION_META` label (added when
     // `CommunicationsSection` landed), and that label is the longer form.
     // Matching it here is what the test polices; drifting from it is exactly
     // the bug that test exists to catch.
-    handle: { crumb: 'Communication Monitoring' } satisfies RouteHandle,
+    handle: { titleKey: 'admin.section.communications' } satisfies RouteHandle,
     children: [
       {
         index: true,
@@ -259,7 +260,7 @@ export const adminRoutes: readonly RouteObject[] = [
       },
       {
         path: ':conversationId',
-        handle: { crumb: 'Conversation' } satisfies RouteHandle,
+        handle: { titleKey: 'route.conversation' } satisfies RouteHandle,
         lazy: demoOnly('communications', async () => {
           const { ConversationViewerPage } =
             await import('./communications/ConversationViewerPage');
@@ -273,7 +274,7 @@ export const adminRoutes: readonly RouteObject[] = [
    * shape ADM-05 and ADM-01 took: a screen with a service, a taxonomy and a
    * drawer of its own is not a clinic-management section.
    */
-  section('logs', 'System Logs', async () => {
+  section('logs', 'admin.section.logs', async () => {
     const { SystemLogsSection } = await import('./logs/SystemLogsSection');
     return { Component: SystemLogsSection };
   }),
@@ -283,17 +284,17 @@ export const adminRoutes: readonly RouteObject[] = [
    * a service and a widget shell of its own, none of which is clinic
    * management.
    */
-  section('reports', 'Reports', async () => {
+  section('reports', 'admin.section.reports', async () => {
     const { ReportsSection } = await import('./reports/ReportsSection');
     return { Component: ReportsSection };
   }),
-  section('profile', 'My Profile', async () => {
+  section('profile', 'admin.section.profile', async () => {
     const { AdminProfileSection } = await import('./sections/AdminProfileSection');
     return { Component: AdminProfileSection };
   }),
   {
     path: 'settings',
-    handle: { crumb: 'Platform Settings' } satisfies RouteHandle,
+    handle: { titleKey: 'admin.section.settings' } satisfies RouteHandle,
     children: [
       {
         index: true,

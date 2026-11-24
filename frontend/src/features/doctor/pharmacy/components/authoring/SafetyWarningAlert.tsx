@@ -1,6 +1,7 @@
 import { Alert } from '@/components/feedback';
 import { StatusBadge } from '@/components/patterns';
 import { Checkbox } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import type { AuthoringSafetyWarning } from '../../model/safety-check';
 import { SAFETY_EVIDENCE_META } from '../../model/safety-check';
@@ -30,6 +31,7 @@ export interface SafetyWarningAlertProps {
 }
 
 export function SafetyWarningAlert({ warning, acknowledgement }: SafetyWarningAlertProps) {
+  const t = useT();
   const severity = SAFETY_WARNING_SEVERITY_META[warning.severity];
   const kind = SAFETY_WARNING_KIND_META[warning.kind];
   const evidence = SAFETY_EVIDENCE_META[warning.source];
@@ -42,16 +44,21 @@ export function SafetyWarningAlert({ warning, acknowledgement }: SafetyWarningAl
     >
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={severity.kind} label={`${severity.label} severity`} />
-          <StatusBadge status="info" label={kind.label} />
-          {warning.blocking ? <StatusBadge status="critical" label="Cannot be overridden" /> : null}
+          <StatusBadge
+            status={severity.kind}
+            label={t('rx.severityBadge', { severity: t(severity.labelKey) })}
+          />
+          <StatusBadge status="info" label={t(kind.labelKey)} />
+          {warning.blocking ? (
+            <StatusBadge status="critical" label={t('rx.cannotOverride')} />
+          ) : null}
         </div>
 
         <p>{warning.detail}</p>
 
         {warning.against.length > 0 ? (
           <p className="text-caption text-text-secondary">
-            <span className="font-medium text-text-primary">Found against:</span>{' '}
+            <span className="font-medium text-text-primary">{t('rx.foundAgainst')}</span>{' '}
             {warning.against.join(' · ')}
           </p>
         ) : null}
@@ -61,7 +68,7 @@ export function SafetyWarningAlert({ warning, acknowledgement }: SafetyWarningAl
             disappears by itself when a real service answers. */}
         {evidence.isDemo ? (
           <p className="text-caption text-text-tertiary">
-            <span className="font-medium">{evidence.label}.</span> {evidence.detail}
+            <span className="font-medium">{t(evidence.labelKey)}.</span> {t(evidence.detailKey)}
           </p>
         ) : null}
 
@@ -69,7 +76,10 @@ export function SafetyWarningAlert({ warning, acknowledgement }: SafetyWarningAl
           <Checkbox
             checked={acknowledgement.checked}
             onChange={acknowledgement.onToggle}
-            label={`I have reviewed this ${severity.label.toLowerCase()} ${kind.label.toLowerCase()} and accept it`}
+            label={t('rx.acknowledge', {
+              severity: t(severity.labelKey).toLowerCase(),
+              kind: t(kind.labelKey).toLowerCase(),
+            })}
             containerClassName="mt-1"
           />
         ) : null}

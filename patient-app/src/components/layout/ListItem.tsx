@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { pressableA11y } from '@/accessibility/a11y';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 import type { ColorToken } from '@/theme/tokens';
 
@@ -46,6 +47,7 @@ export function ListItem({
   testID,
 }: ListItemProps) {
   const theme = useTheme();
+  const t = useT();
 
   const body = (
     <View style={[styles.row, { columnGap: theme.space[3], minHeight: theme.minTouchTarget }]}>
@@ -80,11 +82,11 @@ export function ListItem({
         testID={testID}
         accessible
         accessibilityRole="text"
-        accessibilityLabel={
-          readOnly
-            ? `${title}${value === undefined ? '' : `, ${value}`}, read only`
-            : `${title}${value === undefined ? '' : `, ${value}`}`
-        }
+        accessibilityLabel={(() => {
+          // The separator is the locale's comma: "," in English, "،" in Arabic.
+          const spoken = value === undefined ? title : t('a11y.listSeparator', { title, value });
+          return readOnly ? t('a11y.readOnly', { value: spoken }) : spoken;
+        })()}
         style={[styles.container, { paddingVertical: theme.space[2] }]}
       >
         {body}

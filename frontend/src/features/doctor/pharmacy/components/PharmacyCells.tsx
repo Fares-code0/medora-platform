@@ -2,6 +2,7 @@ import { TriangleAlert } from 'lucide-react';
 
 import { StatusBadge } from '@/components/patterns';
 import { Avatar, Badge, Tooltip } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import {
   PRESCRIPTION_STATUS_META,
@@ -83,11 +84,13 @@ export function MedicationFlags({ prescription }: { prescription: PrescriptionSu
 }
 
 export function PrescriptionStatusBadge({ prescription }: { prescription: PrescriptionSummary }) {
+  const t = useT();
   const meta = PRESCRIPTION_STATUS_META[prescription.status];
-  return <StatusBadge status={meta.kind} label={meta.label} />;
+  return <StatusBadge status={meta.kind} label={t(meta.labelKey)} />;
 }
 
 export function RefillStatusBadge({ prescription }: { prescription: PrescriptionSummary }) {
+  const t = useT();
   const meta = REFILL_STATUS_META[prescription.refillStatus];
-  return <StatusBadge status={meta.kind} label={meta.label} />;
+  return <StatusBadge status={meta.kind} label={t(meta.labelKey)} />;
 }

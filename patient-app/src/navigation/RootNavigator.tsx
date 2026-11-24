@@ -99,7 +99,7 @@ export function RootNavigator() {
         component={EmergencyModal}
         options={{
           presentation: 'modal',
-          title: 'Emergency',
+          title: t('emergency.short'),
           headerTintColor: theme.colors.error,
         }}
       />

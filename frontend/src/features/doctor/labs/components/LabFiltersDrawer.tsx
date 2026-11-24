@@ -1,5 +1,6 @@
 import { Stack } from '@/components/layout';
 import { Button, Drawer, Input, Select, type SelectOption } from '@/components/ui';
+import { useT } from '@/i18n';
 
 import {
   LAB_FLAG_FILTERS,
@@ -67,6 +68,7 @@ export function LabFiltersDrawer({
   onFilterChange,
   onClear,
 }: LabFiltersDrawerProps) {
+  const t = useT();
   const bindSelect = <
     K extends 'status' | 'category' | 'priority' | 'department' | 'doctor' | 'flag' | 'review',
   >(
@@ -105,7 +107,10 @@ export function LabFiltersDrawer({
           label="Status"
           options={withAll(
             'All statuses',
-            LAB_STATUSES.map((status) => ({ value: status, label: LAB_STATUS_META[status].label })),
+            LAB_STATUSES.map((status) => ({
+              value: status,
+              label: t(LAB_STATUS_META[status].labelKey),
+            })),
           )}
           {...bindSelect('status')}
         />
@@ -123,7 +128,7 @@ export function LabFiltersDrawer({
             'All priorities',
             LAB_PRIORITIES.map((priority) => ({
               value: priority,
-              label: LAB_PRIORITY_META[priority].label,
+              label: t(LAB_PRIORITY_META[priority].labelKey),
             })),
           )}
           {...bindSelect('priority')}

@@ -1,4 +1,4 @@
-import type { Messages } from './en';
+import type { PartialMessages } from './en';
 
 /**
  * Turkish (Türkçe) — left-to-right.
@@ -13,7 +13,7 @@ import type { Messages } from './en';
  * The dotted/dotless i distinction is real vocabulary, not a typo: "ilaç"
  * (medicine) and "ışık" (light) begin with different letters.
  */
-export const tr: Messages = {
+export const tr: PartialMessages = {
   // Brand panel
   'brand.welcome': 'Medora’ya hoş geldiniz',
   'brand.tagline': 'Modern sağlık ekipleri için yapay zekâ destekli platform.',
@@ -314,4 +314,15 @@ export const tr: Messages = {
   'invitation.error.taken': 'Bu e-posta ile kayıtlı bir hesap zaten var.',
   'invitation.error.weakPassword': 'Daha güçlü bir parola seçin.',
   'invitation.error.generic': 'Davetinizi tamamlayamadık. Lütfen yeniden deneyin.',
+
+  /* ── Unread counts (plural; were concatenated before the Arabic foundation) ── */
+  'shell.unreadCount': { one: '{count} okunmamış', other: '{count} okunmamış' },
+  'shell.notificationsUnread': {
+    one: 'Bildirimler ({count} okunmamış)',
+    other: 'Bildirimler ({count} okunmamış)',
+  },
+  'shell.unreadNotificationsBadge': {
+    one: '{count} okunmamış — Bildirimler',
+    other: '{count} okunmamış — Bildirimler',
+  },
 };

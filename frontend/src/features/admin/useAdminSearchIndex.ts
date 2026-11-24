@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
+import { useT } from '@/i18n';
 import type { ShellSearchResult, ShellSearchValue } from '@/layouts';
 import { routes } from '@/routes';
 
@@ -26,6 +27,7 @@ import {
  * feature keeps ownership of its index while the shell stays domain-free.
  */
 export function useAdminSearchIndex(): ShellSearchValue {
+  const t = useT();
   const staff = useStaff();
   const departments = useDepartments();
   const rooms = useRooms();
@@ -45,7 +47,7 @@ export function useAdminSearchIndex(): ShellSearchValue {
       results.push({
         id,
         label,
-        hint: `${kind} · ${SECTION_META[slug ?? 'overview'].label}`,
+        hint: `${kind} · ${t(SECTION_META[slug ?? 'overview'].labelKey)}`,
         path: routes.admin.section(slug),
       });
     };
@@ -75,24 +77,25 @@ export function useAdminSearchIndex(): ShellSearchValue {
       results.push({
         id: `set-${panel.id}`,
         label: panel.label,
-        hint: `Settings · ${SECTION_META.settings.label}`,
+        hint: `Settings · ${t(SECTION_META.settings.labelKey)}`,
         path: routes.admin.settings(panel.id),
       });
     }
     results.push({
       id: 'nav-preferences',
       label: 'My Settings',
-      hint: `Account · ${SECTION_META.preferences.label}`,
+      hint: `Account · ${t(SECTION_META.preferences.labelKey)}`,
       path: routes.admin.section('preferences'),
     });
     results.push({
       id: 'nav-profile',
       label: 'My Profile',
-      hint: `Account · ${SECTION_META.profile.label}`,
+      hint: `Account · ${t(SECTION_META.profile.labelKey)}`,
       path: routes.admin.section('profile'),
     });
     return results;
   }, [
+    t,
     staff.data,
     departments.data,
     rooms.data,
