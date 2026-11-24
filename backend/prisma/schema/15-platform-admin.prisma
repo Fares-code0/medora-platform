@@ -1,0 +1,37 @@
+// Explicit Platform Admin designation (S5; OD-07, M-13).
+//
+// The `admin` role alone never makes an account a Platform Admin: an account
+// is one only while it holds a live row here (`revoked_at IS NULL`). Rows are
+// never rewritten: a revocation stamps `revoked_at`, `revoked_by` and
+// `revoke_reason`, so the table is the history of every grant. A direct
+// DELETE is refused while the account exists; a hard delete of the account
+// itself cascades.
+//
+// Database rules (migration 20261124100000_platform_admin_assignments; the
+// CHECK constraints and triggers are not expressible in Prisma):
+// - at most one live row per user (partial unique index);
+// - a live row requires the user to hold the `admin` role;
+// - a user cannot hold a live Platform Admin row and a live hospital `admin`
+//   assignment at the same time (checked from both tables under a per-user
+//   advisory lock);
+// - changing the user's role away from `admin` revokes the live row.
+
+model PlatformAdminAssignment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  /// Why the grant was made: the reviewed mapping list entry, ticket or
+  /// seed marker. Required, so no grant is anonymous.
+  grantReason String @map("grant_reason") @db.VarChar(300)
+  grantedBy String? @map("granted_by") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedBy String? @map("revoked_by") @db.Uuid
+  revokeReason String? @map("revoke_reason") @db.VarChar(300)
+  user User @relation("PlatformAdminAssignee", fields: [userId], references: [id], onDelete: Cascade)
+  granter User? @relation("PlatformAdminGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
+  revoker User? @relation("PlatformAdminRevokedBy", fields: [revokedBy], references: [id], onDelete: SetNull)
+
+  @@unique([userId], where: raw("revoked_at IS NULL"), map: "platform_admin_assignments_one_live_per_user_key")
+  @@index([userId, grantedAt(sort: Desc)], map: "platform_admin_assignments_user_granted_idx")
+  @@map("platform_admin_assignments")
+}

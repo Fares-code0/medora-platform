@@ -194,6 +194,11 @@ model User {
   clinicHoursCreated ClinicOperatingHour[] @relation("ClinicOperatingHourCreatedBy")
   clinicHoursUpdated ClinicOperatingHour[] @relation("ClinicOperatingHourUpdatedBy")
 
+  /// S5 (OD-07, M-13): explicit, historical Platform Admin designation.
+  platformAdminAssignments PlatformAdminAssignment[] @relation("PlatformAdminAssignee")
+  platformAdminGrantsMade PlatformAdminAssignment[] @relation("PlatformAdminGrantedBy")
+  platformAdminGrantsRevoked PlatformAdminAssignment[] @relation("PlatformAdminRevokedBy")
+
   @@map("users")
 }
 
