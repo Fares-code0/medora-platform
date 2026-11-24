@@ -186,6 +186,7 @@ export const en = {
   'shell.searchPlaceholder': 'Search…',
   'shell.searchPatientsPlaceholder': 'Search patients…',
   'shell.notifications': 'Notifications',
+  'shell.activeHospital': 'Active hospital: ',
   'shell.dismissNotification': 'Dismiss notification',
   'shell.unread': 'Unread',
   'shell.more': 'More',

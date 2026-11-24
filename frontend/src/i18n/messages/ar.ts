@@ -171,6 +171,7 @@ export const ar: Messages = {
   'shell.searchPlaceholder': 'ابحث…',
   'shell.searchPatientsPlaceholder': 'ابحث عن مريض…',
   'shell.notifications': 'الإشعارات',
+  'shell.activeHospital': 'المستشفى الحالي: ',
   'shell.dismissNotification': 'إخفاء الإشعار',
   'shell.unread': 'غير مقروء',
   'shell.more': 'المزيد',
