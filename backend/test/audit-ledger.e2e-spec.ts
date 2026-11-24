@@ -192,7 +192,11 @@ async function restorePartitions(): Promise<void> {
   for (const partition of await repository.partitions()) {
     if (partition.from >= keepFrom && partition.from < keepTo) continue;
 
-    await repository.dropPartition(partition.name);
+    // Shared-database housekeeping, as the owner: it also removes *future*
+    // months a simulated-clock sweep created, which the application's
+    // drop path (`drop_audit_events_partition`) rightly refuses.
+    if (!/^audit_events_\d{4}_\d{2}$/.test(partition.name)) continue;
+    await harness.prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${partition.name}"`);
   }
 }
 

@@ -32,6 +32,13 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO __RUNTIME
 
 -- The audit ledger is append-only (ADR-007 R2, ADR-024): read and insert only.
 REVOKE UPDATE, DELETE ON public.audit_events FROM __RUNTIME_ROLE__;
+-- The grant above reaches every audit_events partition too, and a partition
+-- is checked on its own when a query names it directly. Strip every
+-- partition back to owner-only, with Row-Level Security and no policy
+-- (migration 20261124130000 + 20261125090000, finding F-05). Access goes
+-- through the parent, whose policies apply. Re-run this whenever the grant
+-- above is re-run.
+SELECT public.audit_events_secure_all_partitions();
 
 -- Reference-number sequences used by defaults and triggers.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO __RUNTIME_ROLE__;

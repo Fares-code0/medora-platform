@@ -247,7 +247,10 @@ export class AuditRepository {
       throw new Error(`Refusing to drop "${name}": not an audit_events month partition`);
     }
 
-    await this.prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${name}"`);
+    // Through the owner-run, validated function (migration
+    // 20261125090000): the application holds no DDL right of its own, and
+    // the database refuses a partition whose month has not ended.
+    await this.prisma.$executeRaw`SELECT drop_audit_events_partition(${name})`;
   }
 
   /* ── Incident bookmarks (§14.4) ────────────────────────────── */

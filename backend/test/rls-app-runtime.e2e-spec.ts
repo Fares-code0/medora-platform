@@ -141,6 +141,10 @@ afterAll(async () => {
   );
   await owner.query(`DELETE FROM users WHERE email LIKE '%' || $1`, [domain]);
   await owner.query('DELETE FROM hospitals WHERE id = ANY($1::uuid[])', [[ids.hospitalA, ids.hospitalB]]);
+  // F-16: the LOGIN role this suite provisioned does not outlive it.
+  // `DROP OWNED` removes its grants in this database first (it owns nothing).
+  await owner.query(`DROP OWNED BY ${ROLE}`).catch(() => undefined);
+  await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
   await owner.end();
 });
 

@@ -160,6 +160,10 @@ afterAll(async () => {
   await owner.query('DELETE FROM patients WHERE id = ANY($1::uuid[])', [[ids.patientA, ids.patientB]]);
   await owner.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [[ids.doctorUserA, ids.requesterB, ids.approverA]]);
   await owner.query('DELETE FROM hospitals WHERE id = ANY($1::uuid[])', [[ids.hospitalA, ids.hospitalB]]);
+  // F-16: the LOGIN role this suite provisioned does not outlive it.
+  // `DROP OWNED` removes its grants in this database first (it owns nothing).
+  await owner.query(`DROP OWNED BY ${ROLE}`).catch(() => undefined);
+  await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
   await owner.end();
 });
 
@@ -348,5 +352,104 @@ describe('coverage of the enforced migration', () => {
     );
     expect(covered.rows.filter((row) => !row.enabled || row.policies === '0').map((row) => row.relname)).toEqual([]);
     expect(covered.rows).toHaveLength(required.length);
+  });
+});
+
+describe('audit ledger partitions (F-05): no bypass by naming a partition', () => {
+  const FUTURE = '2099-01-01';
+  const FUTURE_NAME = 'audit_events_2099_01';
+  const PAST = '1990-01-01';
+  const PAST_NAME = 'audit_events_1990_01';
+
+  async function existingPartition(): Promise<string> {
+    const row = await owner.query<{ name: string }>(
+      `SELECT c.relname AS name FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'audit_events'::regclass AND c.relname ~ '^audit_events_[0-9]{4}_[0-9]{2}$'
+        ORDER BY c.relname LIMIT 1`,
+    );
+    const name = row.rows[0]?.name;
+    if (name === undefined) throw new Error('no monthly partition');
+    return name;
+  }
+
+  /** Runs `sql` as the runtime role and returns the SQLSTATE it fails with, or 'ok'. */
+  async function attempt(sql: string, context: Context = { scope: 'system' }): Promise<string> {
+    try {
+      await as(context, (client) => client.query(sql));
+      return 'ok';
+    } catch (error) {
+      return (error as { code?: string }).code ?? 'error';
+    }
+  }
+
+  afterAll(async () => {
+    await owner.query(`DROP TABLE IF EXISTS ${FUTURE_NAME}`);
+    await owner.query(`DROP TABLE IF EXISTS ${PAST_NAME}`);
+  });
+
+  it('refuses SELECT, INSERT, UPDATE and DELETE on an existing monthly partition and the DEFAULT partition', async () => {
+    for (const partition of [await existingPartition(), 'audit_events_default']) {
+      expect(await attempt(`SELECT 1 FROM ${partition} LIMIT 1`), partition).toBe('42501');
+      expect(
+        await attempt(
+          `INSERT INTO ${partition} (occurred_at, category, event_type, severity, summary)
+           VALUES (now(), 'system', 'probe.partition', 'info', 'probe')`,
+        ),
+        partition,
+      ).toBe('42501');
+      expect(await attempt(`UPDATE ${partition} SET summary = summary`), partition).toBe('42501');
+      expect(await attempt(`DELETE FROM ${partition}`), partition).toBe('42501');
+    }
+  });
+
+  it('keeps the parent working: append allowed, reads scoped, no UPDATE or DELETE', async () => {
+    expect(
+      await attempt(
+        `INSERT INTO audit_events (occurred_at, category, event_type, severity, summary)
+         VALUES (now(), 'system', 'probe.parent', 'info', 'probe')`,
+      ),
+    ).toBe('ok');
+    expect(await attempt('SELECT 1 FROM audit_events LIMIT 1', { scope: 'platform' })).toBe('ok');
+    expect(await attempt(`UPDATE audit_events SET summary = summary WHERE event_type = 'probe.parent'`)).toBe('42501');
+    expect(await attempt(`DELETE FROM audit_events WHERE event_type = 'probe.parent'`)).toBe('42501');
+  });
+
+  it('secures a partition the application creates itself, and the runtime role cannot address it', async () => {
+    // The retention job's own path, run as the runtime role.
+    expect(await attempt(`SELECT create_audit_events_partition('${FUTURE}'::date)`)).toBe('ok');
+    const facts = await owner.query<{ rls: boolean; grantees: string }>(
+      `SELECT c.relrowsecurity AS rls,
+              coalesce(string_agg(DISTINCT pg_get_userbyid(a.grantee), ',') FILTER (WHERE a.grantee <> c.relowner), '') AS grantees
+         FROM pg_class c LEFT JOIN LATERAL aclexplode(c.relacl) a ON true
+        WHERE c.relname = $1 GROUP BY c.relrowsecurity`,
+      [FUTURE_NAME],
+    );
+    expect(facts.rows[0]).toEqual({ rls: true, grantees: '' });
+    for (const sql of [
+      `SELECT 1 FROM ${FUTURE_NAME}`,
+      `INSERT INTO ${FUTURE_NAME} (occurred_at, category, event_type, severity, summary) VALUES ('2099-01-02', 'system', 'probe.new', 'info', 'probe')`,
+      `UPDATE ${FUTURE_NAME} SET summary = summary`,
+      `DELETE FROM ${FUTURE_NAME}`,
+      `ALTER TABLE ${FUTURE_NAME} DISABLE ROW LEVEL SECURITY`,
+      `DROP TABLE ${FUTURE_NAME}`,
+    ]) {
+      expect(await attempt(sql), sql).toBe('42501');
+    }
+  });
+
+  it('lets the retention path drop only a past month partition of audit_events', async () => {
+    // Current or future month, the DEFAULT partition, another table, or a
+    // name that is not a month partition: refused.
+    expect(await attempt(`SELECT drop_audit_events_partition('${FUTURE_NAME}')`)).toBe('22023');
+    expect(await attempt(`SELECT drop_audit_events_partition('audit_events_default')`)).toBe('22023');
+    expect(await attempt(`SELECT drop_audit_events_partition('patients')`)).toBe('22023');
+    expect(await attempt(`SELECT drop_audit_events_partition('audit_events_2099_01; DROP TABLE patients')`)).toBe(
+      '22023',
+    );
+    // A month wholly in the past: dropped.
+    expect(await attempt(`SELECT create_audit_events_partition('${PAST}'::date)`)).toBe('ok');
+    expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('ok');
+    const gone = await owner.query('SELECT to_regclass($1) AS rel', [`public.${PAST_NAME}`]);
+    expect(gone.rows[0]).toEqual({ rel: null });
   });
 });
