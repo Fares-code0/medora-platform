@@ -158,6 +158,9 @@ export function toView(row: AuditEventRow | AuditEventDetailRow) {
     severity: row.severity.toLowerCase(),
     summary: row.summary,
     target: row.target,
+    // The hospital the event belongs to (§2.13; audit F-17) — null for a
+    // platform-wide event. The scope filter keys on it, so the reader sees it.
+    hospitalId: row.hospitalId,
     ipAddress: row.ipAddress,
     device: row.device,
     sessionId: row.sessionId,

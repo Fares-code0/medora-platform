@@ -57,6 +57,8 @@ const COLUMNS = [
   'ipAddress',
   'sessionId',
   'incidentRef',
+  // Last, so every existing column keeps its position (F-17).
+  'hospitalId',
 ] as const;
 
 @Injectable()

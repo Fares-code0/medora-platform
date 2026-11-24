@@ -397,9 +397,12 @@ describe('administrative tiering (§2.2, §2.3, OD-07)', () => {
       .get('/api/v1/audit-events?pageSize=100&q=employment')
       .set(as(hospitalAdmin.token));
     expect(listed.status, JSON.stringify(listed.body)).toBe(200);
-    const targets = dataOf<{ items: { target: string | null }[] }>(listed).items.map((item) => item.target);
+    const items = dataOf<{ items: { target: string | null; hospitalId: string | null }[] }>(listed).items;
+    const targets = items.map((item) => item.target);
     expect(targets).toContain(`doctor_employment:${own}`);
     expect(targets).not.toContain(`doctor_employment:${other}`);
+    // Each event carries its hospital attribution on the wire (F-17).
+    expect(items.find((item) => item.target === `doctor_employment:${own}`)?.hospitalId).toBe(a);
 
     // Another hospital's event is not found; the platform sees both.
     const otherEvent = await harness.prisma.auditEvent.findFirstOrThrow({
