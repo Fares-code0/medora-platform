@@ -37,7 +37,7 @@ placeholder. Whatever is chosen must satisfy, and the tests prove why:
    active affiliation (DR-02, MRD-05 a), enforced by unique indexes (test 7), so resolution cannot be
    ambiguous. Hospital Admins with more than one hospital are unresolved by design.
 
-## 3. Coverage inventory (124 tables, from the catalog)
+## 3. Coverage inventory (125 tables, from the catalog)
 
 The authoritative per-table list — class, primary key, ownership path, foreign-key parents, sensitivity,
 expected behaviour and whether a policy is required — is **Appendix A**, generated from the catalog and
@@ -191,7 +191,7 @@ policy-dependent tests fail (verified), so they test PostgreSQL behaviour, not t
 
 ## Appendix A — Per-table RLS coverage (generated from the PostgreSQL catalog)
 
-Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue_hospital_ownership`, PR #28). **124 tables**, each listed once: Direct 35, Global/reference 36, Indirect 33, Internal/system 18, Unresolved 2. `backend/test/rls-inventory.e2e-spec.ts` fails if a table is added, removed or listed twice.
+Generated from a fresh `db:deploy` of 45 migrations (incl. `20261123130000_queue_hospital_ownership`, PR #28; `20261124100000_platform_admin_assignments`, S5). **125 tables**, each listed once: Direct 35, Global/reference 36, Indirect 33, Internal/system 19, Unresolved 2. `backend/test/rls-inventory.e2e-spec.ts` fails if a table is added, removed or listed twice.
 
 | Table | Class | PK | Ownership path | FK parents | Sensitivity | Expected RLS behaviour | Policy |
 |---|---|---|---|---|---|---|---|
@@ -276,6 +276,7 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `patients` | Indirect | id | hospital_medical_records (patient_id) — visible where the hospital holds a record | doctors, users | PII/PHI | SELECT where an HMR exists for the context hospital; global identity (DR-03); writes via identity flows | Yes |
 | `permission_matrix_state` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access | No |
 | `permissions` | Global/reference | id | — | — | Reference | No policy; read-only reference for the runtime role | No |
+| `platform_admin_assignments` | Internal/system | id | — | users | Operational | No hospital policy; per-user or system access (platform-level authorization grants, S5) | No |
 | `platform_integrations` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
 | `platform_settings` | Internal/system | key | — | users | Operational | No hospital policy; per-user or system access | No |
 | `policies` | Global/reference | id | — | users | Reference | No policy; read-only reference for the runtime role | No |

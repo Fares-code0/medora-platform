@@ -28,6 +28,17 @@ import {
 } from '../src/shared/authz';
 import { PrismaService } from '../src/shared/database';
 
+import { createTestDoctor, destroyTestDoctor } from './support/doctor-fixture';
+import {
+  createTestHospital,
+  destroyTestHospitals,
+  employDoctor,
+  assignOwned,
+} from './support/hospital-fixture';
+import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
+
+const FIXTURE_TAG = 'authzrepo';
+
 const CLINICAL_ASSIGNMENT = {
   revokedAt: null,
   doctorEmployment: {
@@ -124,6 +135,26 @@ describe('the authorization repositories', () => {
   });
 
   describe('PrismaPatientAssignmentRepository', () => {
+    // Its own clinically usable doctor and owned assignment, rather than
+    // whatever another suite left behind: the demo seed's assignments are
+    // legacy (no hospital) and grant nothing under S3 / #17.
+    let ownedPatientId = '';
+
+    beforeAll(async () => {
+      const hospital = await createTestHospital(prisma, FIXTURE_TAG);
+      const doctor = await createTestDoctor(prisma, FIXTURE_TAG);
+      await employDoctor(prisma, doctor.id, hospital.id);
+      const [patient] = await createPatientRecords(prisma, FIXTURE_TAG, 1);
+      ownedPatientId = patient!.id;
+      await assignOwned(prisma, { doctorId: doctor.id, patientId: ownedPatientId });
+    });
+
+    afterAll(async () => {
+      await destroyPatientRecords(prisma, FIXTURE_TAG);
+      await destroyTestDoctor(prisma, FIXTURE_TAG);
+      await destroyTestHospitals(prisma, FIXTURE_TAG);
+    });
+
     it('finds a live assignment through both joins', async () => {
       // The seed gives each canonical patient a live assignment; this
       // asserts the doctor's *user* id reaches it, which is the join the
@@ -132,7 +163,7 @@ describe('the authorization repositories', () => {
         // S3: only an assignment the hospital-aware rule grants — owned by
         // an active employment at an active hospital, held by a clinically
         // usable doctor. A legacy row with no hospital answers no (#17).
-        where: CLINICAL_ASSIGNMENT,
+        where: { ...CLINICAL_ASSIGNMENT, patientId: ownedPatientId },
         select: {
           doctor: { select: { userId: true } },
           patient: { select: { id: true, publicId: true } },
@@ -149,7 +180,7 @@ describe('the authorization repositories', () => {
         // S3: only an assignment the hospital-aware rule grants — owned by
         // an active employment at an active hospital, held by a clinically
         // usable doctor. A legacy row with no hospital answers no (#17).
-        where: CLINICAL_ASSIGNMENT,
+        where: { ...CLINICAL_ASSIGNMENT, patientId: ownedPatientId },
         select: {
           doctor: { select: { userId: true } },
           patient: { select: { id: true } },
@@ -189,7 +220,7 @@ describe('the authorization repositories', () => {
         // S3: only an assignment the hospital-aware rule grants — owned by
         // an active employment at an active hospital, held by a clinically
         // usable doctor. A legacy row with no hospital answers no (#17).
-        where: CLINICAL_ASSIGNMENT,
+        where: { ...CLINICAL_ASSIGNMENT, patientId: ownedPatientId },
         select: {
           id: true,
           doctor: { select: { userId: true } },

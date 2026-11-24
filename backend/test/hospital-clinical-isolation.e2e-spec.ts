@@ -5,6 +5,7 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  errorBody,
   markVerified,
   registrationBody,
   testEmail,
@@ -527,7 +528,6 @@ describe('doctor lifecycle (#18)', () => {
       { verificationStatus: 'PENDING' as const },
       { verificationStatus: 'VERIFIED' as const },
     ],
-    ['suspended', { practiceStatus: 'SUSPENDED' as const }, { practiceStatus: 'ACTIVE' as const }],
     ['soft-deleted', { deletedAt: new Date() }, { deletedAt: null }],
   ])('denies a doctor who is %s, on the chart and the list', async (_label, change, restore) => {
     const id = doctorA.doctorId;
@@ -542,6 +542,27 @@ describe('doctor lifecycle (#18)', () => {
     }
   });
 
+  // A suspended doctor is stopped before the clinical rule by the #18 gate
+  // (own account only): 403 practice_suspended on the chart, the records and
+  // the list alike. The clinical rule would deny too; this asserts the layer
+  // that answers first.
+  it('denies a suspended doctor, on the chart and the list (#18: own account only)', async () => {
+    const id = doctorA.doctorId;
+    await harness.prisma.doctor.update({ where: { id }, data: { practiceStatus: 'SUSPENDED' } });
+    try {
+      for (const path of [`${PATIENTS}/${y.publicId}`, RECORDS, PATIENTS]) {
+        const response = await get(doctorA.token, path);
+        expect({ path, status: response.status, code: errorBody(response).code }).toEqual({
+          path,
+          status: 403,
+          code: 'practice_suspended',
+        });
+      }
+    } finally {
+      await harness.prisma.doctor.update({ where: { id }, data: { practiceStatus: 'ACTIVE' } });
+    }
+  });
+
   it('denies a doctor whose employment was terminated (OD-12)', async () => {
     const employment = await harness.prisma.doctorEmployment.findFirstOrThrow({
       where: { doctorId: doctorA.doctorId, endedAt: null },
@@ -552,7 +573,9 @@ describe('doctor lifecycle (#18)', () => {
       data: { endedAt: new Date() },
     });
 
-    expect((await get(doctorA.token, `${PATIENTS}/${y.publicId}`)).status).toBe(404);
-    expect((await get(doctorA.token, `${LAB_ORDERS}`)).status).toBe(404);
+    // #18: an ended employment refuses the doctor's token on the next
+    // request (401), before any clinical rule is reached; OD-12.
+    expect((await get(doctorA.token, `${PATIENTS}/${y.publicId}`)).status).toBe(401);
+    expect((await get(doctorA.token, `${LAB_ORDERS}`)).status).toBe(401);
   });
 });

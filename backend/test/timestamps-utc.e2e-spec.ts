@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { markPlatformAdmin } from './support/admin-scope';
 import {
   PASSWORD,
   destroyLabFixtures,
@@ -156,6 +157,9 @@ async function adminToken(): Promise<string> {
     .set('Authorization', `Bearer ${bootstrap}`)
     .send({ code: currentCode(secret) });
   await setRole(email, 'admin');
+  // S5 (OD-07, M-13): an `admin` has administrative scope only when
+  // explicitly designated; an unmapped one is refused everywhere.
+  await markPlatformAdmin(harness.prisma, email);
 
   const { otpToken } = await login(email);
   return dataOf<{ accessToken: string }>(
