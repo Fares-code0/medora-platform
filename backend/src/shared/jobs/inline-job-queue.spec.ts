@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { inRequestScope, memoizeInRequest, runInRequestScope } from '../authz/request-scope';
+
 import { DeadLetterStore } from './dead-letter.store';
 import { InlineJobQueue } from './inline-job-queue';
 import { JobMetricsService } from './job-metrics.service';
@@ -163,5 +165,102 @@ describe('InlineJobQueue', () => {
     await queue.stop();
 
     expect(registry.runnable()).toHaveLength(1);
+  });
+});
+
+/**
+ * Audit F5 (#24): a manual run or replay is enqueued from an HTTP request,
+ * and the in-process driver starts it right there. The job must not inherit
+ * that request's AsyncLocalStorage store — nor, through it, anything the
+ * request cached (today the Phase 22 memo, later a tenant context).
+ */
+describe('InlineJobQueue request-scope isolation (F5)', () => {
+  it('runs a job enqueued inside a request with no request store', async () => {
+    const { registry, queue } = build();
+    const scopes: boolean[] = [];
+    registry.register(
+      job(() => {
+        scopes.push(inRequestScope());
+        return Promise.resolve({});
+      }),
+    );
+
+    await runInRequestScope(async () => {
+      expect(inRequestScope()).toBe(true);
+      await queue.enqueue('test.sweep', 'manual');
+    });
+    await queue.settle();
+
+    expect(scopes).toEqual([false]);
+  });
+
+  it('cannot read a memo entry written by the request that enqueued it', async () => {
+    const { registry, queue } = build();
+    const seen: string[] = [];
+    registry.register(
+      job(async () => {
+        seen.push(
+          await memoizeInRequest('hospital-context:user-1:doctor', () => Promise.resolve('fresh')),
+        );
+        return {};
+      }),
+    );
+
+    await runInRequestScope(async () => {
+      await memoizeInRequest('hospital-context:user-1:doctor', () => Promise.resolve('hospital-a'));
+      await queue.enqueue('test.sweep', 'replay');
+    });
+    await queue.settle();
+
+    expect(seen).toEqual(['fresh']);
+  });
+
+  it('keeps every retry outside the request store after a failure', async () => {
+    const { registry, queue } = build();
+    const scopes: boolean[] = [];
+    let calls = 0;
+    registry.register(
+      job(() => {
+        calls += 1;
+        scopes.push(inRequestScope());
+        return calls === 1 ? Promise.reject(new Error('transient')) : Promise.resolve({});
+      }),
+    );
+
+    await runInRequestScope(() => queue.enqueue('test.sweep', 'manual'));
+    await queue.settle();
+
+    expect(calls).toBe(2);
+    expect(scopes).toEqual([false, false]);
+  });
+
+  it('keeps two jobs started by two concurrent requests apart', async () => {
+    const registry = new JobRegistry();
+    const runner = new JobRunner(new JobMetricsService(), new DeadLetterStore());
+    const queue = new InlineJobQueue(registry, runner, HOOKS);
+    const seen: string[] = [];
+    for (const name of ['test.a', 'test.b']) {
+      registry.register({
+        ...job(async () => {
+          seen.push(`${name}:${await memoizeInRequest('ctx', () => Promise.resolve('fresh'))}`);
+          return {};
+        }),
+        name,
+      });
+    }
+
+    await Promise.all([
+      runInRequestScope(async () => {
+        await memoizeInRequest('ctx', () => Promise.resolve('hospital-a'));
+        await queue.enqueue('test.a', 'manual');
+      }),
+      runInRequestScope(async () => {
+        await memoizeInRequest('ctx', () => Promise.resolve('hospital-b'));
+        await queue.enqueue('test.b', 'manual');
+      }),
+    ]);
+    await queue.settle();
+
+    expect(seen.sort()).toEqual(['test.a:fresh', 'test.b:fresh']);
   });
 });

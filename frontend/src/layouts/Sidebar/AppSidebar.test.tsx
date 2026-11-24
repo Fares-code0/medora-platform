@@ -39,9 +39,17 @@ vi.mock('@/app/providers', () => ({
   }),
 }));
 
+// The active-hospital line queries the API; its own behaviour is covered by
+// `ActiveHospital.test.tsx`. Here only its placement in the card is checked.
+const activeHospital = vi.hoisted(() => ({
+  value: null as { id: string; name: string } | null,
+}));
+vi.mock('./useActiveHospital', () => ({ useActiveHospital: () => activeHospital.value }));
+
 afterEach(() => {
   auth.user = null;
   auth.denied = [];
+  activeHospital.value = null;
 });
 
 function PathProbe() {
@@ -114,6 +122,30 @@ describe('AppSidebar account card', () => {
     expect(screen.getByText(role)).toBeInTheDocument();
     expect(screen.queryByText('MD, FACP')).not.toBeInTheDocument();
     expect(screen.queryByText('Dr. Amelia Chen')).not.toBeInTheDocument();
+  });
+});
+
+describe('AppSidebar active hospital (WEB-1)', () => {
+  it('shows the doctor’s active hospital under the name and credentials', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    renderAs('doctor', 'Amelia Chen', doctorNavigation);
+    const hospital = screen.getByText('Al Noor Hospital');
+    expect(hospital.parentElement).toHaveTextContent('Active hospital: Al Noor Hospital');
+    const caption = screen.getByText('MD, FACP');
+    expect(
+      caption.compareDocumentPosition(hospital) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('adds nothing to the card when there is no active hospital', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation);
+    expect(screen.queryByText(/Active hospital/)).not.toBeInTheDocument();
+  });
+
+  it('is hidden with the rest of the card text on the collapsed rail', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, true);
+    expect(screen.queryByText('Al Noor Hospital')).not.toBeInTheDocument();
   });
 });
 

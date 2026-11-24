@@ -88,10 +88,15 @@ export class AccessTokenGuard implements CanActivate {
     //
     // An `@AllowEndedSession()` route waives liveness, not identity: the
     // session must still exist and belong to the token's subject.
+    //
+    // Every other route also requires the account to still hold the
+    // token's role (F3, ADR-046): a role changed after the token was minted
+    // is refused here, and the client's one refresh mints a token for the
+    // current role. Logout keeps working for a demoted account.
     const valid =
       allowEnded === true
         ? await this.sessions.belongsTo(user.sessionId, user.id)
-        : await this.sessions.isActive(user.sessionId, user.id);
+        : await this.sessions.isActive(user.sessionId, user.id, user.role);
     if (!valid) throw AppException.unauthorized('unauthorized', 'Session expired');
 
     request[AUTHENTICATED_USER] = user;

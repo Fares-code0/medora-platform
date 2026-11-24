@@ -5,7 +5,7 @@
 2026-10-07 (final OD-01…OD-14) · 2026-10-07 (**OQ-01 = A**, **OD-04 correction: Break-Glass exists**;
 this revision)
 **Status of this document:** **FINAL and authoritative.** When any other document, checklist, ADR draft,
-phase file or code comment disagrees with this file, this file wins until ADR-042 is accepted.
+phase file or code comment disagrees with an owner decision, this file governs. ADR-042 was accepted on 2026-11-22 and formalizes the architecture with its implementation safeguards.
 
 This file holds only owner decisions. Technical choices are marked **TECHNICAL RECOMMENDATION** in the
 other files of this folder.
@@ -30,20 +30,13 @@ other files of this folder.
 
 ## ADR status
 
-No ADR in `docs/DECISIONS.md` records these decisions yet. ADR-018 §1, the ADR-010 clinics/facilities
-clause and ADR-022's assignment anchor still read as Accepted and conflict with them
-(`MIGRATION_AND_COMPATIBILITY.md` §1).
+ADR-042 was accepted by the project owner on 2026-11-22 and registered in docs/DECISIONS.md after a fresh
+numbering sweep. It supersedes ADR-018 §1, the ADR-010 clinics/facilities scope-out, and the ADR-022
+assignment anchor as specified in the accepted ADR. ADR-018 §2 and §4 and ADR-022's 404-not-403 and
+RLS-before-production provisions remain in force.
 
-The ADR number for the Hospital architecture is **ADR-042**, verified 2026-10-07:
-- highest published is ADR-039 (`backend`);
-- ADR-040 and ADR-041 are held in `origin/backend:backend/docs/PENDING_ADRS.md`;
-- ADR-042 appears only as "next free number" text.
-
-A **draft** is held at [`ADR-042-DRAFT.md`](ADR-042-DRAFT.md), status *Proposed — pending owner
-approval*. It is **not** entered in `docs/DECISIONS.md`. This mirrors the repository's practice of holding
-unpublished ADRs outside the register (`backend/docs/PENDING_ADRS.md`), and it avoids a number collision
-while ADR-039…041 live only on `backend`.
-
+OQ-02 remains open: the identity-proofing method for claiming a pre-existing hospital record. Patient
+record claiming remains blocked until that method is explicitly decided.
 ---
 
 ## Summary

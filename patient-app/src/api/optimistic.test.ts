@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { MutationObserver, QueryClient } from '@tanstack/react-query';
 
 import { optimisticUpdate, type OptimisticContext } from './optimistic';
 
@@ -146,5 +146,98 @@ describe('handing authority back to the server', () => {
     await settle('a', context);
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['notes'] });
+  });
+});
+
+/**
+ * A rollback that lands after the session it belonged to has ended.
+ *
+ * Signing out clears the query cache (`clearPhiCache`), but it cannot stop a
+ * request already on the wire, and TanStack still runs the mutation's
+ * `onError` after `clear()`. A rollback that wrote by key would then
+ * re-create the feed the sign-out removed — holding the previous account's
+ * data — or overwrite the next account's feed with it. These run through a
+ * real `MutationObserver`, so the callbacks fire exactly as `useMutation`
+ * fires them.
+ */
+describe('a rollback that outlives its session', () => {
+  const KEY = ['notes', 'list', {}] as const;
+  const NEXT_ACCOUNT: Note[] = [{ id: 'z', read: false }];
+
+  function inFlight(onRollback?: () => void) {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity },
+        mutations: { retry: false, gcTime: Infinity },
+      },
+    });
+    let fail: (error: Error) => void = () => undefined;
+    const request = new Promise<void>((_, reject) => {
+      fail = reject;
+    });
+    const observer = new MutationObserver<void, Error, string, OptimisticContext>(queryClient, {
+      mutationFn: () => request,
+      ...optimisticUpdate<string, Note[], void, Error>({
+        queryClient,
+        queryKey: ['notes'],
+        apply: markRead,
+        ...(onRollback === undefined ? {} : { onRollback }),
+      }),
+    });
+    return {
+      queryClient,
+      start: async () => {
+        const settled = observer.mutate('a').catch(() => undefined);
+        // `onMutate` awaits a cancellation first; wait for the optimistic
+        // write itself rather than counting microtasks.
+        for (let i = 0; i < 50; i += 1) {
+          if (queryClient.getQueryData<Note[]>(KEY)?.[0]?.read === true) break;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        expect(queryClient.getQueryData<Note[]>(KEY)?.[0]?.read).toBe(true);
+        // Wrapped: an async function returning the bare promise would wait
+        // for the mutation to settle, and it settles only when failed.
+        return { settled };
+      },
+      fail: (inflight: { readonly settled: Promise<unknown> }) => {
+        fail(new Error('offline'));
+        return inflight.settled;
+      },
+    };
+  }
+
+  it('still rolls back, then tells the call site, when the session is intact', async () => {
+    const seen: (Note[] | undefined)[] = [];
+    const t = inFlight(() => seen.push(t.queryClient.getQueryData<Note[]>(KEY)));
+    t.queryClient.setQueryData(KEY, UNREAD);
+
+    await t.fail(await t.start());
+
+    expect(t.queryClient.getQueryData(KEY)).toEqual(UNREAD);
+    expect(seen).toEqual([UNREAD]);
+  });
+
+  it('does not resurrect a query the sign-out cleared', async () => {
+    const t = inFlight();
+    t.queryClient.setQueryData(KEY, UNREAD);
+    const inflight = await t.start();
+
+    t.queryClient.clear();
+    await t.fail(inflight);
+
+    expect(t.queryClient.getQueryCache().find({ queryKey: KEY, exact: true })).toBeUndefined();
+    expect(t.queryClient.getQueryData(KEY)).toBeUndefined();
+  });
+
+  it("leaves the next account's query under the same key untouched", async () => {
+    const t = inFlight();
+    t.queryClient.setQueryData(KEY, UNREAD);
+    const inflight = await t.start();
+
+    t.queryClient.clear();
+    t.queryClient.setQueryData(KEY, NEXT_ACCOUNT);
+    await t.fail(inflight);
+
+    expect(t.queryClient.getQueryData(KEY)).toEqual(NEXT_ACCOUNT);
   });
 });

@@ -2,10 +2,10 @@
 
 **Origin:** audit-derived (2026-10-07); reconciled with the owner's FINAL decisions the same day
 **Primary Area:** Architecture (Database, Backend, Security, AI, Frontend and Patient App review)
-**Status:** IN PROGRESS
+**Status:** IN PROGRESS — ADR-042 accepted and registered; phase review sign-offs remain open
 - Owner decisions DR-01…DR-13, OD-01…OD-14 and OQ-01 are **FINAL**: `docs/multi-hospital/OWNER_DECISIONS.md`.
-- ADR-042 exists as a **Proposed draft**, `docs/multi-hospital/ADR-042-DRAFT.md`, held outside the register
-  pending owner approval.
+- ADR-042 is Accepted (2026-11-22) and registered in docs/DECISIONS.md; the original source copy remains in docs/multi-hospital/ADR-042-DRAFT.md.
+
 
 **Valid after the final decisions:** yes
 **Depends On:** owner decisions (done)
@@ -27,7 +27,7 @@
 
 ## Objective
 
-Formalize the final Hospital architecture as an accepted ADR (draft written; owner approval pending). The ADR supersedes the single-clinic and
+Formalize the final Hospital architecture as an accepted ADR (completed 2026-11-22). The ADR supersedes the single-clinic and
 assignment-anchored decisions and records the technical choices later phases build to.
 
 ## Why it exists
@@ -42,9 +42,9 @@ is recorded in the ADR as open and deferred to implementation. It does not chang
 
 ## Deliverables
 
-- [x] [ARCHITECTURE] **ADR-042 draft** written: `docs/multi-hospital/ADR-042-DRAFT.md` (Proposed)
-- [ ] [OWNER] Approve ADR-042. Then re-run the register sweep including
-  `origin/backend:backend/docs/PENDING_ADRS.md`, and append it to `docs/DECISIONS.md`. The draft covers:
+- [x] [ARCHITECTURE] ADR-042 written and accepted; source copy: docs/multi-hospital/ADR-042-DRAFT.md
+- [x] [OWNER] Approve ADR-042 and register it after the fresh sweep completed 2026-11-22.
+  The sweep covered locally available PENDING_ADRS.md files; the accepted ADR covers:
   - DR-01…DR-13, OD-01…OD-14 and OQ-01 by reference;
   - the Hospital → Clinic / Location hierarchy;
   - Platform Admin + Hospital Admin, and the deliberate mapping of existing admins;
@@ -75,6 +75,6 @@ The ADR adopts `SECURITY_AND_DATA_ISOLATION.md` §1–§5 and gates G-1…G-8.
 
 - `docs/DECISIONS.md` ADR-010, ADR-018, ADR-022
 - `git grep '^## ADR-' origin/* -- docs/DECISIONS.md` → highest ADR-039
-- `origin/backend:backend/docs/PENDING_ADRS.md` (ADR-040, ADR-041)
+- `all locally available PENDING_ADRS.md files` (ADR-040, ADR-041)
 - "next free number: ADR-042" in `origin/frontend:frontend/FRONTEND_CHECKLIST.md` and
   `origin/frontend:docs/handoff/clinic-isolation.md`

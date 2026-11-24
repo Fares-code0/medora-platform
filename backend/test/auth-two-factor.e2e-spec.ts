@@ -87,8 +87,16 @@ function currentCode(secret: string): string {
 async function enrol(
   email: string,
   options: { keepSession?: boolean } = {},
-): Promise<{ secret: string; accessToken: string }> {
-  const accessToken = await accessTokenFor(email);
+): Promise<{ secret: string; accessToken: string; refreshCookie: string }> {
+  const login = await request(harness.server)
+    .post(LOGIN)
+    .send({ email, password: PASSWORD, rememberMe: false });
+  const accessToken = dataOf<SessionPayload>(login).accessToken;
+  const rawCookies: unknown = login.headers['set-cookie'];
+  const refreshCookie =
+    (Array.isArray(rawCookies) ? (rawCookies as unknown[]) : [rawCookies])
+      .find((value): value is string => typeof value === 'string' && value.startsWith('medora_rt='))
+      ?.split(';')[0] ?? '';
   const enrolment = dataOf<Enrolment>(
     await request(harness.server)
       .post(SETUP)
@@ -104,7 +112,7 @@ async function enrol(
   const keep = options.keepSession === true ? { id: { not: sidOf(accessToken) } } : {};
   await harness.prisma.session.deleteMany({ where: { user: { email }, ...keep } });
 
-  return { secret: enrolment.secret, accessToken };
+  return { secret: enrolment.secret, accessToken, refreshCookie };
 }
 
 /** The `sid` claim of an access token this suite was just issued. */
@@ -298,10 +306,25 @@ describe('disabling', () => {
 
   it('refuses an administrator, who may not remove their own factor', async () => {
     const email = await seedAccount('marcus');
-    const { accessToken } = await enrol(email, { keepSession: true });
+    const { accessToken: doctorToken, refreshCookie } = await enrol(email, { keepSession: true });
 
     const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+
+    // ADR-046: the token minted for the old role is refused outright, and
+    // the session's one refresh mints the administrator token this case is
+    // about. The ADR-035 refusal below is then exercised with a token that
+    // really carries the `admin` role.
+    const stale = await request(harness.server)
+      .post(DISABLE)
+      .set('Authorization', `Bearer ${doctorToken}`)
+      .send({ password: PASSWORD });
+    expect(stale.status).toBe(401);
+
+    const refreshed = await request(harness.server).post(REFRESH).set('Cookie', refreshCookie);
+    expect(refreshed.status).toBe(200);
+    expect(dataOf<SessionPayload>(refreshed).user.role).toBe('admin');
+    const accessToken = dataOf<SessionPayload>(refreshed).accessToken;
 
     const response = await request(harness.server)
       .post(DISABLE)

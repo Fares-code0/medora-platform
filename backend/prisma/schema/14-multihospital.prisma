@@ -1,0 +1,217 @@
+// Medora multi-hospital data model (ADR-042; additive Phase 21).
+// Existing identities and clinical rows are not reassigned by this schema.
+
+model HospitalDepartment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  name String @db.VarChar(80)
+  description String @default("") @db.VarChar(300)
+  status ActiveStatus @default(ACTIVE)
+  catalogueDepartmentId String? @map("catalogue_department_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  catalogue Department? @relation(fields: [catalogueDepartmentId], references: [id], onDelete: Restrict)
+  employments DoctorEmployment[]
+  staffAffiliations HospitalStaffAffiliation[]
+  rooms Room[]
+  resources Resource[]
+  appointments Appointment[]
+  encounters MedicalRecord[]
+  labOrders LabOrder[]
+  prescriptions Prescription[]
+  @@unique([id, hospitalId], map: "hospital_departments_id_hospital_id_key")
+  @@unique([hospitalId, name], map: "hospital_departments_hospital_id_name_key")
+  @@index([hospitalId, status], map: "hospital_departments_hospital_status_idx")
+  @@index([catalogueDepartmentId], map: "hospital_departments_catalogue_department_idx")
+  @@index([deletedAt], map: "hospital_departments_deleted_at_idx")
+  @@map("hospital_departments")
+}
+
+model DoctorEmployment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId String @map("doctor_id") @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  endedAt DateTime? @map("ended_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  department HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "doctor_employments_department_hospital_fkey")
+  @@unique([id, hospitalId], map: "doctor_employments_id_hospital_id_key")
+  @@unique([id, hospitalId, doctorId], map: "doctor_employments_id_hospital_doctor_key")
+  @@unique([doctorId], where: raw("ended_at IS NULL"), map: "doctor_employments_one_active_per_doctor_key")
+  @@index([hospitalId, endedAt], map: "doctor_employments_hospital_ended_idx")
+  @@index([doctorId, startedAt(sort: Desc)], map: "doctor_employments_doctor_started_idx")
+  slots PublishedSlot[]
+  prescriptions Prescription[]
+  labOrders LabOrder[]
+  medicalRecords MedicalRecord[]
+  careAssignments PatientDoctorAssignment[]
+  appointments Appointment[]
+  roleAssignments HospitalRoleAssignment[]
+  availability DoctorAvailability[]
+  timeOff DoctorTimeOff[]
+
+  @@map("doctor_employments")
+}
+
+model HospitalStaffAffiliation {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  staffId String @map("staff_id") @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  hospitalDepartmentId String? @map("hospital_department_id") @db.Uuid
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+  endedAt DateTime? @map("ended_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  staff StaffMember @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  department HospitalDepartment? @relation(fields: [hospitalDepartmentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "hospital_staff_affiliations_department_hospital_fkey")
+  @@unique([id, hospitalId], map: "hospital_staff_affiliations_id_hospital_id_key")
+  @@unique([id, hospitalId, staffId], map: "hospital_staff_affiliations_id_hospital_staff_key")
+  @@unique([staffId, hospitalId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_hospital_key")
+  /// MRD-05 (a): one active hospital affiliation per non-doctor staff member
+  /// (migration 20261123120100_one_active_staff_affiliation).
+  @@unique([staffId], where: raw("ended_at IS NULL"), map: "hospital_staff_affiliations_one_active_per_staff_key")
+  @@index([hospitalId, endedAt], map: "hospital_staff_affiliations_hospital_ended_idx")
+  @@index([staffId, startedAt(sort: Desc)], map: "hospital_staff_affiliations_staff_started_idx")
+  shiftAssignments StaffShiftAssignment[]
+  roleAssignments HospitalRoleAssignment[]
+
+  @@map("hospital_staff_affiliations")
+}
+
+model HospitalRoleAssignment {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
+  sourceDoctorEmploymentId String? @map("source_doctor_employment_id") @db.Uuid
+  sourceStaffAffiliationId String? @map("source_staff_affiliation_id") @db.Uuid
+  grantedBy String? @map("granted_by") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  doctorEmployment DoctorEmployment? @relation(fields: [sourceDoctorEmploymentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "hospital_role_assignments_doctor_employment_fkey")
+  staffAffiliation HospitalStaffAffiliation? @relation(fields: [sourceStaffAffiliationId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "hospital_role_assignments_staff_affiliation_fkey")
+  granter User? @relation("HospitalRoleAssignmentGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
+  @@unique([userId, hospitalId, roleId], where: raw("revoked_at IS NULL"), map: "hospital_role_assignments_active_key")
+  @@index([hospitalId, userId, revokedAt], map: "hospital_role_assignments_hospital_user_revoked_idx")
+  @@index([roleId], map: "hospital_role_assignments_role_idx")
+  @@index([sourceDoctorEmploymentId], map: "hospital_role_assignments_doctor_source_idx")
+  @@index([sourceStaffAffiliationId], map: "hospital_role_assignments_staff_source_idx")
+
+  @@map("hospital_role_assignments")
+}
+
+model HospitalMedicalRecord {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  chronicConditions HospitalMedicalRecordCondition[]
+  allergies PatientAllergy[]
+  documents PatientDocument[]
+  notes PatientNote[]
+  history PatientMedicalHistory[]
+  vitalSigns PatientVitalSign[]
+  clinicalAlerts PatientClinicalAlert[]
+  medications PatientMedication[]
+  studies PatientStudy[]
+  assignments PatientDoctorAssignment[]
+  appointments Appointment[]
+  encounters MedicalRecord[]
+  labOrders LabOrder[]
+  prescriptions Prescription[]
+  conversations Conversation[]
+  notifications Notification[]
+  aiConversations AiConversation[]
+  @@unique([patientId, hospitalId], map: "hospital_medical_records_patient_hospital_key")
+  @@unique([id, hospitalId, patientId], map: "hospital_medical_records_id_hospital_patient_key")
+  @@index([hospitalId, createdAt(sort: Desc)], map: "hospital_medical_records_hospital_created_idx")
+  @@map("hospital_medical_records")
+}
+
+model HospitalMedicalRecordCondition {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalMedicalRecordId String @map("hospital_medical_record_id") @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  conditionId String @map("condition_id") @db.Uuid
+  diagnosedOn DateTime? @map("diagnosed_on") @db.Date
+  recordedBy String? @map("recorded_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  medicalRecord HospitalMedicalRecord @relation(fields: [hospitalMedicalRecordId, hospitalId, patientId], references: [id, hospitalId, patientId], onDelete: Restrict, map: "hospital_medical_record_conditions_record_fkey")
+  condition ChronicCondition @relation(fields: [conditionId], references: [id], onDelete: Restrict)
+  recorder User? @relation(fields: [recordedBy], references: [id], onDelete: SetNull)
+  @@unique([hospitalMedicalRecordId, conditionId], where: raw("deleted_at IS NULL"), map: "hospital_medical_record_conditions_active_key")
+  @@index([conditionId], map: "hospital_medical_record_conditions_condition_idx")
+  @@index([hospitalId, deletedAt], map: "hospital_medical_record_conditions_hospital_deleted_idx")
+  @@map("hospital_medical_record_conditions")
+}
+
+model PublishedSlot {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  doctorEmploymentId String @map("doctor_employment_id") @db.Uuid
+  startsAt DateTime @map("starts_at") @db.Timestamptz(3)
+  durationMinutes Int @map("duration_minutes")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  withdrawnAt DateTime? @map("withdrawn_at") @db.Timestamptz(3)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  employment DoctorEmployment @relation(fields: [doctorEmploymentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "published_slots_employment_hospital_fkey")
+  appointments Appointment[]
+  @@unique([id, hospitalId, doctorEmploymentId], map: "published_slots_id_hospital_employment_key")
+  @@index([hospitalId, startsAt], map: "published_slots_hospital_starts_idx")
+  @@index([doctorEmploymentId, startsAt], map: "published_slots_employment_starts_idx")
+
+  @@map("published_slots")
+}
+
+model HospitalInsuranceCoverage {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalId String @map("hospital_id") @db.Uuid
+  providerId String @map("provider_id") @db.Uuid
+  planCode String @map("plan_code") @db.VarChar(60)
+  planName String @map("plan_name") @db.VarChar(120)
+  active Boolean @default(true)
+  startsOn DateTime? @map("starts_on") @db.Date
+  endsOn DateTime? @map("ends_on") @db.Date
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
+  provider InsuranceProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  @@unique([hospitalId, providerId, planCode], map: "hospital_insurance_coverage_plan_key")
+  @@index([hospitalId, active], map: "hospital_insurance_coverage_hospital_active_idx")
+  @@map("hospital_insurance_coverage")
+}
+
+/// Per-clinic schedule. The legacy clinic_working_days table remains the platform-wide schedule.
+model ClinicOperatingHour {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId String @map("clinic_id") @db.Uuid
+  day Weekday
+  open Boolean
+  startTime DateTime @map("start_time") @db.Time(0)
+  endTime DateTime @map("end_time") @db.Time(0)
+  breakLabel String? @map("break_label") @db.VarChar(80)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy String? @map("created_by") @db.Uuid
+  updatedBy String? @map("updated_by") @db.Uuid
+  clinic Clinic @relation(fields: [clinicId], references: [id], onDelete: Restrict)
+  creator User? @relation("ClinicOperatingHourCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updater User? @relation("ClinicOperatingHourUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+  @@unique([clinicId, day], map: "clinic_operating_hours_clinic_day_key")
+  @@index([clinicId, open], map: "clinic_operating_hours_clinic_open_idx")
+  @@map("clinic_operating_hours")
+}

@@ -28,6 +28,8 @@ import { randomUUID } from 'node:crypto';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { runOutsideRequestScope } from '../authz/request-scope';
+
 import { DeadLetterStore } from './dead-letter.store';
 import { JobMetricsService } from './job-metrics.service';
 import { backoffDelayMs } from './retry-policy';
@@ -79,8 +81,18 @@ export class JobRunner {
    * Throws on failure — the caller decides whether that is a retry or a
    * dead letter, because that decision differs between the in-process
    * loop and the broker.
+   *
+   * Runs outside any request store (audit F5): this is the BullMQ worker's
+   * entry point, and the in-process loop's per-attempt step.
    */
-  async attempt(
+  attempt(
+    job: RunnableJob,
+    context: { attempt: number; trigger: JobTrigger; correlationId: string; now: Date },
+  ): Promise<JobOutcome> {
+    return runOutsideRequestScope(() => this.attemptOnce(job, context));
+  }
+
+  private async attemptOnce(
     job: RunnableJob,
     context: { attempt: number; trigger: JobTrigger; correlationId: string; now: Date },
   ): Promise<JobOutcome> {
@@ -171,11 +183,24 @@ export class JobRunner {
    * that propagated would turn a failed sweep into an unhandled
    * rejection in a timer callback, which takes the process down.
    */
-  async runToCompletion(
+  runToCompletion(
     job: RunnableJob,
     trigger: JobTrigger,
     hooks: RunHooks = REAL_HOOKS,
     correlationId: string = randomUUID(),
+  ): Promise<RunReport> {
+    // A job is independent of whatever started it — a manual run or replay
+    // is enqueued from an HTTP request — so it must not inherit that
+    // request's AsyncLocalStorage store (audit F5, #24). Entered here, for
+    // both drivers; every attempt and backoff below runs outside it too.
+    return runOutsideRequestScope(() => this.attempts(job, trigger, hooks, correlationId));
+  }
+
+  private async attempts(
+    job: RunnableJob,
+    trigger: JobTrigger,
+    hooks: RunHooks,
+    correlationId: string,
   ): Promise<RunReport> {
     let lastError: unknown = null;
 
@@ -225,9 +250,7 @@ export class JobRunner {
 
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        reject(
-          new Error(`Job \`${job.name}\` exceeded its ${String(job.timeoutMs)} ms timeout.`),
-        );
+        reject(new Error(`Job \`${job.name}\` exceeded its ${String(job.timeoutMs)} ms timeout.`));
       }, job.timeoutMs);
     });
 

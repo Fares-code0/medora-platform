@@ -70,5 +70,10 @@ export {
 export { AuthorizationGuard } from './authorization.guard';
 export { PermissionResolver } from './permission-resolver.service';
 export { PatientScopeService } from './patient-scope.service';
+export {
+  HOSPITAL_CONTEXT_REPOSITORY,
+  HospitalContextService,
+  type HospitalContextRepository,
+} from './hospital-context.service';
 export { PatientSelfScopeService } from './patient-self-scope.service';
 export { AuthzKernelModule } from './authz.module';

@@ -2,7 +2,9 @@
 
 **Governing decisions (FINAL):** DR-01…DR-12, OD-01…OD-08, OD-12, OD-13, OQ-01.
 **Work phases:** 22, 22A, 28, and **30 (the critical gate)**.
-**Status:** NOT STARTED. No hospital isolation and no cross-hospital test exist today (AF-23).
+**Status:** FOUNDATION ONLY on PR #5's unmerged branch. Hospital, HospitalLocation, and Clinic tables
+exist there, but no hospital isolation or cross-hospital security test has been implemented (AF-23).
+The foundation does not authorize real multi-hospital access.
 
 > **Correction history.**
 > - Rev. 1 required AI to exclude grant-covered data.
@@ -15,6 +17,33 @@
 >     (OD-05);
 >   - doctor-approved selective documentation into the requesting hospital's record is allowed
 >     (OQ-01 = A).
+
+---
+
+## 0. PR #5 implementation boundary and remaining production gates
+
+PR #5 adds the Hospital/Clinic/Location schema foundation and PostgreSQL constraint tests. It does not
+implement hospital context, tenant-scoped application access, staff affiliations, clinical-record
+ownership, grants, Break-Glass, consultations, or AI data-class retention. Treat the new tables as
+inert foundation until the following gates are implemented, reviewed, and passed. The approved owner
+safeguards also prohibit record claiming while OQ-02 is open and prohibit implementing cross-hospital
+access, Break-Glass, AI C2 retention, or provenance before their technical specifications are approved.
+
+| Gate | Required before real multi-hospital access | Evidence required |
+|---|---|---|
+| **Tenant context and default access** | Resolve Hospital server-side from the doctor’s active employment; never trust a client-supplied hospital id. Enforce hospital + role + permission in the shared data-access/authorization layer; return 404 for another hospital’s ids. | Cross-hospital negative tests for direct IDs, lists, search, filters, exports, aggregates, admin endpoints, assignments, messages, AI context, files, and cached data. |
+| **Structural ownership** | Add `HospitalMedicalRecord`; bind clinical children to that record and hospital with composite foreign keys. Add staff/doctor employment and hospital-scoped affiliations. | Constraint tests proving cross-hospital parent/child combinations cannot be stored; migration rehearsal and data mapping review. |
+| **Admin and employment lifecycle** | Separate Platform Admin (no implicit clinical access) from one-hospital Hospital Admin. Ending a doctor employment immediately revokes access derived from that employment, without revoking unrelated access. | Role-boundary and termination tests for sessions, refresh tokens, caches, grants, and any Break-Glass session. |
+| **Cross-hospital access** | Implement purpose/category-scoped grants approved by the target Hospital Admin and time-bounded, attributable Break-Glass with minimum necessary access. Apply only after the technical specifications are approved. | Grant/revoke/expiry and Break-Glass negative/lifecycle tests; audit evidence for access and denials. |
+| **Consultations, messages, and files** | Scope each consultation, message, attachment and signed download to authorized participants and the active grant/Break-Glass window; revoke access when authorization ends. | Cross-hospital participant, attachment, guessed-ID, URL-expiry, revocation, and employment-termination tests. |
+| **Discovery and booking** | Require authenticated discovery; derive booking Hospital from the published slot; enforce capacity 1 and no double-booking at the database boundary. | Concurrent booking tests prove exactly one success; discovery tests ensure reviews and comparison never expose clinical information. |
+| **RLS and pooled connections** | Enable RLS on clinical tables as defence in depth; set tenant context transaction-locally and fail closed when missing. Prevent context leakage across pooled connections and cover background jobs. | Pool reuse/missing-context tests plus negative queries across two hospitals. RLS is not complete until tenant-context handling and negative tests pass. |
+| **Patient identity and records** | Keep patient identity global and create one HospitalMedicalRecord per hospital interaction. Do not implement record claiming until OQ-02 identity proofing is decided. | Identity/claim negative tests and verified ownership mapping; no default-hospital assignment without separate approval. |
+| **AI and provenance** | Keep AI hospital-only by default. Cross-hospital inputs require a valid grant or Break-Glass; C2 raw content is removed or inaccessible when authorization ends; doctor-approved saved content carries provenance. Wait for approved technical specifications. | Per-turn authorization, expiry/revocation, retention/purge, saved-content provenance, and cross-hospital negative tests before enabling a real provider. |
+| **Audit and readiness** | Audit cross-hospital access and denial events; define retention and recovery; complete G-1…G-8 with no unresolved High/Critical isolation findings. | Security review, migration rehearsal, backup/restore drill, operational sign-off; no second real Hospital before all gates pass. |
+
+These requirements are not satisfied by adding `hospital_id` alone. PR #5 has no RLS policy or application
+tenant-context code; all downstream access features remain blocked by this gate.
 
 ---
 
@@ -54,6 +83,22 @@ TECHNICAL RECOMMENDATION unless noted.
 8. RLS on patient/clinical tables is a **production security gate** (G-8, ADR-022).
 9. Client-side checks are display rules only. The fail-open `useClinicScope` (AF-17) is never a
    hospital-isolation mechanism.
+
+### 2.1 Phase 22 shadow mode — implementation status
+
+Phase 22 computes hospital-aware decisions **without enforcing them**. Nothing below grants, widens
+or refuses access; the legacy care-assignment rule (ADR-022) still makes every real decision.
+
+| Piece | What it does | Where |
+|---|---|---|
+| Hospital context | Server-derived, resolved lazily and at most once per request (an `AsyncLocalStorage` memo opened by middleware; no global interceptor, so routes that never read it pay nothing). Doctor → the one active `DoctorEmployment`; Hospital Admin → the one active hospital `admin` role assignment; patient → unresolved until a resource is known. Only a hospital with `status = 'ACTIVE'` and `deleted_at IS NULL` yields context: a suspended, inactive or soft-deleted hospital reads as missing context. Missing, ambiguous or unmapped scope stays `unresolved`; a lookup failure is `resolution_unavailable` and is not cached. Platform scope is never inferred (OD-07 mapping pending). | `backend/src/shared/authz/hospital-context.service.ts`, `request-scope.ts` |
+| Patient scope comparison | `PatientScopeService.canReach` decides with the legacy rule first, then **starts** `HospitalPatientScopeShadow` detached — not awaited — so a slow, hung or failing comparison can neither delay nor change the returned decision (audit F1). Its result is discarded; a synchronous throw and an asynchronous rejection are both caught and logged. A legacy repository failure still propagates before any shadow work runs. The comparison is **opt-in**: `HOSPITAL_SCOPE_SHADOW_COMPARISON` defaults to `false`, and off no shadow exists and the pre-Phase-22 path runs unchanged. Enable it under real load only after its queries are bounded (condition C1 — they share the application pool with no enforced timeout). | `backend/src/shared/authz/patient-scope.service.ts`, `hospital-patient-scope.shadow.ts` |
+| Shadow rule (fail closed) | Allow only when the doctor's context is one active employment **and** exactly one live care assignment links doctor and patient **and** that assignment is owned by the same `ACTIVE`, non-deleted hospital, bound to the active employment and to the patient's `HospitalMedicalRecord` there. Legacy assignments without a hospital are never assigned one by guesswork. Every non-doctor role — Hospital Admin and Platform Admin included — gets no clinical access. | `hospital-patient-scope.shadow.ts` |
+| Observation | The shadow passes only role, outcome and reason to the logger — no patient identifier, hospital name, token or session id. **The log line is not free of patient identifiers, however:** the request logger adds its own `req` fields to every line written inside a request, and `req.url` keeps the path (only query strings are dropped, `common/logging/logger.config.ts`), so a divergence on a route such as `/api/v1/patients/PT-1001` carries that public patient id — as every access-log line for that request already does. `legacy_allow_shadow_deny` is expected while legacy rows are unowned; `legacy_deny_shadow_allow` is logged as a warning and must not occur. | same |
+
+Still not in place: enforcement in the data-access layer, Platform Admin vs Hospital Admin guards, RLS,
+grants, Break-Glass and termination-driven session invalidation. The tenant-context gate in §0 is
+therefore still open.
 
 ## 3. Path 1 — Cross-Hospital Access Grant controls
 

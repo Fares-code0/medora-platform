@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { clearSessionMemory } from '@/api/session-memory';
 import { envelope, json, pageOf, stubApi } from '@/test/api-stub';
 
 import {
@@ -406,6 +407,15 @@ describe('drafts', () => {
     await httpRecordService.discardDraft(saved.id);
     expect(await httpRecordService.listDrafts()).toEqual([]);
     expect(requests).toHaveLength(0);
+  });
+
+  it('end with the session — another account signing in on this tab lists none of them', async () => {
+    stubApi({});
+    await httpRecordService.saveDraft(completeDraft());
+
+    clearSessionMemory();
+
+    expect(await httpRecordService.listDrafts()).toEqual([]);
   });
 
   it('says vitals are not attached and records are persisted', () => {

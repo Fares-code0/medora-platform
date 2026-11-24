@@ -31,6 +31,8 @@ import { randomUUID } from 'node:crypto';
 
 import { Injectable, Logger } from '@nestjs/common';
 
+import { runOutsideRequestScope } from '../authz/request-scope';
+
 import { JobRegistry } from './job-registry.service';
 import { JobRunner, REAL_HOOKS, type RunHooks } from './job-runner.service';
 import { describeSchedule, nextRunAfter } from './job-schedule';
@@ -148,12 +150,17 @@ export class InlineJobQueue implements JobQueuePort {
     }
 
     const correlationId = randomUUID();
-    const promise = this.runner
-      .runToCompletion(job, trigger, this.hooks, correlationId)
-      .then(() => undefined)
-      .finally(() => {
-        this.running.delete(job.name);
-      });
+    // `enqueue` is called from a request for a manual run or a replay. The
+    // whole chain — the run, its bookkeeping, and the re-armed timer of a
+    // scheduled run — is created outside that request's store (F5, #24).
+    const promise = runOutsideRequestScope(() =>
+      this.runner
+        .runToCompletion(job, trigger, this.hooks, correlationId)
+        .then(() => undefined)
+        .finally(() => {
+          this.running.delete(job.name);
+        }),
+    );
 
     this.running.set(job.name, promise);
   }
