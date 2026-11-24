@@ -130,6 +130,7 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   // Reaching past a privacy boundary, or changing who can.
   'communication_access.approve': 'warning',
   'communication_access.view': 'warning',
+  'communication_access.revoke': 'warning',
   'patient_identity.reveal': 'warning',
   'roles.user_overrides': 'warning',
   'roles.create': 'warning',

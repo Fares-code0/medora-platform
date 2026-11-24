@@ -57,7 +57,7 @@ export class OversightController {
     @Param('conversationId') conversationId: string,
     @Body(zodBody(accessRequestSchema)) body: AccessRequestBody,
   ) {
-    return this.oversight.requestAccess(user.id, conversationId, body);
+    return this.oversight.requestAccess(user, conversationId, body);
   }
 
   // Multi-hospital §2.1: an administrator holds no standing PHI capability,
@@ -78,6 +78,14 @@ export class OversightController {
   // administrator, a limited lifetime and an audit row on every read. The
   // grant, checked by OversightService, is the authorization; the role rule
   // (with the guard's administrative tiering) only says who may ask.
+  // F-12: a grant ends at once when its requester withdraws it or another
+  // administrator terminates it.
+  @Roles('admin')
+  @Post('conversations/access-requests/:requestId/revoke')
+  revoke(@CurrentUser() user: AuthenticatedUser, @Param('requestId') requestId: string) {
+    return this.oversight.revoke(user.id, requestId);
+  }
+
   @Roles('admin')
   @PhiRead('conversation_content', { auditedByHandler: true })
   @Get('conversations/:conversationId/content')

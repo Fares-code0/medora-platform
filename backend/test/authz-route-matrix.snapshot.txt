@@ -184,6 +184,7 @@ POST /api/v1/admin/appointments/:appointmentId/nudge                      A.R...
 POST /api/v1/admin/appointments/:appointmentId/reassign                   A.R....  can:appointments.reassign
 POST /api/v1/admin/conversations/:conversationId/access-request           A......  roles:admin
 POST /api/v1/admin/conversations/access-requests/:requestId/approve       A......  roles:admin
+POST /api/v1/admin/conversations/access-requests/:requestId/revoke        A......  roles:admin
 POST /api/v1/admin/message-flags/:flagId/resolve                          A......  can:communications.resolveFlags
 POST /api/v1/administration/announcements                                 A......  roles:admin
 POST /api/v1/administration/departments                                   A......  roles:admin

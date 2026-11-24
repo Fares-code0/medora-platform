@@ -20,6 +20,8 @@ export type OversightQuery = z.infer<typeof oversightQuerySchema>;
 export const accessRequestSchema = z.object({
   justificationCategory: z.enum(['complaint', 'safety', 'legal', 'audit']),
   reason: z.string().trim().min(10).max(2000),
+  /** F-12: content access re-proves the requester, as Break-Glass does. */
+  password: z.string().min(1).max(200),
 });
 
 export type AccessRequestBody = z.infer<typeof accessRequestSchema>;
