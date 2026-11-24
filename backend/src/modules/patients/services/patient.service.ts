@@ -57,8 +57,8 @@ import {
   type AuditDispatcher,
   MandatoryAuditWriter,
 } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
-import { isUniqueViolation } from '../../../shared/database';
+import { PatientScopeService, principalOf, TenantContextResolver } from '../../../shared/authz';
+import { isUniqueViolation, runAsSystem } from '../../../shared/database';
 import { maskPatientIdentity, type MaskedIdentity } from '../../../shared/phi';
 import { bloodTypeToWire, genderToWire } from '../dto/clinical-enums';
 import {
@@ -118,6 +118,7 @@ export class PatientService {
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
     private readonly disclosureAudit: TransactionalAuditWriter,
+    private readonly tenants: TenantContextResolver,
   ) {}
 
   /**
@@ -136,10 +137,12 @@ export class PatientService {
   ): Promise<PaginatedPatients<PatientView | MaskedIdentity>> {
     const care = await this.careOf(user);
     const clear = care !== null;
+    const directory = care === null ? await this.directoryOf(user) : undefined;
 
     const { rows: found, totalItems } = await this.patients.list(
       care,
       criteriaFor(query, query.page, query.pageSize),
+      directory,
     );
     const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
@@ -182,10 +185,12 @@ export class PatientService {
   async export(user: AuthenticatedUser, query: PatientExportQuery): Promise<CsvFile> {
     const care = await this.careOf(user);
     const clear = care !== null;
+    const directory = care === null ? await this.directoryOf(user) : undefined;
 
     const { rows: found, totalItems } = await this.patients.list(
       care,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
+      directory,
     );
     const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
@@ -655,6 +660,22 @@ export class PatientService {
     });
 
     return toAlertView(updated);
+  }
+
+  /**
+   * The masked directory's reach (F-08), from the caller's own staffing:
+   * a Platform Admin's spans every hospital (`undefined`); a
+   * Hospital Admin's or a staff member's is the patients holding a record
+   * at their hospital; anyone with no tenant (an administrator without a
+   * scope, a doctor without standing) gets none at all (`null`).
+   */
+  private async directoryOf(
+    user: AuthenticatedUser,
+  ): Promise<string | null | undefined> {
+    const tenant = await runAsSystem(() => this.tenants.resolve(user));
+    if (tenant?.scope === 'platform') return undefined;
+    if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
+    return null;
   }
 
   /**

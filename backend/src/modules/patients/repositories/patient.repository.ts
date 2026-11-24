@@ -151,10 +151,23 @@ export class PatientRepository {
   async list(
     care: { readonly doctorId: string; readonly hospitalId: string } | null,
     criteria: PatientListCriteria,
+    /**
+     * The masked directory's reach (F-08): `undefined` for a Platform Admin
+     * (every hospital), a hospital id for a Hospital Admin or staff member
+     * (patients holding a record there), `null` for no directory at all.
+     * Ignored for a doctor's own list.
+     */
+    directoryHospitalId?: string | null,
   ): Promise<{ rows: readonly PatientRow[]; totalItems: number }> {
     if (care !== null && !UUID.test(care.doctorId)) return { rows: [], totalItems: 0 };
+    if (care === null && directoryHospitalId === null) return { rows: [], totalItems: 0 };
 
-    const where = this.whereFor(care, criteria);
+    const where: Prisma.PatientWhereInput = {
+      ...this.whereFor(care, criteria),
+      ...(care === null && typeof directoryHospitalId === 'string'
+        ? { hospitalMedicalRecords: { some: { hospitalId: directoryHospitalId } } }
+        : {}),
+    };
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patient.findMany({

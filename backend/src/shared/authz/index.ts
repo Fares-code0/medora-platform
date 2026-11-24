@@ -100,3 +100,4 @@ export {
 export { AdminScopeService, type AdminScope } from './admin-scope.service';
 
 export { NotPhi, PhiRead, NOT_PHI_METADATA, PHI_READ_METADATA, type PhiReadSpec } from './phi-read.decorator';
+export { TenantContextResolver } from './tenant-context.resolver';

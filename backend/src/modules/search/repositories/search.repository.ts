@@ -55,6 +55,12 @@ export interface NamedHit {
   readonly detail: string;
 }
 
+/** Whose search, at which hospital (F-08). */
+export interface SearchScopeOf {
+  readonly doctorId: string;
+  readonly hospitalId: string;
+}
+
 @Injectable()
 export class SearchRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -78,15 +84,22 @@ export class SearchRepository {
 
   /* ── Doctor scope (M26.1) ──────────────────────────────────── */
 
-  /** Live assignments only — a revoked one is not a care relationship. */
-  private scopedToDoctor(doctorId: string) {
-    return { careAssignments: { some: { doctorId, revokedAt: null } } };
+  /**
+   * The doctor's own patients at their hospital (F-08): a live assignment
+   * made there, and the patient's record there — the patient list's scope,
+   * so search finds no one the list would not show.
+   */
+  private scopedToDoctor(scope: SearchScopeOf) {
+    return {
+      careAssignments: { some: { doctorId: scope.doctorId, hospitalId: scope.hospitalId, revokedAt: null } },
+      hospitalMedicalRecords: { some: { hospitalId: scope.hospitalId } },
+    };
   }
 
-  patients(doctorId: string, term: string, limit: number): Promise<PatientHit[]> {
+  patients(scope: SearchScopeOf, term: string, limit: number): Promise<PatientHit[]> {
     return this.prisma.db.patient.findMany({
       where: {
-        ...this.scopedToDoctor(doctorId),
+        ...this.scopedToDoctor(scope),
         OR: [
           { fullName: { contains: term, mode: 'insensitive' } },
           { mrn: { contains: term, mode: 'insensitive' } },
@@ -109,10 +122,13 @@ export class SearchRepository {
    * also treat is their encounter, not mine, and the roster page it
    * links to would not show it.
    */
-  appointments(doctorId: string, term: string, limit: number): Promise<AppointmentHit[]> {
+  appointments(scope: SearchScopeOf, term: string, limit: number): Promise<AppointmentHit[]> {
     return this.prisma.db.appointment.findMany({
       where: {
-        doctorId,
+        doctorId: scope.doctorId,
+        // At the doctor's current hospital, under an active employment (F-08).
+        hospitalId: scope.hospitalId,
+        doctorEmployment: { is: { endedAt: null } },
         OR: [
           { publicId: { contains: term, mode: 'insensitive' } },
           { reason: { contains: term, mode: 'insensitive' } },
@@ -131,10 +147,12 @@ export class SearchRepository {
     });
   }
 
-  records(doctorId: string, term: string, limit: number): Promise<RecordHit[]> {
+  records(scope: SearchScopeOf, term: string, limit: number): Promise<RecordHit[]> {
     return this.prisma.db.medicalRecord.findMany({
       where: {
-        doctorId,
+        doctorId: scope.doctorId,
+        // The doctor's own records at their current hospital (F-08).
+        hospitalId: scope.hospitalId,
         OR: [
           { publicId: { contains: term, mode: 'insensitive' } },
           { visitType: { contains: term, mode: 'insensitive' } },
@@ -157,9 +175,15 @@ export class SearchRepository {
 
   /* ── Admin scope (M26.2) ───────────────────────────────────── */
 
-  async staff(term: string, limit: number): Promise<NamedHit[]> {
+  /*
+   * `hospitalId` null = a Platform Admin's platform-wide index; otherwise a
+   * Hospital Admin's, confined to that hospital (F-08).
+   */
+
+  async staff(term: string, limit: number, hospitalId: string | null): Promise<NamedHit[]> {
     const rows = await this.prisma.db.staffMember.findMany({
       where: {
+        ...(hospitalId === null ? {} : { hospitalAffiliations: { some: { hospitalId, endedAt: null } } }),
         OR: [
           { name: { contains: term, mode: 'insensitive' } },
           { title: { contains: term, mode: 'insensitive' } },
@@ -173,9 +197,12 @@ export class SearchRepository {
     return rows.map((row) => ({ id: row.id, name: row.name, detail: row.title }));
   }
 
-  async departments(term: string, limit: number): Promise<NamedHit[]> {
+  async departments(term: string, limit: number, hospitalId: string | null): Promise<NamedHit[]> {
     const rows = await this.prisma.db.department.findMany({
-      where: { name: { contains: term, mode: 'insensitive' } },
+      where: {
+        name: { contains: term, mode: 'insensitive' },
+        ...(hospitalId === null ? {} : { hospitalDepartments: { some: { hospitalId } } }),
+      },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
       take: limit,
@@ -184,9 +211,9 @@ export class SearchRepository {
     return rows.map((row) => ({ id: row.id, name: row.name, detail: 'Department' }));
   }
 
-  async rooms(term: string, limit: number): Promise<NamedHit[]> {
+  async rooms(term: string, limit: number, hospitalId: string | null): Promise<NamedHit[]> {
     const rows = await this.prisma.db.room.findMany({
-      where: { name: { contains: term, mode: 'insensitive' } },
+      where: { name: { contains: term, mode: 'insensitive' }, ...(hospitalId === null ? {} : { hospitalId }) },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
       take: limit,
@@ -195,9 +222,10 @@ export class SearchRepository {
     return rows.map((row) => ({ id: row.id, name: row.name, detail: 'Room' }));
   }
 
-  async resources(term: string, limit: number): Promise<NamedHit[]> {
+  async resources(term: string, limit: number, hospitalId: string | null): Promise<NamedHit[]> {
     const rows = await this.prisma.db.resource.findMany({
       where: {
+        ...(hospitalId === null ? {} : { hospitalId }),
         OR: [
           { name: { contains: term, mode: 'insensitive' } },
           { category: { contains: term, mode: 'insensitive' } },
