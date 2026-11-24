@@ -12,11 +12,15 @@
  * - **Every request** names one patient, one hospital, the data categories and
  *   a reason, carries a duration (≤ 24 h), and re-proves the requester's
  *   password through the shared `ReauthenticationPort`.
- * - **EXCEPTIONAL** waits for an independent approver when the hospital
- *   requires one (`hospitals.exceptional_access_requires_approval`). No data
- *   is readable before that. Nobody approves their own request.
- * - **EMERGENCY** is active at once, notifies the hospital's administrators,
- *   is audited at `critical`, and must be reviewed retrospectively.
+ * - **EXCEPTIONAL** always waits for an independent approver — the target
+ *   hospital's own Hospital Admin, never the requester, never a Platform
+ *   Admin (audit F-11; the per-hospital waiver no longer applies). No data
+ *   is readable before that, and a hospital with no approver leaves the
+ *   request pending.
+ * - **EMERGENCY** (Break-Glass) is for doctors in clinical standing only —
+ *   never an administrator. It is active at once, notifies the hospital's
+ *   administrators, is audited at `critical`, and must be reviewed
+ *   retrospectively.
  * - **Reads** happen only through `GET /exceptional-access/:id/data`, by the
  *   requester themselves (no impersonation), within the window, for a
  *   category in scope. Every read is audited with the grant id.
@@ -129,6 +133,12 @@ export class ControlledAccessService {
     input: RequestExceptionalAccessInput,
   ): Promise<GrantView> {
     await this.assertMayRequestExceptional(user, input.hospitalId);
+    // Break-Glass is a clinician's emergency path (OD-04: "not available to
+    // admins"; N-25). An administrator — Platform or Hospital — never
+    // obtains immediately active PHI access by being eligible (F-11).
+    if (input.kind === 'EMERGENCY' && user.role !== 'doctor') {
+      throw AppException.forbidden('Emergency Override is available to doctors only');
+    }
     // Re-authentication before anything is created (401 / 429 on failure,
     // with the shared lockout budget).
     await this.reauth.verify(user, input.password);
@@ -137,7 +147,12 @@ export class ControlledAccessService {
     if (record === null) throw AppException.notFound('Patient not found');
 
     const emergency = input.kind === 'EMERGENCY';
-    const requiresApproval = !emergency && record.hospitalRequiresApproval;
+    // A grant (path 1) is "approved by the target Hospital Admin" (§1,
+    // DR-06): always, whatever the hospital's setting, so nothing is
+    // readable until an independent approver has acted. A hospital without
+    // an approver leaves the request pending: a missing approver is not an
+    // approval (F-11). The database refuses an active grant without one.
+    const requiresApproval = !emergency;
     const grant = await this.access.createGrant({
       kind: input.kind,
       requesterUserId: user.id,

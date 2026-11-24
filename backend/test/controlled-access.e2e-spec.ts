@@ -106,6 +106,20 @@ function breakGlass(token: string, body: Record<string, unknown>) {
     });
 }
 
+/** An EXCEPTIONAL grant, approved by hospital A's own Hospital Admin (F-11). */
+async function approvedGrant(token: string): Promise<{ id: string; status: string }> {
+  const created = await breakGlass(token, {});
+  expect(created.status, JSON.stringify(created.body)).toBe(201);
+  const grant = dataOf<{ id: string; status: string }>(created);
+  expect(grant.status).toBe('PENDING');
+  const approved = await request(harness.server)
+    .post(`/api/v1/exceptional-access/${grant.id}/approve`)
+    .set(as(hospitalAdminA))
+    .send({});
+  expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+  return dataOf<{ id: string; status: string }>(approved);
+}
+
 const readGrant = (token: string, grantId: string, category: string) =>
   request(harness.server).get(`/api/v1/exceptional-access/${grantId}/data?category=${category}`).set(as(token));
 
@@ -174,9 +188,7 @@ describe('Exceptional Access (Break-Glass)', () => {
   });
 
   it('grants narrowly: only the requester, only the categories, every read audited', async () => {
-    const created = await breakGlass(doctorB, {});
-    expect(created.status, JSON.stringify(created.body)).toBe(201);
-    const grant = dataOf<{ id: string; status: string; expiresAt: string }>(created);
+    const grant = await approvedGrant(doctorB);
     expect(grant.status).toBe('ACTIVE');
 
     const identity = await readGrant(doctorB, grant.id, 'identity');
@@ -207,7 +219,7 @@ describe('Exceptional Access (Break-Glass)', () => {
   });
 
   it('expires: a grant past its window reads nothing', async () => {
-    const grant = dataOf<{ id: string }>(await breakGlass(doctorB, {}));
+    const grant = await approvedGrant(doctorB);
     await harness.prisma.exceptionalAccessGrant.update({
       where: { id: grant.id },
       data: { startsAt: new Date(Date.now() - 120_000), expiresAt: new Date(Date.now() - 1_000) },
@@ -215,8 +227,9 @@ describe('Exceptional Access (Break-Glass)', () => {
     expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(403);
   });
 
-  it('waits for an independent approver when the hospital requires one — no data before', async () => {
-    await harness.prisma.hospital.update({ where: { id: hospitalA }, data: { exceptionalAccessRequiresApproval: true } });
+  it('always waits for an independent approver — even where the hospital once waived it (F-11)', async () => {
+    // The per-hospital waiver no longer opens a grant without an approver.
+    await harness.prisma.hospital.update({ where: { id: hospitalA }, data: { exceptionalAccessRequiresApproval: false } });
     try {
       const grant = dataOf<{ id: string; status: string }>(await breakGlass(doctorB, {}));
       expect(grant.status).toBe('PENDING');
@@ -239,6 +252,36 @@ describe('Exceptional Access (Break-Glass)', () => {
         data: { exceptionalAccessRequiresApproval: false },
       });
     }
+  });
+
+  it('refuses Break-Glass to any administrator, Platform or Hospital (F-11, N-25)', async () => {
+    for (const token of [platformAdmin, hospitalAdminA]) {
+      const response = await breakGlass(token, { kind: 'EMERGENCY' });
+      expect(response.status).toBe(403);
+    }
+  });
+
+  it('never gives a Platform Admin an active grant by eligibility alone (F-11)', async () => {
+    const created = await breakGlass(platformAdmin, {});
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const grant = dataOf<{ id: string; status: string }>(created);
+    expect(grant.status).toBe('PENDING');
+    expect((await readGrant(platformAdmin, grant.id, 'identity')).status).toBe(403);
+  });
+
+  it('the database refuses an active grant with no approver (F-11)', async () => {
+    const grant = dataOf<{ id: string }>(await breakGlass(doctorB, {}));
+    await expect(
+      harness.prisma.exceptionalAccessGrant.update({
+        where: { id: grant.id },
+        data: {
+          status: 'ACTIVE',
+          requiresApproval: false,
+          startsAt: new Date(),
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      }),
+    ).rejects.toThrow(/exceptional_approved_check|check constraint/);
   });
 
   it('Emergency Override: active at once, notifies the hospital, reviewed retrospectively', async () => {
