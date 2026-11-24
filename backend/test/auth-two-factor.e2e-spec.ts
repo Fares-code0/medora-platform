@@ -306,15 +306,21 @@ describe('disabling', () => {
 
   it('refuses an administrator, who may not remove their own factor', async () => {
     const email = await seedAccount('marcus');
-    const { accessToken: doctorToken, refreshCookie } = await enrol(email, { keepSession: true });
+    const {
+      secret,
+      accessToken: doctorToken,
+      refreshCookie,
+    } = await enrol(email, { keepSession: true });
 
     const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
 
-    // ADR-046: the token minted for the old role is refused outright, and
-    // the session's one refresh mints the administrator token this case is
-    // about. The ADR-035 refusal below is then exercised with a token that
-    // really carries the `admin` role.
+    // ADR-046: the token minted for the old role is refused outright; the
+    // approved G4 contract also revokes the session with the role change, so
+    // there is no refreshing into the new role. A fresh sign-in (through the
+    // OTP challenge, the factor being enrolled) mints the administrator token
+    // this case is about, and the ADR-035 refusal below is exercised with a
+    // token that really carries the `admin` role.
     const stale = await request(harness.server)
       .post(DISABLE)
       .set('Authorization', `Bearer ${doctorToken}`)
@@ -322,9 +328,17 @@ describe('disabling', () => {
     expect(stale.status).toBe(401);
 
     const refreshed = await request(harness.server).post(REFRESH).set('Cookie', refreshCookie);
-    expect(refreshed.status).toBe(200);
-    expect(dataOf<SessionPayload>(refreshed).user.role).toBe('admin');
-    const accessToken = dataOf<SessionPayload>(refreshed).accessToken;
+    expect(refreshed.status).toBe(401);
+
+    const login = await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
+    const verified = await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: currentCode(secret) });
+    expect(verified.status).toBe(200);
+    expect(dataOf<SessionPayload>(verified).user.role).toBe('admin');
+    const accessToken = dataOf<SessionPayload>(verified).accessToken;
 
     const response = await request(harness.server)
       .post(DISABLE)
@@ -365,7 +379,9 @@ describe('disabling', () => {
     const { accessToken } = await enrol(email, { keepSession: true });
     // A session from the step-up, so "ends every session" has something
     // to end.
-    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
     // The disabling session itself is live, so the count below cannot be
     // zero by accident.
     expect(
@@ -430,7 +446,9 @@ describe('the login step-up', () => {
       .send({ email, password: PASSWORD, rememberMe: true });
     const { otpToken } = dataOf<{ otpToken: string }>(challenge);
 
-    await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: currentCode(secret) });
+    await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken, code: currentCode(secret) });
 
     // The flag is chosen on the login form and never sent again (API
     // §1.3's body is `{ otpToken, code }`), so the token has to carry it.
@@ -491,9 +509,13 @@ describe('the login step-up', () => {
     const { otpToken } = dataOf<{ otpToken: string }>(challenge);
     const code = currentCode(secret);
 
-    expect((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code })).status).toBe(200);
+    expect((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code })).status).toBe(
+      200,
+    );
     // Same token, same still-valid code: the challenge is single-use.
-    expect((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code })).status).toBe(401);
+    expect((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code })).status).toBe(
+      401,
+    );
     expect(await harness.prisma.session.count({ where: { user: { email } } })).toBe(1);
   });
 
@@ -647,7 +669,9 @@ describe('the ten-minute absolute challenge lifetime', () => {
     const row = await harness.prisma.otpCode.findFirstOrThrow({ where: { user: { email } } });
     // `created_at` is the database's clock and `expires_at` the server's, so
     // they are compared with a tolerance rather than to the millisecond.
-    expect(Math.abs(row.expiresAt.getTime() - row.createdAt.getTime() - TEN_MINUTES_MS)).toBeLessThan(2_000);
+    expect(
+      Math.abs(row.expiresAt.getTime() - row.createdAt.getTime() - TEN_MINUTES_MS),
+    ).toBeLessThan(2_000);
     expect(Math.abs(row.expiresAt.getTime() - (issuedAt + TEN_MINUTES_MS))).toBeLessThan(5_000);
 
     const claims = tokenClaims(otpToken);
@@ -786,11 +810,17 @@ describe('the ten-minute absolute challenge lifetime', () => {
     const row = await harness.prisma.otpCode.findFirstOrThrow({ where: { user: { email } } });
 
     const statuses: number[] = [];
-    statuses.push((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status);
-    statuses.push((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status);
+    statuses.push(
+      (await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status,
+    );
+    statuses.push(
+      (await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status,
+    );
     await passCooldown(row.id);
     await request(harness.server).post(OTP_RESEND).send({ otpToken });
-    statuses.push((await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status);
+    statuses.push(
+      (await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: '000000' })).status,
+    );
 
     expect(statuses).toEqual([401, 401, 429]);
     harness.policy.overrides = {};
