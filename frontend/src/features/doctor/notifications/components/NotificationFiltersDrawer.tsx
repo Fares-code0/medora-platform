@@ -3,20 +3,17 @@ import { Button, Drawer, Input, Select, type SelectOption } from '@/components/u
 
 import { isValidDateKey, type NotificationListFilters } from '../model/filters';
 import {
-  NOTIFICATION_CATEGORIES,
-  NOTIFICATION_CATEGORY_META,
   NOTIFICATION_KINDS,
   NOTIFICATION_KIND_META,
   NOTIFICATION_PRIORITIES,
   NOTIFICATION_PRIORITY_META,
-  NOTIFICATION_STATUS_FILTERS,
-  NOTIFICATION_STATUS_LABELS,
 } from '../model/types';
 
 /**
- * Advanced filters drawer (UX P1). Selections apply immediately to the
- * URL state; "Clear filters" resets everything. Status defaults to the
- * inbox view (unarchived).
+ * Advanced filters drawer (UX P1) — priority, type and received dates.
+ * Selections apply immediately to the URL state. The view (inbox, unread…)
+ * is the page's navigation and the category is in the toolbar, so neither
+ * is repeated here; "Clear filters" clears the facets and keeps the view.
  */
 
 const ALL = 'all';
@@ -67,32 +64,6 @@ export function NotificationFiltersDrawer({
       }
     >
       <Stack gap={5}>
-        <Select
-          label="Status"
-          options={NOTIFICATION_STATUS_FILTERS.map((status) => ({
-            value: status,
-            label: NOTIFICATION_STATUS_LABELS[status],
-          }))}
-          value={filters.status}
-          onChange={(value) => onFilterChange('status', value as NotificationListFilters['status'])}
-        />
-        <Select
-          label="Category"
-          options={withAll(
-            'All categories',
-            NOTIFICATION_CATEGORIES.map((category) => ({
-              value: category,
-              label: NOTIFICATION_CATEGORY_META[category].label,
-            })),
-          )}
-          value={filters.category ?? ALL}
-          onChange={(value) =>
-            onFilterChange(
-              'category',
-              value === ALL ? null : (value as NotificationListFilters['category']),
-            )
-          }
-        />
         <Select
           label="Priority"
           options={withAll(

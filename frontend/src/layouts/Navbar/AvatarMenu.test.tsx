@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Providers from '@/app/providers';
 import { ThemeProvider } from '@/app/providers/ThemeProvider';
@@ -15,13 +15,14 @@ import { AvatarMenu } from './AvatarMenu';
  */
 
 const logout = vi.fn();
+const account = vi.hoisted(() => ({ name: 'Amelia Chen', role: 'doctor' }));
 
 vi.mock('@/app/providers', async (importOriginal) => {
   const actual: typeof Providers = await importOriginal();
   return {
     ...actual,
     useAuth: () => ({
-      user: { id: 'u-1', name: 'Amelia Chen', email: 'doctor@medora.health', role: 'doctor' },
+      user: { id: 'u-1', name: account.name, email: 'doctor@medora.health', role: account.role },
       logout,
     }),
     useDoctorProfile: () => ({ profile: { fullName: 'Dr. Amelia Chen', photo: null } }),
@@ -54,5 +55,40 @@ describe('the avatar menu', () => {
     ]);
     expect(screen.queryByRole('group', { name: 'Theme' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * My Profile is reached from the avatar menu, never the sidebar (see the
+ * adminNavigation comment and navigation.test.ts): both roles that have a
+ * profile page must keep the entry here, and it must open their own page.
+ */
+describe('the avatar menu — My Profile', () => {
+  afterEach(() => {
+    account.name = 'Amelia Chen';
+    account.role = 'doctor';
+  });
+
+  function PathProbe() {
+    return <output data-testid="path">{useLocation().pathname}</output>;
+  }
+
+  it.each([
+    ['doctor', 'Amelia Chen', /Dr\. Amelia Chen/, '/doctor/settings/profile'],
+    ['admin', 'Platform Admin', /Platform Admin/, '/admin/profile'],
+  ] as const)('offers My Profile to the %s', async (role, name, button, path) => {
+    account.name = name;
+    account.role = role;
+    render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <AvatarMenu />
+          <PathProbe />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: button }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'My Profile' }));
+    expect(screen.getByTestId('path')).toHaveTextContent(path);
   });
 });

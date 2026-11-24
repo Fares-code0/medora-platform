@@ -17,7 +17,8 @@ export const LAB_NOT_FOUND = 'LAB_NOT_FOUND';
 
 export interface LabService {
   /* ── Reads ─────────────────────────────────────────────────── */
-  listLabTests(): Promise<readonly LabTest[]>;
+  /** `signal` lets a cancelled query stop an adapter's remaining reads. */
+  listLabTests(options?: { readonly signal?: AbortSignal }): Promise<readonly LabTest[]>;
   getLabTest(labId: string): Promise<LabTest>;
   /** The tests that may be ordered (API §8.1). */
   listCatalogue(): Promise<readonly TestSpec[]>;

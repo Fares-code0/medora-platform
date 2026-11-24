@@ -61,6 +61,16 @@ async function fetchNotifications(): Promise<readonly DoctorNotification[]> {
   return [...readNotifications()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** The bell feed: unarchived, pinned first then newest — the API's order. */
+async function fetchRecent(limit: number): Promise<readonly DoctorNotification[]> {
+  await delay();
+  maybeDeliverIncoming();
+  return readNotifications()
+    .filter((notification) => !notification.archived)
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt.localeCompare(a.createdAt))
+    .slice(0, Math.max(0, limit));
+}
+
 /** Applies a patch to many ids at once (single-row actions pass one id). */
 async function updateNotifications(
   ids: readonly string[],
@@ -252,6 +262,7 @@ export const mockNotificationService: NotificationService = {
   capabilities: MOCK_NOTIFICATION_CAPABILITIES,
 
   fetchNotifications,
+  fetchRecent,
   updateNotifications,
   markAllRead,
   deleteNotifications,

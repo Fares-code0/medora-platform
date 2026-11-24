@@ -22,10 +22,15 @@ import {
  * (?tab=&q=&status=&category=&priority=&kind=&from=&to=&sort=&page=
  * &pageSize=&conv=). Every param validates on read (invalid → default);
  * filter changes reset pagination. `tab` switches to the communication
- * center; `conv` deep-links a conversation there.
+ * center; `conv` deep-links a conversation there. `status` is the view the
+ * navigation picks (inbox, unread, read, starred, archived) — the same param
+ * it always was, so every older link still lands on the same list.
  */
 
 const FILTER_KEYS = ['status', 'category', 'priority', 'kind', 'from', 'to'] as const;
+
+/** Everything that narrows a view, as opposed to choosing it (`status`). */
+const FACET_KEYS = ['category', 'priority', 'kind', 'from', 'to'] as const;
 
 export type NotificationFilterKey = (typeof FILTER_KEYS)[number];
 
@@ -148,6 +153,28 @@ export function useNotificationListState() {
     [update],
   );
 
+  /** Clears the facets (and, optionally, the search) but keeps the view. */
+  const clearFacets = useCallback(
+    (options?: { readonly query?: boolean }) =>
+      update((params) => {
+        FACET_KEYS.forEach((key) => params.delete(key));
+        if (options?.query) params.delete('q');
+        params.delete('page');
+      }),
+    [update],
+  );
+
+  /** Switches the view (`?status=`); the inbox is the bare URL. */
+  const setView = useCallback(
+    (view: NotificationStatusFilter) =>
+      update((params) => {
+        if (view === DEFAULT_STATUS) params.delete('status');
+        else params.set('status', view);
+        params.delete('page');
+      }),
+    [update],
+  );
+
   const setSort = useCallback(
     (sort: NotificationSort) =>
       update(
@@ -188,6 +215,8 @@ export function useNotificationListState() {
     [setFilter],
   );
 
+  const facetCount = FACET_KEYS.filter((key) => state.filters[key] !== null).length;
+
   const hasActiveFilters =
     state.filters.status !== DEFAULT_STATUS ||
     state.filters.category !== null ||
@@ -199,12 +228,16 @@ export function useNotificationListState() {
   return {
     ...state,
     hasActiveFilters,
+    /** How many facets narrow the view — the view itself is not counted. */
+    facetCount,
     setTab,
     setConversation,
     setQuery,
     setFilter,
     removeFilter,
     clearFilters,
+    clearFacets,
+    setView,
     setSort,
     setPage,
     setPageSize,

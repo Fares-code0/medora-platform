@@ -9,7 +9,7 @@ import {
   useArchiveAllReadMutation,
   useMarkAllNotificationsReadMutation,
   useNotificationBadgesQuery,
-  useNotificationsListQuery,
+  useRecentNotificationsQuery,
   useUpdateNotificationsMutation,
 } from '@/features/doctor/notifications';
 import { ShellBadgesContext, type ShellBadgesValue, type ShellFeedItem } from '@/layouts';
@@ -25,6 +25,12 @@ import { relativeDayLabel } from '@/utils/dates';
  * bell with real mark-read / clear behavior instead of a placeholder.
  */
 
+/**
+ * How many rows the bell shows — and how many it asks for: the feed is one
+ * `GET /notifications?status=active&page=1&pageSize=FEED_SIZE`, never the
+ * Notifications page's full drain, because this provider is mounted on every
+ * page of every workspace that has a bell.
+ */
 const FEED_SIZE = 6;
 
 export function ShellBadgesProvider({ children }: { children: ReactNode }) {
@@ -36,7 +42,7 @@ export function ShellBadgesProvider({ children }: { children: ReactNode }) {
   // only in the admin shell — a doctor may not read the roster — and shown
   // as nothing while loading or after a failure, never as a stand-in count.
   const pending = usePendingVerificationsCount(user?.role === 'admin');
-  const list = useNotificationsListQuery();
+  const recent = useRecentNotificationsQuery(FEED_SIZE);
   const update = useUpdateNotificationsMutation();
   const markAll = useMarkAllNotificationsReadMutation();
   const archiveRead = useArchiveAllReadMutation();
@@ -50,9 +56,9 @@ export function ShellBadgesProvider({ children }: { children: ReactNode }) {
   const viewAllHref = user === null ? null : workspaceFor(user.role).notifications;
 
   const value = useMemo<ShellBadgesValue>(() => {
-    const notifications = (list.data ?? []).filter((notification) => !notification.archived);
+    const notifications = (recent.data ?? []).filter((notification) => !notification.archived);
 
-    const feed: readonly ShellFeedItem[] | null = list.isPending
+    const feed: readonly ShellFeedItem[] | null = recent.isPending
       ? null
       : notifications.slice(0, FEED_SIZE).map((notification) => {
           const meta = NOTIFICATION_CATEGORY_META[notification.category];
@@ -104,8 +110,8 @@ export function ShellBadgesProvider({ children }: { children: ReactNode }) {
     };
   }, [
     badges.data,
-    list.data,
-    list.isPending,
+    recent.data,
+    recent.isPending,
     messaging.data,
     pending.data,
     user?.role,

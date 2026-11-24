@@ -51,4 +51,18 @@ describe('computeAnchoredPanel', () => {
     expect(position.caretX).toBeGreaterThan(0);
     expect(position.caretX).toBeLessThan(position.width);
   });
+
+  it('fits a 320px viewport, in both reading directions, with the caret on the bell', () => {
+    const viewport = 320;
+    for (const rtl of [false, true]) {
+      const trigger = rtl ? bell(8) : bell(272);
+      const position = computeAnchoredPanel(trigger, viewport, rtl);
+
+      expect(position.width).toBe(viewport - PANEL_EDGE * 2);
+      expect(position.left).toBe(PANEL_EDGE);
+      expect(position.left + position.width).toBe(viewport - PANEL_EDGE);
+      expect(position.caretX).toBeGreaterThan(0);
+      expect(position.caretX).toBeLessThan(position.width);
+    }
+  });
 });

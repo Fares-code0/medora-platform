@@ -1,51 +1,47 @@
-import { Bell, BellDot, CalendarClock, CalendarDays, TriangleAlert } from 'lucide-react';
-
-import { MetricStrip, type MetricStripItem } from '@/components/patterns';
-
 import type { NotificationsSummary } from '../model/selectors';
 
 /**
- * Notifications summary — one compact activity band over the unarchived
- * dataset so the inbox itself stays the page's focal point.
+ * Notifications summary — one quiet line under the header ("4 unread ·
+ * 1 critical · 6 today") over the unarchived dataset, rather than a band of
+ * cards: the inbox itself stays the page's focal point.
  */
-export function NotificationSummaryCards({
+export function NotificationSummaryLine({
   summary,
   loading,
 }: {
   summary: NotificationsSummary;
   loading: boolean;
 }) {
-  const items: readonly MetricStripItem[] = [
-    { id: 'total', label: 'Total', value: String(summary.total), icon: Bell, tone: 'neutral' },
+  if (loading) return null;
+  const parts: { id: string; label: string; strong?: boolean; tone?: string }[] = [
     {
       id: 'unread',
-      label: 'Unread',
-      value: String(summary.unread),
-      icon: BellDot,
-      tone: 'primary',
-    },
-    {
-      id: 'critical',
-      label: 'Critical',
-      value: String(summary.critical),
-      icon: TriangleAlert,
-      tone: 'error',
-    },
-    {
-      id: 'today',
-      label: 'Today',
-      value: String(summary.today),
-      icon: CalendarClock,
-      tone: 'info',
-    },
-    {
-      id: 'week',
-      label: 'This week',
-      value: String(summary.thisWeek),
-      icon: CalendarDays,
-      tone: 'neutral',
+      label: summary.unread === 0 ? 'No unread' : `${String(summary.unread)} unread`,
+      strong: summary.unread > 0,
     },
   ];
+  if (summary.critical > 0) {
+    parts.push({
+      id: 'critical',
+      label: `${String(summary.critical)} critical`,
+      tone: 'text-error',
+    });
+  }
+  parts.push({ id: 'today', label: `${String(summary.today)} today` });
+  parts.push({ id: 'week', label: `${String(summary.thisWeek)} this week` });
 
-  return <MetricStrip items={items} loading={loading} />;
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-body-sm text-text-secondary">
+      {parts.map((part, index) => (
+        <span key={part.id} className="inline-flex items-center gap-2">
+          {index > 0 ? <span aria-hidden="true">·</span> : null}
+          <span
+            className={part.strong ? 'font-semibold text-text-primary' : (part.tone ?? undefined)}
+          >
+            {part.label}
+          </span>
+        </span>
+      ))}
+    </p>
+  );
 }

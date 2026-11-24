@@ -712,6 +712,68 @@ describe('MobileNavDrawer groups', () => {
 });
 
 /**
+ * The footer (Settings · Help · theme · account) is tighter in the mobile
+ * drawer only: less padding and spacing, 40px touch rows, a safe-area inset
+ * at the bottom. The desktop sidebar keeps its original footer, and neither
+ * changes a font size.
+ */
+describe('AppSidebar footer density', () => {
+  function footerOf(nav: HTMLElement) {
+    const settings = within(nav).getByRole('link', { name: 'Settings', hidden: true });
+    const stack = settings.parentElement as HTMLElement;
+    return { settings, stack, region: stack.parentElement as HTMLElement };
+  }
+
+  it('keeps the desktop footer unchanged', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation);
+    const { settings, stack, region } = footerOf(screen.getByRole('navigation'));
+    expect(region).toHaveClass('p-3');
+    expect(region.className).not.toMatch(/safe-area/);
+    expect(stack).toHaveClass('gap-1');
+    expect(stack).not.toHaveAttribute('data-footer-density');
+    expect(settings).toHaveClass('touch:h-11', 'text-body-sm');
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveClass('touch:h-11');
+    expect(screen.getByRole('radiogroup', { name: 'Theme' }).parentElement).toHaveClass('mt-2');
+    expect(screen.getByText('Dr. Amelia Chen').closest('.gap-3')).toHaveClass('py-2');
+  });
+
+  it('is compact in the mobile drawer', () => {
+    auth.user = { id: 'doctor-1', name: 'Amelia Chen', role: 'doctor' };
+    const proto = window.HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+    proto['showModal'] = function showModal(this: HTMLDialogElement) {
+      this.open = true;
+    };
+    proto['close'] = function close(this: HTMLDialogElement) {
+      this.open = false;
+    };
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={['/doctor/overview']}>
+          <MobileNavDrawer open onClose={() => undefined} config={doctorNavigation} />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    const drawer = screen.getByRole('dialog', { hidden: true });
+    const { settings, stack, region } = footerOf(drawer);
+    expect(region).toHaveClass('px-3', 'py-2', 'pb-[max(0.5rem,env(safe-area-inset-bottom))]');
+    expect(stack).toHaveAttribute('data-footer-density', 'compact');
+    expect(stack).toHaveClass('gap-0.5');
+    expect(stack).not.toHaveClass('gap-1');
+    expect(settings).toHaveClass('touch:h-10', 'text-body-sm');
+    expect(settings).not.toHaveClass('touch:h-11');
+    expect(within(drawer).getByRole('link', { name: 'Help', hidden: true })).toHaveClass(
+      'touch:h-10',
+    );
+    const theme = within(drawer).getByRole('radiogroup', { name: 'Theme', hidden: true });
+    expect(theme.parentElement).toHaveClass('mt-1');
+    expect(theme.parentElement).not.toHaveClass('mt-2');
+    const card = within(drawer).getByText('Dr. Amelia Chen').closest('.gap-3');
+    expect(card).toHaveClass('py-1');
+    expect(card).not.toHaveClass('py-2');
+  });
+});
+
+/**
  * The collapsed rail shows icons only: no tooltip and no native `title`
  * appears beside any of them on hover or focus — the navigation items, the
  * footer's Settings and Help, the theme switch, the Pharmacy group. Every

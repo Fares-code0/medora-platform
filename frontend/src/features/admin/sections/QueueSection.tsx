@@ -252,14 +252,16 @@ function QueueRow({
   return (
     <li
       className={cn(
-        'flex items-center gap-3 border-b border-border px-4 py-3 last:border-b-0',
+        // Wraps on a narrow screen: the priority Select and the row actions
+        // move to a second line rather than squeezing the name to nothing.
+        'flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 last:border-b-0',
         entry.delayed && 'bg-error-subtle',
       )}
     >
       <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-surface bg-surface-sunken px-1.5 text-caption font-semibold text-text-secondary tabular-nums">
         {entry.ticket}
       </span>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[9rem] flex-1">
         <div className="truncate text-body-sm font-medium text-text-primary">
           <MaskedIdentifier
             subjectId={entry.id}

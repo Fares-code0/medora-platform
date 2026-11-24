@@ -3,6 +3,7 @@ import {
   asRecord,
   fetchAllPages,
   LARGE_LIST_MAX_PAGES,
+  MAX_PAGE_SIZE,
   malformedResponse,
   notConnected,
   readBoolean,
@@ -10,6 +11,7 @@ import {
   readEnum,
   readNumber,
   readOptionalString,
+  readPage,
   readString,
 } from '@/api/http';
 
@@ -32,6 +34,7 @@ import {
  * | Port method           | Endpoint                                                       |
  * | --------------------- | -------------------------------------------------------------- |
  * | `fetchNotifications`  | `GET /notifications` — the inbox and the archive                |
+ * | `fetchRecent`         | `GET /notifications?status=active&page=1&pageSize={limit}`     |
  * | `updateNotifications` | `POST /notifications/{id}/read` · `…/unread`                   |
  * |                       | `POST /notifications/{id}/archive` · `…/favorite` · `…/pin`     |
  * | `markAllRead`         | `POST /notifications/read-all`                                 |
@@ -191,6 +194,20 @@ export const httpNotificationService: NotificationService = {
       listByStatus('archived'),
     ]);
     return [...active, ...archived].map(toNotification);
+  },
+
+  async fetchRecent(limit) {
+    // One page, sized to the feed: the server already orders pinned first,
+    // then newest, which is the bell's order.
+    const page = readPage(
+      await apiClient.get('/notifications', {
+        status: 'active',
+        page: 1,
+        pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(limit))),
+      }),
+      'notifications',
+    );
+    return page.items.map(toNotification);
   },
 
   async updateNotifications(ids, patch) {

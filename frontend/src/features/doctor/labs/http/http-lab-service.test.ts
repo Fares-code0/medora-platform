@@ -7,7 +7,7 @@ import { LAB_NOT_FOUND } from '../model/lab-service';
 import { assessOrder } from '../model/ordering';
 import { assessReviewability } from '../model/review';
 
-import { httpLabService, toLabTest, toTestSpec } from './http-lab-service';
+import { httpLabService, listLabTests, toLabTest, toTestSpec } from './http-lab-service';
 
 /**
  * The laboratory over HTTP (FE-10.7), against bodies captured from API §8
@@ -265,6 +265,60 @@ describe('reads', () => {
       'GET /lab-orders/LAB-100000': () => json({ message: 'Internal' }, 500),
     });
     await expect(httpLabService.listLabTests()).rejects.toMatchObject({ kind: 'server' });
+  });
+
+  /*
+   * The worklist is one GET per order (up to 2,000), six at a time. A read
+   * that is cancelled (its screen unmounted, the search closed) or has
+   * already failed must stop issuing the rest of that queue.
+   */
+  function manyOrders(count: number) {
+    const ids = Array.from({ length: count }, (_, index) => `LAB-${String(200000 + index)}`);
+    const routes: Record<string, () => unknown> = {
+      'GET /lab-orders': () => pageOf(ids.map((id) => orderView({ id }))),
+    };
+    return { ids, routes };
+  }
+
+  it('stops issuing detail reads once the signal aborts', async () => {
+    const { ids, routes } = manyOrders(40);
+    const controller = new AbortController();
+    for (const id of ids) {
+      routes[`GET /lab-orders/${id}`] = () => {
+        controller.abort();
+        return envelope(detailView({ id }));
+      };
+    }
+    const { requests } = stubApi(routes);
+
+    await expect(listLabTests({ signal: controller.signal })).rejects.toBeDefined();
+
+    const details = requests.filter((request) => request.path.startsWith('/lab-orders/'));
+    expect(details.length).toBeGreaterThan(0);
+    expect(details.length).toBeLessThanOrEqual(6);
+  });
+
+  it('issues no read at all when the signal is already aborted', async () => {
+    const { routes } = manyOrders(3);
+    const { requests } = stubApi(routes);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(listLabTests({ signal: controller.signal })).rejects.toBeDefined();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('stops the detail queue after the first failed read', async () => {
+    const { ids, routes } = manyOrders(40);
+    for (const id of ids) {
+      routes[`GET /lab-orders/${id}`] = () => json({ message: 'Internal' }, 500);
+    }
+    const { requests } = stubApi(routes);
+
+    await expect(httpLabService.listLabTests()).rejects.toMatchObject({ kind: 'server' });
+
+    const details = requests.filter((request) => request.path.startsWith('/lab-orders/'));
+    expect(details.length).toBeLessThanOrEqual(6);
   });
 
   it('turns a 404 into the port’s not-found contract', async () => {

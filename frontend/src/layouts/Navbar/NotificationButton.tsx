@@ -29,18 +29,25 @@ import { PANEL_EDGE, computeAnchoredPanel, type AnchoredPanelPosition } from './
  * opened it. It is now a compact panel that hangs from the bell itself:
  * aligned to it, with a caret pointing back at it, and dropping 6px into
  * place as it fades in (and lifting back out as it fades away). Geometry is
- * `computeAnchoredPanel`, which keeps it inside the viewport at every width.
+ * `computeAnchoredPanel`, which keeps it inside the viewport at every width,
+ * recomputed on resize, on scroll and when the visual viewport changes.
  *
  * Non-modal, like the avatar menu beside it: the page stays interactive,
  * and a click outside, Escape, or tabbing away closes it. Escape returns
  * focus to the bell.
  */
 
-/** Enter: a short ease-out drop. Exit: quicker, accelerating away. */
+/**
+ * Enter: a 150 ms ease-out drop of 6px with a fade. Exit: quicker,
+ * accelerating away. Framer is the panel's only animation (no CSS keyframe
+ * on the same element, which would fight it for `transform`), so the app's
+ * `MotionConfig` decides reduced motion — `prefers-reduced-motion`, or the
+ * in-app switch escalating it to "always" — and the drop is skipped.
+ */
 const PANEL_MOTION = {
   initial: { opacity: 0, y: -6 },
-  animate: { opacity: 1, y: 0, transition: { duration: 0.18, ease: [0.16, 1, 0.3, 1] } },
-  exit: { opacity: 0, y: -4, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.15, ease: [0, 0, 0.2, 1] } },
+  exit: { opacity: 0, y: -4, transition: { duration: 0.1, ease: [0.4, 0, 1, 1] } },
 } as const;
 
 function FeedRow({ item, onSelect }: { item: ShellFeedItem; onSelect: (id: string) => void }) {
@@ -143,11 +150,30 @@ export function NotificationButton() {
     const place = () => {
       const trigger = triggerRef.current;
       if (!trigger) return;
-      setPosition(computeAnchoredPanel(trigger.getBoundingClientRect(), window.innerWidth, rtl));
+      const next = computeAnchoredPanel(trigger.getBoundingClientRect(), window.innerWidth, rtl);
+      // Scroll events arrive at frame rate (including the feed's own
+      // scrolling, which the captured listener also hears): keep the same
+      // object when nothing moved, so React skips the re-render.
+      setPosition((prev) =>
+        prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
+      );
     };
     place();
+    // The panel is `fixed`, the bell is not always: a scrolled page, a
+    // scrolling ancestor (captured), or the mobile visual viewport resizing
+    // under a keyboard or a pinch would otherwise leave it hanging from
+    // where the bell used to be.
+    const viewport = window.visualViewport;
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
+    window.addEventListener('scroll', place, { capture: true, passive: true });
+    viewport?.addEventListener('resize', place);
+    viewport?.addEventListener('scroll', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, { capture: true });
+      viewport?.removeEventListener('resize', place);
+      viewport?.removeEventListener('scroll', place);
+    };
   }, [isOpen, rtl]);
 
   useEffect(() => {
@@ -220,7 +246,7 @@ export function NotificationButton() {
               maxHeight: `min(520px, calc(100dvh - ${String(position.top + PANEL_EDGE)}px))`,
               transformOrigin: `${String(position.caretX)}px 0`,
             }}
-            className="fixed z-dropdown flex animate-menu-in flex-col rounded-surface border border-border bg-surface shadow-popover focus:outline-none"
+            className="fixed z-dropdown flex flex-col rounded-surface border border-border bg-surface shadow-popover focus:outline-none"
           >
             {/* The caret: the panel's visible link back to the bell. Its base
                 overlaps the panel's top border by a pixel so the two read as

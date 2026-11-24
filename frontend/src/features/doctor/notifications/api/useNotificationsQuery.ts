@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 
 import { createKeyFactory } from '@/api/query-keys';
 
@@ -28,6 +28,20 @@ export const notificationKeys = createKeyFactory('doctor-notifications');
 
 const BADGE_KEY = [...notificationKeys.all, 'badges'] as const;
 const CONVERSATIONS_KEY = [...notificationKeys.all, 'conversations'] as const;
+/**
+ * The shell bell's small feed — its own key, outside `lists()`, so the bell
+ * never mounts (or refetches) the page's full multi-page drain.
+ */
+const RECENT_PREFIX = [...notificationKeys.all, 'recent'] as const;
+
+export const recentNotificationsKey = (limit: number) => [...RECENT_PREFIX, limit] as const;
+
+/**
+ * What a write to the notifications themselves can change: the badge, the
+ * page's list and the bell's feed. Never the conversations — a read flag on
+ * a notification does not touch a chat.
+ */
+const NOTIFICATION_DATA_KEYS = [BADGE_KEY, notificationKeys.lists(), RECENT_PREFIX] as const;
 
 /** Mock stand-in for realtime push: poll every 30 s + on window focus. */
 const BADGE_POLL_MS = 30_000;
@@ -37,6 +51,20 @@ export function useNotificationsListQuery() {
     queryKey: notificationKeys.lists(),
     queryFn: () => service().then((notifications) => notifications.fetchNotifications()),
     staleTime: 15_000,
+  });
+}
+
+/**
+ * PUBLIC (feature index): the bell's feed — one `GET` of `limit` rows, not
+ * the full list. Shares the badge's polling cadence so the feed and the
+ * count it sits under do not drift apart.
+ */
+export function useRecentNotificationsQuery(limit: number) {
+  return useQuery({
+    queryKey: recentNotificationsKey(limit),
+    queryFn: () => service().then((notifications) => notifications.fetchRecent(limit)),
+    refetchInterval: BADGE_POLL_MS,
+    staleTime: 10_000,
   });
 }
 
@@ -51,10 +79,27 @@ export function useNotificationBadgesQuery() {
   });
 }
 
+/**
+ * Reconciles exactly the caches a notification write can change. Only the
+ * ones with a mounted observer refetch (TanStack's `refetchType: 'active'`),
+ * so on any page but Notifications a row marked read from the bell costs a
+ * badge read and a one-page feed read — not a re-drain of every page.
+ */
 function useInvalidateNotificationData() {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    for (const queryKey of NOTIFICATION_DATA_KEYS) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  };
+}
+
+/** A conversation write changes the threads and the messages badge only. */
+function useInvalidateConversationData() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
+    void queryClient.invalidateQueries({ queryKey: BADGE_KEY });
   };
 }
 
@@ -119,6 +164,9 @@ export function useMarkAllNotificationsReadMutation() {
 
 interface ListPatchContext {
   readonly previousList: readonly DoctorNotification[] | undefined;
+  readonly previousRecent: ReadonlyArray<
+    readonly [QueryKey, readonly DoctorNotification[] | undefined]
+  >;
   readonly previousBadges: unknown;
 }
 
@@ -133,11 +181,16 @@ function useOptimisticListPatch() {
     ): Promise<ListPatchContext> {
       // Any in-flight refetch would otherwise land after this patch and
       // overwrite it with the pre-mutation server state.
-      await queryClient.cancelQueries({ queryKey: notificationKeys.all });
+      await Promise.all(
+        NOTIFICATION_DATA_KEYS.map((queryKey) => queryClient.cancelQueries({ queryKey })),
+      );
 
       const previousList = queryClient.getQueryData<readonly DoctorNotification[]>(
         notificationKeys.lists(),
       );
+      const previousRecent = queryClient.getQueriesData<readonly DoctorNotification[]>({
+        queryKey: RECENT_PREFIX,
+      });
       const previousBadges = queryClient.getQueryData(BADGE_KEY);
 
       if (previousList !== undefined) {
@@ -146,15 +199,28 @@ function useOptimisticListPatch() {
           previousList.map(patchRow),
         );
       }
+      // The bell's rows too, so a row read on the page stops reading as
+      // unread in the bell before the write lands. An archived row leaves
+      // the feed, which lists unarchived notifications only.
+      for (const [queryKey, rows] of previousRecent) {
+        if (rows === undefined) continue;
+        queryClient.setQueryData<readonly DoctorNotification[]>(
+          queryKey,
+          rows.map(patchRow).filter((notification) => !notification.archived),
+        );
+      }
 
       // Returned as the rollback context; `rollback` restores exactly what
       // was there rather than refetching, so a failure is invisible.
-      return { previousList, previousBadges };
+      return { previousList, previousRecent, previousBadges };
     },
 
     rollback(context: ListPatchContext | undefined) {
       if (context?.previousList !== undefined) {
         queryClient.setQueryData(notificationKeys.lists(), context.previousList);
+      }
+      for (const [queryKey, rows] of context?.previousRecent ?? []) {
+        queryClient.setQueryData(queryKey, rows);
       }
       if (context?.previousBadges !== undefined) {
         queryClient.setQueryData(BADGE_KEY, context.previousBadges);
@@ -195,7 +261,7 @@ export function useConversationsQuery() {
 }
 
 export function useMarkConversationReadMutation() {
-  const invalidate = useInvalidateNotificationData();
+  const invalidate = useInvalidateConversationData();
   return useMutation({
     mutationFn: (conversationId: string) =>
       service().then((notifications) => notifications.markConversationRead(conversationId)),
@@ -204,7 +270,7 @@ export function useMarkConversationReadMutation() {
 }
 
 export function useSendMessageMutation() {
-  const invalidate = useInvalidateNotificationData();
+  const invalidate = useInvalidateConversationData();
   return useMutation({
     mutationFn: (input: SendMessageInput) =>
       service().then((notifications) => notifications.sendMessage(input)),

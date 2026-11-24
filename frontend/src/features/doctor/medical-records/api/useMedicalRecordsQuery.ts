@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createKeyFactory } from '@/api/query-keys';
+import { isApiError } from '@/types/api';
 
 import { RECORD_NOT_FOUND } from '../model/record-service';
 import { recordService } from '../service';
@@ -66,8 +67,12 @@ export function useMedicalRecordQuery(recordId: string) {
     queryKey: medicalRecordKeys.detail(recordId),
     queryFn: () => recordService.getRecord(recordId),
     staleTime: 30_000,
-    retry: (failureCount, error) =>
-      error instanceof Error && error.message === RECORD_NOT_FOUND ? false : failureCount < 2,
+    // The global rule first (configs/query-client.ts): only a network failure
+    // is retried, so a 403 or 500 is not re-sent twice behind a spinner.
+    retry: (failureCount, error) => {
+      if (isApiError(error) && error.kind !== 'network') return false;
+      return error.message === RECORD_NOT_FOUND ? false : failureCount < 2;
+    },
   });
 }
 

@@ -116,6 +116,9 @@ export function OtpInput({
           onFocus={(event) => event.target.select()}
           className={cn(
             'h-12 w-full min-w-0 rounded-surface border bg-surface text-center text-h4 font-semibold text-text-primary',
+            // 16px on a coarse pointer so iOS Safari does not zoom into the
+            // focused cell (as every text field does, ui/internal/styles.ts).
+            'touch:text-h3',
             'transition-colors duration-base ease-out focus:outline-none focus:shadow-focus',
             'disabled:cursor-not-allowed disabled:bg-surface-sunken disabled:text-text-disabled',
             invalid

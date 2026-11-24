@@ -1,6 +1,7 @@
 import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { createKeyFactory } from '@/api/query-keys';
+import { isApiError } from '@/types/api';
 
 import { LAB_NOT_FOUND } from '../model/lab-service';
 import type { LabTest } from '../model/types';
@@ -21,13 +22,24 @@ export { LAB_NOT_FOUND };
  * `enabled` exists for the global search index (D-26), which spans five
  * feature datasets and must not fetch any of them until someone actually
  * uses the field. Defaults to true, so every existing caller is unchanged.
+ *
+ * `refetchOnWindowFocus` lets that same index opt its observer out of the
+ * focus refetch: over HTTP this read is one GET per order, and the shell
+ * mounts the index on every doctor page. Observers that leave it unset keep
+ * the global default.
  */
-export function useLabTestsQuery(options?: { readonly enabled?: boolean }) {
+export function useLabTestsQuery(options?: {
+  readonly enabled?: boolean;
+  readonly refetchOnWindowFocus?: boolean;
+}) {
   const query = useQuery({
     queryKey: labKeys.lists(),
-    queryFn: () => labService.listLabTests(),
+    queryFn: ({ signal }) => labService.listLabTests({ signal }),
     staleTime: 30_000,
     enabled: options?.enabled ?? true,
+    ...(options?.refetchOnWindowFocus === undefined
+      ? {}
+      : { refetchOnWindowFocus: options.refetchOnWindowFocus }),
   });
   /*
    * MED-SEC-014 review — fail closed. TanStack keeps the last good `data`
@@ -71,8 +83,12 @@ export function useLabTestQuery(labId: string) {
     initialData: () => worklistRow(queryClient, labId)?.row,
     initialDataUpdatedAt: () => worklistRow(queryClient, labId)?.updatedAt,
     staleTime: 30_000,
-    retry: (failureCount, error) =>
-      error instanceof Error && error.message === LAB_NOT_FOUND ? false : failureCount < 2,
+    // The global rule first (configs/query-client.ts): only a network failure
+    // is retried, so a 403 or 500 is not re-sent twice behind a spinner.
+    retry: (failureCount, error) => {
+      if (isApiError(error) && error.kind !== 'network') return false;
+      return error.message === LAB_NOT_FOUND ? false : failureCount < 2;
+    },
   });
 }
 

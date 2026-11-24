@@ -32,6 +32,7 @@ describe('the notifications seam', () => {
       'fetchConversations',
       'fetchNotifications',
       'fetchPreferences',
+      'fetchRecent',
       'markAllRead',
       'markConversationRead',
       'savePreferences',

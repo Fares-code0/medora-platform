@@ -200,10 +200,13 @@ describe.each(['light', 'dark'] as const)('ADR-0005 roles — %s', (theme) => {
     }
   });
 
-  it('the navbar AI button keeps one look and a 3:1 boundary on the navbar', () => {
-    for (const role of ['color-ai-launcher', 'color-ai-launcher-border'] as const) {
-      expect(token(role, theme), `--${role}`).toBe(token(role, 'light'));
-    }
+  it('the navbar AI button keeps one fill and a 3:1 boundary on the navbar', () => {
+    expect(token('color-ai-launcher', theme), '--color-ai-launcher').toBe(
+      token('color-ai-launcher', 'light'),
+    );
+    // The edge is a subtle neutral gray, re-pointed per theme so it stays
+    // visible on each navbar — never the near-black it used to be.
+    expect(token('color-ai-launcher-border', theme)).toBe(token('color-border-strong', theme));
     // The navbar is `surface`. The edge carries the boundary on a light bar,
     // the white fill on a dark one — at least one of the two must hold 3:1.
     const edge = ratio(token('color-ai-launcher-border', theme), token('color-surface', theme));

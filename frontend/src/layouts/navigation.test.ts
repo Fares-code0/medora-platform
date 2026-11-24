@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { LOCALE_CODES } from '@/i18n/locales';
 import { loadAllCatalogues, type Messages } from '@/i18n/messages';
+import { workspaceFor } from '@/routes/workspaces';
 
 import { adminNavigation, doctorNavigation, receptionNavigation } from './navigation';
 
@@ -238,5 +239,28 @@ describe('doctorNavigation Labs group', () => {
       expect(catalogues[code]['nav.labsNew'].length).toBeGreaterThan(0);
     }
     expect(catalogues.en['nav.labsNew']).toBe('New Order');
+  });
+});
+
+/**
+ * My Profile is not a sidebar item for any role: the doctor and the admin
+ * reach their profile from the navbar avatar menu (AvatarMenu.test.tsx), so
+ * the rail never lists it — not as an item, a child, or a link to the page.
+ */
+describe('no sidebar My Profile item', () => {
+  it.each([
+    ['doctor', doctorNavigation, workspaceFor('doctor').profile],
+    ['admin', adminNavigation, workspaceFor('admin').profile],
+  ] as const)('the %s sidebar has no profile entry', (_role, config, profilePath) => {
+    const entries = config.sections.flatMap((section) =>
+      section.items.flatMap((item) => [item, ...(item.children ?? [])]),
+    );
+    expect(entries.length).toBeGreaterThan(0);
+    expect(profilePath).not.toBeNull();
+    for (const entry of entries) {
+      expect(entry.id, entry.id).not.toMatch(/profile/i);
+      expect(entry.labelKey, entry.id).not.toBe('shell.profile');
+      expect(entry.path, entry.id).not.toBe(profilePath);
+    }
   });
 });

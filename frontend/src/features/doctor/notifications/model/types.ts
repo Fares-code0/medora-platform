@@ -97,19 +97,26 @@ export const NOTIFICATION_KINDS = Object.keys(
 
 /* ── Status (read/archive lifecycle) ────────────────────────────── */
 
-export type NotificationStatusFilter = 'active' | 'unread' | 'read' | 'archived';
+/**
+ * The page's views, carried in `?status=` (absent = `active`, the inbox).
+ * `starred` is the `favorite` flag the API already serves — every starred
+ * notification, archived or not, the way a saved item outlives the inbox.
+ */
+export type NotificationStatusFilter = 'active' | 'unread' | 'read' | 'starred' | 'archived';
 
 export const NOTIFICATION_STATUS_FILTERS: readonly NotificationStatusFilter[] = [
   'active',
   'unread',
   'read',
+  'starred',
   'archived',
 ];
 
 export const NOTIFICATION_STATUS_LABELS: Record<NotificationStatusFilter, string> = {
-  active: 'Inbox (unarchived)',
+  active: 'Inbox',
   unread: 'Unread',
   read: 'Read',
+  starred: 'Starred',
   archived: 'Archived',
 };
 
