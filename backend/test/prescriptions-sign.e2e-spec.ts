@@ -13,6 +13,8 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  soleRecordOf,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -210,6 +212,7 @@ async function livePrescriptionFor(
 
   await harness.prisma.prescription.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctor.id, patient.id)),
       publicId: `RX-X${String(Date.now() % 100_000)}${String(Math.floor(Math.random() * 1000))}`,
       patientId: patient.id,
       medicationId,
@@ -473,6 +476,7 @@ describe('409 branch 1 — allergy_conflict, with no override path', () => {
     });
     await harness.prisma.patientAllergy.create({
       data: {
+        ...(await soleRecordOf(harness.prisma, patient.id)),
         patientId: patient.id,
         allergen: 'Penicillin',
         severity: 'SEVERE',

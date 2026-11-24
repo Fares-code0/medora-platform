@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import { type AuthHarness, clinicalStampFor, createAuthHarness, dataOf, testEmail } from './support/auth-app';
 import {
   destroyLabFixtures,
   orderTest,
@@ -157,6 +157,7 @@ async function seedPendingRequest(
 
   await harness.prisma.appointment.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctor.id, patient.id)),
       publicId,
       patientId: patient.id,
       doctorId: doctor.id,

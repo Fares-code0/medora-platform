@@ -13,6 +13,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -182,6 +183,7 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
 
   await harness.prisma.appointment.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctorRow.id, patient.id)),
       publicId,
       patientId: patient.id,
       doctorId: doctorRow.id,

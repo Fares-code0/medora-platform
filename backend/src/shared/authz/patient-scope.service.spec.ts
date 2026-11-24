@@ -10,7 +10,7 @@ import {
 } from './hospital-patient-scope.shadow';
 import { PatientScopeService } from './patient-scope.service';
 import { PLATFORM_ROLES } from './permission-catalogue';
-import type { PatientAssignmentRepository, PlatformRole, Principal } from './authz.types';
+import type { ClinicalReach, PatientAssignmentRepository, PlatformRole, Principal } from './authz.types';
 
 /**
  * DR-05 reach the test controls, as `doctorUserId → patientIds` (the
@@ -22,6 +22,15 @@ class StubAssignments implements PatientAssignmentRepository {
 
   reachesPatient(doctorUserId: string, patientId: string): Promise<boolean> {
     return Promise.resolve((this.links.get(doctorUserId) ?? []).includes(patientId));
+  }
+
+  clinicalHospital(doctorUserId: string): Promise<string | null> {
+    return Promise.resolve(this.links.has(doctorUserId) ? `hospital-of-${doctorUserId}` : null);
+  }
+
+  async clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null> {
+    if (!(await this.reachesPatient(doctorUserId, patientId))) return null;
+    return { hospitalId: `hospital-of-${doctorUserId}`, hospitalMedicalRecordId: `hmr-${patientId}`, patientId };
   }
 }
 
@@ -150,6 +159,8 @@ describe('PatientScopeService — repository failure', () => {
     // "no restriction applies".
     const failing: PatientAssignmentRepository = {
       reachesPatient: () => Promise.reject(new Error('database down')),
+      clinicalHospital: () => Promise.reject(new Error('database down')),
+      clinicalReach: () => Promise.reject(new Error('database down')),
     };
     const scope = new PatientScopeService(failing);
 
@@ -159,6 +170,8 @@ describe('PatientScopeService — repository failure', () => {
   it('does not even ask when the role cannot hold a relationship', async () => {
     const failing: PatientAssignmentRepository = {
       reachesPatient: () => Promise.reject(new Error('should not be called')),
+      clinicalHospital: () => Promise.reject(new Error('should not be called')),
+      clinicalReach: () => Promise.reject(new Error('should not be called')),
     };
     const scope = new PatientScopeService(failing);
     const role: PlatformRole = 'reception';
@@ -280,6 +293,8 @@ describe('PatientScopeService — Phase 22 shadow comparison never changes a dec
     const { shadow, spy } = shadowReturning(SHADOWS['always allows']!);
     const failing: PatientAssignmentRepository = {
       reachesPatient: () => Promise.reject(new Error('database down')),
+      clinicalHospital: () => Promise.reject(new Error('database down')),
+      clinicalReach: () => Promise.reject(new Error('database down')),
     };
     const scope = new PatientScopeService(failing, shadow);
 

@@ -16,7 +16,7 @@ import {
   type PlatformPolicySource,
   type PolicyOverrides,
 } from '../../src/config';
-import { PrismaService } from '../../src/shared/database';
+import { type HospitalStamp, hospitalStampFor, PrismaService } from '../../src/shared/database';
 import { MAILER } from '../../src/shared/mail';
 import { SmtpMailer } from '../../src/shared/mail/smtp.mailer';
 
@@ -593,4 +593,45 @@ export function tokenFromLink(text: string): string {
   const match = /[?&]token=([A-Za-z0-9_-]+)/.exec(text);
   if (match?.[1] === undefined) throw new Error(`No token in mail body:\n${text}`);
   return match[1];
+}
+
+/**
+ * The hospital stamp a clinical row written by `doctorId` about `patientId`
+ * carries (multi-hospital §2.7; audit F-06): the doctor's one active
+ * employment, its hospital, and the patient's record there — derived exactly
+ * as the application derives it. A fixture that writes clinical rows
+ * straight to the database spreads this into them; an unstamped row belongs
+ * to no hospital and is, correctly, invisible to every clinician.
+ */
+export async function clinicalStampFor(
+  prisma: PrismaService,
+  doctorId: string,
+  patientId: string,
+): Promise<HospitalStamp> {
+  const stamp = await hospitalStampFor(prisma, doctorId, patientId);
+  if (stamp === null) {
+    throw new Error('clinicalStampFor: the doctor has no clinical hospital holding this patient’s record');
+  }
+  return stamp;
+}
+
+/**
+ * `{ hospitalId, hospitalMedicalRecordId }` of a patient who holds exactly
+ * one Hospital Medical Record — the stamp a fixture row about that patient
+ * carries when it is written straight to the database (F-06).
+ */
+export async function soleRecordOf(
+  prisma: PrismaService,
+  patientId: string,
+): Promise<{ hospitalId: string; hospitalMedicalRecordId: string }> {
+  const records = await prisma.hospitalMedicalRecord.findMany({
+    where: { patientId },
+    select: { id: true, hospitalId: true },
+    take: 2,
+  });
+  const [record] = records;
+  if (record === undefined || records.length !== 1) {
+    throw new Error('soleRecordOf: the patient must hold exactly one Hospital Medical Record');
+  }
+  return { hospitalId: record.hospitalId, hospitalMedicalRecordId: record.id };
 }

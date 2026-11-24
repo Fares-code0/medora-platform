@@ -97,7 +97,9 @@ beforeAll(async () => {
   harness = await createAuthHarness('lab-review');
 
   doctorToken = await seedDoctor(harness, 'review-doctor');
-  strangerToken = await seedDoctor(harness, 'review-stranger');
+  // DR-05 (F-01): a stranger is a doctor at another hospital — one of its own,
+  // with no orders, so its summary is empty by construction.
+  strangerToken = await seedDoctor(harness, 'review-stranger', 'lrstranger');
 
   const patient = await seedPatient(harness, doctorToken);
   patientId = patient.id;

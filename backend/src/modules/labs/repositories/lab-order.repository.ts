@@ -198,30 +198,30 @@ export class LabOrderRepository {
   }
 
   /** One order by `LAB-…`, within the caller's scope. */
-  findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
+  findForDoctor(hospitalId: string, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.labOrder.findFirst({
-      where: { publicId, deletedAt: null, ...visibleTo(doctorId) },
+      where: { publicId, deletedAt: null, ...visibleTo(hospitalId) },
       select: DETAIL_SELECT,
     });
   }
 
   /** The same lookup for a set of references — the bulk review's read. */
   findManyForDoctor(
-    doctorId: string,
+    hospitalId: string,
     publicIds: readonly string[],
   ): Promise<readonly DetailRow[]> {
     return this.prisma.db.labOrder.findMany({
-      where: { publicId: { in: [...publicIds] }, deletedAt: null, ...visibleTo(doctorId) },
+      where: { publicId: { in: [...publicIds] }, deletedAt: null, ...visibleTo(hospitalId) },
       select: DETAIL_SELECT,
     });
   }
 
   /** API §8.2 — the worklist, one page of it. */
   async list(
-    doctorId: string,
+    worklist: LabWorklist,
     criteria: LabOrderCriteria,
   ): Promise<{ rows: readonly DetailRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(worklist, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.labOrder.findMany({
@@ -249,7 +249,7 @@ export class LabOrderRepository {
    * and `reviewedAt: null`, no extra clause that would take the query
    * off it.
    */
-  async summaryFor(doctorId: string): Promise<{
+  async summaryFor(worklist: LabWorklist): Promise<{
     readonly total: number;
     readonly pending: number;
     readonly inProgress: number;
@@ -258,7 +258,7 @@ export class LabOrderRepository {
     readonly criticalUnreviewed: number;
     readonly unreviewed: number;
   }> {
-    const scope: Prisma.LabOrderWhereInput = { deletedAt: null, ...visibleTo(doctorId) };
+    const scope: Prisma.LabOrderWhereInput = { deletedAt: null, ...onWorklist(worklist) };
     const count = (where: Prisma.LabOrderWhereInput): Promise<number> =>
       this.prisma.db.labOrder.count({ where: { ...scope, ...where } });
 
@@ -521,7 +521,7 @@ export class LabOrderRepository {
   }
 
   private whereFor(
-    doctorId: string,
+    worklist: LabWorklist,
     criteria: LabOrderCriteria,
   ): Prisma.LabOrderWhereInput {
     return {
@@ -530,7 +530,7 @@ export class LabOrderRepository {
       // `q` search below: spread side by side, the second `OR` key
       // replaced the first, and a search returned every order on the
       // platform (found at M32.3, `test/lab-order-scope.e2e-spec.ts`).
-      AND: [visibleTo(doctorId)],
+      AND: [onWorklist(worklist)],
       ...(criteria.status === undefined ? {} : { status: { in: [...criteria.status] } }),
       ...(criteria.priority === undefined ? {} : { priority: { in: [...criteria.priority] } }),
       ...(criteria.patientId === undefined ? {} : { patient: { publicId: criteria.patientId } }),
@@ -598,17 +598,49 @@ export interface SpecimenInput {
 }
 
 /**
- * §8.2's "own orders / care-scoped", as one clause.
+ * The resource-level DR-05 clause, as one predicate (audit F-01).
  *
- * Both arms, because either alone loses a real case — see the file
- * header. `revokedAt: null` is what makes a revoked assignment stop
- * granting access, which is the whole point of revocation.
+ * An order is visible to a doctor practising at hospital H when it belongs
+ * to H and its patient holds a Hospital Medical Record there. This replaces
+ * §8.2's "own orders OR care-assigned patient" disjunction: neither
+ * authorship nor an assignment survives a move to another hospital, and
+ * neither is needed at H — the locum's critical potassium on a colleague's
+ * patient is visible to every doctor of H. Still an `AND` operand, never
+ * spread (see `whereFor`).
  */
-function visibleTo(doctorId: string): Prisma.LabOrderWhereInput {
+function visibleTo(hospitalId: string): Prisma.LabOrderWhereInput {
+  return { hospitalId, patient: { hospitalMedicalRecords: { some: { hospitalId } } } };
+}
+
+/** Whose worklist, at which hospital. */
+export interface LabWorklist {
+  readonly hospitalId: string;
+  readonly doctorId: string;
+}
+
+/**
+ * The caller's worklist (§8.2's "own orders / care-scoped"), now inside the
+ * hospital: an order this doctor placed, or one on a patient in their live
+ * care there — the locum's potassium on the caller's patient included. It
+ * shapes the list only; any order of the hospital opens by id through
+ * `visibleTo`. One `AND`, both operands `OR`-free at the top, never spread.
+ */
+function onWorklist(worklist: LabWorklist): Prisma.LabOrderWhereInput {
   return {
-    OR: [
-      { orderedBy: doctorId },
-      { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } },
+    AND: [
+      visibleTo(worklist.hospitalId),
+      {
+        OR: [
+          { orderedBy: worklist.doctorId },
+          {
+            patient: {
+              careAssignments: {
+                some: { doctorId: worklist.doctorId, hospitalId: worklist.hospitalId, revokedAt: null },
+              },
+            },
+          },
+        ],
+      },
     ],
   };
 }

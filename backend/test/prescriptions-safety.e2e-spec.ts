@@ -12,6 +12,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -154,6 +155,7 @@ async function givePatientAMedication(
 
   await harness.prisma.prescription.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctorId, patient.id)),
       publicId: `RX-T${String(Date.now() % 100_000)}${String(Math.floor(Math.random() * 1000))}`,
       patientId: patient.id,
       medicationId,

@@ -154,10 +154,21 @@ export class AiConversationRepository {
     readonly contextMode: AiContextMode;
     readonly patientId: string | null;
     readonly refPublicId: string | null;
+    /** The hospital the patient was reached at (F-06); a patient-free thread has none. */
+    readonly chart: {
+      readonly hospitalId: string;
+      readonly hospitalMedicalRecordId: string;
+    } | null;
   }): Promise<ConversationDetailRow> {
     return this.prisma.db.aiConversation.create({
       data: {
         ownerId: input.ownerId,
+        ...(input.patientId === null || input.chart === null
+          ? {}
+          : {
+              hospitalId: input.chart.hospitalId,
+              hospitalMedicalRecordId: input.chart.hospitalMedicalRecordId,
+            }),
         title: input.title,
         contextMode: input.contextMode,
         ...(input.patientId === null ? {} : { patientId: input.patientId }),

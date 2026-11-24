@@ -60,9 +60,14 @@ export class AiContextRepository {
   }
 
   /** `record` mode — `MR-…`, and it must belong to the bound patient. */
-  async recordFor(patientId: string, publicId: string): Promise<BoundEntity | null> {
+  async recordFor(
+    patientId: string,
+    hospitalId: string,
+    publicId: string,
+  ): Promise<BoundEntity | null> {
+    // At the reader's hospital only (DR-05 at resource level, F-01).
     const row = await this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, patientId, deletedAt: null },
+      where: { publicId, patientId, hospitalId, deletedAt: null },
       // `visitType` is a denormalised string on the record (DB §D1), not
       // a relation — the catalogue row it came from may since have been
       // renamed, and the record says what it said at the visit.
@@ -78,9 +83,14 @@ export class AiContextRepository {
   }
 
   /** `labs` mode — `LAB-…`, belonging to the bound patient. */
-  async labOrderFor(patientId: string, publicId: string): Promise<BoundEntity | null> {
+  async labOrderFor(
+    patientId: string,
+    hospitalId: string,
+    publicId: string,
+  ): Promise<BoundEntity | null> {
+    // At the reader's hospital only (DR-05 at resource level, F-01).
     const row = await this.prisma.db.labOrder.findFirst({
-      where: { publicId, patientId, deletedAt: null },
+      where: { publicId, patientId, hospitalId, deletedAt: null },
       select: { publicId: true, status: true, test: { select: { name: true } } },
     });
 
@@ -93,9 +103,14 @@ export class AiContextRepository {
   }
 
   /** `pharmacy` mode — `RX-…`, belonging to the bound patient. */
-  async prescriptionFor(patientId: string, publicId: string): Promise<BoundEntity | null> {
+  async prescriptionFor(
+    patientId: string,
+    hospitalId: string,
+    publicId: string,
+  ): Promise<BoundEntity | null> {
+    // At the reader's hospital only (DR-05 at resource level, F-01).
     const row = await this.prisma.db.prescription.findFirst({
-      where: { publicId, patientId, deletedAt: null },
+      where: { publicId, patientId, hospitalId, deletedAt: null },
       select: { publicId: true, medication: { select: { name: true } }, dosage: true },
     });
 

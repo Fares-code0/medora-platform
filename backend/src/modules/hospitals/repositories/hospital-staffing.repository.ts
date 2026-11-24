@@ -145,6 +145,7 @@ export class HospitalStaffingRepository {
         where: { sourceDoctorEmploymentId: employment.id, revokedAt: null },
         data: { revokedAt: now },
       });
+      await endCareAt(tx, employment, now);
       await bump(tx, employment.userId);
       return revokeSessions(tx, employment.userId, now);
     });
@@ -163,6 +164,7 @@ export class HospitalStaffingRepository {
         where: { sourceDoctorEmploymentId: input.from.id, revokedAt: null },
         data: { revokedAt: now },
       });
+      await endCareAt(tx, input.from, now);
       const created = await tx.doctorEmployment.create({
         data: {
           doctorId: input.from.doctorId,
@@ -358,6 +360,29 @@ export class HospitalStaffingRepository {
 function withoutDoctor<T extends { doctor: unknown }>(row: T): Omit<T, 'doctor'> {
   const { doctor: _doctor, ...rest } = row;
   return rest;
+}
+
+/**
+ * Ends the doctor's care assignments at the hospital they are leaving (audit
+ * F-01): those made under the ending employment, and any other live one at
+ * that hospital. An assignment is a care relationship *at a hospital*; it
+ * must not outlive the doctor's employment there and keep the former
+ * hospital's patients on their list. Access itself never depended on it
+ * (DR-05 keys on the employment), so this closes the list, not a gate.
+ */
+async function endCareAt(
+  tx: Tx,
+  employment: { readonly id: string; readonly doctorId: string; readonly hospitalId: string },
+  now: Date,
+): Promise<void> {
+  await tx.patientDoctorAssignment.updateMany({
+    where: {
+      doctorId: employment.doctorId,
+      revokedAt: null,
+      OR: [{ doctorEmploymentId: employment.id }, { hospitalId: employment.hospitalId }],
+    },
+    data: { revokedAt: now },
+  });
 }
 
 async function bump(tx: Tx, userId: string): Promise<void> {

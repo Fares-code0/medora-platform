@@ -50,6 +50,7 @@ import type {
 import {
   AppointmentRepository,
   type BookRow,
+  CrossHospitalReassignment,
   type ScheduleTx,
 } from '../repositories/appointment.repository';
 
@@ -314,9 +315,8 @@ export class AppointmentOversightService {
     // slot between this check and the write, landing the appointment on
     // the receiving doctor at a time nobody checked. Both are locked in
     // one statement in id order, and the row is read again under them.
-    const moved = await this.conflicts.underScheduleLock(
-      [row.doctor.id, receiving.id],
-      async (tx) => {
+    const moved = await this.conflicts
+      .underScheduleLock([row.doctor.id, receiving.id], async (tx) => {
         const locked = await this.appointments.findAny(publicId, tx);
         if (locked === null) throw notFound();
 
@@ -340,8 +340,20 @@ export class AppointmentOversightService {
           },
           tx,
         );
-      },
-    );
+      })
+      .catch((error: unknown) => {
+        // F-07: an appointment belongs to its hospital for good. A doctor
+        // who does not practise there cannot receive it; the booking is
+        // cancelled and the patient rebooked at the other hospital.
+        if (error instanceof CrossHospitalReassignment) {
+          throw AppException.validation(
+            { doctorId: ['The receiving doctor does not practise at this appointment’s hospital'] },
+            'Reassignment cannot cross hospitals; cancel and rebook instead',
+            'cross_hospital_reassignment',
+          );
+        }
+        throw error;
+      });
 
     if (moved === null) {
       throw AppException.conflict(

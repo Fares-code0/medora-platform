@@ -80,7 +80,7 @@ export class ConversationController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(zodBody(createConversationSchema)) body: CreateConversationBody,
   ): Promise<{ id: string }> {
-    return this.conversations.create(user.id, body);
+    return this.conversations.create(user, body);
   }
 
   @PhiRead('messages')

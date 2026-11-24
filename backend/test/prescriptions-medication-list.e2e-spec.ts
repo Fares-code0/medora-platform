@@ -10,6 +10,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  soleRecordOf,
 } from './support/auth-app';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
@@ -163,6 +164,7 @@ async function medicationList(token: string, patientPublicId: string): Promise<M
 async function giveExternalEntry(patientId: string, name = 'Aspirin (self-reported)'): Promise<void> {
   await harness.prisma.patientMedication.create({
     data: {
+      ...(await soleRecordOf(harness.prisma, patientId)),
       patientId,
       name,
       dosage: '75 mg',
@@ -272,6 +274,7 @@ describe('RM M13.6 verify — signing an Rx adds a patient_medications row', () 
 
     await harness.prisma.patientAllergy.create({
       data: {
+        ...(await soleRecordOf(harness.prisma, patient.id)),
         patientId: patient.id,
         allergen: 'Penicillin',
         severity: 'SEVERE',

@@ -84,7 +84,7 @@ export class DashboardRepository {
    * the kind of wrong that makes a dashboard untrusted.
    */
   kpis(doctorId: string, now: Date, dayStart: Date, dayEnd: Date, weekStart: Date, previousWeekStart: Date): Promise<KpiCounts> {
-    const mine = { doctorId, deletedAt: null };
+    const mine = { doctorId, deletedAt: null, ...atPractice(doctorId) };
 
     return this.prisma.$transaction(async (tx) => {
       const [
@@ -142,7 +142,7 @@ export class DashboardRepository {
 
   schedule(doctorId: string, dayStart: Date, dayEnd: Date): Promise<ScheduleRow[]> {
     return this.prisma.db.appointment.findMany({
-      where: { doctorId, startsAt: { gte: dayStart, lt: dayEnd } },
+      where: { doctorId, startsAt: { gte: dayStart, lt: dayEnd }, ...atPractice(doctorId) },
       select: {
         publicId: true,
         startsAt: true,
@@ -211,7 +211,7 @@ export class DashboardRepository {
   async recentActivity(doctorId: string, userId: string, limit: number): Promise<ActivityRow[]> {
     const [notes, prescriptions, labs] = await Promise.all([
       this.prisma.db.recordNote.findMany({
-        where: { authorId: userId, signed: true, signedAt: { not: null } },
+        where: { authorId: userId, signed: true, signedAt: { not: null }, record: atPractice(doctorId) },
         select: {
           id: true,
           signedAt: true,
@@ -221,7 +221,7 @@ export class DashboardRepository {
         take: limit,
       }),
       this.prisma.db.prescription.findMany({
-        where: { prescribingDoctorId: doctorId, signedAt: { not: null } },
+        where: { prescribingDoctorId: doctorId, signedAt: { not: null }, ...atPractice(doctorId) },
         select: {
           id: true,
           signedAt: true,
@@ -232,7 +232,7 @@ export class DashboardRepository {
         take: limit,
       }),
       this.prisma.db.labOrder.findMany({
-        where: { orderedBy: doctorId, completedAt: { not: null } },
+        where: { orderedBy: doctorId, completedAt: { not: null }, ...atPractice(doctorId) },
         select: {
           id: true,
           completedAt: true,
@@ -276,3 +276,17 @@ export class DashboardRepository {
 
 /** Kept for the raw trend query's parameter typing. */
 export type { Prisma };
+
+/**
+ * Resource-level DR-05 for the doctor's own dashboards (audit F-01): rows
+ * belonging to a hospital where the doctor practises now, through the
+ * patient's Hospital Medical Record there. After a transfer, the former
+ * hospital's appointments, orders, notes and alerts leave the dashboard.
+ */
+function atPractice(doctorId: string) {
+  return {
+    hospitalMedicalRecord: {
+      is: { hospital: { is: { doctorEmployments: { some: { doctorId, endedAt: null } } } } },
+    },
+  } as const;
+}

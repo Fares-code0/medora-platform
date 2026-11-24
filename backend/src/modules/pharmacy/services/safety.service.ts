@@ -89,7 +89,9 @@ export class SafetyService {
     request: ScreenRequest,
     tx?: Db,
   ): Promise<ScreenOutcome> {
-    await this.scope.assertCanReach(principalOf(user), request.patientId);
+    // DR-05 at resource level (F-01): screened against the chart at the
+    // prescriber's hospital — its allergies and its live prescriptions.
+    const reach = await this.scope.reachAt(principalOf(user), request.patientId);
 
     const patient = await this.prescriptions.patientByPublicId(request.patientId, tx);
     // Reachable when a care relationship exists for a chart that has
@@ -105,9 +107,10 @@ export class SafetyService {
     }
 
     const [allergies, current] = await Promise.all([
-      this.safety.allergiesFor(patient.id, tx),
+      this.safety.allergiesFor(patient.id, reach.hospitalId, tx),
       this.safety.currentMedicationsFor(
         patient.id,
+        reach.hospitalId,
         { excludePrescriptionId: request.excludePrescriptionId },
         tx,
       ),

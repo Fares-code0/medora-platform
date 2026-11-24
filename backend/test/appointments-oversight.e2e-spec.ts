@@ -11,8 +11,10 @@ import {
   registrationBody,
   testEmail,
   grantPlatformAdmin,
+  fixtureHospital,
   makeClinicalDoctor,
   purgeHospitalRecords,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -106,12 +108,16 @@ interface Doctor {
   readonly id: string;
 }
 
-async function seedDoctor(local: string, specialty?: string): Promise<Doctor> {
+async function seedDoctor(local: string, specialty?: string, hospital?: string): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
-  // Clinical standing at the fixture hospital (§2.6, DR-05).
-  await makeClinicalDoctor(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05), or another one.
+  await makeClinicalDoctor(
+    harness.prisma,
+    email,
+    hospital === undefined ? undefined : await fixtureHospital(harness.prisma, hospital),
+  );
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -253,6 +259,7 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
 
   await harness.prisma.appointment.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctorRow.id, patient.id)),
       publicId,
       patientId: patient.id,
       doctorId: doctorRow.id,
@@ -513,6 +520,98 @@ describe('POST /admin/appointments/{id}/reassign (§5.10)', () => {
 
     expect(receiving.items.map((item) => item.id)).toContain(reference);
     expect(original.items.map((item) => item.id)).not.toContain(reference);
+  });
+
+  it('keeps the hospital and moves the booking to the receiving doctor’s employment there (F-07)', async () => {
+    const admin = await seedAdmin('reassign-own-admin');
+    const from = await seedDoctor('reassign-own-from', 'Cardiology');
+    const to = await seedDoctor('reassign-own-to', 'Cardiology');
+    const reference = await book(from.token, await seedPatient(from.token));
+    const before = await harness.prisma.appointment.findUniqueOrThrow({
+      where: { publicId: reference },
+      select: { hospitalId: true, hospitalMedicalRecordId: true },
+    });
+
+    const response = await request(harness.server)
+      .post(`${ADMIN_APPOINTMENTS}/${reference}/reassign`)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ doctorId: to.id, reason: 'Original doctor on emergency leave' });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+
+    const after = await harness.prisma.appointment.findUniqueOrThrow({
+      where: { publicId: reference },
+      select: { hospitalId: true, hospitalMedicalRecordId: true, doctorEmploymentId: true },
+    });
+    const employment = await harness.prisma.doctorEmployment.findFirstOrThrow({
+      where: { doctorId: to.id, endedAt: null },
+      select: { id: true },
+    });
+    expect(after.hospitalId).toBe(before.hospitalId);
+    expect(after.hospitalMedicalRecordId).toBe(before.hospitalMedicalRecordId);
+    expect(after.doctorEmploymentId).toBe(employment.id);
+  });
+
+  it('refuses a reassignment to a doctor at another hospital, and changes nothing (F-07)', async () => {
+    const admin = await seedAdmin('reassign-cross-admin');
+    const from = await seedDoctor('reassign-cross-from', 'Cardiology');
+    const elsewhere = await seedDoctor('reassign-cross-to', 'Cardiology', 'b');
+    const reference = await book(from.token, await seedPatient(from.token));
+
+    const response = await request(harness.server)
+      .post(`${ADMIN_APPOINTMENTS}/${reference}/reassign`)
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ doctorId: elsewhere.id, reason: 'Moving the patient across hospitals' });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toContain('cross_hospital_reassignment');
+    const row = await harness.prisma.appointment.findUniqueOrThrow({
+      where: { publicId: reference },
+      select: { doctorId: true },
+    });
+    expect(row.doctorId).toBe(from.id);
+  });
+
+  it('lets exactly one of two concurrent reassignments win (F-07)', async () => {
+    const admin = await seedAdmin('reassign-race-admin');
+    const from = await seedDoctor('reassign-race-from', 'Cardiology');
+    const first = await seedDoctor('reassign-race-one', 'Cardiology');
+    const second = await seedDoctor('reassign-race-two', 'Cardiology');
+    const reference = await book(from.token, await seedPatient(from.token));
+
+    const move = (doctorId: string) =>
+      request(harness.server)
+        .post(`${ADMIN_APPOINTMENTS}/${reference}/reassign`)
+        .set('Authorization', `Bearer ${admin}`)
+        .send({ doctorId, reason: 'Two administrators at once' });
+    const statuses = (await Promise.all([move(first.id), move(second.id)])).map((r) => r.status).sort();
+
+    expect(statuses).toEqual([200, 409]);
+  });
+
+  it('the database refuses to move an appointment’s hospital or employment out of it (F-07)', async () => {
+    const from = await seedDoctor('reassign-db-from', 'Cardiology');
+    const elsewhere = await seedDoctor('reassign-db-elsewhere', 'Cardiology', 'b');
+    const reference = await book(from.token, await seedPatient(from.token));
+    const row = await harness.prisma.appointment.findUniqueOrThrow({
+      where: { publicId: reference },
+      select: { id: true, doctorEmploymentId: true },
+    });
+    const otherHospital = await fixtureHospital(harness.prisma, 'b');
+    const otherEmployment = await harness.prisma.doctorEmployment.findFirstOrThrow({
+      where: { doctorId: elsewhere.id, endedAt: null },
+      select: { id: true },
+    });
+    const refused = (sql: string, ...values: unknown[]) =>
+      expect(harness.prisma.$executeRawUnsafe(sql, ...values)).rejects.toThrow(/23514|cannot be changed|reassigned only|changes only/);
+
+    await refused('UPDATE appointments SET hospital_id = $1::uuid WHERE id = $2::uuid', otherHospital, row.id);
+    await refused(
+      'UPDATE appointments SET doctor_id = $1::uuid, doctor_employment_id = $2::uuid WHERE id = $3::uuid',
+      elsewhere.id,
+      otherEmployment.id,
+      row.id,
+    );
+    await refused('UPDATE appointments SET doctor_employment_id = NULL WHERE id = $1::uuid', row.id);
   });
 
   it('refuses a reassignment across specialties', async () => {

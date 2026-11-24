@@ -22,10 +22,11 @@ export interface HospitalStamp {
 /** The structural slice of a Prisma client (or transaction) this needs. */
 export interface StampClient {
   doctorEmployment: {
-    findFirst(args: {
+    findMany(args: {
       where: object;
       select: { id: true; hospitalId: true };
-    }): Promise<{ id: string; hospitalId: string } | null>;
+      take: number;
+    }): Promise<{ id: string; hospitalId: string }[]>;
   };
   hospitalMedicalRecord: {
     findFirst(args: { where: object; select: { id: true } }): Promise<{ id: string } | null>;
@@ -37,11 +38,16 @@ export async function hospitalStampFor(
   doctorId: string,
   patientId: string,
 ): Promise<HospitalStamp | null> {
-  const employment = await client.doctorEmployment.findFirst({
+  // Exactly one: two active employments are ambiguous standing, and the
+  // read scope (`PatientScopeService.clinicalHospitalOf`) refuses them too,
+  // so a write can never be stamped with a hospital its author cannot read.
+  const employments = await client.doctorEmployment.findMany({
     where: { doctorId, endedAt: null, hospital: { is: { status: 'ACTIVE', deletedAt: null } } },
     select: { id: true, hospitalId: true },
+    take: 2,
   });
-  if (employment === null) return null;
+  const employment = employments.length === 1 ? employments[0] : undefined;
+  if (employment === undefined) return null;
   const record = await client.hospitalMedicalRecord.findFirst({
     where: { patientId, hospitalId: employment.hospitalId },
     select: { id: true },

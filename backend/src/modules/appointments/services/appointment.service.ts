@@ -146,8 +146,9 @@ export class AppointmentService {
   async create(user: AuthenticatedUser, input: CreateAppointmentInput): Promise<AppointmentView> {
     const doctorId = await this.requireDoctor(user);
 
-    // The care relationship, before anything is resolved or written.
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    // DR-05, before anything is resolved or written: the patient holds a
+    // record at the doctor's hospital, which the booking is stamped with.
+    await this.scope.reachAt(principalOf(user), input.patientId);
 
     const patient = await this.appointments.patientByPublicId(input.patientId);
     // Unreachable in practice — `assertCanReach` already 404s for a

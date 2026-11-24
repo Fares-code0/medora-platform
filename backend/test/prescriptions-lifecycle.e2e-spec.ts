@@ -11,6 +11,7 @@ import {
   purgeHospitalRecords,
   registrationBody,
   testEmail,
+  soleRecordOf,
 } from './support/auth-app';
 
 /**
@@ -460,6 +461,7 @@ describe('RM M13.4 verify — renew copies the source Rx correctly', () => {
     });
     await harness.prisma.patientAllergy.create({
       data: {
+        ...(await soleRecordOf(harness.prisma, patient.id)),
         patientId: patient.id,
         allergen: 'Penicillin',
         severity: 'SEVERE',

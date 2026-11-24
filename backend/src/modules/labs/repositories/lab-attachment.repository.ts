@@ -102,10 +102,13 @@ export class LabAttachmentRepository {
     });
   }
 
-  /** A record by `MR-…`, with the patient it belongs to. */
-  async recordByPublicId(publicId: string): Promise<RecordTarget | null> {
+  /**
+   * A record by `MR-…`, with the patient it belongs to — at `hospitalId`
+   * only (F-01): a lab report is never filed onto another hospital's record.
+   */
+  async recordByPublicId(publicId: string, hospitalId: string): Promise<RecordTarget | null> {
     const row = await this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, deletedAt: null },
+      where: { publicId, hospitalId, deletedAt: null },
       select: { id: true, publicId: true, patientId: true },
     });
 

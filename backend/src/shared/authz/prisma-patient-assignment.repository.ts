@@ -35,41 +35,56 @@ import { Injectable } from '@nestjs/common';
 import { DoctorVerificationStatus } from '../../generated/prisma/enums';
 import { PrismaService } from '../database';
 import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
-import type { PatientAssignmentRepository } from './authz.types';
+import type { ClinicalReach, PatientAssignmentRepository } from './authz.types';
 
 @Injectable()
 export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async reachesPatient(doctorUserId: string, patientId: string): Promise<boolean> {
-    // One indexed read: the patient's record at the hospital where the
-    // doctor is actively and clinically employed (DR-05).
-    const record = await this.prisma.db.hospitalMedicalRecord.findFirst({
+    return (await this.clinicalReach(doctorUserId, patientId)) !== null;
+  }
+
+  /**
+   * The doctor's one clinical hospital: an active employment at an ACTIVE
+   * hospital, the doctor verified, in ACTIVE or VACATION practice and not
+   * deleted. Two such employments are ambiguous and answer `null`, the same
+   * rule `HospitalContextService` applies, so the hospital a read is scoped
+   * to and the hospital a write is stamped with can never differ.
+   */
+  async clinicalHospital(doctorUserId: string): Promise<string | null> {
+    const rows = await this.prisma.db.doctorEmployment.findMany({
       where: {
-        patient: { OR: [{ publicId: patientId }, ...uuidClause(patientId)] },
-        hospital: {
+        endedAt: null,
+        hospital: { is: ACTIVE_HOSPITAL_FILTER },
+        doctor: {
           is: {
-            ...ACTIVE_HOSPITAL_FILTER,
-            doctorEmployments: {
-              some: {
-                endedAt: null,
-                doctor: {
-                  is: {
-                    userId: doctorUserId,
-                    deletedAt: null,
-                    verificationStatus: DoctorVerificationStatus.VERIFIED,
-                    practiceStatus: { in: [...CLINICAL_PRACTICE_STATUSES] },
-                  },
-                },
-              },
-            },
+            userId: doctorUserId,
+            deletedAt: null,
+            verificationStatus: DoctorVerificationStatus.VERIFIED,
+            practiceStatus: { in: [...CLINICAL_PRACTICE_STATUSES] },
           },
         },
       },
-      select: { id: true },
+      select: { hospitalId: true },
+      take: 2,
     });
+    return rows.length === 1 ? (rows[0]?.hospitalId ?? null) : null;
+  }
 
-    return record !== null;
+  async clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null> {
+    const hospitalId = await this.clinicalHospital(doctorUserId);
+    if (hospitalId === null) return null;
+    const record = await this.prisma.db.hospitalMedicalRecord.findFirst({
+      where: {
+        hospitalId,
+        patient: { OR: [{ publicId: patientId }, ...uuidClause(patientId)] },
+      },
+      select: { id: true, patientId: true },
+    });
+    return record === null
+      ? null
+      : { hospitalId, hospitalMedicalRecordId: record.id, patientId: record.patientId };
   }
 }
 

@@ -90,6 +90,7 @@ import {
   type DetailRow,
   type RecordChildren,
   type RecordCriteria,
+  type Worklist,
 } from '../repositories/record.repository';
 
 import { assertEditable, recordStatusMachine } from './record-status.machine';
@@ -118,10 +119,10 @@ export class RecordService {
 
   /** API §6.1. */
   async list(user: AuthenticatedUser, query: RecordListQuery): Promise<PaginatedRecords> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      worklist,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -147,10 +148,10 @@ export class RecordService {
    * count and the filter *names*.
    */
   async export(user: AuthenticatedUser, query: RecordExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      worklist,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
@@ -640,18 +641,35 @@ export class RecordService {
 
   /** API §6.10 — the cards. */
   async summary(user: AuthenticatedUser): Promise<RecordSummaryView> {
-    return this.records.summaryFor(await this.requireDoctor(user));
+    return this.records.summaryFor(await this.requireWorklist(user));
   }
 
   /** The care-scoped fetch every single-record path begins with. */
   private async require(user: AuthenticatedUser, publicId: string): Promise<DetailRow> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.records.findForDoctor(doctorId, publicId);
+    const hospitalId = await this.requireHospital(user);
+    const row = await this.records.findForDoctor(hospitalId, publicId);
     // Identical to a genuinely missing record, and carrying no
     // reference: the caller must not be able to tell the two apart.
     if (row === null) throw recordNotFound();
 
     return row;
+  }
+
+  /**
+   * The doctor's one clinical hospital (F-01): every record read is scoped
+   * to it. Without unambiguous clinical standing there is no chart to read,
+   * which is the same 404 as a record that does not exist.
+   */
+  private async requireHospital(user: AuthenticatedUser): Promise<string> {
+    await this.requireDoctor(user);
+    const hospitalId = await this.scope.clinicalHospitalOf(principalOf(user));
+    if (hospitalId === null) throw recordNotFound();
+    return hospitalId;
+  }
+
+  private async requireWorklist(user: AuthenticatedUser): Promise<Worklist> {
+    const [doctorId, hospitalId] = await Promise.all([this.requireDoctor(user), this.requireHospital(user)]);
+    return { doctorId, hospitalId };
   }
 
   private async requireDoctor(user: AuthenticatedUser): Promise<string> {

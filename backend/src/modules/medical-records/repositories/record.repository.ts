@@ -325,10 +325,10 @@ export class RecordRepository {
 
   /** API §6.1, scoped to the patients the caller has a care relationship with. */
   async list(
-    doctorId: string,
+    worklist: Worklist,
     criteria: RecordCriteria,
   ): Promise<{ rows: readonly ListRow[]; totalItems: number }> {
-    const where = this.whereFor(doctorId, criteria);
+    const where = this.whereFor(worklist, criteria);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.medicalRecord.findMany({
@@ -345,20 +345,20 @@ export class RecordRepository {
   }
 
   /** The document with every child, care-scoped in the WHERE. */
-  findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
+  findForDoctor(hospitalId: string, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, ...careScope(doctorId) },
+      where: { publicId, ...careScope(hospitalId) },
       select: DETAIL_SELECT,
     });
   }
 
   /** The lightweight row, for a status check before a write. */
   findHeaderForDoctor(
-    doctorId: string,
+    hospitalId: string,
     publicId: string,
   ): Promise<{ id: string; publicId: string; status: RecordStatus } | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, ...careScope(doctorId) },
+      where: { publicId, ...careScope(hospitalId) },
       select: { id: true, publicId: true, status: true },
     });
   }
@@ -834,13 +834,13 @@ export class RecordRepository {
   }
 
   /** API §6.10 — the cards. */
-  async summaryFor(doctorId: string): Promise<{
+  async summaryFor(worklist: Worklist): Promise<{
     open: number;
     completed: number;
     critical: number;
     unsignedNotes: number;
   }> {
-    const scope = careScope(doctorId);
+    const scope = worklistScope(worklist);
 
     const [open, completed, critical, unsignedNotes] = await Promise.all([
       this.prisma.db.medicalRecord.count({
@@ -856,11 +856,11 @@ export class RecordRepository {
     return { open, completed, critical, unsignedNotes };
   }
 
-  private whereFor(doctorId: string, criteria: RecordCriteria): Prisma.MedicalRecordWhereInput {
+  private whereFor(worklist: Worklist, criteria: RecordCriteria): Prisma.MedicalRecordWhereInput {
     const mode = 'insensitive' as const;
 
     return {
-      ...careScope(doctorId),
+      ...worklistScope(worklist),
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -907,16 +907,47 @@ export class RecordRepository {
 }
 
 /**
- * The care-relationship predicate, in one place.
+ * The resource-level DR-05 predicate, in one place (audit F-01).
  *
- * `revokedAt: null` is what makes removing a doctor from a patient's
- * care actually remove their access to that patient's records. It is
- * the same clause `PatientRepository` applies to the chart itself, and
- * the two must agree: a patient absent from a doctor's list is a patient
- * whose records answer 404.
+ * A record is readable by a doctor practising at hospital H when the record
+ * belongs to H and the patient holds a Hospital Medical Record at H. No care
+ * assignment is required (DR-05), and none is honoured: an assignment from a
+ * hospital the doctor has left reaches nothing. A record another hospital
+ * wrote — or an unstamped legacy record — is not part of H's chart, as
+ * Row-Level Security also has it. `PatientScopeService.reachAt` gates the
+ * patient by the same hospital, so the list and the single-record paths
+ * agree.
  */
-function careScope(doctorId: string): Prisma.MedicalRecordWhereInput {
-  return { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } };
+function careScope(hospitalId: string): Prisma.MedicalRecordWhereInput {
+  return { hospitalId, patient: { hospitalMedicalRecords: { some: { hospitalId } } } };
+}
+
+/** Whose worklist, at which hospital. */
+export interface Worklist {
+  readonly hospitalId: string;
+  readonly doctorId: string;
+}
+
+/**
+ * The caller's own list (§6.1): records on patients in their live care at
+ * their hospital — the assignment shapes the list, it is not access (any
+ * record of the hospital opens by id through `careScope`). Always inside
+ * `careScope`, so the list can never show a row the detail would refuse,
+ * and an assignment from a former hospital lists nothing.
+ */
+function worklistScope(worklist: Worklist): Prisma.MedicalRecordWhereInput {
+  return {
+    AND: [
+      careScope(worklist.hospitalId),
+      {
+        patient: {
+          careAssignments: {
+            some: { doctorId: worklist.doctorId, hospitalId: worklist.hospitalId, revokedAt: null },
+          },
+        },
+      },
+    ],
+  };
 }
 
 /**

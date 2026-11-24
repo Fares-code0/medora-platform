@@ -538,8 +538,9 @@ describe('POST /medical-records (§6.3)', () => {
 
 describe('GET /medical-records (§6.1, §6.2)', () => {
   it('lists only records for patients the caller is on, and the detail agrees', async () => {
-    const mine = await seedDoctor('list-mine');
-    // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+    // DR-05 (F-01): the list is the caller's hospital's records, so this
+    // test has a hospital of its own; isolation is across hospitals.
+    const mine = await seedDoctor('list-mine', 'mrlist');
     const theirs = await seedDoctor('list-theirs', 'b');
     const minePatient = await seedPatient(mine.token);
     const theirsPatient = await seedPatient(theirs.token);
@@ -1316,7 +1317,8 @@ describe('notes (§6.6)', () => {
   });
 
   it('counts unsigned notes in the summary', async () => {
-    const doctor = await seedDoctor('note-summary');
+    // The summary counts the caller's hospital (F-01): a hospital of its own.
+    const doctor = await seedDoctor('note-summary', 'mrsum');
     const patientId = await seedPatient(doctor.token);
     const reference = await createRecord(doctor.token, patientId);
 

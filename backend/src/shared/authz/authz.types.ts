@@ -166,6 +166,24 @@ export interface PatientAssignmentRepository {
    * (`@Can`), and each resource is checked against H by its repository.
    */
   reachesPatient(doctorUserId: string, patientId: string): Promise<boolean>;
+
+  /**
+   * DR-05 at resource level (audit F-01): the one hospital H where the
+   * doctor holds clinical standing — `null` when there is none, or more
+   * than one (ambiguous standing is no standing) — and, for `clinicalReach`,
+   * the patient's Hospital Medical Record there. Every clinical row a doctor
+   * reads must belong to H; every row they write is stamped with H.
+   */
+  clinicalHospital(doctorUserId: string): Promise<string | null>;
+  clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null>;
+}
+
+/** Where a doctor reaches a patient: the hospital and the record there. */
+export interface ClinicalReach {
+  readonly hospitalId: string;
+  readonly hospitalMedicalRecordId: string;
+  /** `patients.id` (uuid), whatever handle the caller quoted. */
+  readonly patientId: string;
 }
 
 export const PATIENT_ASSIGNMENT_REPOSITORY = Symbol('PATIENT_ASSIGNMENT_REPOSITORY');

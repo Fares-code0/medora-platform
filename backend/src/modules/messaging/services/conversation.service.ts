@@ -18,6 +18,9 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { PatientScopeService, principalOf } from '../../../shared/authz';
+
 import { AppException } from '../../../common/errors/app.exception';
 import { CONVERSATION_KIND_TO_WIRE } from '../dto/messaging-enums';
 import type { ConversationView } from '../dto/messaging.dto';
@@ -42,7 +45,10 @@ export interface PaginatedConversations {
 
 @Injectable()
 export class ConversationService {
-  constructor(private readonly conversations: ConversationRepository) {}
+  constructor(
+    private readonly conversations: ConversationRepository,
+    private readonly scope: PatientScopeService,
+  ) {}
 
   async list(userId: string, query: ConversationQuery): Promise<PaginatedConversations> {
     const { rows, totalItems } = await this.conversations.list(userId, query);
@@ -72,7 +78,8 @@ export class ConversationService {
    * unknown participant is a 422 naming the count rather than the ids,
    * which would confirm which of them exist.
    */
-  async create(userId: string, body: CreateConversationBody): Promise<{ id: string }> {
+  async create(user: AuthenticatedUser, body: CreateConversationBody): Promise<{ id: string }> {
+    const userId = user.id;
     const requested = [...new Set(body.participantIds)].filter((id) => id !== userId);
 
     if (requested.length === 0) {
@@ -93,11 +100,18 @@ export class ConversationService {
       );
     }
 
+    // A thread *about* a patient is that patient's PHI at a hospital
+    // (F-01, F-06): only a caller who reaches the patient may tag one, and
+    // the thread belongs to the hospital where the reach holds. Anyone else
+    // gets the same 404 a missing patient produces.
+    const chart =
+      body.patientId === undefined ? undefined : await this.scope.reachAt(principalOf(user), body.patientId);
+
     const id = await this.conversations.create({
       authorId: userId,
       participantIds: requested,
       topic: body.topic,
-      patientId: body.patientId,
+      ...(chart === undefined ? {} : { chart }),
     });
 
     return { id };

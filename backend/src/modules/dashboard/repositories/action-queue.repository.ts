@@ -104,7 +104,7 @@ export class ActionQueueRepository {
   /** Pending requests on this doctor's book (§5.1, §5.4). */
   async appointmentRequests(doctorId: string): Promise<readonly AppointmentRequestRow[]> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: { doctorId, status: 'PENDING', deletedAt: null },
+      where: { doctorId, status: 'PENDING', deletedAt: null, ...atPractice(doctorId) },
       select: {
         publicId: true,
         createdAt: true,
@@ -137,9 +137,18 @@ export class ActionQueueRepository {
         deletedAt: null,
         hasCriticalResult: true,
         reviewedAt: null,
-        OR: [
-          { orderedBy: doctorId },
-          { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } },
+        // The doctor's own queue — orders they placed or on a patient in
+        // their live care — and only at their current hospital (F-01):
+        // neither authorship nor an old assignment reaches another
+        // hospital's results.
+        AND: [
+          atPractice(doctorId),
+          {
+            OR: [
+              { orderedBy: doctorId },
+              { patient: { careAssignments: { some: { doctorId, revokedAt: null } } } },
+            ],
+          },
         ],
       },
       select: {
@@ -263,3 +272,17 @@ export class ActionQueueRepository {
 
 /** Kept honest by the compiler: the shape the queries above promise. */
 export type QueuePatientSelect = Prisma.PatientGetPayload<{ select: typeof QUEUE_PATIENT.select }>;
+
+/**
+ * Resource-level DR-05 for the doctor's own dashboards (audit F-01): rows
+ * belonging to a hospital where the doctor practises now, through the
+ * patient's Hospital Medical Record there. After a transfer, the former
+ * hospital's appointments, orders, notes and alerts leave the dashboard.
+ */
+function atPractice(doctorId: string) {
+  return {
+    hospitalMedicalRecord: {
+      is: { hospital: { is: { doctorEmployments: { some: { doctorId, endedAt: null } } } } },
+    },
+  } as const;
+}

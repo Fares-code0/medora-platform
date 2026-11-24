@@ -58,6 +58,7 @@ import {
   type Db,
   type ListCriteria,
   type PersistableWarning,
+  RenewalUnattributable,
 } from '../repositories/prescription.repository';
 
 import { InteractionSourceUnavailable } from './interaction-source';
@@ -159,7 +160,7 @@ export class PrescriptionService {
     input: CreatePrescriptionInput,
   ): Promise<PrescriptionDetailView> {
     const doctorId = await this.requireDoctor(user);
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    const reach = await this.scope.reachAt(principalOf(user), input.patientId);
 
     const patient = await this.prescriptions.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
@@ -195,7 +196,7 @@ export class PrescriptionService {
     const record =
       input.recordId === undefined
         ? null
-        : await this.prescriptions.recordForPatient(patient.id, input.recordId);
+        : await this.prescriptions.recordForPatient(patient.id, input.recordId, reach.hospitalId);
 
     if (input.recordId !== undefined && record === null) {
       throw AppException.validation(
@@ -654,6 +655,12 @@ export class PrescriptionService {
       endDate,
       actorId: user.id,
       actorName: await this.actorName(user),
+    }).catch((error: unknown) => {
+      // F-06: a renewal is never unattributed (see the repository).
+      if (error instanceof RenewalUnattributable) {
+        throw AppException.conflict('This prescription cannot be renewed without a clinical hospital', 'conflict');
+      }
+      throw error;
     });
 
     await this.audit.record({

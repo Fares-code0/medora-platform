@@ -64,10 +64,7 @@ export class AiConversationService {
   }
 
   /** API §11.2 — `GET /ai/conversations/{id}`. */
-  async detail(
-    user: AuthenticatedUser,
-    conversationId: string,
-  ): Promise<AiConversationDetailView> {
+  async detail(user: AuthenticatedUser, conversationId: string): Promise<AiConversationDetailView> {
     const row = await this.conversations.detail(user.id, conversationId);
     if (row === null) throw notFound();
 
@@ -90,6 +87,7 @@ export class AiConversationService {
       contextMode: modeToEnum(input.context.mode),
       patientId: resolved.patient?.id ?? null,
       refPublicId: resolved.entity?.refId ?? null,
+      chart: resolved.chart ?? null,
     });
 
     // Audited because binding a patient to an assistant thread is an

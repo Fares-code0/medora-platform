@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CriticalAlertsRepository } from '../src/modules/dashboard/repositories/critical-alerts.repository';
 import {
   type AuthHarness,
+  clinicalStampFor,
   createAuthHarness,
   dataOf,
   makeClinicalDoctor,
@@ -155,8 +156,12 @@ beforeAll(async () => {
   // Written straight to the database: open its Medical Record (DR-05).
   await recordPatientAt(harness.prisma, patientId);
 
+  // Every clinical row below belongs to the doctor's hospital (F-01/F-06).
+  const stamp = await clinicalStampFor(harness.prisma, doctorId, patientId);
+  const owned = { hospitalId: stamp.hospitalId, hospitalMedicalRecordId: stamp.hospitalMedicalRecordId };
+
   await harness.prisma.patientDoctorAssignment.create({
-    data: { patientId, doctorId, role: 'primary' },
+    data: { ...stamp, patientId, doctorId, role: 'primary' },
   });
 
   const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
@@ -169,6 +174,7 @@ beforeAll(async () => {
   await harness.prisma.appointment.createMany({
     data: [
       {
+        ...stamp,
         publicId: `APT-T${TAG}1`,
         patientId,
         doctorId,
@@ -178,6 +184,7 @@ beforeAll(async () => {
         status: 'COMPLETED',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}2`,
         patientId,
         doctorId,
@@ -187,6 +194,7 @@ beforeAll(async () => {
         status: 'CONFIRMED',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}3`,
         patientId,
         doctorId,
@@ -196,6 +204,7 @@ beforeAll(async () => {
         status: 'PENDING',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}4`,
         patientId,
         doctorId,
@@ -210,6 +219,7 @@ beforeAll(async () => {
       // for any run after 20:00 UTC. Tomorrow is always ahead, and lies
       // outside every today-bounded figure the composite asserts.
       {
+        ...stamp,
         publicId: `APT-T${TAG}5`,
         patientId,
         doctorId,
@@ -224,6 +234,7 @@ beforeAll(async () => {
 
   const record0 = await harness.prisma.medicalRecord.create({
     data: {
+      ...stamp,
       publicId: `MR-T${TAG}1`,
       patientId,
       doctorId,
@@ -249,6 +260,7 @@ beforeAll(async () => {
 
   await harness.prisma.prescription.create({
     data: {
+      ...stamp,
       publicId: `RX-T${TAG}1`,
       patientId,
       medicationId: medication.id,
@@ -271,6 +283,7 @@ beforeAll(async () => {
   // the Row-0 banner's first source, and the action queue's.
   await harness.prisma.labOrder.create({
     data: {
+      ...stamp,
       publicId: `LAB-T${TAG}1`,
       patientId,
       testId: test.id,
@@ -284,7 +297,7 @@ beforeAll(async () => {
   });
 
   await harness.prisma.patientClinicalAlert.create({
-    data: { patientId, severity: 'CRITICAL', message: 'Anaphylaxis to penicillin', active: true },
+    data: { ...owned, patientId, severity: 'CRITICAL', message: 'Anaphylaxis to penicillin', active: true },
   });
 
   await harness.prisma.satisfactionSurvey.create({

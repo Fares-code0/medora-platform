@@ -98,6 +98,7 @@ import {
   type PatientListCriteria,
   type PatientRow,
 } from '../repositories/patient.repository';
+import type { ChartScope } from '../repositories/patient-tabs.repository';
 
 export interface PaginatedPatients<T> {
   readonly items: readonly T[];
@@ -133,13 +134,14 @@ export class PatientService {
     user: AuthenticatedUser,
     query: PatientListQuery,
   ): Promise<PaginatedPatients<PatientView | MaskedIdentity>> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const care = await this.careOf(user);
+    const clear = care !== null;
 
-    const { rows, totalItems } = await this.patients.list(
-      doctorId,
+    const { rows: found, totalItems } = await this.patients.list(
+      care,
       criteriaFor(query, query.page, query.pageSize),
     );
+    const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
     // The masked branch needs no appointment lookup — a masked row does
     // not carry `nextAppointment`, and a query for a field nobody will
@@ -178,13 +180,14 @@ export class PatientService {
    * why it is a `warning` in the taxonomy rather than an ordinary read.
    */
   async export(user: AuthenticatedUser, query: PatientExportQuery): Promise<CsvFile> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const care = await this.careOf(user);
+    const clear = care !== null;
 
-    const { rows, totalItems } = await this.patients.list(
-      doctorId,
+    const { rows: found, totalItems } = await this.patients.list(
+      care,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
+    const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
     if (totalItems > EXPORT_ROW_LIMIT) throw exportTooLarge(totalItems);
 
@@ -233,12 +236,12 @@ export class PatientService {
       return toMasked(row);
     }
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    const reach = await this.scope.reachAt(principalOf(user), publicId);
     await this.recordPhiRead(user, row, 'patient.view');
 
     const next = await this.patients.nextAppointments([row.id]);
 
-    return toView(row, next[row.id] ?? null, new Date());
+    return toView(atHospital(row, reach.hospitalId), next[row.id] ?? null, new Date());
   }
 
   /**
@@ -312,7 +315,7 @@ export class PatientService {
     const row = await this.requireReachable(user, publicId);
 
     const [bundle, next] = await Promise.all([
-      this.patients.bundleFor(row.id),
+      this.patients.bundleFor(row.chart),
       this.patients.nextAppointments([row.id]),
     ]);
 
@@ -504,7 +507,7 @@ export class PatientService {
     let created: AllergyRow;
     try {
       created = await this.patients.createAllergy({
-        patientId: row.id,
+        scope: row.chart,
         actorId: user.id,
         allergen: input.allergen,
         severity: ALLERGY_SEVERITY_FROM_WIRE[input.severity] ?? 'MILD',
@@ -547,7 +550,7 @@ export class PatientService {
   ): Promise<PatientAllergyView> {
     const row = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAllergy(row.id, allergyId, user.id, {
+    const updated = await this.patients.updateAllergy(row.chart, allergyId, user.id, {
       allergen: input.allergen,
       severity:
         input.severity === undefined ? undefined : ALLERGY_SEVERITY_FROM_WIRE[input.severity],
@@ -575,7 +578,7 @@ export class PatientService {
   ): Promise<void> {
     const row = await this.requireReachable(user, publicId);
 
-    const removed = await this.patients.removeAllergy(row.id, allergyId, user.id);
+    const removed = await this.patients.removeAllergy(row.chart, allergyId, user.id);
     if (removed === 0) throw AppException.notFound('Allergy not found');
 
     // Removing an allergy narrows what the prescription safety screen
@@ -597,7 +600,7 @@ export class PatientService {
     activeOnly: boolean,
   ): Promise<readonly PatientAlertView[]> {
     const row = await this.requireReachable(user, publicId);
-    return (await this.patients.alerts(row.id, activeOnly)).map(toAlertView);
+    return (await this.patients.alerts(row.chart, activeOnly)).map(toAlertView);
   }
 
   async addAlert(
@@ -608,7 +611,7 @@ export class PatientService {
     const row = await this.requireReachable(user, publicId);
 
     const created = await this.patients.createAlert({
-      patientId: row.id,
+      scope: row.chart,
       actorId: user.id,
       severity: ALERT_SEVERITY_FROM_WIRE[input.severity] ?? 'WARNING',
       message: input.message,
@@ -633,7 +636,7 @@ export class PatientService {
   ): Promise<PatientAlertView> {
     const row = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAlert(row.id, alertId, user.id, {
+    const updated = await this.patients.updateAlert(row.chart, alertId, user.id, {
       severity:
         input.severity === undefined ? undefined : ALERT_SEVERITY_FROM_WIRE[input.severity],
       message: input.message,
@@ -655,6 +658,23 @@ export class PatientService {
   }
 
   /**
+   * A doctor's list scope: their doctor row and their one clinical hospital
+   * (F-01). A doctor without unambiguous clinical standing has no clear
+   * list — they get the masked directory every other role gets, never an
+   * unscoped one.
+   */
+  private async careOf(
+    user: AuthenticatedUser,
+  ): Promise<{ readonly doctorId: string; readonly hospitalId: string } | null> {
+    if (user.role !== 'doctor') return null;
+    const [doctorId, hospitalId] = await Promise.all([
+      this.patients.doctorIdForUser(user.id),
+      this.scope.clinicalHospitalOf(principalOf(user)),
+    ]);
+    return doctorId === null || hospitalId === null ? null : { doctorId, hospitalId };
+  }
+
+  /**
    * The chart, or a 404 that does not say which kind of 404 it is.
    *
    * Every clinical read and write on this surface starts here, which is
@@ -664,13 +684,20 @@ export class PatientService {
   private async requireReachable(
     user: AuthenticatedUser,
     publicId: string,
-  ): Promise<PatientRow> {
+  ): Promise<PatientRow & { readonly chart: ChartScope }> {
     const row = await this.patients.findByPublicId(publicId);
     if (row === null) throw notFound();
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    // DR-05 at resource level (F-01): the chart is the patient's record at
+    // the doctor's hospital — its rows only, and its stamp on every write.
+    const reach = await this.scope.reachAt(principalOf(user), publicId);
+    const chart: ChartScope = {
+      patientId: row.id,
+      hospitalId: reach.hospitalId,
+      hospitalMedicalRecordId: reach.hospitalMedicalRecordId,
+    };
 
-    return row;
+    return { ...atHospital(row, reach.hospitalId), chart };
   }
 
   /**
@@ -927,3 +954,8 @@ const BLOOD_TYPE_FROM_WIRE: Readonly<Record<string, PatientRow['bloodType']>> = 
   'O+': 'O_POSITIVE',
   'O-': 'O_NEGATIVE',
 };
+
+/** The chart as one hospital sees it: its own allergy rows only (F-01). */
+function atHospital<T extends PatientRow>(row: T, hospitalId: string): T {
+  return { ...row, allergies: row.allergies.filter((allergy) => allergy.hospitalId === hospitalId) };
+}
