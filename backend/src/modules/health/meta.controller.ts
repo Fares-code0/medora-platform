@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 
 import { RevalidatePrivately } from '../../common/http/cache-policy';
-import { Authenticated } from '../../shared/authz';
+import { Authenticated, NotPhi } from '../../shared/authz';
 
 import { MetaService, type MetaEnumsResponse } from './meta.service';
 
@@ -23,6 +23,7 @@ import { MetaService, type MetaEnumsResponse } from './meta.service';
 export class MetaController {
   constructor(private readonly meta: MetaService) {}
 
+  @NotPhi('status vocabularies')
   @Get('enums')
   @RevalidatePrivately()
   enums(): Promise<MetaEnumsResponse> {

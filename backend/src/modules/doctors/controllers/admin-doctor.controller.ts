@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type {
   AdminDoctorDetail,
   PracticeStatusResult,
@@ -56,6 +56,7 @@ export class AdminDoctorController {
 
   /** API §3.4 — the roster with its four operational columns. */
   @Can('doctors.manage')
+  @NotPhi('doctor directory')
   @Get()
   list(
     @Query(zodQuery(adminDoctorQuerySchema)) query: AdminDoctorQuery,
@@ -65,6 +66,7 @@ export class AdminDoctorController {
 
   /** API §3.5 — the detail, carrying `affectedAppointments` for §3.7. */
   @Can('doctors.manage')
+  @NotPhi('a doctor profile')
   @Get(':doctorId')
   detail(@Param('doctorId') doctorId: string): Promise<AdminDoctorDetail> {
     return this.doctors.detail(doctorId);

@@ -33,7 +33,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import {
   assertScanClean,
@@ -108,6 +108,8 @@ export interface PatientAppointmentView {
 @Injectable()
 export class PatientTabsService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly patients: PatientRepository,
     private readonly tabs: PatientTabsRepository,
     private readonly scope: PatientScopeService,
@@ -508,7 +510,7 @@ export class PatientTabsService {
       { fileName: document.file.originalName, disposition: 'attachment' },
     );
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',

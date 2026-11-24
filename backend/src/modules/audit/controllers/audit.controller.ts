@@ -4,7 +4,7 @@ import type { Response } from 'express';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can, HospitalScope } from '../../../shared/authz';
+import { Can, HospitalScope, NotPhi } from '../../../shared/authz';
 import {
   auditExportSchema,
   auditQuerySchema,
@@ -43,6 +43,7 @@ export class AuditController {
 
   /** §14.1 — filters, keyset pagination, pivot and the retention meta. */
   @HospitalScope()
+  @NotPhi('audit ledger metadata; carries identifiers, never clinical content')
   @Get()
   async list(
     @CurrentUser() actor: AuthenticatedUser,
@@ -79,6 +80,7 @@ export class AuditController {
 
   /** §14.2 — the full payload and the correlated events. */
   @HospitalScope()
+  @NotPhi('audit ledger metadata; carries identifiers, never clinical content')
   @Get(':eventId')
   detail(@CurrentUser() actor: AuthenticatedUser, @Param('eventId') eventId: string) {
     return this.query.detail(actor, eventId);

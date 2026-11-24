@@ -48,7 +48,7 @@ import {
   type CsvFile,
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type {
@@ -124,6 +124,8 @@ const TRANSITION_EVENT: Record<TransitionLabOrderInput['to'], LabTimelineKind> =
 @Injectable()
 export class LabOrderService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly orders: LabOrderRepository,
     private readonly tests: LabTestRepository,
     private readonly scope: PatientScopeService,
@@ -178,7 +180,7 @@ export class LabOrderService {
     const now = new Date();
     const body = toCsv(EXPORT_COLUMNS, rows.map((row) => toLabOrderView(row, now)));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'lab_order.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'lab_order',

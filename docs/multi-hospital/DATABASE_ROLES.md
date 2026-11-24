@@ -48,21 +48,21 @@ passed**. Every failure was classified:
   owner. The runtime role correctly cannot.
 - **One application path (finding §4):** the audit retention job.
 
-## 4. Finding — the audit partition jobs need DDL
+## 4. The audit partition jobs (resolved — option 2, finding F-05)
 
-`AuditRepository` (`backend/src/modules/audit/repositories/audit.repository.ts`) calls
-`create_audit_events_partition(date)` (creates a partition: `CREATE TABLE … PARTITION OF`) and drops
-expired partitions with `DROP TABLE IF EXISTS`. Both are refused for the runtime role (proven; and the
-retention test fails with `permission denied for schema public` when run as it).
+`AuditRepository` creates monthly partitions through `create_audit_events_partition(date)` and drops
+expired ones through `drop_audit_events_partition(text)`. Since migration
+`20261125090000_audit_partition_hardening` both are owner-defined `SECURITY DEFINER` functions with a
+pinned `search_path = pg_catalog, public` and schema-qualified DDL, so the runtime role holds no DDL
+right of its own (`CREATE TABLE` and `DROP TABLE` stay refused; `database-roles.e2e-spec.ts`).
 
-Options (decision needed; tracked on #19):
-1. Run the retention/partition job on a separate connection as the owner role (Backend change).
-2. Owner-defined `SECURITY DEFINER` functions for create and for drop-expired, executable by the runtime
-   role (Database migration + Backend call change). **Caution, proven in the test:**
-   `create_audit_events_partition` uses *unqualified* names, so a definer wrapper must pin
-   `search_path = public, pg_temp` (safe only because the runtime role cannot create in `public`) — or,
-   better, the function is first rewritten with schema-qualified names. A drop function must restrict
-   itself to `audit_events_YYYY_MM` partitions older than the retention window.
+- Creation accepts only the first day of a month, and secures the new partition at once: every
+  non-owner privilege is revoked and Row-Level Security is enabled with no policy, so a partition can
+  never be addressed directly — reads and appends go through `audit_events`, whose policies apply.
+- The drop accepts only an `audit_events_YYYY_MM` child of `audit_events` whose month has ended; never
+  the DEFAULT partition or another table. The retention window itself remains the service's.
+
+The option considered and not adopted was a separate owner connection for the retention job.
 
 ## 5. Deployment requirements (operations)
 

@@ -22,5 +22,11 @@ export {
   type AuditSeverity,
   type Classification,
 } from './audit-taxonomy';
+export {
+  type AuditAttribution,
+  currentAuditAttribution,
+  runWithAuditAttribution,
+} from './audit-attribution';
 export { AuditKernelModule } from './audit.module';
+export { MandatoryAuditWriter } from './mandatory-audit.writer';
 export { TransactionalAuditWriter } from './transactional-audit.writer';

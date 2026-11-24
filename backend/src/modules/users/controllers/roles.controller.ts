@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can, HospitalScope, PlatformScope } from '../../../shared/authz';
+import { Can, HospitalScope, NotPhi, PlatformScope } from '../../../shared/authz';
 import type {
   CapabilityCatalogueView,
   MatrixPreviewView,
@@ -52,6 +52,7 @@ export class RolesController {
 
   /** API §15.1 — roles with member counts. */
   @HospitalScope()
+  @NotPhi('role definitions')
   @Get('roles')
   list(): Promise<readonly RoleView[]> {
     return this.roles.list();
@@ -59,6 +60,7 @@ export class RolesController {
 
   /** API §15.1 — the 22-capability catalogue, grouped by domain. */
   @HospitalScope()
+  @NotPhi('permission catalogue')
   @Get('permissions')
   catalogue(): CapabilityCatalogueView {
     return this.roles.catalogue();
@@ -73,6 +75,7 @@ export class RolesController {
    * `:notificationId` case at M19, which genuinely needed the ordering.
    */
   @PlatformScope()
+  @NotPhi('role and permission matrix')
   @Get('roles/matrix')
   matrix(): Promise<MatrixView> {
     return this.roles.matrix();
@@ -117,6 +120,7 @@ export class RolesController {
 
   /** API §15.5 — read one account's overrides and its effective set. */
   @PlatformScope()
+  @NotPhi('a user’s effective permissions')
   @Get('users/:userId/permissions')
   userPermissions(@Param('userId') userId: string): Promise<UserPermissionsView> {
     return this.roles.userPermissions(userId);

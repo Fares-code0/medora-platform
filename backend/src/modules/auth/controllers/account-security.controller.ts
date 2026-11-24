@@ -13,7 +13,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type {
   ActiveSessionView,
   LoginEventView,
@@ -56,6 +56,7 @@ export class AccountSecurityController {
   constructor(private readonly security: AccountSecurityService) {}
 
   /** API §2.4 — the live sessions, current one flagged. */
+  @NotPhi('the caller’s own sessions')
   @Get('sessions')
   sessions(@CurrentUser() user: AuthenticatedUser): Promise<readonly ActiveSessionView[]> {
     return this.security.sessions(user);
@@ -87,6 +88,7 @@ export class AccountSecurityController {
   }
 
   /** API §2.6 — the devices this account trusts. */
+  @NotPhi('the caller’s own devices')
   @Get('devices')
   devices(@CurrentUser() user: AuthenticatedUser): Promise<readonly TrustedDeviceView[]> {
     return this.security.devices(user.id);
@@ -113,6 +115,7 @@ export class AccountSecurityController {
   }
 
   /** API §2.7 — paginated sign-in history. Failures included. */
+  @NotPhi('the caller’s own sign-in history')
   @Get('login-history')
   loginHistory(
     @CurrentUser() user: AuthenticatedUser,

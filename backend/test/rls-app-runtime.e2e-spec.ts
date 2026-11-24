@@ -161,6 +161,30 @@ describe('the application connected as the runtime role', () => {
     expect(response.status, JSON.stringify(response.body)).toBe(200);
   });
 
+  it('writes the mandatory read audit under RLS, attributed to the doctor’s hospital (F-02, F-04)', async () => {
+    const events = async (type: string) =>
+      (
+        await owner.query<{ hospital_id: string | null }>(
+          `SELECT hospital_id FROM audit_events
+            WHERE event_type = $1 AND actor_id = (SELECT id FROM users WHERE email = $2)`,
+          [type, testEmail('rls-doctor')],
+        )
+      ).rows;
+    const views = (await events('patient.view')).length;
+    const reads = (await events('phi.read')).length;
+
+    expect((await request(harness.server).get(`/api/v1/patients/${publicIds.patientA}`).set(as())).status).toBe(200);
+    const vitals = await request(harness.server).get(`/api/v1/patients/${publicIds.patientA}/vitals`).set(as());
+    expect(vitals.status, JSON.stringify(vitals.body)).toBe(200);
+
+    const viewRows = await events('patient.view');
+    const readRows = await events('phi.read');
+    expect(viewRows.length).toBe(views + 1);
+    expect(readRows.length).toBe(reads + 1);
+    expect(viewRows.every((row) => row.hospital_id === ids.hospitalA)).toBe(true);
+    expect(readRows.every((row) => row.hospital_id === ids.hospitalA)).toBe(true);
+  });
+
   it('cannot reach another hospital’s patient', async () => {
     const response = await request(harness.server).get(`/api/v1/patients/${publicIds.patientB}`).set(as());
     expect(response.status).toBe(404);

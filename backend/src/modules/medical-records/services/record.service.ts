@@ -41,7 +41,7 @@ import {
   type CsvFile,
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import {
   assertScanClean,
@@ -106,6 +106,8 @@ export interface PaginatedRecords {
 @Injectable()
 export class RecordService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly records: RecordRepository,
     private readonly scope: PatientScopeService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
@@ -157,7 +159,7 @@ export class RecordService {
     const now = new Date();
     const body = toCsv(LIST_EXPORT_COLUMNS, rows.map((row) => toView(row, now)));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'medical_record.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'medical_record',
@@ -192,7 +194,7 @@ export class RecordService {
 
     const body = toCsv(FIELD_VALUE_COLUMNS, recordFields(record));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'medical_record.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'medical_record',
@@ -587,7 +589,7 @@ export class RecordService {
       { fileName: attachment.file.originalName, disposition: 'attachment' },
     );
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',
@@ -714,7 +716,7 @@ export class RecordService {
     reference: string,
     action: string,
   ): Promise<void> {
-    await this.audit.record({
+    await this.disclosures.record({
       action,
       actor: { userId: user.id, role: user.role },
       entityType: 'medical_record',

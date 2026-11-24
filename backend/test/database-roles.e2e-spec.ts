@@ -226,40 +226,29 @@ describe('runtime role (provision-runtime-role.sql)', () => {
     });
   });
 
-  it('cannot run the audit partition jobs as they are written today (finding: needs a decision)', async () => {
-    await withRuntimeRole(async (runtime, owner) => {
+  it('runs the audit partition jobs only through the owner-defined functions (F-05)', async () => {
+    await withRuntimeRole(async (runtime) => {
       await asRuntime(runtime);
-      // create_audit_events_partition is SECURITY INVOKER and runs CREATE TABLE.
-      await refused("SELECT public.create_audit_events_partition(DATE '2099-01-01')");
-      // audit.repository.ts drops expired partitions with DROP TABLE.
-      await refused('DROP TABLE IF EXISTS public.audit_events_2026_11');
+      // Creation through the SECURITY DEFINER function: the partition is
+      // made, owned by the owner and secured (RLS on, no grantee).
+      await client.query("SELECT public.create_audit_events_partition(DATE '2099-01-01')");
+      await client.query('RESET ROLE');
+      const made = (
+        await client.query<{ rls: boolean; acl: string | null }>(
+          "SELECT relrowsecurity AS rls, relacl::text AS acl FROM pg_class WHERE oid = 'public.audit_events_2099_01'::regclass",
+        )
+      ).rows[0];
+      expect(made?.rls).toBe(true);
+      expect(made?.acl ?? '').not.toContain(runtime);
 
-      // One possible remedy, demonstrated (not adopted): an owner-defined
-      // SECURITY DEFINER wrapper. create_audit_events_partition uses
-      // UNQUALIFIED names, so the wrapper must pin `public` first (pg_temp
-      // last; the runtime role cannot create in public) — with
-      // `pg_catalog, public` it tries to create the partition in pg_catalog.
-      // Adopting this for real should first schema-qualify the function.
-      await client.query('RESET ROLE');
-      await client.query(
-        'CREATE FUNCTION public.role_test_create_partition(month_start date) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$ SELECT public.create_audit_events_partition(month_start) $$',
-      );
-      await client.query(
-        `ALTER FUNCTION public.role_test_create_partition(date) OWNER TO ${owner}`,
-      );
-      await client.query(
-        `GRANT EXECUTE ON FUNCTION public.role_test_create_partition(date) TO ${runtime}`,
-      );
       await asRuntime(runtime);
-      await client.query("SELECT public.role_test_create_partition(DATE '2099-01-01')");
-      await client.query('RESET ROLE');
-      expect(
-        (
-          await client.query(
-            "SELECT to_regclass('public.audit_events_2099_01') IS NOT NULL AS made",
-          )
-        ).rows[0],
-      ).toEqual({ made: true });
+      // No DDL right of its own: neither CREATE nor DROP directly.
+      await refused(
+        "CREATE TABLE public.audit_events_2099_02 PARTITION OF public.audit_events FOR VALUES FROM ('2099-02-01') TO ('2099-03-01')",
+      );
+      await refused('DROP TABLE IF EXISTS public.audit_events_2099_01');
+      // The drop function refuses a month that has not ended.
+      await refused("SELECT public.drop_audit_events_partition('audit_events_2099_01')", [], '22023');
     });
   });
 

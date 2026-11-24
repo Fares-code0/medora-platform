@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi, PhiRead } from '../../../shared/authz';
 import type { BadgeCounts } from '../dto/notification.dto';
 import {
   notificationFlagSchema,
@@ -63,6 +63,8 @@ import {
 export class NotificationController {
   constructor(private readonly notifications: NotificationService) {}
 
+  @PhiRead('notification_list')
+
   @Get()
   feed(
     @CurrentUser() user: AuthenticatedUser,
@@ -78,12 +80,14 @@ export class NotificationController {
    * this one would capture `badge-counts` as an id and answer 404 on the
    * poll target.
    */
+  @NotPhi('counts')
   @Get('badge-counts')
   badgeCounts(@CurrentUser() user: AuthenticatedUser): Promise<BadgeCounts> {
     return this.notifications.badgeCounts(user.id);
   }
 
   /** API §10.6 — the summary cards. Declared above `:notificationId`. */
+  @NotPhi('counts')
   @Get('summary')
   summary(@CurrentUser() user: AuthenticatedUser): Promise<NotificationSummary> {
     return this.notifications.summary(user.id);

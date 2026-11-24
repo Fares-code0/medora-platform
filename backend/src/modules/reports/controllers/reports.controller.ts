@@ -17,7 +17,7 @@ import type { Response } from 'express';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type { InsightView } from '../dto/analytics.dto';
 import { insightsQuerySchema, type AnalyticsQuery } from '../dto/analytics.schema';
 import {
@@ -58,6 +58,7 @@ export class ReportsController {
   ) {}
 
   /** API §12.2 — the seven insight kinds. */
+  @NotPhi('aggregate reporting; no patient-level data')
   @Get('insights')
   insights(
     @CurrentUser() user: AuthenticatedUser,
@@ -68,6 +69,8 @@ export class ReportsController {
   }
 
   /* ── Saved reports — API §12.3 ───────────────────────────────── */
+
+  @NotPhi('report definitions')
 
   @Get('saved')
   listSaved(@CurrentUser() user: AuthenticatedUser) {
@@ -94,6 +97,8 @@ export class ReportsController {
 
   /* ── Scheduled reports — API §12.4 ───────────────────────────── */
 
+  @NotPhi('report schedules')
+
   @Get('scheduled')
   listScheduled(@CurrentUser() user: AuthenticatedUser) {
     return this.documents.listScheduled(user.id);
@@ -109,6 +114,7 @@ export class ReportsController {
   }
 
   /** Declared before `:reportId` so `runs` is not read as an id. */
+  @NotPhi('report run history; no patient-level data')
   @Get('scheduled/:reportId/runs')
   runs(@CurrentUser() user: AuthenticatedUser, @Param('reportId') reportId: string) {
     return this.documents.runs(user.id, reportId);

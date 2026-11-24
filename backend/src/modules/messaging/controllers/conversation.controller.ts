@@ -14,7 +14,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import { Idempotent } from '../../../shared/idempotency';
 import type { MessageView } from '../dto/messaging.dto';
 import {
@@ -63,6 +63,8 @@ export class ConversationController {
     private readonly messages: MessageService,
   ) {}
 
+  @PhiRead('conversation_list')
+
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -80,6 +82,8 @@ export class ConversationController {
   ): Promise<{ id: string }> {
     return this.conversations.create(user.id, body);
   }
+
+  @PhiRead('messages')
 
   @Get(':conversationId/messages')
   thread(

@@ -2,7 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import type { ActionQueueView } from '../dto/action-queue.dto';
 import { ActionQueueService } from '../services/action-queue.service';
 import { CriticalAlertsService } from '../services/critical-alerts.service';
@@ -52,6 +52,7 @@ export class DoctorDashboardController {
    * Declared first, and the route is the bare controller path, so no
    * parameterised sibling can shadow it.
    */
+  @PhiRead('doctor_dashboard')
   @Get()
   composite(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.overview(user);
@@ -63,12 +64,14 @@ export class DoctorDashboardController {
    * **Fails loud.** Nothing between the query and the exception filter
    * catches anything; see `CriticalAlertsService`.
    */
+  @PhiRead('critical_alerts')
   @Get('critical-alerts')
   alerts(@CurrentUser() user: AuthenticatedUser) {
     return this.criticalAlerts.forDoctor(user);
   }
 
   /** API §16.2 — the Row 2 widget, sorted urgency then age (M15.4). */
+  @PhiRead('action_queue')
   @Get('action-queue')
   queue(@CurrentUser() user: AuthenticatedUser): Promise<ActionQueueView> {
     return this.actionQueue.forDoctor(user);
@@ -76,25 +79,35 @@ export class DoctorDashboardController {
 
   /* ── The other widgets (M27.2) ─────────────────────────────── */
 
+  @NotPhi('counts; no patient-level data')
+
   @Get('kpis')
   kpis(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.kpisFor(user);
   }
+
+  @PhiRead('schedule')
 
   @Get('schedule')
   schedule(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.scheduleFor(user);
   }
 
+  @NotPhi('aggregate trends')
+
   @Get('trends')
   trends(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.trendsFor(user);
   }
 
+  @NotPhi('aggregate satisfaction scores')
+
   @Get('satisfaction')
   satisfaction(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.satisfactionFor(user);
   }
+
+  @PhiRead('recent_activity')
 
   @Get('recent-activity')
   recentActivity(@CurrentUser() user: AuthenticatedUser) {

@@ -16,7 +16,7 @@ import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nest
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Roles } from '../../../shared/authz';
+import { NotPhi, Roles } from '../../../shared/authz';
 import type { DeadLetterView, JobTriggerView, JobsView } from '../dto/jobs.dto';
 import { JobsService } from '../services/jobs.service';
 
@@ -24,6 +24,8 @@ import { JobsService } from '../services/jobs.service';
 @Controller('administration/jobs')
 export class JobsController {
   constructor(private readonly jobs: JobsService) {}
+
+  @NotPhi('background job status')
 
   @Get()
   overview(): JobsView {
@@ -35,6 +37,7 @@ export class JobsController {
    * collide with it anyway — a job name is dotted (`audit.retention-
    * sweep`) and this segment is not, so no schedule can shadow it.
    */
+  @NotPhi('job failure metadata; no patient data')
   @Get('dead-letters')
   deadLetters(@Query('job') job?: string): readonly DeadLetterView[] {
     return this.jobs.deadLetterList(job);

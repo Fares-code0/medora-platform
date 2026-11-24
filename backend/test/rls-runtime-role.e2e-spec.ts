@@ -331,6 +331,58 @@ describe('the audit ledger', () => {
       as({ scope: 'system' }, (client) => client.query('DELETE FROM audit_events WHERE id = $1', [event])),
     ).rejects.toThrow(/permission denied/);
   });
+
+  /* F-04: attribution is validated against the request's own tenant. */
+  const append = (context: Context, hospital: string | null) =>
+    as(context, (client) =>
+      client.query(
+        `INSERT INTO audit_events (id, occurred_at, category, event_type, severity, summary, hospital_id)
+         VALUES ($1, now(), 'user_action', 'rls.attribution_probe', 'info', 'RLS attribution probe', $2)`,
+        [randomUUID(), hospital],
+      ),
+    );
+
+  it('lets a hospital-scoped request append events attributed to its own hospital, or to none', async () => {
+    await expect(append({ scope: 'hospital', hospitalId: ids.hospitalA }, ids.hospitalA)).resolves.toBeDefined();
+    await expect(append({ scope: 'hospital', hospitalId: ids.hospitalA }, null)).resolves.toBeDefined();
+  });
+
+  it('refuses a hospital-scoped request forging another hospital’s audit history', async () => {
+    await expect(append({ scope: 'hospital', hospitalId: ids.hospitalA }, ids.hospitalB)).rejects.toThrow(
+      /row-level security/,
+    );
+  });
+
+  it('lets a patient-scoped request attribute only to a hospital holding its record', async () => {
+    await expect(append({ scope: 'patient', patientId: ids.patientA }, ids.hospitalA)).resolves.toBeDefined();
+    await expect(append({ scope: 'patient', patientId: ids.patientA }, null)).resolves.toBeDefined();
+    await expect(append({ scope: 'patient', patientId: ids.patientA }, ids.hospitalB)).rejects.toThrow(
+      /row-level security/,
+    );
+  });
+
+  it('lets system and platform events attribute to any hospital; no context attributes to none', async () => {
+    await expect(append({ scope: 'system' }, ids.hospitalB)).resolves.toBeDefined();
+    await expect(append({ scope: 'platform' }, ids.hospitalA)).resolves.toBeDefined();
+    await expect(append({}, null)).resolves.toBeDefined();
+    await expect(append({}, ids.hospitalA)).rejects.toThrow(/row-level security/);
+  });
+
+  it('accepts an append the request may not read back, because writers insert without RETURNING', async () => {
+    // Attributed to no hospital: a hospital-scoped read would not see it, so
+    // INSERT … RETURNING (the SELECT policy) would refuse it; a plain INSERT
+    // is checked against the append policy only.
+    await expect(append({ scope: 'hospital', hospitalId: ids.hospitalA }, null)).resolves.toBeDefined();
+    await expect(
+      as({ scope: 'hospital', hospitalId: ids.hospitalA }, (client) =>
+        client.query(
+          `INSERT INTO audit_events (id, occurred_at, category, event_type, severity, summary)
+           VALUES ($1, now(), 'user_action', 'rls.attribution_probe', 'info', 'probe') RETURNING id`,
+          [randomUUID()],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/);
+  });
 });
 
 describe('coverage of the enforced migration', () => {

@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import { Idempotent } from '../../../shared/idempotency';
 import type {
   AppointmentDetailView,
@@ -69,6 +69,7 @@ export class AppointmentController {
   constructor(private readonly appointments: AppointmentService) {}
 
   /** API §5.1 — the book, in list or calendar form. */
+  @PhiRead('appointment_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -78,12 +79,14 @@ export class AppointmentController {
   }
 
   /** API §5.11 — the cards above the book. Declared before `:id`. */
+  @NotPhi('counts by status')
   @Get('summary')
   summary(@CurrentUser() user: AuthenticatedUser): Promise<AppointmentSummaryView> {
     return this.appointments.summary(user);
   }
 
   /** API §5.2 — one appointment with its transition history. */
+  @PhiRead('appointment')
   @Get(':appointmentId')
   detail(
     @CurrentUser() user: AuthenticatedUser,

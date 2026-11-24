@@ -17,7 +17,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { sendCsv } from '../../../common/http/csv-export';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import type { MaskedIdentity } from '../../../shared/phi';
 import type {
   PatientAlertView,
@@ -84,6 +84,7 @@ export class PatientController {
   constructor(private readonly patients: PatientService) {}
 
   /** API §4.1 — the list. Clear for a doctor, masked for anyone else. */
+  @PhiRead('patient_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -98,6 +99,7 @@ export class PatientController {
    * and wrapping a spreadsheet in `{ data: … }` would make every consumer
    * unwrap one.
    */
+  @PhiRead('patient_export', { auditedByHandler: true })
   @Get('export')
   async export(
     @CurrentUser() user: AuthenticatedUser,
@@ -118,6 +120,7 @@ export class PatientController {
   }
 
   /** API §4.3 — one patient, with the derived fields. */
+  @PhiRead('patient', { auditedByHandler: true })
   @Get(':patientId')
   detail(
     @CurrentUser() user: AuthenticatedUser,
@@ -146,6 +149,7 @@ export class PatientController {
   }
 
   /** API §4.4 — the profile bundle the chart screen loads first. */
+  @PhiRead('patient_profile', { auditedByHandler: true })
   @Get(':patientId/profile')
   profile(
     @CurrentUser() user: AuthenticatedUser,
@@ -183,6 +187,7 @@ export class PatientController {
   }
 
   /** API §4.5/§4.6 — the allergy list behind the fixed safety strip. */
+  @PhiRead('patient_allergies')
   @Get(':patientId/allergies')
   allergies(
     @CurrentUser() user: AuthenticatedUser,
@@ -228,6 +233,7 @@ export class PatientController {
    * Active only by default: a resolved alert is history, and a banner a
    * clinician cannot dismiss (DB §B12) must not be drawn from one.
    */
+  @PhiRead('clinical_alerts')
   @Get(':patientId/alerts')
   alerts(
     @CurrentUser() user: AuthenticatedUser,

@@ -44,7 +44,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import {
   assertScanClean,
   checkSignature,
@@ -61,6 +61,8 @@ import { FileAccessService } from './file-access.service';
 @Injectable()
 export class FilesService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly files: FileRepository,
     private readonly access: FileAccessService,
     @Inject(FILE_STORAGE) private readonly storage: FileStoragePort,
@@ -135,7 +137,7 @@ export class FilesService {
       disposition: 'attachment',
     });
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',

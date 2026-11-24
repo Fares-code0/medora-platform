@@ -2,7 +2,7 @@ import { Controller, Get, Param } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import { AttachmentService } from '../services/attachment.service';
 
 /**
@@ -20,6 +20,8 @@ import { AttachmentService } from '../services/attachment.service';
 @Controller('attachments')
 export class AttachmentController {
   constructor(private readonly attachments: AttachmentService) {}
+
+  @PhiRead('message_attachment')
 
   @Get(':attachmentId/download')
   download(

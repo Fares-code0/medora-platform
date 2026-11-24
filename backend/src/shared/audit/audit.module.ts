@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database';
 
 import { PrismaAuditWriter } from './prisma-audit.writer';
+import { MandatoryAuditWriter } from './mandatory-audit.writer';
 import { TransactionalAuditWriter } from './transactional-audit.writer';
 import { AUDIT_DISPATCHER } from './audit.types';
 
@@ -24,7 +25,11 @@ import { AUDIT_DISPATCHER } from './audit.types';
  */
 @Module({
   imports: [DatabaseModule],
-  providers: [{ provide: AUDIT_DISPATCHER, useClass: PrismaAuditWriter }, TransactionalAuditWriter],
-  exports: [AUDIT_DISPATCHER, TransactionalAuditWriter],
+  providers: [
+    { provide: AUDIT_DISPATCHER, useClass: PrismaAuditWriter },
+    TransactionalAuditWriter,
+    MandatoryAuditWriter,
+  ],
+  exports: [AUDIT_DISPATCHER, TransactionalAuditWriter, MandatoryAuditWriter],
 })
 export class AuditKernelModule {}

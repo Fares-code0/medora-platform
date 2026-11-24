@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, PhiRead } from '../../../shared/authz';
 import {
   approveInformationRequestSchema,
   categoryQuerySchema,
@@ -89,6 +89,7 @@ export class ControlledAccessController {
   }
 
   @Authenticated()
+  @PhiRead('exceptional_access_data', { auditedByHandler: true })
   @Get('exceptional-access/:grantId/data')
   read(
     @CurrentUser() user: AuthenticatedUser,
@@ -140,6 +141,7 @@ export class ControlledAccessController {
   }
 
   @Authenticated()
+  @PhiRead('shared_information', { auditedByHandler: true })
   @Get('information-requests/:requestId/shared')
   readShared(
     @CurrentUser() user: AuthenticatedUser,

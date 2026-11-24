@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 
 import { AllowEndedSession } from '../../../common/auth/allow-ended-session.decorator';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { Public } from '../../../common/auth/public.decorator';
 import { AppException } from '../../../common/errors/app.exception';
@@ -77,6 +77,7 @@ export class AuthController {
    * most important line in this file to read correctly.
    */
   @Authenticated()
+  @NotPhi('the caller’s own session')
   @Get('session')
   session(@CurrentUser() user: AuthenticatedUser): Promise<CurrentSessionUserPayload> {
     return this.sessionUser.current(user);

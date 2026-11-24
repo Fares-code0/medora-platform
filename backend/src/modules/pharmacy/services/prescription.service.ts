@@ -21,7 +21,7 @@ import {
   type CsvFile,
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type {
@@ -81,6 +81,8 @@ export interface PaginatedPrescriptions {
 @Injectable()
 export class PrescriptionService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly safety: SafetyService,
     private readonly prescriptions: PrescriptionRepository,
     private readonly medications: MedicationRepository,
@@ -463,7 +465,7 @@ export class PrescriptionService {
     const now = new Date();
     const body = toCsv(EXPORT_COLUMNS, rows.map((row) => toPrescriptionView(row, now)));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'prescription.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'prescription',

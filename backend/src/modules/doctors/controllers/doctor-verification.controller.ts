@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/commo
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type { VerificationDocumentView } from '../dto/admin-doctor.dto';
 import {
   submitVerificationDocumentSchema,
@@ -30,6 +30,7 @@ export class DoctorVerificationController {
   constructor(private readonly verification: DoctorVerificationService) {}
 
   /** What this doctor has filed, newest first, each with its decision. */
+  @NotPhi('the doctor’s own verification documents')
   @Get()
   list(@CurrentUser() user: AuthenticatedUser): Promise<readonly VerificationDocumentView[]> {
     return this.verification.list(user);

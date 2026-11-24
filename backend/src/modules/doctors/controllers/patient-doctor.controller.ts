@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type { PatientDoctorDetail, PatientDoctorSummary } from '../dto/patient-doctor.dto';
 import { doctorSearchSchema, type DoctorSearchQuery } from '../dto/patient-doctor.schema';
 import { PatientDoctorService, type Paginated } from '../services/patient-doctor.service';
@@ -42,6 +42,8 @@ import { PatientDoctorService, type Paginated } from '../services/patient-doctor
 export class PatientDoctorController {
   constructor(private readonly doctors: PatientDoctorService) {}
 
+  @NotPhi('public doctor directory')
+
   @Get('doctors')
   search(
     @Query(zodQuery(doctorSearchSchema)) query: DoctorSearchQuery,
@@ -49,10 +51,14 @@ export class PatientDoctorController {
     return this.doctors.search(query);
   }
 
+  @NotPhi('public doctor profile')
+
   @Get('doctors/:doctorId')
   byId(@Param('doctorId') doctorId: string): Promise<PatientDoctorDetail> {
     return this.doctors.byId(doctorId);
   }
+
+  @NotPhi('specialty catalogue')
 
   @Get('specialties')
   specialties(): Promise<readonly { id: string; name: string; parentId: string | null }[]> {

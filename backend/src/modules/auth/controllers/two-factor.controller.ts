@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/commo
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
 import {
   confirmReenrollmentSchema,
@@ -47,6 +47,7 @@ export class TwoFactorController {
    * The only place the remaining recovery-code count is served (owner
    * decision R2): not in the redemption response and not in the mail.
    */
+  @NotPhi('the caller’s own two-factor status')
   @Get()
   status(@CurrentUser() user: AuthenticatedUser): Promise<TwoFactorStatus> {
     return this.twoFactor.status(user);

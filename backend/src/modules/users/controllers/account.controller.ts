@@ -3,7 +3,7 @@ import { Body, Controller, Get, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type { AccountView } from '../dto/account.dto';
 import {
   activityQuerySchema,
@@ -38,6 +38,8 @@ export class AccountController {
   /** API §2.1 — the Account panel's document. */
   constructor(private readonly accounts: AccountService) {}
 
+  @NotPhi('the caller’s own account')
+
   @Get('account')
   account(@CurrentUser() user: AuthenticatedUser): Promise<AccountView> {
     return this.accounts.account(user.id);
@@ -60,6 +62,7 @@ export class AccountController {
   }
 
   /** API §2.8 — the caller's own activity feed. */
+  @NotPhi('the caller’s own activity')
   @Get('activity')
   activity(
     @CurrentUser() user: AuthenticatedUser,

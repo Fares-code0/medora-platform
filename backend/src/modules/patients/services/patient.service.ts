@@ -55,6 +55,7 @@ import {
   AUDIT_DISPATCHER,
   TransactionalAuditWriter,
   type AuditDispatcher,
+  MandatoryAuditWriter,
 } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { isUniqueViolation } from '../../../shared/database';
@@ -109,6 +110,8 @@ export interface PaginatedPatients<T> {
 @Injectable()
 export class PatientService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly patients: PatientRepository,
     private readonly scope: PatientScopeService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
@@ -198,7 +201,7 @@ export class PatientService {
       body = toCsv(MASKED_EXPORT_COLUMNS, rows.map(toMasked));
     }
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'patient.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'patient',
@@ -683,7 +686,7 @@ export class PatientService {
     row: PatientRow,
     action: string,
   ): Promise<void> {
-    await this.audit.record({
+    await this.disclosures.record({
       action,
       actor: { userId: user.id, role: user.role },
       entityType: 'patient',

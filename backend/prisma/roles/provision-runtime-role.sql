@@ -61,7 +61,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE __OWNER_ROLE__ IN SCHEMA public
   GRANT EXECUTE ON FUNCTIONS TO __RUNTIME_ROLE__;
 
 -- Not granted, on purpose: CREATE on the schema, TRUNCATE, REFERENCES,
--- TRIGGER, ownership, role management. The audit partition jobs need DDL
--- (create_audit_events_partition, DROP of expired partitions) — see
--- DATABASE_ROLES.md §4: they must run as the owner role or through
--- owner-defined SECURITY DEFINER functions (decision pending).
+-- TRIGGER, ownership, role management. The audit partition jobs need no DDL
+-- right of their own: they call the owner-defined SECURITY DEFINER functions
+-- create_audit_events_partition and drop_audit_events_partition (migration
+-- 20261125090000, finding F-05), which validate their input.

@@ -39,7 +39,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import {
   AdminScopeService,
   HospitalContextService,
@@ -111,6 +111,8 @@ const requestView = (row: RequestRow): InformationRequestView => ({
 @Injectable()
 export class ControlledAccessService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly access: ControlledAccessRepository,
     private readonly scopes: AdminScopeService,
     private readonly contexts: HospitalContextService,
@@ -244,7 +246,7 @@ export class ControlledAccessService {
     await this.assertMayRequestExceptional(user, grant.hospitalId);
 
     const data = await this.access.read(query.category, grant.patientId, grant.hospitalId);
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'exceptional_access.read',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'exceptional_access_grant',
@@ -371,7 +373,7 @@ export class ControlledAccessService {
     }
 
     const data = await this.access.read(query.category, request.patientId, request.targetHospitalId);
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'information_request.read',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'information_request',

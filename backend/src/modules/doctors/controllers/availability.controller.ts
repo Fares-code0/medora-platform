@@ -3,7 +3,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Put }
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import type {
   AvailabilitySaveResult,
   AvailabilityView,
@@ -49,6 +49,7 @@ export class AvailabilityController {
   constructor(private readonly availability: AvailabilityService) {}
 
   /** API §3.8 — the weekly grid, always seven days. */
+  @NotPhi('the doctor’s own availability')
   @Get('availability')
   grid(@CurrentUser() user: AuthenticatedUser): Promise<AvailabilityView> {
     return this.availability.grid(user.id);
@@ -68,6 +69,7 @@ export class AvailabilityController {
   }
 
   /** API §3.9 — blocks that have not finished yet. */
+  @NotPhi('the doctor’s own time off')
   @Get('time-off')
   timeOff(@CurrentUser() user: AuthenticatedUser): Promise<readonly TimeOffView[]> {
     return this.availability.timeOff(user.id);

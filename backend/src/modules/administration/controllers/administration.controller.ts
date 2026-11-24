@@ -16,7 +16,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Roles } from '../../../shared/authz';
+import { NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
   announcementPatchSchema,
   announcementSchema,
@@ -96,12 +96,16 @@ export class AdministrationController {
 
   /* ── M23.1 ─────────────────────────────────────────────────── */
 
+  @NotPhi('hospital operations counts')
+
   @Get('overview')
   clinicOverview() {
     return this.overview.build();
   }
 
   /* ── M23.2 — staff ─────────────────────────────────────────── */
+
+  @NotPhi('staff directory')
 
   @Get('staff')
   listStaff(@Query(zodQuery(pageQuerySchema)) query: PageQuery) {
@@ -126,6 +130,8 @@ export class AdministrationController {
   }
 
   /* ── M23.2 — departments ───────────────────────────────────── */
+
+  @NotPhi('hospital configuration')
 
   @Get('departments')
   listDepartments() {
@@ -154,6 +160,8 @@ export class AdministrationController {
 
   /* ── M23.2 — rooms ─────────────────────────────────────────── */
 
+  @NotPhi('hospital configuration')
+
   @Get('rooms')
   listRooms() {
     return this.directory.listRooms();
@@ -177,6 +185,8 @@ export class AdministrationController {
   }
 
   /* ── M23.2 — resources ─────────────────────────────────────── */
+
+  @NotPhi('hospital configuration')
 
   @Get('resources')
   listResources() {
@@ -205,6 +215,8 @@ export class AdministrationController {
 
   /* ── M23.3 — schedule ──────────────────────────────────────── */
 
+  @NotPhi('hospital configuration')
+
   @Get('working-days')
   workingDays() {
     return this.operations.workingDays();
@@ -222,6 +234,8 @@ export class AdministrationController {
     return this.operations.replaceWorkingWeek(body);
   }
 
+  @NotPhi('hospital configuration')
+
   @Get('holidays')
   holidays() {
     return this.operations.holidays();
@@ -238,6 +252,8 @@ export class AdministrationController {
   deleteHoliday(@Param('id') id: string): Promise<void> {
     return this.operations.deleteHoliday(id);
   }
+
+  @NotPhi('staff rota')
 
   @Get('shifts')
   shifts() {
@@ -265,6 +281,7 @@ export class AdministrationController {
    * widens these two routes only; every write below stays admin-only.
    */
   @Roles('admin', 'reception')
+  @PhiRead('patient_queue')
   @Get('queue')
   queue() {
     return this.operations.queue();
@@ -289,6 +306,7 @@ export class AdministrationController {
   }
 
   @Roles('admin', 'reception')
+  @PhiRead('waiting_room')
   @Get('waiting-room')
   waitingRoom() {
     return this.operations.waitingRoom();
@@ -307,6 +325,8 @@ export class AdministrationController {
   }
 
   /* ── M23.5 — announcements, policies, templates ────────────── */
+
+  @NotPhi('hospital announcements')
 
   @Get('announcements')
   announcements(@Query('includeExpired') includeExpired?: string) {
@@ -336,6 +356,8 @@ export class AdministrationController {
     return this.operations.deleteAnnouncement(id);
   }
 
+  @NotPhi('hospital policies')
+
   @Get('policies')
   policies() {
     return this.operations.policies();
@@ -357,6 +379,8 @@ export class AdministrationController {
   deletePolicy(@Param('id') id: string): Promise<void> {
     return this.operations.deletePolicy(id);
   }
+
+  @NotPhi('document templates')
 
   @Get('document-templates')
   templates() {
@@ -395,6 +419,7 @@ export class AdministrationController {
    * a smoke test and mislead the one reader who matters: an
    * administrator deciding whether the platform is healthy.
    */
+  @NotPhi('platform health')
   @Get('platform-status')
   platformStatus(): never {
     throw new AppException(501, {
@@ -410,6 +435,7 @@ export class AdministrationController {
    * The thin recent feed. The full audit surface — filters, export,
    * incident bookmarks — is **M28**.
    */
+  @NotPhi('audit ledger metadata; carries identifiers, never clinical content')
   @Get('audit-events')
   auditEvents(@Query('limit') limit?: string) {
     const parsed = Number.parseInt(limit ?? '25', 10);

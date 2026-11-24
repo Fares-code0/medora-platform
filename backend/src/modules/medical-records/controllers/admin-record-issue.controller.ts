@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Roles } from '../../../shared/authz';
+import { PhiRead, Roles } from '../../../shared/authz';
 import {
   recordIssueListSchema,
   updateRecordIssueSchema,
@@ -26,6 +26,8 @@ import {
 @Controller('admin/record-issues')
 export class AdminRecordIssueController {
   constructor(private readonly issues: RecordIssueService) {}
+
+  @PhiRead('record_issue')
 
   @Get()
   list(

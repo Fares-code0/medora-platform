@@ -12,7 +12,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import type {
   AppointmentAdminSummaryView,
   OversightAppointmentView,
@@ -71,6 +71,7 @@ export class AdminAppointmentController {
   constructor(private readonly oversight: AppointmentOversightService) {}
 
   /** API §5.10 — every doctor's book, with `ageInState` and the flags. */
+  @PhiRead('appointment_list')
   @Get()
   list(
     @Query(zodQuery(oversightListSchema)) query: OversightListQuery,
@@ -79,6 +80,7 @@ export class AdminAppointmentController {
   }
 
   /** API §5.11's administrator strip. Declared before `:appointmentId`. */
+  @NotPhi('counts by status')
   @Get('summary')
   summary(): Promise<AppointmentAdminSummaryView> {
     return this.oversight.summary();

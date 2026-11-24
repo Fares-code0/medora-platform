@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can, Roles } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
   accessRequestSchema,
   flagQuerySchema,
@@ -38,6 +38,7 @@ export class OversightController {
   constructor(private readonly oversight: OversightService) {}
 
   @Can('communications.viewMetadata')
+  @NotPhi('conversation metadata only; identities masked, no message text')
   @Get('conversations')
   list(@Query(zodQuery(oversightQuerySchema)) query: OversightQuery) {
     return this.oversight.listConversations(query);
@@ -78,6 +79,7 @@ export class OversightController {
   // grant, checked by OversightService, is the authorization; the role rule
   // (with the guard's administrative tiering) only says who may ask.
   @Roles('admin')
+  @PhiRead('conversation_content', { auditedByHandler: true })
   @Get('conversations/:conversationId/content')
   content(
     @CurrentUser() user: AuthenticatedUser,
@@ -87,6 +89,7 @@ export class OversightController {
   }
 
   @Can('communications.resolveFlags')
+  @PhiRead('message_flags')
   @Get('message-flags')
   flags(@Query(zodQuery(flagQuerySchema)) query: FlagQuery) {
     return this.oversight.listFlags(query);
