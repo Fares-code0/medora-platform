@@ -368,14 +368,13 @@ describe('termination is immediate (OD-12)', () => {
       expect(refresh.status).toBe(401);
     }
 
-    // The account itself is intact; a fresh sign-in carries no hospital.
-    const again = await signIn(doctor.email);
-    const after = await request(harness.server)
-      .get(SESSION)
-      .set('Authorization', `Bearer ${again.accessToken}`);
-    expect(after.status).toBe(200);
-    expect(dataOf<SessionUser>(after).role).toBe('doctor');
-    expect(dataOf<SessionUser>(after).activeHospital).toBeNull();
+    // #18 (OWNER_DECISIONS 2026-11-23): employment terminated — login
+    // denied. A fresh sign-in is refused like any inactive account.
+    const again = await request(harness.server)
+      .post(LOGIN)
+      .send({ email: doctor.email, password: PASSWORD, rememberMe: false });
+    expect(again.status).toBe(403);
+    expect(errorBody(again).code).toBe('account_inactive');
 
     // Owned assignments revoked; the legacy one untouched.
     const ownedRows = await harness.prisma.patientDoctorAssignment.findMany({

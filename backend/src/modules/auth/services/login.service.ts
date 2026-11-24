@@ -178,12 +178,14 @@ export class LoginService {
     // but "suspended" and "locked" carry different implications about a
     // person, and the account holder learns which from their
     // administrator rather than from a login form.
-    if (user.status !== UserStatus.ACTIVE) {
+    //
+    // #18: a doctor whose employment has ended is refused the same way —
+    // same code, same message — so the refusal says no more than a
+    // suspended account's does. Checked before any second-factor challenge
+    // is issued; `establishSession` checks again for the OTP completions.
+    if (user.status !== UserStatus.ACTIVE || (await this.identity.isTerminatedDoctor(user.id))) {
       await this.fail(email, user.id, 'account_inactive', context);
-      throw new AppException(HttpStatus.FORBIDDEN, {
-        message: 'This account is not active. Contact your administrator.',
-        code: 'account_inactive',
-      });
+      throw accountInactive();
     }
 
     // A successful password check clears the counter (on success only;
@@ -248,6 +250,15 @@ export class LoginService {
     rememberMe: boolean,
     context: RequestContext = {},
   ): Promise<LoginSuccess> {
+    // #18 — every path that mints a session comes through here (password
+    // sign-in, `POST /auth/otp/verify`, `POST /auth/otp/recovery`), so an
+    // employment ended between the password and the second factor still
+    // mints nothing.
+    if (await this.identity.isTerminatedDoctor(user.id)) {
+      await this.fail(user.email, user.id, 'account_inactive', context);
+      throw accountInactive();
+    }
+
     const { permissions, permissionVersion } = await this.permissions.resolveVersioned(
       user.id,
       user.roleId,
@@ -366,6 +377,14 @@ export class LoginService {
  */
 function isPrivilegedRole(roleCode: string): boolean {
   return roleCode === 'admin';
+}
+
+/** 403 `account_inactive` (ADR-035 §6; #18 for an ended employment). */
+function accountInactive(): AppException {
+  return new AppException(HttpStatus.FORBIDDEN, {
+    message: 'This account is not active. Contact your administrator.',
+    code: 'account_inactive',
+  });
 }
 
 /**

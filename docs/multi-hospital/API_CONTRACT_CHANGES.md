@@ -168,7 +168,7 @@ and `ended_at` is set only if still active; live `hospital_role_assignments` who
 `revokedHospitalRoles` — independent grants and grants at other hospitals are untouched); live
 `patient_doctor_assignments` whose `doctor_employment_id` is this employment are
 revoked; **every** session of the doctor's account is revoked (the doctor's next request is 401 and
-the refresh token is refused; a new sign-in carries `activeHospital: null`); the audit row
+the refresh token is refused; with no other active employment, a new sign-in is refused — §8b); the audit row
 `doctor.employment_ended` (metadata: employment, hospital and department ids, the counts) is written
 on the same transaction. Starting writes `doctor.employment_started`. Both rows set
 `audit_events.hospital_id` to the employment's hospital (server-derived; other events leave it NULL).
@@ -176,6 +176,35 @@ on the same transaction. Starting writes `doctor.employment_started`. Both rows 
 **Limitations:** legacy assignments with no `doctor_employment_id` are not touched (#17) and are only
 counted (`legacyAssignmentsUntouched` in the audit metadata); published slots and permission caches
 are not revoked.
+
+## 8b. Doctor lifecycle at sign-in and per request — implemented (#18)
+
+Owner decision 2026-11-23 (`OWNER_DECISIONS.md`, "Doctor lifecycle"). **Terminated** means a
+`doctors` row with at least one `doctor_employments` row and none active (`ended_at IS NULL`); a
+doctor with **no** employment rows (legacy, unmapped) is not terminated and keeps sign-in.
+
+| State | Sign-in and token minting | Requests with an existing access token |
+|---|---|---|
+| Employment terminated | `POST /auth/login`, `/auth/otp/verify`, `/auth/otp/recovery`: **`403 account_inactive`** (existing code and message, after the password, exactly as a non-`ACTIVE` account). `POST /auth/refresh`: `401` and the session is revoked | `401 unauthorized` on every route (same as a dead session); `POST /auth/logout` still `204` |
+| Suspended (`practice_status = suspended`) | Allowed (unchanged) | Own-account routes only (below). Every other authenticated route: **`403 practice_suspended`** (new code) |
+| Unverified | Allowed (unchanged) | Unchanged here; clinical access is the authorization layer's |
+| Vacation | Allowed (unchanged) | Unchanged |
+
+Own-account routes a suspended doctor keeps: `GET /auth/session`, `POST /auth/logout`,
+`GET`/`PATCH /me/profile`, `PUT /me/profile/photo`, `GET`/`PATCH /me/account`, `POST /me/password`,
+`POST /me/password/verify`, `GET /me/2fa`, `POST /me/2fa/{setup,enable,reenroll,reenroll/confirm,disable}`,
+`GET /me/sessions`, `POST /me/sessions/revoke-others`, `DELETE /me/sessions/:sessionId`,
+`GET`/`POST /me/devices`, `DELETE /me/devices/:deviceId`, `GET /me/login-history`. Everything else —
+including `/me/settings`, `/me/activity`, `/me/notification-preferences`, `/me/availability`,
+`/patient/doctors` — is `403 practice_suspended`. Decided from the database on every request.
+
+**New client-visible error code:** `practice_suspended` (403). Clients should show "your practice is
+suspended; only your account settings are available" and not refresh or sign out on it. It needs
+frontend and patient-app translations (not added here).
+
+`GET /patient/doctors` and `GET /patient/doctors/:doctorId` additionally exclude terminated doctors
+(already excluded: unverified, any practice status other than `active` — including vacation — and
+soft-deleted). The detail route answers 404 for them.
 
 ## 9. Mapping from the 2026-10-06 proposals
 

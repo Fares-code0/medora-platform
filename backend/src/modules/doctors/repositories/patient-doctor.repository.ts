@@ -26,6 +26,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../../shared/database';
+import type { Prisma } from '../../../generated/prisma/client';
 import type { PatientDoctorDetail, PatientDoctorSummary } from '../dto/patient-doctor.dto';
 
 /**
@@ -52,11 +53,24 @@ export interface DoctorPage {
   readonly totalItems: number;
 }
 
-/** Applied to every patient-facing read. Not overridable by any caller. */
+/**
+ * Applied to every patient-facing read. Not overridable by any caller.
+ *
+ * #18 (OWNER_DECISIONS 2026-11-23): a doctor whose employment has ended —
+ * at least one `doctor_employments` row and none active — has no clinical
+ * access and is not offered either. A doctor with no employment rows
+ * (legacy, not yet mapped to a hospital) is not "terminated" and is still
+ * listed; unverified, suspended (and on-vacation) doctors were already
+ * excluded by the two predicates above it, soft-deleted ones by the
+ * client extension.
+ */
 const PATIENT_VISIBLE = {
   verificationStatus: 'VERIFIED',
   practiceStatus: 'ACTIVE',
-} as const;
+  NOT: {
+    AND: [{ employments: { some: {} } }, { employments: { none: { endedAt: null } } }],
+  },
+} satisfies Prisma.DoctorWhereInput;
 
 const SUMMARY_SELECT = {
   id: true,

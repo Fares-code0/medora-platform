@@ -257,12 +257,12 @@ describe('GET /auth/session (M8.1)', () => {
         data: { endedAt: new Date() },
       });
 
+      // #18 (OWNER_DECISIONS 2026-11-23): employment terminated — login
+      // denied, so the same token no longer reads any session at all.
       const after = await request(harness.server)
         .get(SESSION)
         .set('Authorization', 'Bearer ' + session.accessToken);
-      expect(after.status).toBe(200);
-      expect(dataOf<SessionUser>(after).activeHospital).toBeNull();
-      expect(dataOf<SessionUser>(after).adminScope).toBeNull();
+      expect(after.status).toBe(401);
     } finally {
       await harness.prisma.db.doctorEmployment.deleteMany({
         where: { doctorId: doctor.id, hospitalId: hospital.id },

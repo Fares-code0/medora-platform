@@ -620,13 +620,15 @@ describe('suspension (§3.7, M9.5)', () => {
       .send({ email, password: PASSWORD, rememberMe: false });
     expect(login.status).toBe(200);
 
-    // What changed is that patients no longer see them.
+    // What changed is that patients no longer see them. (Read with the
+    // administrator's token: a suspended doctor's own token reaches only
+    // their own account, #18.)
     const patientView = await request(harness.server)
       .get('/api/v1/patient/doctors?pageSize=100')
-      .set('Authorization', `Bearer ${dataOf<SessionPayload>(login).accessToken}`);
-    expect(
-      dataOf<Page<{ id: string }>>(patientView).items.map((row) => row.id),
-    ).not.toContain(doctorId);
+      .set('Authorization', `Bearer ${token}`);
+    expect(dataOf<Page<{ id: string }>>(patientView).items.map((row) => row.id)).not.toContain(
+      doctorId,
+    );
 
     await harness.prisma.appointment.delete({ where: { id: appointment.id } });
   });

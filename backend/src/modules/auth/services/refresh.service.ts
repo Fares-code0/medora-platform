@@ -139,7 +139,14 @@ export class RefreshService {
     // working forever, which made the administrative lever a no-op for
     // exactly the case it was pulled in. The session is revoked as well
     // as refused, so the family cannot be retried.
-    if (user === null || user.status !== UserStatus.ACTIVE) {
+    //
+    // #18: a doctor whose employment has ended is refused and revoked the
+    // same way, so no refresh outlives the employment either.
+    if (
+      user === null ||
+      user.status !== UserStatus.ACTIVE ||
+      (await this.identity.isTerminatedDoctor(user.id))
+    ) {
       await this.sessions.revoke(live.sessionId);
       throw expiredSession();
     }

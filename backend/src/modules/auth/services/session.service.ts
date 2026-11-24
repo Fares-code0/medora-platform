@@ -6,7 +6,6 @@ import { PolicyService } from '../../../config';
 import { EnvelopeService, sessionRefreshSuccessorAad } from '../../../shared/crypto';
 import { PrismaService } from '../../../shared/database';
 import type { Prisma, Session } from '../../../generated/prisma/client';
-import { UserStatus } from '../../../generated/prisma/enums';
 
 import { SecretService } from './secret.service';
 
@@ -173,6 +172,20 @@ interface LockedRowRecord {
 export interface SessionContext {
   readonly device?: string | undefined;
   readonly ipAddress?: string | undefined;
+}
+
+/**
+ * What the access-token guard's one per-request read answers for a live
+ * session (`SessionService.activePermissionVersion`).
+ */
+export interface ActiveAccount {
+  /** `users.permission_version` (G4, ADR-047). */
+  readonly permissionVersion: number;
+  /**
+   * The account is a doctor whose `practice_status` is `suspended`: it may
+   * sign in, but only its own-account routes answer (#18).
+   */
+  readonly practiceSuspended: boolean;
 }
 
 export interface IssuedSession {
@@ -605,42 +618,76 @@ export class SessionService {
   }
 
   /**
-   * `isActive`, answering with the account's `users.permission_version`
-   * instead of `true` — or `null` wherever `isActive` answers `false`.
+   * `isActive`, answering with what the access-token guard needs about the
+   * account — or `null` wherever `isActive` answers `false`.
    *
-   * G4 (ADR-047): the access-token guard needs the authoritative permission
-   * version on every request, and it already reads the account on every
-   * request. This is that read, extended rather than repeated: **one SQL
-   * statement**, rooted at `users` (so the version is a column of the row
-   * selected) with the session and the role as `EXISTS` filters. Rooting it
-   * at `sessions` and selecting `user.permissionVersion` would be a second
-   * query for the relation.
+   * G4 (ADR-047): the guard needs the authoritative permission version on
+   * every request, and it already reads the account on every request. This
+   * is that read, extended rather than repeated: **one SQL statement**,
+   * rooted at `users` with the session, the role and the doctor lifecycle
+   * as `EXISTS` filters, and the doctor's `practice_status` from a
+   * `LEFT JOIN` on the same row (a Prisma relation `select` would be a
+   * second query).
    *
-   * The conditions are exactly `isActive`'s: the token's own session, not
-   * revoked, not expired; the account `ACTIVE`, not soft-deleted, and —
-   * when `roleCode` is given — still holding that role (ADR-046).
+   * The conditions are `isActive`'s: the token's own session, not revoked,
+   * not expired; the account `ACTIVE`, not soft-deleted, and — when
+   * `roleCode` is given — still holding that role (ADR-046). And, for the
+   * doctor lifecycle (#18, OWNER_DECISIONS 2026-11-23):
+   *
+   *  - **employment terminated** — a `doctors` row with at least one
+   *    `doctor_employments` row and none active (`ended_at IS NULL`) — is
+   *    `null`: the same 401 as a dead session. Ending an employment already
+   *    revokes the doctor's sessions (`DoctorEmploymentRepository`); this
+   *    refuses the token of an employment ended by any other path too. A
+   *    doctor with **no** employment rows (legacy, not yet mapped to a
+   *    hospital) is not terminated and is not refused here.
+   *  - **suspended** (`practice_status = 'suspended'`) is answered, not
+   *    refused: the guard confines the account to `OWN_ACCOUNT_ROUTES`.
+   *
+   * Still named for the version it was introduced to return, so the specs
+   * that fault this read (`session-validation`) keep reaching the guard's
+   * only per-request query.
    */
   async activePermissionVersion(
     sessionId: string,
     userId: string,
     roleCode?: string,
-  ): Promise<number | null> {
+  ): Promise<ActiveAccount | null> {
     if (!UUID.test(sessionId) || !UUID.test(userId)) return null;
 
-    const user = await this.prisma.db.user.findFirst({
-      where: {
-        id: userId,
-        status: UserStatus.ACTIVE,
-        deletedAt: null,
-        ...(roleCode === undefined ? {} : { role: { is: { code: roleCode } } }),
-        sessions: {
-          some: { id: sessionId, revokedAt: null, expiresAt: { gt: new Date() } },
-        },
-      },
-      select: { permissionVersion: true },
-    });
+    // The application clock, as the Prisma form this replaced used.
+    const now = new Date();
+    const role = roleCode ?? null;
 
-    return user?.permissionVersion ?? null;
+    const rows = await this.prisma.$queryRaw<
+      { permissionVersion: number; practiceSuspended: boolean }[]
+    >`
+      SELECT u.permission_version                             AS "permissionVersion",
+             COALESCE(d.practice_status = 'suspended', false) AS "practiceSuspended"
+        FROM users u
+        LEFT JOIN doctors d ON d.user_id = u.id
+       WHERE u.id = ${userId}::uuid
+         AND u.status = 'active'
+         AND u.deleted_at IS NULL
+         AND (${role}::text IS NULL
+              OR EXISTS (SELECT 1 FROM roles r WHERE r.id = u.role_id AND r.code = ${role}::text))
+         AND EXISTS (SELECT 1
+                       FROM sessions s
+                      WHERE s.id = ${sessionId}::uuid
+                        AND s.user_id = u.id
+                        AND s.revoked_at IS NULL
+                        AND s.expires_at > ${now})
+         AND NOT (d.id IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM doctor_employments e WHERE e.doctor_id = d.id)
+                  AND NOT EXISTS (SELECT 1
+                                    FROM doctor_employments e
+                                   WHERE e.doctor_id = d.id
+                                     AND e.ended_at IS NULL))
+       LIMIT 1`;
+
+    const row = rows[0];
+    if (row === undefined) return null;
+    return { permissionVersion: row.permissionVersion, practiceSuspended: row.practiceSuspended };
   }
 
   /**

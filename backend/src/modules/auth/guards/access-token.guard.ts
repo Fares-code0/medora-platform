@@ -1,4 +1,4 @@
-import { type CanActivate, type ExecutionContext, Injectable } from '@nestjs/common';
+import { type CanActivate, type ExecutionContext, HttpStatus, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 
@@ -13,6 +13,8 @@ import { IS_PUBLIC_KEY } from '../../../common/auth/public.decorator';
 import { PermissionResolver } from '../../../shared/authz';
 import { AccessTokenService } from '../services/access-token.service';
 import { SessionService } from '../services/session.service';
+
+import { isOwnAccountRoute } from './own-account-routes';
 
 /**
  * Bearer-token authentication (RM M6.2; M7.1 layers role and permission
@@ -59,6 +61,14 @@ import { SessionService } from '../services/session.service';
  * None of this revokes a session or answers 401: an ordinary permission
  * change takes effect on the same token. A *role* change is still refused
  * 401 through the role check above (ADR-046; its session is not revoked).
+ *
+ * ## Doctor lifecycle (#18)
+ *
+ * The same read refuses a doctor whose employment has ended (401, as a
+ * dead session) and reports a suspended doctor, whom this guard then
+ * confines to `OWN_ACCOUNT_ROUTES` — every other route is 403
+ * `practice_suspended`. Unverified and on-vacation doctors are not
+ * affected here; clinical access is decided by the authorization layer.
  *
  * ## 401 and not 403
  *
@@ -126,10 +136,22 @@ export class AccessTokenGuard implements CanActivate {
       return true;
     }
 
-    // One statement: the session check, the role check and the account's
-    // authoritative permission version (G4, ADR-047).
-    const version = await this.sessions.activePermissionVersion(user.sessionId, user.id, user.role);
-    if (version === null) throw AppException.unauthorized('unauthorized', 'Session expired');
+    // One statement: the session check, the role check, the doctor
+    // lifecycle and the account's authoritative permission version (G4,
+    // ADR-047; #18). A doctor whose employment has ended answers `null`.
+    const account = await this.sessions.activePermissionVersion(user.sessionId, user.id, user.role);
+    if (account === null) throw AppException.unauthorized('unauthorized', 'Session expired');
+
+    // #18: a suspended doctor keeps their own account and nothing else.
+    // Decided from the row just read, on every request — never from a
+    // claim — and against an allow-list, so an unlisted route is refused.
+    // 403, not 401: the session is valid, and a 401 would send the client
+    // into refresh-then-sign-out for a state a refresh cannot change.
+    if (account.practiceSuspended && !isOwnAccountRoute(context)) {
+      throw practiceSuspended();
+    }
+
+    const version = account.permissionVersion;
 
     // A token whose `pv` matches was resolved at this version, so its claim
     // is current. Otherwise it is stale (or predates the claim) and is
@@ -149,6 +171,18 @@ export class AccessTokenGuard implements CanActivate {
     request[AUTHENTICATED_USER] = { ...user, permissions, permissionVersion: version };
     return true;
   }
+}
+
+/**
+ * 403 `practice_suspended` — a suspended doctor on a route outside their
+ * own account (#18). It tells the caller only what their own sign-in
+ * already showed them: this account is suspended from practice.
+ */
+function practiceSuspended(): AppException {
+  return new AppException(HttpStatus.FORBIDDEN, {
+    message: 'Your practice is suspended. Only your own account is available.',
+    code: 'practice_suspended',
+  });
 }
 
 /** The principal for a route that read no version: no version, no claim. */

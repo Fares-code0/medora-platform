@@ -57,6 +57,31 @@ export class IdentityRepository {
   }
 
   /**
+   * Whether `userId` is a doctor whose employment has ended (#18,
+   * OWNER_DECISIONS 2026-11-23: "Employment terminated — login denied").
+   *
+   * Terminated means: a `doctors` row with **at least one**
+   * `doctor_employments` row and **no active one** (`ended_at IS NULL`).
+   * A doctor with no employment rows at all is a legacy account not yet
+   * mapped to a hospital; it is not terminated and keeps its sign-in (the
+   * hospital-aware authorization gives it no clinical access). Not a
+   * doctor: `false`.
+   *
+   * The unfiltered client, so a soft-deleted `doctors` row still counts —
+   * its employments say what they say. One indexed read.
+   */
+  async isTerminatedDoctor(userId: string): Promise<boolean> {
+    const doctor = await this.prisma.doctor.findFirst({
+      where: {
+        userId,
+        AND: [{ employments: { some: {} } }, { employments: { none: { endedAt: null } } }],
+      },
+      select: { id: true },
+    });
+    return doctor !== null;
+  }
+
+  /**
    * Creates the account and its credential row in one transaction.
    *
    * The two are inseparable: a `users` row with no `user_credentials` is

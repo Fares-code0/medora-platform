@@ -11,7 +11,7 @@
  * test here is the order of the checks and which ones each route runs.
  */
 
-import { HttpStatus, type ExecutionContext } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Patch, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,7 +24,7 @@ import { Public } from '../../../common/auth/public.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import type { PermissionResolver, Principal } from '../../../shared/authz';
 import type { AccessTokenService } from '../services/access-token.service';
-import type { SessionService } from '../services/session.service';
+import type { ActiveAccount, SessionService } from '../services/session.service';
 
 import { AccessTokenGuard } from './access-token.guard';
 
@@ -56,6 +56,11 @@ const PRINCIPAL: AuthenticatedUser = {
 /** What the database answers as the account's permission version by default. */
 const CURRENT_VERSION = 4;
 
+/** The guard's per-request read, for an account that is not a suspended doctor by default. */
+function account(permissionVersion: number, practiceSuspended = false): ActiveAccount {
+  return { permissionVersion, practiceSuspended };
+}
+
 type Handler = keyof FixtureController;
 
 function contextFor(
@@ -79,7 +84,7 @@ function contextFor(
 
 let verify: ReturnType<typeof vi.fn<(token: string) => Promise<AuthenticatedUser | null>>>;
 let isActive: ReturnType<
-  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>
+  typeof vi.fn<(sid: string, sub: string, role?: string) => Promise<ActiveAccount | null>>
 >;
 let permissionsFor: ReturnType<typeof vi.fn<(principal: Principal) => Promise<readonly string[]>>>;
 let belongsTo: ReturnType<typeof vi.fn<(sid: string, sub: string) => Promise<boolean>>>;
@@ -91,8 +96,8 @@ beforeEach(() => {
   );
   // `isActive` here is `SessionService.activePermissionVersion`: the same
   // read, answering the account's permission version or `null` (G4).
-  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<number | null>>(() =>
-    Promise.resolve(CURRENT_VERSION),
+  isActive = vi.fn<(sid: string, sub: string, role?: string) => Promise<ActiveAccount | null>>(() =>
+    Promise.resolve(account(CURRENT_VERSION)),
   );
   permissionsFor = vi.fn<(principal: Principal) => Promise<readonly string[]>>(() =>
     Promise.resolve(['records.view', 'patients.view']),
@@ -243,7 +248,7 @@ describe('AccessTokenGuard — permission version (G4, ADR-047)', () => {
   });
 
   it('replaces a stale permission claim with a fresh resolution at the current version', async () => {
-    isActive.mockResolvedValueOnce(CURRENT_VERSION + 1);
+    isActive.mockResolvedValueOnce(account(CURRENT_VERSION + 1));
     const { context, request } = contextFor('guarded', 'Bearer good');
 
     // Not a 401: an ordinary permission change applies on the same token.
@@ -277,7 +282,7 @@ describe('AccessTokenGuard — permission version (G4, ADR-047)', () => {
   });
 
   it('fails closed when a stale claim cannot be re-resolved', async () => {
-    isActive.mockResolvedValueOnce(CURRENT_VERSION + 1);
+    isActive.mockResolvedValueOnce(account(CURRENT_VERSION + 1));
     permissionsFor.mockRejectedValueOnce(new Error('database down'));
     const { context, request } = contextFor('guarded', 'Bearer good');
 
@@ -294,5 +299,93 @@ describe('AccessTokenGuard — permission version (G4, ADR-047)', () => {
     expect((request[AUTHENTICATED_USER] as AuthenticatedUser | undefined)?.permissionVersion).toBe(
       CURRENT_VERSION,
     );
+  });
+});
+
+/**
+ * #18 — a suspended doctor keeps their own account and nothing else.
+ * Real `@Controller`/`@Get` metadata, because the allow-list is keyed on
+ * exactly that metadata.
+ */
+@Controller('me/profile')
+class ProfileFixture {
+  @Get()
+  read(): void {}
+
+  @Patch()
+  update(): void {}
+}
+
+@Controller('auth')
+class AuthFixture {
+  @Get('session')
+  session(): void {}
+}
+
+@Controller('patients')
+class ClinicalFixture {
+  @Get(':patientId')
+  read(): void {}
+}
+
+@Controller('me')
+class SettingsFixture {
+  @Get('settings')
+  settings(): void {}
+}
+
+function routeContext(controller: object, handler: () => void) {
+  const request: Record<string | symbol, unknown> = { headers: { authorization: 'Bearer good' } };
+  const context = {
+    getHandler: () => handler,
+    getClass: () => controller,
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+  return { context, request };
+}
+
+describe('AccessTokenGuard — suspended doctor (#18)', () => {
+  it('lets a suspended doctor reach their own profile and session', async () => {
+    isActive.mockResolvedValue(account(CURRENT_VERSION, true));
+
+    for (const [controller, handler] of [
+      [ProfileFixture, ProfileFixture.prototype.read],
+      [ProfileFixture, ProfileFixture.prototype.update],
+      [AuthFixture, AuthFixture.prototype.session],
+    ] as const) {
+      const { context, request } = routeContext(controller, handler);
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(request[AUTHENTICATED_USER]).toEqual(PRINCIPAL);
+    }
+  });
+
+  it('refuses a suspended doctor anything else — 403 practice_suspended, no principal', async () => {
+    isActive.mockResolvedValue(account(CURRENT_VERSION, true));
+
+    for (const [controller, handler] of [
+      [ClinicalFixture, ClinicalFixture.prototype.read],
+      [SettingsFixture, SettingsFixture.prototype.settings],
+    ] as const) {
+      const { context, request } = routeContext(controller, handler);
+      const error = await refusal(guard.canActivate(context));
+      expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+      expect(error.code).toBe('practice_suspended');
+      expect(request[AUTHENTICATED_USER]).toBeUndefined();
+    }
+  });
+
+  it('fails closed on a handler with no routing metadata', async () => {
+    isActive.mockResolvedValueOnce(account(CURRENT_VERSION, true));
+
+    const error = await refusal(guard.canActivate(contextFor('guarded', 'Bearer good').context));
+
+    expect(error.getStatus()).toBe(HttpStatus.FORBIDDEN);
+    expect(error.code).toBe('practice_suspended');
+  });
+
+  it('does not restrict an account that is not suspended', async () => {
+    const { context } = routeContext(ClinicalFixture, ClinicalFixture.prototype.read);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
   });
 });
