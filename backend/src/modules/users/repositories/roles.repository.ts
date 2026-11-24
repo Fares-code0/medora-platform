@@ -85,9 +85,15 @@ export class RolesRepository {
    * every active user's id into memory to take `.length`, which is a
    * table scan per role on a real roster.
    */
-  async roles(): Promise<readonly RoleRow[]> {
+  /**
+   * `hospitalId` set (a Hospital Admin, F-17): the system roles and that
+   * hospital's own custom roles only, with member counts limited to people
+   * working there — no other hospital's roles or headcounts.
+   */
+  async roles(hospitalId?: string): Promise<readonly RoleRow[]> {
     const [rows, counts] = await Promise.all([
       this.prisma.db.role.findMany({
+        ...(hospitalId === undefined ? {} : { where: { OR: [{ hospitalId: null }, { hospitalId }] } }),
         select: {
           id: true,
           code: true,
@@ -97,7 +103,7 @@ export class RolesRepository {
         },
         orderBy: { code: 'asc' },
       }),
-      this.memberCountsByRoleId(),
+      this.memberCountsByRoleId(hospitalId),
     ]);
 
     return rows.map((row) => {
@@ -125,11 +131,12 @@ export class RolesRepository {
    * `activeMembers <= members` holds by construction rather than by
    * timing.
    */
-  private async memberCountsByRoleId(): Promise<
-    Readonly<Record<string, { members: number; activeMembers: number }>>
-  > {
+  private async memberCountsByRoleId(
+    hospitalId?: string,
+  ): Promise<Readonly<Record<string, { members: number; activeMembers: number }>>> {
     const grouped = await this.prisma.db.user.groupBy({
       by: ['roleId', 'status'],
+      ...(hospitalId === undefined ? {} : { where: worksAt(hospitalId) }),
       _count: { _all: true },
     });
 
@@ -142,6 +149,11 @@ export class RolesRepository {
     }
 
     return counts;
+  }
+
+  /** Whether the account works at `hospitalId` now (employment, affiliation or admin assignment). */
+  async worksAt(userId: string, hospitalId: string): Promise<boolean> {
+    return (await this.prisma.db.user.count({ where: { id: userId, ...worksAt(hospitalId) } })) > 0;
   }
 
   findRoleByCode(code: string): Promise<{ id: string; code: string; isSystem: boolean } | null> {
@@ -428,4 +440,15 @@ export class RolesRepository {
       });
     });
   }
+}
+
+/** People working at a hospital now: a doctor's employment, a staff affiliation, an admin assignment. */
+function worksAt(hospitalId: string) {
+  return {
+    OR: [
+      { doctor: { is: { employments: { some: { hospitalId, endedAt: null } } } } },
+      { staffMember: { some: { hospitalAffiliations: { some: { hospitalId, endedAt: null } } } } },
+      { hospitalRoleAssignments: { some: { hospitalId, revokedAt: null } } },
+    ],
+  };
 }

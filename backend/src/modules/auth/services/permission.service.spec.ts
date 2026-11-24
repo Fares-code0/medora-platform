@@ -61,8 +61,8 @@ describe('PermissionService — the claim is the enforced set', () => {
 
   it('adds an allowed override inside the ceiling', async () => {
     expect(
-      await serviceWith(grant('appointments.reassign')).resolve('u-1', 'r', 'doctor'),
-    ).toContain('appointments.reassign');
+      await serviceWith(grant('appointments.cancelAdministratively')).resolve('u-1', 'r', 'reception'),
+    ).toContain('appointments.cancelAdministratively');
   });
 
   it('removes a denied override the bundle carries', async () => {

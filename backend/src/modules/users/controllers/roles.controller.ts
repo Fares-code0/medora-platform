@@ -54,8 +54,8 @@ export class RolesController {
   @HospitalScope()
   @NotPhi('role definitions')
   @Get('roles')
-  list(): Promise<readonly RoleView[]> {
-    return this.roles.list();
+  list(@CurrentUser() user: AuthenticatedUser): Promise<readonly RoleView[]> {
+    return this.roles.list(user);
   }
 
   /** API §15.1 — the 22-capability catalogue, grouped by domain. */

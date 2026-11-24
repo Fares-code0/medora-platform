@@ -27,7 +27,7 @@
  *    default).
  */
 
-import { PERMISSIONS, type Permission } from './permission-catalogue';
+import { type Permission } from './permission-catalogue';
 
 /** Clinical content and clear identity: never standing capabilities of `admin`. */
 export const ADMIN_DENIED_PHI: readonly Permission[] = [
@@ -76,46 +76,65 @@ export function isRoleCategory(code: string): code is RoleCategory {
   return CATEGORIES.has(code);
 }
 
-const without = (...excluded: (readonly Permission[])[]): ReadonlySet<Permission> => {
-  const out = new Set<Permission>(PERMISSIONS);
-  for (const list of excluded) for (const capability of list) out.delete(capability);
-  return out;
-};
 
 /**
- * The most a role of each category may ever hold.
+ * The most a role of each category may ever hold — an explicit allow-list
+ * per category (audit F-13), not the catalogue minus a few exclusions. A
+ * capability added to the catalogue is therefore held by no category until
+ * someone puts it in one, and no two clinical categories share a ceiling:
  *
- * - `reception`, `laboratory`, `pharmacy` keep the catalogue's existing
- *   locks (no record authoring, no prescribing, no message content for
- *   laboratory and pharmacy) and lose platform administration.
- * - `nurse` has no defined bundle yet; its ceiling is deny-by-default for
- *   authoring, prescribing, message content and the AI assistant, and no
- *   platform administration. Anything inside the ceiling still has to be
- *   granted explicitly.
- * - `patient` holds no capability at all; patient routes authorize by
- *   self-scope (ADR-030), not capabilities.
+ * - `admin`: patient directory (masked), appointment administration,
+ *   messaging oversight metadata and flags, and platform administration —
+ *   never standing PHI (`ADMIN_DENIED_PHI`).
+ * - `doctor`: the clinical set — charts, records (view/edit), prescribing,
+ *   lab review, own appointments, messaging, the assistant. No
+ *   administration and no oversight.
+ * - `nurse`: charts and records to read, own appointments and messaging.
+ *   No authoring, prescribing, lab review or assistant.
+ * - `reception`: the patient directory and the schedule (own, reassignment,
+ *   administrative cancellation) and messaging. No clinical content.
+ * - `laboratory`: charts and records to read, lab review, messaging.
+ * - `pharmacy`: the patient directory and messaging.
+ * - `patient`: nothing — patient routes authorize by self-scope (ADR-030).
+ *
+ * Anything inside a ceiling still has to be granted explicitly (seeded
+ * matrix, custom-role grant or override).
  */
+const only = (...allowed: Permission[]): ReadonlySet<Permission> => new Set<Permission>(allowed);
+
 const CEILING: Readonly<Record<RoleCategory, ReadonlySet<Permission>>> = {
-  admin: without(ADMIN_DENIED_PHI),
-  doctor: without(ADMIN_ONLY),
-  reception: without(ADMIN_ONLY, ['records.edit', 'prescriptions.create']),
-  laboratory: without(ADMIN_ONLY, [
-    'records.edit',
-    'prescriptions.create',
-    'communications.viewContent',
-  ]),
-  pharmacy: without(ADMIN_ONLY, [
-    'records.edit',
-    'prescriptions.create',
-    'communications.viewContent',
-  ]),
-  nurse: without(ADMIN_ONLY, [
-    'records.edit',
-    'prescriptions.create',
-    'communications.viewContent',
-    'ai.use',
+  admin: only(
+    'patients.view',
+    'appointments.reassign',
+    'appointments.cancelAdministratively',
+    'messages.send',
+    'communications.viewMetadata',
+    'communications.resolveFlags',
+    ...ADMIN_ONLY,
+  ),
+  doctor: only(
+    'patients.view',
     'patients.revealIdentity',
-  ]),
+    'records.view',
+    'records.edit',
+    'prescriptions.create',
+    'labs.review',
+    'appointments.manageOwn',
+    'messages.send',
+    'communications.viewMetadata',
+    'ai.use',
+  ),
+  nurse: only('patients.view', 'records.view', 'appointments.manageOwn', 'messages.send', 'communications.viewMetadata'),
+  reception: only(
+    'patients.view',
+    'appointments.manageOwn',
+    'appointments.reassign',
+    'appointments.cancelAdministratively',
+    'messages.send',
+    'communications.viewMetadata',
+  ),
+  laboratory: only('patients.view', 'records.view', 'labs.review', 'messages.send', 'communications.viewMetadata'),
+  pharmacy: only('patients.view', 'messages.send', 'communications.viewMetadata'),
   patient: new Set<Permission>(),
 };
 

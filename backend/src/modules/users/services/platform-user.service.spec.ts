@@ -67,7 +67,7 @@ function repositoryFor(options: {
     findRoleByCode: vi.fn((code: string) =>
       Promise.resolve(
         (options.knownRoles ?? ['doctor', 'nurse', 'reception', 'admin']).includes(code)
-          ? { id: `role_${code}`, code }
+          ? { id: `role_${code}`, code, hospitalId: null }
           : null,
       ),
     ),

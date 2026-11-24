@@ -177,7 +177,7 @@ export class PlatformUserService {
       );
     }
 
-    const roleId = await this.resolveRole(target.role.code, input.role);
+    const roleId = await this.resolveRole(target.role.code, input.role, target.id);
     const status = resolveStatus(input.active);
 
     await this.assertAdministrationSurvives(target.role.code, input.role, input.active);
@@ -256,6 +256,7 @@ export class PlatformUserService {
   private async resolveRole(
     currentRole: string,
     requested: string | undefined,
+    targetUserId: string,
   ): Promise<string | undefined> {
     if (requested === undefined || requested === currentRole) return undefined;
 
@@ -271,6 +272,15 @@ export class PlatformUserService {
     // user: the user exists, the body does not name a real role.
     if (role === null) {
       throw AppException.validation({ role: ['Unknown role'] }, 'Unknown role');
+    }
+
+    // F-17: a custom role belongs to one hospital, and is held only by
+    // someone working there — never assigned across hospitals.
+    if (role.hospitalId !== null && !(await this.users.worksAt(targetUserId, role.hospitalId))) {
+      throw AppException.validation(
+        { role: ['This role belongs to a hospital the account does not work at'] },
+        'Role belongs to another hospital',
+      );
     }
 
     return role.id;

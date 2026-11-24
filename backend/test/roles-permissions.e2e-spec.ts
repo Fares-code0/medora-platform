@@ -676,9 +676,12 @@ describe('/users/{id}/permissions (§15.5)', () => {
     expect(updated.status).toBe(200);
 
     const view = dataOf<UserPermissionsView>(updated);
-    expect(view.effective).toContain('appointments.reassign');
-    // `logs.view` is platform administration: outside the doctor category's
-    // ceiling, so the override row is stored but never effective (§2.4, §2.8).
+    // Both grants are stored, and neither is effective: `logs.view` is
+    // platform administration and `appointments.reassign` administrative
+    // scheduling — both outside the doctor category's explicit ceiling
+    // (§2.4, §2.8; audit F-13).
+    expect(view.granted).toEqual(expect.arrayContaining(['appointments.reassign', 'logs.view']));
+    expect(view.effective).not.toContain('appointments.reassign');
     expect(view.effective).not.toContain('logs.view');
     expect(view.effective).not.toContain('prescriptions.create');
     // The bundle itself is untouched — this is an override, not an edit.
@@ -691,7 +694,7 @@ describe('/users/{id}/permissions (§15.5)', () => {
       .set('Authorization', `Bearer ${refreshed}`);
 
     const permissions = dataOf<{ permissions: string[] }>(session).permissions;
-    expect(permissions).toContain('appointments.reassign');
+    expect(permissions).not.toContain('appointments.reassign');
     expect(permissions).not.toContain('logs.view');
     expect(permissions).not.toContain('prescriptions.create');
   });

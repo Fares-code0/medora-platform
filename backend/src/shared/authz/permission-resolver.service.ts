@@ -82,7 +82,8 @@ export class PermissionResolver {
     // verification documents) need none, so "login allowed, clinical
     // denied" and "own profile only" both fall out of this one rule.
     const kind = standingKindOf(categoryOf(principal.roleCode, baseRoleCode));
-    const standing = kind === null ? 'clinical' : await this.roles.standingOf(principal.userId, kind);
+    const standing =
+      kind === null ? 'clinical' : await this.roles.standingOf(principal.userId, kind, await this.roleHospital(principal.roleCode, platformRole));
     const policed = standing === 'clinical' ? applyServerPolicy(principal.roleCode, baseRoleCode, locked) : [];
 
     return {
@@ -139,7 +140,15 @@ export class PermissionResolver {
   private async computeStanding(userId: string, roleCode: string): Promise<Standing> {
     const baseRoleCode = isPlatformRole(roleCode) ? null : await this.roles.baseRoleCodeOf(roleCode);
     const kind = standingKindOf(categoryOf(roleCode, baseRoleCode));
-    return kind === null ? 'clinical' : this.roles.standingOf(userId, kind);
+    return kind === null
+      ? 'clinical'
+      : this.roles.standingOf(userId, kind, await this.roleHospital(roleCode, isPlatformRole(roleCode)));
+  }
+
+  /** A custom role's own hospital (F-17); `undefined` for a system role. */
+  private async roleHospital(roleCode: string, systemRole: boolean): Promise<string | undefined> {
+    if (systemRole || this.roles.roleHospitalOf === undefined) return undefined;
+    return (await this.roles.roleHospitalOf(roleCode)) ?? undefined;
   }
 
   /** One user's overrides changed (API §15.5). */

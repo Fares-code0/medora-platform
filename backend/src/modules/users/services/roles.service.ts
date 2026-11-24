@@ -98,8 +98,11 @@ export class RolesService {
   ) {}
 
   /** API §15.1 — roles with member counts. */
-  async list(): Promise<readonly RoleView[]> {
-    const rows = await this.roles.roles();
+  async list(actor: AuthenticatedUser): Promise<readonly RoleView[]> {
+    // F-17: a Hospital Admin lists its own hospital's roles and headcounts.
+    const scope = await this.scopes.scopeOf(actor);
+    if (scope.kind === 'none') throw AppException.forbidden();
+    const rows = await this.roles.roles(scope.kind === 'hospital' ? scope.hospitalId : undefined);
 
     return rows.map((row) => ({
       id: row.id,

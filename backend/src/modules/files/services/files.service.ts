@@ -189,7 +189,11 @@ export class FilesService {
 
   /** The metadata a client holds between upload and linking. */
   async detail(user: AuthenticatedUser, fileId: string) {
-    return toView(await this.access.readable(user, fileId));
+    const row = await this.access.readable(user, fileId);
+    // F-14: the checksum fingerprints the document's content; only the
+    // uploader, who needs it to confirm their own upload, sees it.
+    const { checksumSha256, ...view } = toView(row);
+    return row.uploadedBy === user.id ? { ...view, checksumSha256 } : view;
   }
 }
 

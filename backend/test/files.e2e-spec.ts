@@ -21,6 +21,7 @@ import {
   fixtureHospital,
   makeClinicalDoctor,
   recordPatientAt,
+  soleRecordOf,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -373,8 +374,13 @@ describe('API §17.2 — who may read a file', () => {
       await upload(ownerToken, 'patient_document', 'M25 linked.pdf', 'application/pdf', PDF),
     );
 
+    // Linked as the application links it: the file joins the chart's
+    // hospital and the document is stamped with it (F-06, F-14).
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
     await harness.prisma.patientDocument.create({
       data: {
+        ...stamp,
         patientId,
         name: 'Referral',
         category: 'REFERRAL',
@@ -394,6 +400,36 @@ describe('API §17.2 — who may read a file', () => {
     expect(
       (await request(harness.server).get(`${FILES}/${file.id}`).set(as(strangerToken))).status,
     ).toBe(404);
+  });
+
+  it('keeps a file to its hospital, and the checksum to its uploader (F-14)', async () => {
+    const file = dataOf<FileView>(
+      await upload(ownerToken, 'patient_document', 'M25 scoped.pdf', 'application/pdf', PDF),
+    );
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
+    await harness.prisma.patientDocument.create({
+      data: { ...stamp, patientId, name: 'Scoped', category: 'REFERRAL', sizeKb: 1, fileId: file.id },
+    });
+
+    const asOwner = await request(harness.server).get(`${FILES}/${file.id}`).set(as(ownerToken));
+    expect(asOwner.status).toBe(200);
+    expect(dataOf<Record<string, unknown>>(asOwner)).toHaveProperty('checksumSha256');
+    const asCarer = await request(harness.server).get(`${FILES}/${file.id}`).set(as(carerToken));
+    expect(asCarer.status).toBe(200);
+    expect(dataOf<Record<string, unknown>>(asCarer)).not.toHaveProperty('checksumSha256');
+
+    // The stranger now reaches the patient too — through a record at their
+    // own hospital B — and still cannot open hospital A's file.
+    const hospitalB = await fixtureHospital(harness.prisma, 'b');
+    const recordB = await recordPatientAt(harness.prisma, patientId, hospitalB);
+    try {
+      for (const path of [`${FILES}/${file.id}`, `${FILES}/${file.id}/download`]) {
+        expect((await request(harness.server).get(path).set(as(strangerToken))).status, path).toBe(404);
+      }
+    } finally {
+      await harness.prisma.hospitalMedicalRecord.delete({ where: { id: recordB } });
+    }
   });
 
   it('lets any signed-in user read a profile photo', async () => {
@@ -454,8 +490,10 @@ describe('API §17.3 — delete is the owner’s, and is a soft delete', () => {
       await upload(ownerToken, 'patient_document', 'M25 notyours.pdf', 'application/pdf', PDF),
     );
 
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
     await harness.prisma.patientDocument.create({
-      data: { patientId, name: 'Scan', category: 'REPORT', sizeKb: 1, fileId: file.id },
+      data: { ...stamp, patientId, name: 'Scan', category: 'REPORT', sizeKb: 1, fileId: file.id },
     });
 
     // The carer can read this file — asserted above for its sibling —

@@ -135,11 +135,17 @@ export class PrismaRoleRepository implements RoleRepository {
   }
 
   /** See `RoleRepository.standingOf`. Two indexed reads at most. */
-  async standingOf(userId: string, kind: StandingKind): Promise<Standing> {
-    return kind === 'doctor' ? this.doctorStanding(userId) : this.staffStanding(userId);
+  async standingOf(userId: string, kind: StandingKind, hospitalId?: string): Promise<Standing> {
+    return kind === 'doctor' ? this.doctorStanding(userId, hospitalId) : this.staffStanding(userId, hospitalId);
   }
 
-  private async doctorStanding(userId: string): Promise<Standing> {
+  /** See `RoleRepository.roleHospitalOf`. */
+  async roleHospitalOf(roleCode: string): Promise<string | null> {
+    const row = await this.prisma.db.role.findUnique({ where: { code: roleCode }, select: { hospitalId: true } });
+    return row?.hospitalId ?? null;
+  }
+
+  private async doctorStanding(userId: string, hospitalId?: string): Promise<Standing> {
     const doctor = await this.prisma.db.doctor.findUnique({
       where: { userId },
       select: {
@@ -147,7 +153,7 @@ export class PrismaRoleRepository implements RoleRepository {
         verificationStatus: true,
         practiceStatus: true,
         employments: {
-          select: { endedAt: true, hospital: { select: { status: true, deletedAt: true } } },
+          select: { endedAt: true, hospitalId: true, hospital: { select: { status: true, deletedAt: true } } },
           orderBy: { startedAt: 'desc' },
           take: 2,
         },
@@ -162,25 +168,30 @@ export class PrismaRoleRepository implements RoleRepository {
 
     const hospitalActive =
       active.hospital.status === ACTIVE_HOSPITAL_FILTER.status && active.hospital.deletedAt === null;
+    // A hospital-bound custom role (F-17): only at its own hospital.
+    const atRoleHospital = hospitalId === undefined || active.hospitalId === hospitalId;
     const clinical =
       hospitalActive &&
+      atRoleHospital &&
       doctor.verificationStatus === DoctorVerificationStatus.VERIFIED &&
       CLINICAL_PRACTICE_STATUSES.includes(doctor.practiceStatus);
 
     return clinical ? 'clinical' : 'restricted';
   }
 
-  private async staffStanding(userId: string): Promise<Standing> {
+  private async staffStanding(userId: string, hospitalId?: string): Promise<Standing> {
     const affiliations = await this.prisma.db.hospitalStaffAffiliation.findMany({
       where: { staff: { is: { userId, deletedAt: null } } },
-      select: { endedAt: true, hospital: { select: { status: true, deletedAt: true } } },
+      select: { endedAt: true, hospitalId: true, hospital: { select: { status: true, deletedAt: true } } },
       orderBy: { startedAt: 'desc' },
       take: 2,
     });
     const active = affiliations.find((affiliation) => affiliation.endedAt === null);
     if (active === undefined) return affiliations.length > 0 ? 'terminated' : 'restricted';
 
-    return active.hospital.status === ACTIVE_HOSPITAL_FILTER.status && active.hospital.deletedAt === null
+    return active.hospital.status === ACTIVE_HOSPITAL_FILTER.status &&
+      active.hospital.deletedAt === null &&
+      (hospitalId === undefined || active.hospitalId === hospitalId)
       ? 'clinical'
       : 'restricted';
   }

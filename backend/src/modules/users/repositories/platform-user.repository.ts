@@ -118,8 +118,22 @@ export class PlatformUserRepository {
     });
   }
 
-  findRoleByCode(code: string): Promise<{ id: string; code: string } | null> {
-    return this.prisma.db.role.findUnique({ where: { code }, select: { id: true, code: true } });
+  findRoleByCode(code: string): Promise<{ id: string; code: string; hospitalId: string | null } | null> {
+    return this.prisma.db.role.findUnique({ where: { code }, select: { id: true, code: true, hospitalId: true } });
+  }
+
+  /** Whether the account works at `hospitalId` now (employment or affiliation) — F-17. */
+  async worksAt(userId: string, hospitalId: string): Promise<boolean> {
+    const count = await this.prisma.db.user.count({
+      where: {
+        id: userId,
+        OR: [
+          { doctor: { is: { employments: { some: { hospitalId, endedAt: null } } } } },
+          { staffMember: { some: { hospitalAffiliations: { some: { hospitalId, endedAt: null } } } } },
+        ],
+      },
+    });
+    return count > 0;
   }
 
   /**

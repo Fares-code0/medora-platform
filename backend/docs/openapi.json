@@ -483,6 +483,11 @@
                     ],
                     "type": "string"
                   },
+                  "password": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "reason": {
                     "maxLength": 2000,
                     "minLength": 10,
@@ -491,7 +496,8 @@
                 },
                 "required": [
                   "justificationCategory",
-                  "reason"
+                  "reason",
+                  "password"
                 ],
                 "type": "object"
               }
@@ -567,6 +573,45 @@
     "/api/v1/admin/conversations/access-requests/{requestId}/approve": {
       "post": {
         "operationId": "Oversight_approve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Oversight"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [],
+          "public": false,
+          "roles": [
+            "admin"
+          ]
+        }
+      }
+    },
+    "/api/v1/admin/conversations/access-requests/{requestId}/revoke": {
+      "post": {
+        "operationId": "Oversight_revoke",
         "parameters": [
           {
             "in": "path",
@@ -19677,9 +19722,9 @@
     }
   ],
   "x-medora-coverage": {
-    "operations": 323,
+    "operations": 324,
     "withAnyRequestSchema": 184,
-    "withoutRequestSchema": 139,
+    "withoutRequestSchema": 140,
     "withQuery": 46,
     "withQuerySchema": 42,
     "withQueryWithoutSchema": 4,

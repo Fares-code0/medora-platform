@@ -103,11 +103,11 @@ export class FileAccessService {
 
     switch (file.kind) {
       case 'patient_document':
-        return this.reachesPatient(user, await this.files.patientForDocument(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForDocument(file.id));
       case 'record_attachment':
-        return this.reachesPatient(user, await this.files.patientForRecordAttachment(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForRecordAttachment(file.id));
       case 'lab_attachment':
-        return this.reachesPatient(user, await this.files.patientForLabAttachment(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForLabAttachment(file.id));
       case 'message_attachment':
         return (await this.files.participantsForMessageAttachment(file.id)).includes(user.id);
       case 'verification_document':
@@ -135,16 +135,25 @@ export class FileAccessService {
     return (await this.permissions.standingFor(user.id, user.role)) === 'clinical';
   }
 
-  /** Care relationship, or the patient reading their own file. */
+  /**
+   * DR-05 at resource level (F-01, F-14): a clinician reads a patient's file
+   * only when it belongs to the hospital where they reach the patient — a
+   * file another hospital holds, or one no hospital has adopted, is not
+   * theirs. Or the patient reading their own file.
+   */
   private async reachesPatient(
     user: AuthenticatedUser,
+    file: FileRow,
     patientId: string | null,
   ): Promise<boolean> {
     if (patientId === null) return false;
 
     const principal = principalOf(user);
 
-    if (await this.patientScope.canReach(principal, patientId)) return true;
+    if (principal.roleCode === 'doctor') {
+      const reach = await this.patientScope.reachAt(principal, patientId).catch(() => null);
+      if (reach !== null) return file.hospitalId !== null && file.hospitalId === reach.hospitalId;
+    }
 
     return (await this.selfScope.patientIdFor(principal)) === patientId;
   }

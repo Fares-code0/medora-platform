@@ -113,7 +113,15 @@ export interface RoleRepository {
    * - `terminated` — employment or affiliation ended and none is active: no
    *   login and no clinical access (history is preserved).
    */
-  standingOf(userId: string, kind: StandingKind): Promise<Standing>;
+  standingOf(userId: string, kind: StandingKind, hospitalId?: string): Promise<Standing>;
+  /**
+   * The hospital a custom role belongs to (`roles.hospital_id`), `null` for
+   * a system role (audit F-17). A custom role confers standing — and so any
+   * capability — only while its holder works at that hospital: `standingOf`
+   * is asked with it, and an employment or affiliation elsewhere is
+   * `restricted`.
+   */
+  roleHospitalOf?(roleCode: string): Promise<string | null>;
 }
 
 export type Standing = 'clinical' | 'restricted' | 'terminated';

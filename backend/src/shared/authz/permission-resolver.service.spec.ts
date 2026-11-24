@@ -124,9 +124,10 @@ describe('PermissionResolver — per-user overrides', () => {
   });
 
   it('adds a granted capability the role does not carry, inside its ceiling', async () => {
-    roles.overrides.set('u-1', { granted: ['appointments.reassign'], revoked: [] });
+    // Inside reception's ceiling (F-13), outside its seeded bundle.
+    roles.overrides.set('u-1', { granted: ['appointments.cancelAdministratively'], revoked: [] });
 
-    expect(await resolver.can(principal('doctor'), 'appointments.reassign')).toBe(true);
+    expect(await resolver.can(principal('reception'), 'appointments.cancelAdministratively')).toBe(true);
   });
 
   it('never lets an override give a non-admin platform administration (§2.4, §2.8)', async () => {
@@ -159,27 +160,28 @@ describe('PermissionResolver — per-user overrides', () => {
   });
 
   it('reports the bundle and the overrides alongside the result', async () => {
-    roles.overrides.set('u-1', { granted: ['appointments.reassign'], revoked: ['ai.use'] });
+    roles.overrides.set('u-1', { granted: ['appointments.cancelAdministratively'], revoked: ['messages.send'] });
 
-    const resolved = await resolver.effectivePermissions(principal('doctor'));
+    const resolved = await resolver.effectivePermissions(principal('reception'));
 
-    expect(resolved.fromRole).toEqual(SEEDED_MATRIX.doctor);
-    expect(resolved.overrides.granted).toEqual(['appointments.reassign']);
-    expect(resolved.permissions).toContain('appointments.reassign');
-    expect(resolved.permissions).not.toContain('ai.use');
+    expect(resolved.fromRole).toEqual(SEEDED_MATRIX.reception);
+    expect(resolved.overrides.granted).toEqual(['appointments.cancelAdministratively']);
+    expect(resolved.permissions).toContain('appointments.cancelAdministratively');
+    expect(resolved.permissions).not.toContain('messages.send');
   });
 
   it('returns permissions in catalogue order', async () => {
     roles.overrides.set('u-1', {
-      granted: ['communications.resolveFlags', 'appointments.reassign'],
+      granted: ['communications.viewMetadata', 'appointments.cancelAdministratively'],
       revoked: [],
     });
 
-    const held = await resolver.permissionsFor(principal('doctor'));
+    const held = await resolver.permissionsFor(principal('reception'));
 
     // Catalogue order: Scheduling before Communication.
-    expect(held.indexOf('appointments.reassign')).toBeLessThan(
-      held.indexOf('communications.resolveFlags'),
+    expect(held.indexOf('appointments.cancelAdministratively')).toBeGreaterThanOrEqual(0);
+    expect(held.indexOf('appointments.cancelAdministratively')).toBeLessThan(
+      held.indexOf('communications.viewMetadata'),
     );
   });
 });
@@ -228,9 +230,9 @@ describe('PermissionResolver — an override cannot beat a lock', () => {
 
   it('still honours overrides on cells that are not locked', async () => {
     // The lock rule must not become "overrides never work".
-    roles.overrides.set('u-1', { granted: ['labs.review'], revoked: [] });
+    roles.overrides.set('u-1', { granted: ['communications.viewMetadata'], revoked: [] });
 
-    expect(await resolver.can(principal('pharmacy'), 'labs.review')).toBe(true);
+    expect(await resolver.can(principal('pharmacy'), 'communications.viewMetadata')).toBe(true);
   });
 });
 

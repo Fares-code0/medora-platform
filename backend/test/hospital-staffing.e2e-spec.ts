@@ -456,3 +456,82 @@ describe('administrative tiering (§2.2, §2.3, OD-07)', () => {
     expect(row.occurredAt).toBeInstanceOf(Date);
   });
 });
+
+describe('custom roles belong to one hospital (F-17)', () => {
+  const customRoles: string[] = [];
+
+  async function customRole(hospitalId: string, base = 'doctor'): Promise<string> {
+    const code = `f17_${randomUUID().slice(0, 8)}`;
+    const baseRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: base }, select: { id: true } });
+    await harness.prisma.role.create({
+      data: { code, label: `F-17 ${code}`, isSystem: false, baseRoleId: baseRole.id, hospitalId },
+    });
+    customRoles.push(code);
+    return code;
+  }
+
+  afterAll(async () => {
+    await cleanup();
+    await harness.reset();
+    await harness.prisma.role.deleteMany({ where: { code: { in: customRoles } } });
+  });
+
+  it('lists a Hospital Admin its own hospital’s roles only; a Platform Admin all', async () => {
+    const [a, b] = [await hospital('F17 A'), await hospital('F17 B')];
+    const [atA, atB] = [await customRole(a), await customRole(b)];
+    const hospitalAdmin = await seedAdmin('f17-ha', { hospitalId: a });
+    const platformAdmin = await seedAdmin('f17-pa', { platform: true });
+
+    const codes = async (token: string) =>
+      dataOf<{ code: string }[]>(await request(harness.server).get('/api/v1/roles').set(as(token)).expect(200)).map(
+        (role) => role.code,
+      );
+    const seenByHospital = await codes(hospitalAdmin.token);
+    expect(seenByHospital).toContain(atA);
+    expect(seenByHospital).not.toContain(atB);
+    expect(seenByHospital).toContain('doctor');
+    const seenByPlatform = await codes(platformAdmin.token);
+    expect(seenByPlatform).toEqual(expect.arrayContaining([atA, atB]));
+  });
+
+  it('refuses to assign a custom role to someone who works at another hospital', async () => {
+    const [a, b] = [await hospital('F17 A'), await hospital('F17 B')];
+    const atB = await customRole(b);
+    const platformAdmin = await seedAdmin('f17-assigner', { platform: true });
+    const subject = await seedDoctor('f17-subject');
+    await harness.prisma.doctorEmployment.create({ data: { doctorId: subject.doctorId, hospitalId: a } });
+    const { publicId } = await harness.prisma.user.findUniqueOrThrow({
+      where: { id: subject.userId },
+      select: { publicId: true },
+    });
+
+    const response = await request(harness.server)
+      .patch(`/api/v1/admin/users/${publicId}`)
+      .set(as(platformAdmin.token))
+      .send({ role: atB });
+    expect(response.status, JSON.stringify(response.body)).toBe(422);
+    const after = await harness.prisma.user.findUniqueOrThrow({
+      where: { id: subject.userId },
+      select: { role: { select: { code: true } } },
+    });
+    expect(after.role.code).toBe('doctor');
+  });
+
+  it('confers nothing on a holder who works at another hospital', async () => {
+    const [a, b] = [await hospital('F17 A'), await hospital('F17 B')];
+    const atB = await customRole(b);
+    const holder = await seedDoctor('f17-holder');
+    await harness.prisma.doctorEmployment.create({ data: { doctorId: holder.doctorId, hospitalId: a } });
+    const role = await harness.prisma.role.findUniqueOrThrow({ where: { code: atB }, select: { id: true } });
+    // Written past the API, as a stale or forged assignment would be.
+    await harness.prisma.user.update({
+      where: { id: holder.userId },
+      data: { roleId: role.id, authzVersion: { increment: 1 } },
+    });
+
+    const { token } = await signIn(holder.email);
+    const response = await request(harness.server).get('/api/v1/patients').set(as(token));
+    expect(response.status).toBe(403);
+    expect((response.body as { code?: string }).code).toBe('clinical_standing_required');
+  });
+});
