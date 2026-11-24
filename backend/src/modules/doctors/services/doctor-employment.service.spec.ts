@@ -317,7 +317,7 @@ describe('DoctorEmploymentService.list', () => {
   it('answers 404 for an unknown doctor', async () => {
     const { service, repository } = setup({ doctor: null });
 
-    const error = await rejection(service.list(DOCTOR));
+    const error = await rejection(service.list(DOCTOR, null));
 
     expect(error.getStatus()).toBe(404);
     expect(repository.listFor).not.toHaveBeenCalled();
@@ -326,7 +326,7 @@ describe('DoctorEmploymentService.list', () => {
   it('projects each employment with the hospital public id', async () => {
     const { service } = setup();
 
-    await expect(service.list(DOCTOR)).resolves.toEqual([
+    await expect(service.list(DOCTOR, null)).resolves.toEqual([
       {
         id: EMPLOYMENT,
         doctorId: DOCTOR,

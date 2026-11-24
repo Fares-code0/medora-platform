@@ -13,6 +13,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * API contract audit (2026-11-14) — a user-controlled identifier never
@@ -123,6 +124,8 @@ async function adminToken(): Promise<string> {
     .send({ code: currentCode(secret) });
   const role = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: role.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const { otpToken } = await login(email);
   return dataOf<{ accessToken: string }>(

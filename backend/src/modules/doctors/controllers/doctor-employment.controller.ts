@@ -3,9 +3,16 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from '@nestj
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import {
+  AdminScoped,
+  Can,
+  CurrentAdminScope,
+  hospitalFilterOf,
+  type ResolvedAdminScope,
+} from '../../../shared/authz';
 import type { DoctorEmploymentView, EndEmploymentResult } from '../dto/doctor-employment.dto';
 import { startEmploymentSchema, type StartEmploymentInput } from '../dto/doctor-employment.schema';
+import { DoctorAdminScopeService } from '../services/doctor-admin-scope.service';
 import { DoctorEmploymentService } from '../services/doctor-employment.service';
 
 /**
@@ -16,26 +23,39 @@ import { DoctorEmploymentService } from '../services/doctor-employment.service';
  * OD-07). `doctorId` is the `doctors.id` uuid, as on every administrator
  * doctor route; the hospital is named by its public id in the body.
  */
+// S5 (OD-07): Platform Admin — every employment; Hospital Admin — its own
+// hospital's doctors and employments only, hiring only into its own hospital
+// (`DoctorAdminScopeService`), others 404; no administrative scope — 403.
+@AdminScoped('any')
 @Controller('doctors/:doctorId/employments')
 export class DoctorEmploymentController {
-  constructor(private readonly employments: DoctorEmploymentService) {}
+  constructor(
+    private readonly employments: DoctorEmploymentService,
+    private readonly scopes: DoctorAdminScopeService,
+  ) {}
 
   /** The doctor's employments, active and ended, newest first. */
   @Can('doctors.manage')
   @Get()
-  list(@Param('doctorId') doctorId: string): Promise<DoctorEmploymentView[]> {
-    return this.employments.list(doctorId);
+  async list(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('doctorId') doctorId: string,
+  ): Promise<DoctorEmploymentView[]> {
+    await this.scopes.assertDoctor(scope, doctorId);
+    return this.employments.list(doctorId, hospitalFilterOf(scope));
   }
 
   /** Start an employment. 409 while another is active (DR-02). */
   @Can('doctors.manage')
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  start(
+  async start(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Body(zodBody(startEmploymentSchema)) body: StartEmploymentInput,
   ): Promise<DoctorEmploymentView> {
+    await this.scopes.assertCanStart(scope, doctorId, body.hospitalId);
     return this.employments.start(actor, doctorId, body);
   }
 
@@ -47,11 +67,13 @@ export class DoctorEmploymentController {
   @Can('doctors.manage')
   @Post(':employmentId/end')
   @HttpCode(HttpStatus.OK)
-  end(
+  async end(
     @CurrentUser() actor: AuthenticatedUser,
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('doctorId') doctorId: string,
     @Param('employmentId') employmentId: string,
   ): Promise<EndEmploymentResult> {
+    await this.scopes.assertEmployment(scope, doctorId, employmentId);
     return this.employments.end(actor, doctorId, employmentId);
   }
 }

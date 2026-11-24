@@ -19,6 +19,15 @@ import { PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * S5 scope filter: `null` is platform-wide (a Platform Admin, or a non-admin
+ * role a route admits unchanged); a hospital id restricts to that hospital's
+ * rows. Rows with no hospital (legacy) are never in a hospital's scope.
+ */
+function inHospital(hospitalId: string | null): { hospitalId?: string } {
+  return hospitalId === null ? {} : { hospitalId };
+}
+
 const QUEUE_SELECT = {
   id: true,
   ticket: true,
@@ -105,8 +114,9 @@ export class OperationsRepository {
 
   /* ── Shifts ────────────────────────────────────────────────── */
 
-  shifts() {
+  shifts(hospitalId: string | null) {
     return this.prisma.db.staffShiftAssignment.findMany({
+      where: inHospital(hospitalId),
       select: { id: true, staffId: true, kind: true, days: true },
       orderBy: { createdAt: 'asc' },
     });
@@ -119,11 +129,11 @@ export class OperationsRepository {
     });
   }
 
-  async deleteShift(id: string): Promise<number> {
+  async deleteShift(id: string, hospitalId: string | null): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.staffShiftAssignment.updateMany({
-      where: { id },
+      where: { id, ...inHospital(hospitalId) },
       data: { deletedAt: new Date() },
     });
 
@@ -136,10 +146,22 @@ export class OperationsRepository {
     return this.prisma.db.staffMember.count({ where: { id } });
   }
 
+  /** The staff member's active affiliation at the hospital, if any (S5). */
+  async activeAffiliation(staffId: string, hospitalId: string): Promise<string | null> {
+    if (!UUID.test(staffId)) return null;
+
+    const row = await this.prisma.db.hospitalStaffAffiliation.findFirst({
+      where: { staffId, hospitalId, endedAt: null, staff: { is: { deletedAt: null } } },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
+
   /* ── Queue ─────────────────────────────────────────────────── */
 
-  queue() {
+  queue(hospitalId: string | null) {
     return this.prisma.db.queueEntry.findMany({
+      where: inHospital(hospitalId),
       select: QUEUE_SELECT,
       // Urgent first, then longest waiting — the order a receptionist
       // works the list in, and the one the estimate assumes.
@@ -147,23 +169,38 @@ export class OperationsRepository {
     });
   }
 
-  queueEntry(id: string) {
+  queueEntry(id: string, hospitalId: string) {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.queueEntry.findUnique({ where: { id }, select: QUEUE_SELECT });
+    return this.prisma.db.queueEntry.findFirst({
+      where: { id, hospitalId },
+      select: QUEUE_SELECT,
+    });
   }
 
-  async assignRoom(id: string, roomId: string) {
-    const moved = await this.prisma.db.queueEntry.updateMany({ where: { id }, data: { roomId } });
+  /** A live room of the hospital (S5: a room is assigned only within its hospital). */
+  roomInHospital(roomId: string, hospitalId: string): Promise<number> {
+    if (!UUID.test(roomId)) return Promise.resolve(0);
 
-    return moved.count === 0 ? null : this.queueEntry(id);
+    return this.prisma.db.room.count({ where: { id: roomId, hospitalId } });
   }
 
-  async removeFromQueue(id: string): Promise<number> {
+  async assignRoom(id: string, roomId: string, hospitalId: string) {
+    if (!UUID.test(id)) return null;
+
+    const moved = await this.prisma.db.queueEntry.updateMany({
+      where: { id, hospitalId },
+      data: { roomId },
+    });
+
+    return moved.count === 0 ? null : this.queueEntry(id, hospitalId);
+  }
+
+  async removeFromQueue(id: string, hospitalId: string): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.queueEntry.updateMany({
-      where: { id },
+      where: { id, hospitalId },
       data: { deletedAt: new Date() },
     });
 
@@ -172,17 +209,21 @@ export class OperationsRepository {
 
   /* ── Waiting room ──────────────────────────────────────────── */
 
-  waitingRoom() {
+  waitingRoom(hospitalId: string | null) {
     return this.prisma.db.waitingRoomEntry.findMany({
+      where: inHospital(hospitalId),
       select: WAITING_SELECT,
       orderBy: { checkedInAt: 'asc' },
     });
   }
 
-  waitingEntry(id: string) {
+  waitingEntry(id: string, hospitalId: string) {
     if (!UUID.test(id)) return Promise.resolve(null);
 
-    return this.prisma.db.waitingRoomEntry.findUnique({ where: { id }, select: WAITING_SELECT });
+    return this.prisma.db.waitingRoomEntry.findFirst({
+      where: { id, hospitalId },
+      select: WAITING_SELECT,
+    });
   }
 
   /**
@@ -193,11 +234,16 @@ export class OperationsRepository {
    * write and one 409 — rather than the second silently overwriting a
    * transition the first had already made.
    */
-  async transitionWaiting(id: string, from: WaitingStatus, to: WaitingStatus): Promise<number> {
+  async transitionWaiting(
+    id: string,
+    hospitalId: string,
+    from: WaitingStatus,
+    to: WaitingStatus,
+  ): Promise<number> {
     if (!UUID.test(id)) return 0;
 
     const result = await this.prisma.db.waitingRoomEntry.updateMany({
-      where: { id, status: from },
+      where: { id, hospitalId, status: from },
       data: { status: to },
     });
 
@@ -307,60 +353,75 @@ export class OperationsRepository {
 
   /* ── M23.1 overview and M23.7 audit feed ───────────────────── */
 
-  overviewCounts(from: Date, to: Date) {
+  /**
+   * S5: a Hospital Admin's overview counts its hospital's rows only — the
+   * appointments, queue, waiting room and rooms stamped with its hospital,
+   * and the doctors with an active employment there. Platform-wide (`null`)
+   * is unchanged.
+   */
+  overviewCounts(from: Date, to: Date, hospitalId: string | null) {
     const window = { gte: from, lt: to };
+    const own = inHospital(hospitalId);
+    const doctors =
+      hospitalId === null ? {} : { employments: { some: { hospitalId, endedAt: null } } };
 
     return this.prisma.$transaction([
-      this.prisma.db.appointment.count({ where: { startsAt: window } }),
-      this.prisma.db.appointment.count({ where: { startsAt: window, status: 'COMPLETED' } }),
-      this.prisma.db.appointment.count({ where: { startsAt: window, status: 'CANCELLED' } }),
-      this.prisma.db.waitingRoomEntry.count({ where: { status: 'WAITING' } }),
-      this.prisma.db.queueEntry.count(),
-      this.prisma.db.doctor.count(),
-      this.prisma.db.room.count(),
-      this.prisma.db.room.count({ where: { status: 'OCCUPIED' } }),
+      this.prisma.db.appointment.count({ where: { startsAt: window, ...own } }),
+      this.prisma.db.appointment.count({
+        where: { startsAt: window, status: 'COMPLETED', ...own },
+      }),
+      this.prisma.db.appointment.count({
+        where: { startsAt: window, status: 'CANCELLED', ...own },
+      }),
+      this.prisma.db.waitingRoomEntry.count({ where: { status: 'WAITING', ...own } }),
+      this.prisma.db.queueEntry.count({ where: own }),
+      this.prisma.db.doctor.count({ where: doctors }),
+      this.prisma.db.room.count({ where: own }),
+      this.prisma.db.room.count({ where: { status: 'OCCUPIED', ...own } }),
     ]);
   }
 
   /** Distinct patients with an appointment today. */
-  async todaysPatients(from: Date, to: Date): Promise<number> {
+  async todaysPatients(from: Date, to: Date, hospitalId: string | null): Promise<number> {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['patientId'],
-      where: { startsAt: { gte: from, lt: to } },
+      where: { startsAt: { gte: from, lt: to }, ...inHospital(hospitalId) },
     });
 
     return grouped.length;
   }
 
   /** Start times, for the hourly-activity histogram. */
-  todaysStarts(from: Date, to: Date) {
+  todaysStarts(from: Date, to: Date, hospitalId: string | null) {
     return this.prisma.db.appointment.findMany({
-      where: { startsAt: { gte: from, lt: to } },
+      where: { startsAt: { gte: from, lt: to }, ...inHospital(hospitalId) },
       select: { startsAt: true },
     });
   }
 
   /** Doctors with at least one appointment today, for utilisation. */
-  async busyDoctors(from: Date, to: Date): Promise<number> {
+  async busyDoctors(from: Date, to: Date, hospitalId: string | null): Promise<number> {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['doctorId'],
-      where: { startsAt: { gte: from, lt: to } },
+      where: { startsAt: { gte: from, lt: to }, ...inHospital(hospitalId) },
     });
 
     return grouped.length;
   }
 
   /** Waiting-room check-in times, for the average wait. */
-  waitingSince() {
+  waitingSince(hospitalId: string | null) {
     return this.prisma.db.waitingRoomEntry.findMany({
-      where: { status: 'WAITING' },
+      where: { status: 'WAITING', ...inHospital(hospitalId) },
       select: { checkedInAt: true },
     });
   }
 
   /** M23.7 — the thin recent feed. The full surface is M28. */
-  recentAuditEvents(take: number) {
+  recentAuditEvents(take: number, hospitalId: string | null) {
     return this.prisma.auditEvent.findMany({
+      // S5: a Hospital Admin reads only `audit_events.hospital_id` = its hospital.
+      where: inHospital(hospitalId),
       select: {
         id: true,
         occurredAt: true,

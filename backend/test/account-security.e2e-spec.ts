@@ -18,6 +18,7 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * `GET /auth/session`, `/me/sessions`, `/me/devices`, `/me/login-history`
@@ -1032,6 +1033,9 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
   it('withdraws an administrative capability as soon as the role is downgraded', async () => {
     const signedIn = await seedWithTwoFactor('f3-demoted');
     await setRole(signedIn.email, 'admin');
+    // S5: the admin role alone has no administrative scope (OD-07, M-13); the
+    // demotion below revokes this grant in the database.
+    await markPlatformAdmin(harness.prisma, signedIn.email);
     const asAdmin = await signInWithCode(signedIn.email, signedIn.secret);
 
     const before = await request(harness.server)

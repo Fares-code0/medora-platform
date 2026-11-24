@@ -11,6 +11,13 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
+import {
+  convertToHospitalAdmin,
+  createHospital,
+  markPlatformAdmin,
+  removeHospitals,
+  type FixtureHospital,
+} from './support/admin-scope';
 
 /**
  * The Administration Center — API §18, RM M23.
@@ -98,6 +105,8 @@ async function signUpAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(harness.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),
@@ -501,9 +510,34 @@ describe('M23.3 verify — the working week, holidays and shifts', () => {
 });
 
 describe('M23.4 verify — the waiting-room machine and derived minutes', () => {
+  // S5 (OD-07): the queue and waiting room are Hospital Admin operations — their
+  // rows name patients, and a Platform Admin gets no PHI. These cases run as
+  // the Hospital Admin of one fixture hospital, on rows stamped with it.
+  let hospitalAdmin = '';
+  let hospital: FixtureHospital;
+  const hget = (path: string) => get(path, hospitalAdmin);
+  const hpost = (path: string, body: object) => post(path, body, hospitalAdmin);
+
+  beforeAll(async () => {
+    hospital = await createHospital(harness.prisma, 'M23.4 Hospital');
+    const email = testEmail('admin-center-hospital');
+    hospitalAdmin = await signUpAdmin('admin-center-hospital');
+    await convertToHospitalAdmin(harness.prisma, email, hospital.id);
+  });
+
+  afterAll(async () => {
+    await removeHospitals(harness.prisma, [hospital.id]);
+  });
+
   async function seedWaiting(status = 'WAITING', checkedInAt = new Date()) {
     const row = await harness.prisma.db.waitingRoomEntry.create({
-      data: { patientName: 'Layla Morsi', area: 'Main', status: status as never, checkedInAt },
+      data: {
+        patientName: 'Layla Morsi',
+        area: 'Main',
+        status: status as never,
+        checkedInAt,
+        hospitalId: hospital.id,
+      },
       select: { id: true },
     });
 
@@ -519,10 +553,10 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
     const id = await seedWaiting();
 
     expect(
-      dataOf<{ status: string }>(await post(`/waiting-room/${id}/call`, {}).expect(200)).status,
+      dataOf<{ status: string }>(await hpost(`/waiting-room/${id}/call`, {}).expect(200)).status,
     ).toBe('called');
     expect(
-      dataOf<{ status: string }>(await post(`/waiting-room/${id}/seat`, {}).expect(200)).status,
+      dataOf<{ status: string }>(await hpost(`/waiting-room/${id}/seat`, {}).expect(200)).status,
     ).toBe('in-room');
   });
 
@@ -530,7 +564,7 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   it('refuses in-room → called with 409', async () => {
     const id = await seedWaiting('IN_ROOM');
 
-    const response = await post(`/waiting-room/${id}/call`, {});
+    const response = await hpost(`/waiting-room/${id}/call`, {});
 
     expect(response.status).toBe(409);
     expect(errorBody(response).code).toBe('invalid_status_transition');
@@ -539,21 +573,21 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   it('refuses skipping straight to in-room', async () => {
     const id = await seedWaiting();
 
-    expect((await post(`/waiting-room/${id}/seat`, {})).status).toBe(409);
+    expect((await hpost(`/waiting-room/${id}/seat`, {})).status).toBe(409);
   });
 
   it('refuses calling someone who is already called', async () => {
     const id = await seedWaiting('CALLED');
 
-    expect((await post(`/waiting-room/${id}/call`, {})).status).toBe(409);
+    expect((await hpost(`/waiting-room/${id}/call`, {})).status).toBe(409);
   });
 
   it('lets exactly one of two concurrent calls win', async () => {
     const id = await seedWaiting();
 
     const [first, second] = await Promise.all([
-      post(`/waiting-room/${id}/call`, {}),
-      post(`/waiting-room/${id}/call`, {}),
+      hpost(`/waiting-room/${id}/call`, {}),
+      hpost(`/waiting-room/${id}/call`, {}),
     ]);
 
     // Compare-and-set: one transition, one conflict — never a silent
@@ -564,7 +598,7 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   it('derives waiting minutes from the check-in time', async () => {
     await seedWaiting('WAITING', new Date(Date.now() - 42 * 60_000));
 
-    const rows = dataOf<{ waitingMinutes: number }[]>(await get('/waiting-room').expect(200));
+    const rows = dataOf<{ waitingMinutes: number }[]>(await hget('/waiting-room').expect(200));
 
     expect(rows[0]?.waitingMinutes).toBeGreaterThanOrEqual(42);
     expect(rows[0]?.waitingMinutes).toBeLessThan(45);
@@ -575,11 +609,16 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
       select: { id: true, publicId: true },
     });
     await harness.prisma.db.waitingRoomEntry.create({
-      data: { patientName: 'Layla Morsi', area: 'Main', patientId: patient.id },
+      data: {
+        patientName: 'Layla Morsi',
+        area: 'Main',
+        patientId: patient.id,
+        hospitalId: hospital.id,
+      },
     });
 
     const rows = dataOf<{ patientMrn: string | null; patientName: string }[]>(
-      await get('/waiting-room').expect(200),
+      await hget('/waiting-room').expect(200),
     );
     const withPatient = rows.find((row) => row.patientMrn !== null);
 
@@ -597,11 +636,12 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
         enqueuedAt: new Date(Date.now() - 30 * 60_000),
         // The stored flag says otherwise; the response must not.
         delayed: false,
+        hospitalId: hospital.id,
       },
     });
 
     const rows = dataOf<{ waitingMinutes: number; delayed: boolean }[]>(
-      await get('/queue').expect(200),
+      await hget('/queue').expect(200),
     );
 
     expect(rows[0]?.waitingMinutes).toBeGreaterThanOrEqual(30);
@@ -609,7 +649,7 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   });
 
   it('answers 404 for an unknown waiting-room entry', async () => {
-    expect((await post('/waiting-room/00000000-0000-4000-8000-000000000000/call', {})).status).toBe(
+    expect((await hpost('/waiting-room/00000000-0000-4000-8000-000000000000/call', {})).status).toBe(
       404,
     );
   });

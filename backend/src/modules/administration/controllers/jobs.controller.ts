@@ -16,11 +16,14 @@ import { Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nest
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Roles } from '../../../shared/authz';
+import { AdminScoped, Roles } from '../../../shared/authz';
 import type { DeadLetterView, JobTriggerView, JobsView } from '../dto/jobs.dto';
 import { JobsService } from '../services/jobs.service';
 
 @Roles('admin')
+// S5 (OD-07): platform background jobs — Platform Admin only; a Hospital Admin
+// or an administrator with no explicit scope is refused (403).
+@AdminScoped('platform')
 @Controller('administration/jobs')
 export class JobsController {
   constructor(private readonly jobs: JobsService) {}

@@ -55,11 +55,11 @@ export class DoctorEmploymentService {
   ) {}
 
   /** `GET /doctors/{doctorId}/employments` — newest first. */
-  async list(doctorId: string): Promise<DoctorEmploymentView[]> {
+  async list(doctorId: string, hospitalId: string | null): Promise<DoctorEmploymentView[]> {
     const doctor = await this.employments.findDoctor(doctorId);
     if (doctor === null) throw AppException.notFound('Doctor not found');
 
-    const rows = await this.employments.listFor(doctor.id);
+    const rows = await this.employments.listFor(doctor.id, hospitalId);
     return rows.map(toView);
   }
 

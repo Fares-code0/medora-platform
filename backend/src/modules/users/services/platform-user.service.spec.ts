@@ -108,7 +108,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'admin', activeWithRole: 1 });
     const service = serviceFor(stub);
 
-    const status = await statusOf(service.update(ACTOR, 'usr_target', { role: 'doctor' }));
+    const status = await statusOf(service.update(ACTOR, 'usr_target', { role: 'doctor' }, null));
 
     // A platform with nobody holding `roles.manage` cannot grant it
     // back: the matrix editor and this panel both require it.
@@ -122,7 +122,7 @@ describe('PlatformUserService.update — the four refusals', () => {
 
     // `status != ACTIVE` refuses sign-in, so this is a demotion by
     // another name and has to be refused the same way.
-    expect(await statusOf(service.update(ACTOR, 'usr_target', { active: false }))).toBe(409);
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { active: false }, null))).toBe(409);
     expect(stub.update).not.toHaveBeenCalled();
   });
 
@@ -130,7 +130,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'admin', activeWithRole: 2 });
     const service = serviceFor(stub);
 
-    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'doctor' }))).toBe(200);
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'doctor' }, null))).toBe(200);
     expect(stub.update).toHaveBeenCalledOnce();
   });
 
@@ -138,7 +138,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'doctor', activeWithRole: 1 });
     const service = serviceFor(stub);
 
-    expect(await statusOf(service.update(ACTOR, 'usr_target', { active: false }))).toBe(200);
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { active: false }, null))).toBe(200);
     // The guard is about administration surviving, not about every
     // deactivation — a clinic with one doctor may still suspend them.
     expect(stub.repository.countActiveWithRole).not.toHaveBeenCalled();
@@ -150,7 +150,7 @@ describe('PlatformUserService.update — the four refusals', () => {
 
     // ADR-035 §7: the only path that sets an admin account ACTIVE is the
     // invitation flow's phase 2, immediately after a TOTP code is proved.
-    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'admin' }))).toBe(409);
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'admin' }, null))).toBe(409);
     expect(stub.update).not.toHaveBeenCalled();
   });
 
@@ -164,7 +164,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     });
     const service = serviceFor(stub);
 
-    expect(await statusOf(service.update(ACTOR, 'usr_actor', { active: false }))).toBe(403);
+    expect(await statusOf(service.update(ACTOR, 'usr_actor', { active: false }, null))).toBe(403);
     expect(stub.update).not.toHaveBeenCalled();
   });
 
@@ -172,7 +172,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'doctor', targetStatus: UserStatus.INACTIVE });
     const service = serviceFor(stub);
 
-    await service.update(ACTOR, 'usr_target', { active: false });
+    await service.update(ACTOR, 'usr_target', { active: false }, null);
 
     // Without this the lever does nothing for the case it is pulled in —
     // an account being used right now.
@@ -183,7 +183,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'nurse' });
     const service = serviceFor(stub);
 
-    await service.update(ACTOR, 'usr_target', { role: 'nurse' });
+    await service.update(ACTOR, 'usr_target', { role: 'nurse' }, null);
 
     expect(stub.revokeSessions).not.toHaveBeenCalled();
     expect(stub.repository.countLiveSessions).not.toHaveBeenCalled();
@@ -193,7 +193,7 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'doctor' });
     const service = serviceFor(stub);
 
-    await service.update(ACTOR, 'usr_target', { role: 'nurse' });
+    await service.update(ACTOR, 'usr_target', { role: 'nurse' }, null);
 
     // Approved G4 contract: a role change revokes every live session. The
     // revocation itself is the `users_role_change_revokes_sessions` trigger,
@@ -207,9 +207,9 @@ describe('PlatformUserService.update — the four refusals', () => {
     const stub = repositoryFor({ targetRole: 'doctor' });
     const service = serviceFor(stub);
 
-    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'wizard' }))).toBe(422);
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'wizard' }, null))).toBe(422);
 
     (stub.repository.findIdentity as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    expect(await statusOf(service.update(ACTOR, 'usr_missing', { active: false }))).toBe(404);
+    expect(await statusOf(service.update(ACTOR, 'usr_missing', { active: false }, null))).toBe(404);
   });
 });

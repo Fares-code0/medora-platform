@@ -66,8 +66,20 @@ export class AuditExportService {
     @Inject(AUDIT_DISPATCHER) private readonly dispatcher: AuditDispatcher,
   ) {}
 
-  async export(actor: AuthenticatedUser, input: AuditExportInput): Promise<AuditExport> {
-    const rows = await this.audit.forExport({ ...input, pageSize: input.limit }, input.limit);
+  /**
+   * S5: a Hospital Admin exports its hospital's rows only, and the export's
+   * own audit row is filed under that hospital so it shows in that ledger.
+   */
+  async export(
+    actor: AuthenticatedUser,
+    input: AuditExportInput,
+    hospitalId: string | null,
+  ): Promise<AuditExport> {
+    const rows = await this.audit.forExport(
+      { ...input, pageSize: input.limit },
+      input.limit,
+      hospitalId,
+    );
     const items = rows.map(toView);
 
     const body =
@@ -80,6 +92,7 @@ export class AuditExportService {
       actor: { userId: actor.id, role: actor.role, sessionId: actor.sessionId },
       entityType: 'audit_events',
       entityId: 'export',
+      ...(hospitalId === null ? {} : { hospitalId }),
       metadata: {
         format: input.format,
         rowCount: items.length,

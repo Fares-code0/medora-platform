@@ -16,6 +16,7 @@ import { AvailabilityRepository } from './repositories/availability.repository';
 import { DoctorVerificationRepository } from './repositories/doctor-verification.repository';
 import { PatientDoctorRepository } from './repositories/patient-doctor.repository';
 import { AdminDoctorService } from './services/admin-doctor.service';
+import { DoctorAdminScopeService } from './services/doctor-admin-scope.service';
 import { AvailabilityService } from './services/availability.service';
 import { DoctorEmploymentService } from './services/doctor-employment.service';
 import { DoctorVerificationService } from './services/doctor-verification.service';
@@ -82,6 +83,7 @@ import { PatientDoctorService } from './services/patient-doctor.service';
     AvailabilityRepository,
     AdminDoctorService,
     AdminDoctorRepository,
+    DoctorAdminScopeService,
     DoctorVerificationService,
     DoctorVerificationRepository,
     DoctorEmploymentService,

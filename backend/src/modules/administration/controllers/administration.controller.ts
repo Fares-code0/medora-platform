@@ -16,7 +16,14 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Roles } from '../../../shared/authz';
+import {
+  AdminScoped,
+  CurrentAdminScope,
+  CurrentAdminScopeOrOtherRole,
+  hospitalFilterOf,
+  Roles,
+  type ResolvedAdminScope,
+} from '../../../shared/authz';
 import {
   announcementPatchSchema,
   announcementSchema,
@@ -78,6 +85,27 @@ import { OverviewService } from '../services/overview.service';
  * `GET waiting-room` also admit **reception**, whose workspace owns those two
  * screens. Their writes, and every other route here, stay admin-only.
  *
+ * ## Administrative scope (S5, OD-07)
+ *
+ * `@AdminScoped('platform')` on the class: every route here is
+ * **Platform Admin only** unless a handler says otherwise, so a route added
+ * later without a decision fails closed for Hospital Admins rather than
+ * leaking another hospital's rows. Handlers that a Hospital Admin may use
+ * are marked `any` (Platform Admin platform-wide, Hospital Admin its own
+ * hospital's rows; another hospital's row is 404) or `hospital` (Hospital
+ * Admin only). An administrator with no scope is refused on all of them.
+ *
+ * | Routes | Scope | Why |
+ * | --- | --- | --- |
+ * | overview, audit-events feed | any | counts and rows filtered by `hospital_id` |
+ * | staff | any | in scope = an active `hospital_staff_affiliations` row at the hospital; created staff are affiliated in the same transaction |
+ * | departments `GET` | any | the catalogue is platform-wide; `staffCount` counts the caller's hospital only |
+ * | departments writes | platform | `departments` has no `hospital_id`: a write changes every hospital's catalogue |
+ * | rooms, resources | any | `hospital_id`, stamped on create; legacy rows (no hospital) are outside every hospital's scope |
+ * | shifts | any | `staff_shift_assignments.hospital_id`; a Hospital Admin's shift is stamped with its hospital and the staff member's affiliation |
+ * | queue, waiting room | hospital | rows name patients: a Platform Admin gets no PHI (OD-07); reception's reads are unchanged |
+ * | working-days, holidays, announcements, policies, document templates, platform-status | platform | no `hospital_id` column: platform-wide by construction |
+ *
  * ## `platform-status` is absent, and that is M23.6
  *
  * Its verify step requires "system health reads real probe data, not
@@ -86,6 +114,7 @@ import { OverviewService } from '../services/overview.service';
  * See RA-M23.1.
  */
 @Roles('admin')
+@AdminScoped('platform')
 @Controller('administration')
 export class AdministrationController {
   constructor(
@@ -97,39 +126,58 @@ export class AdministrationController {
   /* ── M23.1 ─────────────────────────────────────────────────── */
 
   @Get('overview')
-  clinicOverview() {
-    return this.overview.build();
+  @AdminScoped('any')
+  clinicOverview(@CurrentAdminScope() scope: ResolvedAdminScope) {
+    return this.overview.build(hospitalFilterOf(scope));
   }
 
   /* ── M23.2 — staff ─────────────────────────────────────────── */
 
   @Get('staff')
-  listStaff(@Query(zodQuery(pageQuerySchema)) query: PageQuery) {
-    return this.directory.listStaff(query.page, query.pageSize);
+  @AdminScoped('any')
+  listStaff(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Query(zodQuery(pageQuerySchema)) query: PageQuery,
+  ) {
+    return this.directory.listStaff(query.page, query.pageSize, hospitalFilterOf(scope));
   }
 
   @Post('staff')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.CREATED)
-  createStaff(@Body(zodBody(staffSchema)) body: StaffBody) {
-    return this.directory.createStaff(body);
+  createStaff(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Body(zodBody(staffSchema)) body: StaffBody,
+  ) {
+    return this.directory.createStaff(body, hospitalFilterOf(scope));
   }
 
   @Patch('staff/:id')
-  updateStaff(@Param('id') id: string, @Body(zodBody(staffPatchSchema)) body: StaffPatchBody) {
-    return this.directory.updateStaff(id, body);
+  @AdminScoped('any')
+  updateStaff(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+    @Body(zodBody(staffPatchSchema)) body: StaffPatchBody,
+  ) {
+    return this.directory.updateStaff(id, body, hospitalFilterOf(scope));
   }
 
   @Delete('staff/:id')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteStaff(@Param('id') id: string): Promise<void> {
-    return this.directory.deleteStaff(id);
+  deleteStaff(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.directory.deleteStaff(id, hospitalFilterOf(scope));
   }
 
   /* ── M23.2 — departments ───────────────────────────────────── */
 
   @Get('departments')
-  listDepartments() {
-    return this.directory.listDepartments();
+  @AdminScoped('any')
+  listDepartments(@CurrentAdminScope() scope: ResolvedAdminScope) {
+    return this.directory.listDepartments(hospitalFilterOf(scope));
   }
 
   @Post('departments')
@@ -155,52 +203,77 @@ export class AdministrationController {
   /* ── M23.2 — rooms ─────────────────────────────────────────── */
 
   @Get('rooms')
-  listRooms() {
-    return this.directory.listRooms();
+  @AdminScoped('any')
+  listRooms(@CurrentAdminScope() scope: ResolvedAdminScope) {
+    return this.directory.listRooms(hospitalFilterOf(scope));
   }
 
   @Post('rooms')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.CREATED)
-  createRoom(@Body(zodBody(roomSchema)) body: RoomBody) {
-    return this.directory.createRoom(body);
+  createRoom(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Body(zodBody(roomSchema)) body: RoomBody,
+  ) {
+    return this.directory.createRoom(body, hospitalFilterOf(scope));
   }
 
   @Patch('rooms/:id')
-  updateRoom(@Param('id') id: string, @Body(zodBody(roomPatchSchema)) body: RoomPatchBody) {
-    return this.directory.updateRoom(id, body);
+  @AdminScoped('any')
+  updateRoom(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+    @Body(zodBody(roomPatchSchema)) body: RoomPatchBody,
+  ) {
+    return this.directory.updateRoom(id, body, hospitalFilterOf(scope));
   }
 
   @Delete('rooms/:id')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteRoom(@Param('id') id: string): Promise<void> {
-    return this.directory.deleteRoom(id);
+  deleteRoom(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.directory.deleteRoom(id, hospitalFilterOf(scope));
   }
 
   /* ── M23.2 — resources ─────────────────────────────────────── */
 
   @Get('resources')
-  listResources() {
-    return this.directory.listResources();
+  @AdminScoped('any')
+  listResources(@CurrentAdminScope() scope: ResolvedAdminScope) {
+    return this.directory.listResources(hospitalFilterOf(scope));
   }
 
   @Post('resources')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.CREATED)
-  createResource(@Body(zodBody(resourceSchema)) body: ResourceBody) {
-    return this.directory.createResource(body);
+  createResource(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Body(zodBody(resourceSchema)) body: ResourceBody,
+  ) {
+    return this.directory.createResource(body, hospitalFilterOf(scope));
   }
 
   @Patch('resources/:id')
+  @AdminScoped('any')
   updateResource(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
     @Param('id') id: string,
     @Body(zodBody(resourcePatchSchema)) body: ResourcePatchBody,
   ) {
-    return this.directory.updateResource(id, body);
+    return this.directory.updateResource(id, body, hospitalFilterOf(scope));
   }
 
   @Delete('resources/:id')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteResource(@Param('id') id: string): Promise<void> {
-    return this.directory.deleteResource(id);
+  deleteResource(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.directory.deleteResource(id, hospitalFilterOf(scope));
   }
 
   /* ── M23.3 — schedule ──────────────────────────────────────── */
@@ -240,20 +313,29 @@ export class AdministrationController {
   }
 
   @Get('shifts')
-  shifts() {
-    return this.operations.shifts();
+  @AdminScoped('any')
+  shifts(@CurrentAdminScope() scope: ResolvedAdminScope) {
+    return this.operations.shifts(hospitalFilterOf(scope));
   }
 
   @Post('shifts')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.CREATED)
-  createShift(@Body(zodBody(shiftSchema)) body: ShiftBody) {
-    return this.operations.createShift(body);
+  createShift(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Body(zodBody(shiftSchema)) body: ShiftBody,
+  ) {
+    return this.operations.createShift(body, hospitalFilterOf(scope));
   }
 
   @Delete('shifts/:id')
+  @AdminScoped('any')
   @HttpCode(HttpStatus.NO_CONTENT)
-  deleteShift(@Param('id') id: string): Promise<void> {
-    return this.operations.deleteShift(id);
+  deleteShift(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.operations.deleteShift(id, hospitalFilterOf(scope));
   }
 
   /* ── M23.4 — queue and waiting room ────────────────────────── */
@@ -265,45 +347,63 @@ export class AdministrationController {
    * widens these two routes only; every write below stays admin-only.
    */
   @Roles('admin', 'reception')
+  @AdminScoped('hospital', { otherRoles: ['reception'] })
   @Get('queue')
-  queue() {
-    return this.operations.queue();
+  queue(@CurrentAdminScopeOrOtherRole() scope: ResolvedAdminScope | null) {
+    // Reception (scope `null`) is unchanged by S5: platform-wide, as before.
+    return this.operations.queue(scope === null ? null : hospitalFilterOf(scope));
   }
 
   @Post('queue/:id/advance')
+  @AdminScoped('hospital')
   @HttpCode(HttpStatus.NO_CONTENT)
-  advance(@Param('id') id: string): Promise<void> {
-    return this.operations.advance(id);
+  advance(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.operations.advance(id, hospitalOf(scope));
   }
 
   @Post('queue/:id/assign-room')
+  @AdminScoped('hospital')
   @HttpCode(HttpStatus.OK)
-  assignRoom(@Param('id') id: string, @Body(zodBody(assignRoomSchema)) body: AssignRoomBody) {
-    return this.operations.assignRoom(id, body.roomId);
+  assignRoom(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+    @Body(zodBody(assignRoomSchema)) body: AssignRoomBody,
+  ) {
+    return this.operations.assignRoom(id, body.roomId, hospitalOf(scope));
   }
 
   @Post('queue/:id/remove')
+  @AdminScoped('hospital')
   @HttpCode(HttpStatus.NO_CONTENT)
-  removeFromQueue(@Param('id') id: string): Promise<void> {
-    return this.operations.removeFromQueue(id);
+  removeFromQueue(
+    @CurrentAdminScope() scope: ResolvedAdminScope,
+    @Param('id') id: string,
+  ): Promise<void> {
+    return this.operations.removeFromQueue(id, hospitalOf(scope));
   }
 
   @Roles('admin', 'reception')
+  @AdminScoped('hospital', { otherRoles: ['reception'] })
   @Get('waiting-room')
-  waitingRoom() {
-    return this.operations.waitingRoom();
+  waitingRoom(@CurrentAdminScopeOrOtherRole() scope: ResolvedAdminScope | null) {
+    return this.operations.waitingRoom(scope === null ? null : hospitalFilterOf(scope));
   }
 
   @Post('waiting-room/:id/call')
+  @AdminScoped('hospital')
   @HttpCode(HttpStatus.OK)
-  call(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'call');
+  call(@CurrentAdminScope() scope: ResolvedAdminScope, @Param('id') id: string) {
+    return this.operations.moveWaiting(id, 'call', hospitalOf(scope));
   }
 
   @Post('waiting-room/:id/seat')
+  @AdminScoped('hospital')
   @HttpCode(HttpStatus.OK)
-  seat(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'seat');
+  seat(@CurrentAdminScope() scope: ResolvedAdminScope, @Param('id') id: string) {
+    return this.operations.moveWaiting(id, 'seat', hospitalOf(scope));
   }
 
   /* ── M23.5 — announcements, policies, templates ────────────── */
@@ -411,10 +511,18 @@ export class AdministrationController {
    * incident bookmarks — is **M28**.
    */
   @Get('audit-events')
-  auditEvents(@Query('limit') limit?: string) {
+  @AdminScoped('any')
+  auditEvents(@CurrentAdminScope() scope: ResolvedAdminScope, @Query('limit') limit?: string) {
     const parsed = Number.parseInt(limit ?? '25', 10);
     const take = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 100) : 25;
 
-    return this.operations.recentAuditEvents(take);
+    return this.operations.recentAuditEvents(take, hospitalFilterOf(scope));
   }
+}
+
+/** `@AdminScoped('hospital')` routes: the guard admitted only a Hospital Admin. */
+function hospitalOf(scope: ResolvedAdminScope): string {
+  const hospitalId = hospitalFilterOf(scope);
+  if (hospitalId === null) throw AppException.forbidden();
+  return hospitalId;
 }

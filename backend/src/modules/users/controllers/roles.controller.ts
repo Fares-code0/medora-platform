@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { AdminScoped, Can } from '../../../shared/authz';
 import type {
   CapabilityCatalogueView,
   MatrixPreviewView,
@@ -46,6 +46,9 @@ import { RolesService } from '../services/roles.service';
  * inside a kernel that must not depend on a controller.
  */
 @Can('roles.manage')
+// S5 (OD-07): the role/permission matrix and per-user permission overrides
+// are platform-wide — Platform Admin only; a Hospital Admin is refused (403).
+@AdminScoped('platform')
 @Controller()
 export class RolesController {
   constructor(private readonly roles: RolesService) {}

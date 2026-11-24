@@ -14,6 +14,7 @@ import {
   testEmail,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
+import { markPlatformAdmin } from './support/admin-scope';
 
 /**
  * `POST /patients/{id}/reveal` — API §4.9, RM M7.3.
@@ -116,6 +117,8 @@ async function signUpAdmin(
 
   const adminRole = await h.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await h.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  // S5: the admin role alone has no administrative scope (OD-07, M-13).
+  await markPlatformAdmin(h.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(h.server).post(LOGIN).send({ email, password: PASSWORD }),

@@ -39,7 +39,7 @@ function percent(part: number, whole: number): number {
 export class OverviewService {
   constructor(private readonly operations: OperationsRepository) {}
 
-  async build(now: Date = new Date()) {
+  async build(hospitalId: string | null, now: Date = new Date()) {
     const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const to = new Date(from.getTime() + 86_400_000);
 
@@ -50,11 +50,11 @@ export class OverviewService {
       busyDoctors,
       waitingSince,
     ] = await Promise.all([
-      this.operations.overviewCounts(from, to),
-      this.operations.todaysPatients(from, to),
-      this.operations.todaysStarts(from, to),
-      this.operations.busyDoctors(from, to),
-      this.operations.waitingSince(),
+      this.operations.overviewCounts(from, to, hospitalId),
+      this.operations.todaysPatients(from, to, hospitalId),
+      this.operations.todaysStarts(from, to, hospitalId),
+      this.operations.busyDoctors(from, to, hospitalId),
+      this.operations.waitingSince(hospitalId),
     ]);
 
     const [

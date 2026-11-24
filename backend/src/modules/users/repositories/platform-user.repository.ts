@@ -44,6 +44,29 @@ export interface PlatformUserCriteria {
   readonly pageSize: number;
 }
 
+/**
+ * S5: the accounts a Hospital Admin administers — its hospital's **staff**:
+ *
+ * - a doctor with an **active** employment at the hospital;
+ * - a staff member with an **active** affiliation at the hospital;
+ * - an account with a **live** hospital role assignment there;
+ *
+ * and never an `admin` account (Hospital Admin management is a Platform
+ * Admin operation, OD-07) nor a patient (patients are not staff; the
+ * patient directory is a separate surface). `null` is platform-wide.
+ */
+export function usersIn(hospitalId: string | null): Prisma.UserWhereInput {
+  if (hospitalId === null) return {};
+  return {
+    role: { is: { code: { notIn: ['admin', 'patient'] } } },
+    OR: [
+      { doctor: { is: { employments: { some: { hospitalId, endedAt: null } } } } },
+      { staffMember: { some: { hospitalAffiliations: { some: { hospitalId, endedAt: null } } } } },
+      { hospitalRoleAssignments: { some: { hospitalId, revokedAt: null } } },
+    ],
+  };
+}
+
 const LIST_SELECT = {
   publicId: true,
   displayName: true,
@@ -60,8 +83,9 @@ export class PlatformUserRepository {
 
   async list(
     criteria: PlatformUserCriteria,
+    hospitalId: string | null,
   ): Promise<{ rows: readonly PlatformUserRow[]; totalItems: number }> {
-    const where: Prisma.UserWhereInput = {
+    const filters: Prisma.UserWhereInput = {
       ...(criteria.q === undefined
         ? {}
         : {
@@ -82,6 +106,8 @@ export class PlatformUserRepository {
           ? { status: UserStatus.ACTIVE }
           : { status: { not: UserStatus.ACTIVE } }),
     };
+
+    const where: Prisma.UserWhereInput = { AND: [filters, usersIn(hospitalId)] };
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.user.findMany({
@@ -104,16 +130,20 @@ export class PlatformUserRepository {
    * and what the list returned. Resolving it here rather than making the
    * caller pass a uuid keeps the internal key off the wire entirely.
    */
-  findByPublicId(publicId: string): Promise<PlatformUserRow | null> {
-    return this.prisma.db.user.findFirst({ where: { publicId }, select: LIST_SELECT });
+  findByPublicId(publicId: string, hospitalId: string | null): Promise<PlatformUserRow | null> {
+    return this.prisma.db.user.findFirst({
+      where: { AND: [{ publicId }, usersIn(hospitalId)] },
+      select: LIST_SELECT,
+    });
   }
 
   /** The internal id and current role of an account, for the update path. */
   findIdentity(
     publicId: string,
+    hospitalId: string | null,
   ): Promise<{ id: string; status: UserStatus; role: { code: string } } | null> {
     return this.prisma.db.user.findFirst({
-      where: { publicId },
+      where: { AND: [{ publicId }, usersIn(hospitalId)] },
       select: { id: true, status: true, role: { select: { code: true } } },
     });
   }
