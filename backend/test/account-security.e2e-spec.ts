@@ -935,6 +935,14 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     if (code === 'admin') await grantPlatformAdmin(harness.prisma, email);
   }
 
+  // The database refuses to demote the last effective Platform Admin
+  // (F-10, migration 20261125092000). On a fresh database (CI) the promoted
+  // fixture would be that last one, so each case keeps an independent
+  // Platform Admin standing while it demotes its fixture.
+  beforeEach(async () => {
+    await setRole(await seedAccount('f3-standing-platform-admin'), 'admin');
+  });
+
   async function refresh(
     token: string,
   ): Promise<{ status: number; accessToken: string; role: string }> {
