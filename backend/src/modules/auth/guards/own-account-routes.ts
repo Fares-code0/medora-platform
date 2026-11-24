@@ -30,6 +30,10 @@ export const OWN_ACCOUNT_ROUTES: ReadonlySet<string> = new Set([
   'PUT me/profile/photo',
   'GET me/account',
   'PATCH me/account',
+  // Own settings, read-only (owner decision 2026-11-24: a suspended doctor
+  // may read `/me/settings` so the client shell loads; `PATCH
+  // me/settings/:section` stays refused).
+  'GET me/settings',
   // Own credentials and second factor.
   'POST me/password',
   'POST me/password/verify',

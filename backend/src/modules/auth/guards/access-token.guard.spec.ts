@@ -328,9 +328,11 @@ class ClinicalFixture {
   read(): void {}
 }
 
+// `GET me/settings` is readable by a suspended doctor (owner decision
+// 2026-11-24); writing a section is not.
 @Controller('me')
 class SettingsFixture {
-  @Get('settings')
+  @Patch('settings/:section')
   settings(): void {}
 }
 

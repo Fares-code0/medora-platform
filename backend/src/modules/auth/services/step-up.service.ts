@@ -85,8 +85,9 @@ export class StepUpService {
     if (!(await this.challenges.consume(challenge.challengeId))) throw otpInvalid();
 
     const user = await this.identity.findById(challenge.userId);
-    // Deactivated between the password check and the code. Rare, and the
-    // one case where a valid code must still not produce a session.
+    // Deleted between the password check and the code. A deactivated or
+    // terminated account is refused by `establishSession` (account_inactive),
+    // which re-checks the standing of the row read here.
     if (user === null) throw otpInvalid();
 
     return this.login.establishSession(user, challenge.rememberMe, context);

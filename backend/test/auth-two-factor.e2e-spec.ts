@@ -437,6 +437,30 @@ describe('the login step-up', () => {
     expect(cookies.some((c) => typeof c === 'string' && c.startsWith('medora_rt='))).toBe(true);
   });
 
+  it('mints no session for an account deactivated between the password and the code', async () => {
+    const email = await seedAccount('julian');
+    const { secret } = await enrol(email);
+
+    const challenge = await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
+    const { otpToken } = dataOf<{ otpToken: string }>(challenge);
+
+    // Deactivated after the password was proved, before the second factor.
+    await harness.prisma.user.update({ where: { email }, data: { status: 'INACTIVE' } });
+
+    const verified = await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken, code: currentCode(secret) });
+
+    // The same refusal a deactivated account gets at the password step.
+    expect(verified.status).toBe(403);
+    expect(errorBody(verified).code).toBe('account_inactive');
+    await expect(
+      harness.prisma.session.count({ where: { user: { email }, revokedAt: null } }),
+    ).resolves.toBe(0);
+  });
+
   it('carries rememberMe across the step-up', async () => {
     const email = await seedAccount('julian');
     const { secret } = await enrol(email);

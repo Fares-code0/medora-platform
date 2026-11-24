@@ -277,9 +277,10 @@ describe('suspended — own profile only', () => {
     `${PREFIX}/me/sessions`,
     `${PREFIX}/me/devices`,
     `${PREFIX}/me/login-history`,
+    // Read-only (owner decision 2026-11-24); PATCH is refused below.
+    `${PREFIX}/me/settings`,
   ];
   const OTHER = [
-    `${PREFIX}/me/settings`,
     `${PREFIX}/me/activity`,
     `${PREFIX}/me/availability`,
     `${PREFIX}/me/appointments`,
@@ -307,6 +308,16 @@ describe('suspended — own profile only', () => {
       });
     }
 
+    // `/me/settings` is readable, not writable.
+    const write = await request(harness.server)
+      .patch(`${PREFIX}/me/settings/appearance`)
+      .set(auth(session.accessToken))
+      .send({});
+    expect({ status: write.status, code: errorBody(write).code }).toEqual({
+      status: 403,
+      code: 'practice_suspended',
+    });
+
     // A refresh still works: login is allowed.
     const refresh = await request(harness.server)
       .post(REFRESH)
@@ -317,16 +328,16 @@ describe('suspended — own profile only', () => {
   it('decides from the database on every request, not from the token', async () => {
     const doctor = await seedDoctor('suspended-live');
     const session = await signIn(doctor.email);
-    const settings = `${PREFIX}/me/settings`;
-    await request(harness.server).get(settings).set(auth(session.accessToken)).expect(200);
+    const activity = `${PREFIX}/me/activity`;
+    await request(harness.server).get(activity).set(auth(session.accessToken)).expect(200);
 
     await setStatus(doctor.doctorId, { practiceStatus: 'SUSPENDED' });
-    const refused = await request(harness.server).get(settings).set(auth(session.accessToken));
+    const refused = await request(harness.server).get(activity).set(auth(session.accessToken));
     expect(refused.status).toBe(403);
     expect(errorBody(refused).code).toBe('practice_suspended');
 
     await setStatus(doctor.doctorId, { practiceStatus: 'ACTIVE' });
-    await request(harness.server).get(settings).set(auth(session.accessToken)).expect(200);
+    await request(harness.server).get(activity).set(auth(session.accessToken)).expect(200);
   });
 });
 

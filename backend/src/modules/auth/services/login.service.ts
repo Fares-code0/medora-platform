@@ -250,11 +250,12 @@ export class LoginService {
     rememberMe: boolean,
     context: RequestContext = {},
   ): Promise<LoginSuccess> {
-    // #18 — every path that mints a session comes through here (password
-    // sign-in, `POST /auth/otp/verify`, `POST /auth/otp/recovery`), so an
-    // employment ended between the password and the second factor still
-    // mints nothing.
-    if (await this.identity.isTerminatedDoctor(user.id)) {
+    // Every path that mints a session comes through here (password sign-in,
+    // `POST /auth/otp/verify`, `POST /auth/otp/recovery`), so the account's
+    // standing is re-checked here, on the row the caller just read: an
+    // account deactivated (ADR-035 §6) or a doctor whose employment ended
+    // (#18) between the password and the second factor mints nothing.
+    if (user.status !== UserStatus.ACTIVE || (await this.identity.isTerminatedDoctor(user.id))) {
       await this.fail(user.email, user.id, 'account_inactive', context);
       throw accountInactive();
     }
