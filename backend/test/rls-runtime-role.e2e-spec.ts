@@ -884,6 +884,16 @@ describe('legacy ownership needs evidence; the evidence is append-only (M2, S2)'
     expect(after.rows[0]).toEqual({ hospital_id: ids.hospitalA });
   });
 
+  it('does not let the runtime role execute the definer-rights evidence check itself', async () => {
+    // Attaching it to a table of its own would turn the check into an oracle
+    // on evidence the runtime role cannot read (migration 20261125104000).
+    const granted = await owner.query<{ h: boolean }>(
+      "SELECT has_function_privilege($1, 'public.prevent_tenant_scope_reassignment()', 'EXECUTE') AS h",
+      [ROLE],
+    );
+    expect(granted.rows[0]).toEqual({ h: false });
+  });
+
   it('keeps ownership evidence append-only, system-scoped and well-formed', async () => {
     const rowId = randomUUID();
     evidenceRows.push(rowId);

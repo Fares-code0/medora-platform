@@ -77,8 +77,10 @@ export class AuditRetentionService {
    * Creates the months ahead and drops the months wholly past the
    * window. `now` is a parameter so the test can control the clock.
    */
-  async sweep(now = new Date()): Promise<RetentionResult> {
-    const retentionDays = await this.retentionDays();
+  async sweep(now = new Date(), window?: number): Promise<RetentionResult> {
+    // `window`: a retention window the caller has already read strictly
+    // (the audit retention command, which refuses rather than fall back).
+    const retentionDays = window ?? (await this.retentionDays());
     const created: string[] = [];
 
     for (let offset = 0; offset < MONTHS_AHEAD; offset += 1) {
