@@ -9,7 +9,12 @@ import {
   testEmail,
   tokenFromLink,
 } from './support/auth-app';
-import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import {
+  createTestDoctor,
+  destroyTestDoctor,
+  employTestDoctor,
+  type DoctorRecord,
+} from './support/doctor-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -123,6 +128,8 @@ beforeAll(async () => {
     where: { id: doctor.id },
     data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
   });
+  // And employed (L6): the patient directory offers only employed doctors.
+  await employTestDoctor(harness.prisma, doctor.id);
   await harness.prisma.doctorAvailability.createMany({
     data: GRID.map(({ weekday, start, end }) => ({
       doctorId: doctor.id,

@@ -28,6 +28,10 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'modules/appointments/services/appointment-oversight.service.ts': "the overseer's own hospital, from their staffing",
   'modules/medical-records/services/record-issue.service.ts': "the reviewer's own hospital, from their staffing",
   'modules/administration/services/operations.service.ts': "the operator's own hospital, from their staffing",
+  'modules/pharmacy/repositories/safety.repository.ts':
+    "the safety screen's legacy (unattributed) allergies and prescriptions of a patient the prescriber already reaches (H2)",
+  'modules/doctors/repositories/patient-doctor.repository.ts':
+    "the patient-facing directory's public profile projection, filtered to doctors holding an active employment (L6)",
   'modules/doctors/repositories/admin-doctor.repository.ts': 'per-doctor counts only (patients, appointments) for the doctor directory',
   'modules/controlled-access/services/controlled-access.service.ts':
     'whether the target hospital holds the record a grant or request names (ids only), and its admins to notify',

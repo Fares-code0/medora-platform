@@ -88,6 +88,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   ai: 'user_action',
   doctor: 'user_action',
   patient: 'user_action',
+  // `legacy_clinical_record.read` — the safety screen consulted a legacy
+  // (unattributed) allergy or prescription (H2).
+  legacy_clinical_record: 'user_action',
   appointment: 'user_action',
   medical_record: 'user_action',
   lab_order: 'user_action',

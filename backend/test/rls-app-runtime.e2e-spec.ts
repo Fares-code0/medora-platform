@@ -221,4 +221,22 @@ describe('the application connected as the runtime role', () => {
     );
     expect(rows[0]?.n).toBe(0);
   });
+
+  it('never drops an audit partition: the retention sweep defers it to the maintenance role (H1)', async () => {
+    const { AuditRetentionService } = await import('../src/modules/audit/services/audit-retention.service');
+    const { runAsSystem } = await import('../src/shared/database');
+    const month = 'audit_events_1991_01';
+    await owner.query(`SELECT create_audit_events_partition('1991-01-01'::date)`);
+    try {
+      const result = await runAsSystem(async () =>
+        await harness.app.get(AuditRetentionService).sweep(new Date()),
+      );
+      expect(result.dropped).toEqual([]);
+      expect(result.deferred).toContain(month);
+      const kept = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${month}`]);
+      expect(kept.rows[0]).toEqual({ present: true });
+    } finally {
+      await owner.query(`SELECT drop_audit_events_partition('${month}')`);
+    }
+  });
 });

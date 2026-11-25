@@ -88,6 +88,8 @@ export class StepUpService {
     // Deactivated between the password check and the code. Rare, and the
     // one case where a valid code must still not produce a session.
     if (user === null) throw otpInvalid();
+    // L5: suspended or terminated while the challenge was open.
+    await this.login.assertMaySignIn(user, context);
 
     return this.login.establishSession(user, challenge.rememberMe, context);
   }
@@ -186,6 +188,8 @@ export class StepUpService {
       throw otpInvalid();
     }
 
+    // L5: suspended or terminated while the challenge was open.
+    await this.login.assertMaySignIn(user, context);
     const session = await this.login.establishSession(user, challenge.rememberMe, context);
 
     await this.activity.record({

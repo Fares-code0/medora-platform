@@ -49,6 +49,7 @@ import {
   type CsvColumn,
   type CsvFile,
 } from '../../../common/http/csv-export';
+import type { Prisma } from '../../../generated/prisma/client';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import {
@@ -404,31 +405,40 @@ export class PatientService {
     const sequence = await this.patients.nextIdentitySequence();
     const publicId = `PT-${String(sequence)}`;
 
-    const row = await this.createWithUniqueMrn({
-      publicId,
-      input,
-      doctorId,
-      hospitalId: employment.hospitalId,
-      doctorEmploymentId: employment.employmentId,
-      actorId: user.id,
-      conditionIds: ids,
-    });
-
-    await this.audit.record({
-      action: 'patient.create',
-      actor: { userId: user.id, role: user.role },
-      entityType: 'patient',
-      entityId: row.publicId,
-      hospitalId: employment.hospitalId,
-      // Counts and flags, never the name, the MRN or the birth date —
-      // `AuditMetadata` forbids clinical values and these are the
-      // identifiers the whole masking apparatus exists to protect.
-      metadata: {
-        allergies: input.allergies.length,
-        chronicConditions: ids.length,
-        hasEmail: input.email !== undefined,
+    const row = await this.createWithUniqueMrn(
+      {
+        publicId,
+        input,
+        doctorId,
+        hospitalId: employment.hospitalId,
+        doctorEmploymentId: employment.employmentId,
+        actorId: user.id,
+        conditionIds: ids,
       },
-    });
+      // L1: the registration is the moment the patient comes to belong to
+      // this hospital (its Hospital Medical Record and care assignment). The
+      // audit row is that ownership's evidence, so it is written in the same
+      // transaction, through the throwing writer: no chart without its row,
+      // no row without its chart.
+      (tx) =>
+        this.disclosures.recordIn(tx, {
+          action: 'patient.create',
+          actor: { userId: user.id, role: user.role },
+          entityType: 'patient',
+          entityId: publicId,
+          hospitalId: employment.hospitalId,
+          // Counts and flags, never the name, the MRN or the birth date —
+          // `AuditMetadata` forbids clinical values and these are the
+          // identifiers the whole masking apparatus exists to protect.
+          metadata: {
+            allergies: input.allergies.length,
+            chronicConditions: ids.length,
+            hasEmail: input.email !== undefined,
+            medicalRecordOpened: true,
+            careAssignment: 'primary',
+          },
+        }),
+    );
 
     await this.activity.record({
       userId: user.id,
@@ -754,15 +764,18 @@ export class PatientService {
    * collisions is negligible, and looping forever on a genuinely
    * exhausted space would hang the request instead of reporting it.
    */
-  private async createWithUniqueMrn(input: {
-    readonly publicId: string;
-    readonly input: CreatePatientInput;
-    readonly doctorId: string;
-    readonly hospitalId: string;
-    readonly doctorEmploymentId: string;
-    readonly actorId: string;
-    readonly conditionIds: readonly string[];
-  }): Promise<PatientRow> {
+  private async createWithUniqueMrn(
+    input: {
+      readonly publicId: string;
+      readonly input: CreatePatientInput;
+      readonly doctorId: string;
+      readonly hospitalId: string;
+      readonly doctorEmploymentId: string;
+      readonly actorId: string;
+      readonly conditionIds: readonly string[];
+    },
+    onCreated: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<PatientRow> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await this.patients.create({
@@ -787,7 +800,7 @@ export class PatientService {
             notes: allergy.notes,
           })),
           conditionIds: input.conditionIds,
-        });
+        }, onCreated);
       } catch (error) {
         if (!isUniqueViolation(error) || attempt === 2) throw error;
       }

@@ -247,8 +247,9 @@ describe('runtime role (provision-runtime-role.sql)', () => {
         "CREATE TABLE public.audit_events_2099_02 PARTITION OF public.audit_events FOR VALUES FROM ('2099-02-01') TO ('2099-03-01')",
       );
       await refused('DROP TABLE IF EXISTS public.audit_events_2099_01');
-      // The drop function refuses a month that has not ended.
-      await refused("SELECT public.drop_audit_events_partition('audit_events_2099_01')", [], '22023');
+      // Audit retention is not the runtime role's at all (H1): the drop
+      // function is not executable by it, whatever month is named.
+      await refused("SELECT public.drop_audit_events_partition('audit_events_2099_01')", [], '42501');
     });
   });
 

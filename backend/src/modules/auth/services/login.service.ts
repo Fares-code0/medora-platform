@@ -173,30 +173,7 @@ export class LoginService {
       });
     }
 
-    // ADR-035 §6. One code for all three non-ACTIVE states: the caller
-    // has proved the password, so this is not an enumeration surface —
-    // but "suspended" and "locked" carry different implications about a
-    // person, and the account holder learns which from their
-    // administrator rather than from a login form.
-    if (user.status !== UserStatus.ACTIVE) {
-      await this.fail(email, user.id, 'account_inactive', context);
-      throw new AppException(HttpStatus.FORBIDDEN, {
-        message: 'This account is not active. Contact your administrator.',
-        code: 'account_inactive',
-      });
-    }
-
-    // Multi-hospital §2.6: a doctor whose employment ended (or a staff
-    // member whose affiliation ended), with none active, may not sign in.
-    // The same code as a suspended account: the holder learns the reason
-    // from their administrator, not from the login form.
-    if (await this.permissions.isTerminated(user.id, user.role.code)) {
-      await this.fail(email, user.id, 'account_inactive', context);
-      throw new AppException(HttpStatus.FORBIDDEN, {
-        message: 'This account is not active. Contact your administrator.',
-        code: 'account_inactive',
-      });
-    }
+    await this.assertMaySignIn(user, context, email);
 
     // A successful password check clears the counter (on success only;
     // see `CredentialLockoutService.clear`).
@@ -255,6 +232,43 @@ export class LoginService {
    * created after a second factor must be indistinguishable from one
    * created without.
    */
+  /**
+   * Whether the account may sign in at all, asked at the password step and
+   * again after the second factor (L5): the account can be suspended, or a
+   * doctor's last employment end, during the minutes a code challenge is
+   * open, and a valid code must not then produce a session.
+   */
+  async assertMaySignIn(
+    user: UserWithCredentials,
+    context: RequestContext = {},
+    attemptedEmail: string = user.email,
+  ): Promise<void> {
+    // ADR-035 §6. One code for all three non-ACTIVE states: the caller
+    // has proved the password, so this is not an enumeration surface —
+    // but "suspended" and "locked" carry different implications about a
+    // person, and the account holder learns which from their
+    // administrator rather than from a login form.
+    if (user.status !== UserStatus.ACTIVE) {
+      await this.fail(attemptedEmail, user.id, 'account_inactive', context);
+      throw new AppException(HttpStatus.FORBIDDEN, {
+        message: 'This account is not active. Contact your administrator.',
+        code: 'account_inactive',
+      });
+    }
+
+    // Multi-hospital §2.6: a doctor whose employment ended (or a staff
+    // member whose affiliation ended), with none active, may not sign in.
+    // The same code as a suspended account: the holder learns the reason
+    // from their administrator, not from the login form.
+    if (await this.permissions.isTerminated(user.id, user.role.code)) {
+      await this.fail(attemptedEmail, user.id, 'account_inactive', context);
+      throw new AppException(HttpStatus.FORBIDDEN, {
+        message: 'This account is not active. Contact your administrator.',
+        code: 'account_inactive',
+      });
+    }
+  }
+
   async establishSession(
     user: UserWithCredentials,
     rememberMe: boolean,

@@ -461,3 +461,158 @@ describe('the screen is a scoped clinical read', () => {
     expect(response.status).toBe(401);
   });
 });
+
+/**
+ * Security remediation H2 — the legacy safety exception (owner decision
+ * #17, 2026-11-24). A legacy row (`hospital_id IS NULL`, source hospital
+ * unknown) is invisible to every hospital, but the safety screen of a
+ * prescriber who already reaches the patient (DR-05) still screens
+ * against it: marked as legacy, and audited. Another hospital's
+ * attributed rows stay out, and nobody who cannot reach the patient
+ * learns anything.
+ */
+describe('legacy clinical records in the safety screen (H2)', () => {
+  const LEGACY = 'legacy record, source hospital unknown';
+
+  async function patientRowId(publicId: string): Promise<string> {
+    return (
+      await harness.prisma.patient.findFirstOrThrow({ where: { publicId }, select: { id: true } })
+    ).id;
+  }
+
+  async function legacyAllergy(publicId: string, allergen: string): Promise<void> {
+    await harness.prisma.patientAllergy.create({
+      data: { patientId: await patientRowId(publicId), allergen, severity: 'SEVERE', reaction: 'Anaphylaxis' },
+    });
+  }
+
+  async function legacyPrescription(publicId: string, medicationId: string, doctorToken: string): Promise<void> {
+    const medication = await harness.prisma.medication.findUniqueOrThrow({
+      where: { id: medicationId },
+      select: { strengths: { select: { strength: true }, take: 1 } },
+    });
+    // No hospital, record or employment: written before attribution.
+    await harness.prisma.prescription.create({
+      data: {
+        publicId: `RX-L${String(Date.now() % 100_000)}${String(Math.floor(Math.random() * 1000))}`,
+        patientId: await patientRowId(publicId),
+        medicationId,
+        prescribingDoctorId: await doctorIdFor(doctorToken),
+        strength: medication.strengths[0]?.strength ?? '5 mg',
+        dosage: '1 tablet',
+        frequency: 'Once daily',
+        route: 'ORAL',
+        durationDays: 30,
+        quantity: 30,
+        instructions: 'Legacy.',
+        status: 'ACTIVE',
+        signedAt: new Date(),
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-12-01'),
+      },
+    });
+  }
+
+  function legacyReads(publicId: string) {
+    return harness.prisma.auditEvent.findMany({
+      where: { eventType: 'legacy_clinical_record.read', target: { contains: publicId } },
+    });
+  }
+
+  it('blocks on a legacy allergy, names it as legacy, and audits the read at the prescriber’s hospital', async () => {
+    const doctor = await seedDoctor('h2-legacy-allergy');
+    const patientId = await seedPatient(doctor.token);
+    await legacyAllergy(patientId, 'Penicillin');
+
+    const response = await check(doctor.token, patientId, amoxilId);
+    expect(response.status).toBe(200);
+    const view = dataOf<SafetyCheckView>(response);
+    const allergy = view.warnings.find((warning) => warning.kind === 'allergy');
+    expect(view.blocking).toBe(true);
+    expect(allergy?.blocking).toBe(true);
+    expect(allergy?.against).toEqual([`Recorded allergy: Penicillin (${LEGACY})`]);
+    expect(allergy?.detail).toContain(LEGACY);
+
+    const audits = await legacyReads(patientId);
+    expect(audits).toHaveLength(1);
+    const hospitalA = await fixtureHospital(harness.prisma, 'a');
+    expect(audits[0]?.hospitalId).toBe(hospitalA);
+    expect(audits[0]?.payload).toMatchObject({ legacyAllergies: 1, legacyPrescriptions: 0 });
+  });
+
+  it('keeps a hospital-attributed allergy unmarked, and writes no legacy audit without legacy rows', async () => {
+    const doctor = await seedDoctor('h2-attributed');
+    const patientId = await seedPatient(doctor.token, [
+      { allergen: 'Penicillin', severity: 'severe', reaction: 'Anaphylaxis' },
+    ]);
+
+    const allergy = dataOf<SafetyCheckView>(await check(doctor.token, patientId, amoxilId)).warnings.find(
+      (warning) => warning.kind === 'allergy',
+    );
+    expect(allergy?.against).toEqual(['Recorded allergy: Penicillin']);
+    expect(await legacyReads(patientId)).toHaveLength(0);
+  });
+
+  it('never screens against another hospital’s attributed allergy (no cross-hospital access)', async () => {
+    const doctor = await seedDoctor('h2-other-hospital');
+    const patientId = await seedPatient(doctor.token);
+    const id = await patientRowId(patientId);
+    const hospitalB = await fixtureHospital(harness.prisma, 'b');
+    const recordB = await harness.prisma.hospitalMedicalRecord.create({
+      data: { patientId: id, hospitalId: hospitalB },
+      select: { id: true },
+    });
+    await harness.prisma.patientAllergy.create({
+      data: {
+        patientId: id,
+        hospitalId: hospitalB,
+        hospitalMedicalRecordId: recordB.id,
+        allergen: 'Penicillin',
+        severity: 'SEVERE',
+        reaction: 'Anaphylaxis',
+      },
+    });
+
+    const view = dataOf<SafetyCheckView>(await check(doctor.token, patientId, amoxilId));
+    expect(view.warnings.find((warning) => warning.kind === 'allergy')).toBeUndefined();
+    expect(await legacyReads(patientId)).toHaveLength(0);
+  });
+
+  it('marks a legacy live prescription in the duplicate-therapy finding', async () => {
+    const doctor = await seedDoctor('h2-legacy-rx');
+    const patientId = await seedPatient(doctor.token);
+    await legacyPrescription(patientId, coumadinId, doctor.token);
+
+    const view = dataOf<SafetyCheckView>(await check(doctor.token, patientId, coumadinId));
+    const duplicate = view.warnings.find((warning) => warning.kind === 'duplicate');
+    expect(duplicate?.severity).toBe('critical');
+    expect(duplicate?.against.join(' ')).toContain(LEGACY);
+    const audits = await legacyReads(patientId);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.payload).toMatchObject({ legacyAllergies: 0, legacyPrescriptions: 1 });
+  });
+
+  it('discloses nothing, and audits nothing, to a doctor who cannot reach the patient', async () => {
+    const owner = await seedDoctor('h2-owner');
+    const stranger = await seedDoctor('h2-stranger', 'b');
+    const patientId = await seedPatient(owner.token);
+    await legacyAllergy(patientId, 'Penicillin');
+
+    const response = await check(stranger.token, patientId, amoxilId);
+    expect(response.status).toBe(404);
+    expect(JSON.stringify(response.body)).not.toContain('Penicillin');
+    expect(await legacyReads(patientId)).toHaveLength(0);
+  });
+
+  it('keeps the legacy row out of the ordinary chart: the exception is the safety screen only', async () => {
+    const doctor = await seedDoctor('h2-chart');
+    const patientId = await seedPatient(doctor.token);
+    await legacyAllergy(patientId, 'Sulfa');
+
+    const list = await request(harness.server)
+      .get(`${PATIENTS}/${patientId}/allergies`)
+      .set('Authorization', `Bearer ${doctor.token}`);
+    expect(list.status).toBe(200);
+    expect(JSON.stringify(list.body)).not.toContain('Sulfa');
+  });
+});

@@ -55,7 +55,7 @@ Admin.
 
 ## 6. Row-Level Security
 
-- RLS is enabled on 73 tables. It binds the runtime role from `prisma/roles/provision-runtime-role.sql`
+- RLS is enabled on 74 tables (`idempotency_records` joined them, owner-scoped: M1). It binds the runtime role from `prisma/roles/provision-runtime-role.sql`
   (NOSUPERUSER, NOBYPASSRLS, not the owner).
 - Context is transaction-local: `app.scope`, `app.hospital_id`, `app.user_id`, `app.patient_id`. It
   is set per request by `TenantContextResolver` and applied by `tenant-context.adapter.ts` when
@@ -67,6 +67,16 @@ Admin.
 ## 7. Legacy data
 
 - Rows with `hospital_id IS NULL` stay invisible to every hospital scope.
+- **One exception, the prescription safety screen (H2; owner decision #17).** A prescriber who already
+  reaches the patient at their own hospital (DR-05) is screened against that patient's legacy allergies
+  and live legacy prescriptions as well — read by a narrow `system` lookup of that patient's
+  unattributed rows only, named "legacy record, source hospital unknown" in the warning, and audited
+  (`legacy_clinical_record.read`, fail-closed) before use. The ordinary chart still hides them, and
+  another hospital's attributed rows are never included.
 - `npm run db:backfill:dry-run` proposes owners from evidence only, in a read-only transaction, and
   refuses production. A real backfill must write `ownership_assignments` evidence rows; it is a
-  production step, not part of this change.
+  production step, not part of this change, and needs the owner's approval.
+- The database enforces that last rule (M2, migration `20261125102000`): filling a legacy NULL
+  `hospital_id` in place requires an `ownership_assignments` row for that table, row and hospital,
+  even under `system` scope. The one exemption is `files`, adopted into a hospital when a document or
+  record attachment links it. Evidence is append-only, one row per assigned row, system-scoped.

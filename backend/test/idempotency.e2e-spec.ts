@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { IdempotencyStore } from '../src/shared/idempotency';
 import {
+  asJob,
   type AuthHarness,
   createAuthHarness,
   dataOf,
@@ -344,7 +345,9 @@ describe('failures, concurrency and expiry', () => {
       data: { expiresAt: new Date(Date.now() - 1_000) },
     });
 
-    expect(await store.purgeExpired()).toBeGreaterThanOrEqual(1);
+    // As JobRunnerService runs the sweep: under explicit `system` scope
+    // (idempotency_records is owner-scoped under RLS, M1).
+    expect(await asJob(store).purgeExpired()).toBeGreaterThanOrEqual(1);
 
     const keys = (
       await harness.prisma.idempotencyRecord.findMany({

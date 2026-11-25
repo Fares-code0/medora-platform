@@ -489,19 +489,259 @@ describe('audit ledger partitions (F-05): no bypass by naming a partition', () =
     }
   });
 
-  it('lets the retention path drop only a past month partition of audit_events', async () => {
-    // Current or future month, the DEFAULT partition, another table, or a
-    // name that is not a month partition: refused.
-    expect(await attempt(`SELECT drop_audit_events_partition('${FUTURE_NAME}')`)).toBe('22023');
-    expect(await attempt(`SELECT drop_audit_events_partition('audit_events_default')`)).toBe('22023');
-    expect(await attempt(`SELECT drop_audit_events_partition('patients')`)).toBe('22023');
-    expect(await attempt(`SELECT drop_audit_events_partition('audit_events_2099_01; DROP TABLE patients')`)).toBe(
-      '22023',
-    );
-    // A month wholly in the past: dropped.
+  it('refuses the runtime role every way of removing a month of the ledger (H1)', async () => {
     expect(await attempt(`SELECT create_audit_events_partition('${PAST}'::date)`)).toBe('ok');
-    expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('ok');
-    const gone = await owner.query('SELECT to_regclass($1) AS rel', [`public.${PAST_NAME}`]);
-    expect(gone.rows[0]).toEqual({ rel: null });
+    // The retention function, the owner-only helpers (including one aimed
+    // at an unrelated table), and direct DDL on the partition or parent.
+    for (const sql of [
+      `SELECT drop_audit_events_partition('${PAST_NAME}')`,
+      `SELECT audit_events_secure_partition('patients'::regclass)`,
+      `SELECT audit_events_secure_partition('${PAST_NAME}'::regclass)`,
+      'SELECT audit_events_secure_all_partitions()',
+      'SELECT platform_admin_count()',
+      'SELECT assert_platform_admin_survives()',
+      `DROP TABLE ${PAST_NAME}`,
+      `ALTER TABLE audit_events DETACH PARTITION ${PAST_NAME}`,
+      `TRUNCATE ${PAST_NAME}`,
+      'TRUNCATE audit_events',
+    ]) {
+      expect(await attempt(sql), sql).toBe('42501');
+    }
+    // Under every scope it can select, not only system.
+    for (const scope of ['hospital', 'platform', 'patient', 'system']) {
+      expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`, { scope }), scope).toBe('42501');
+    }
+    expect((await as({}, (c) => c.query<{ e: boolean }>('SELECT audit_retention_entitled() AS e'))).rows[0]?.e).toBe(
+      false,
+    );
+    const still = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${PAST_NAME}`]);
+    expect(still.rows[0]).toEqual({ present: true });
+  });
+
+  it('refuses the runtime role even if EXECUTE on the drop is granted again (the function guards itself)', async () => {
+    await owner.query(`GRANT EXECUTE ON FUNCTION drop_audit_events_partition(text) TO ${ROLE}`);
+    try {
+      expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('42501');
+    } finally {
+      await owner.query(`REVOKE EXECUTE ON FUNCTION drop_audit_events_partition(text) FROM ${ROLE}`);
+    }
+    const still = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${PAST_NAME}`]);
+    expect(still.rows[0]).toEqual({ present: true });
+  });
+
+  it('lets the audit maintenance role drop only a past month partition of audit_events (H1)', async () => {
+    const login = `medora_e2e_audit_retention_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+    const password = `am_${randomUUID().replace(/-/g, '')}`;
+    await owner.query(
+      readFileSync(join(__dirname, '../prisma/roles/provision-audit-maintenance-role.sql'), 'utf8').replaceAll(
+        '__MAINTENANCE_LOGIN__',
+        login,
+      ),
+    );
+    await owner.query(`ALTER ROLE ${login} LOGIN PASSWORD '${password}'`);
+    const url = new URL(OWNER_URL);
+    url.username = login;
+    url.password = password;
+    url.searchParams.delete('schema');
+    const maintenance = new Client({ connectionString: url.toString() });
+    await maintenance.connect();
+    const run = async (sql: string): Promise<string> => {
+      try {
+        await maintenance.query(sql);
+        return 'ok';
+      } catch (error) {
+        return (error as { code?: string }).code ?? 'error';
+      }
+    };
+    try {
+      const facts = await owner.query<{ s: boolean; b: boolean }>(
+        'SELECT rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = $1',
+        [login],
+      );
+      expect(facts.rows[0]).toEqual({ s: false, b: false });
+      expect((await maintenance.query<{ e: boolean }>('SELECT audit_retention_entitled() AS e')).rows[0]?.e).toBe(true);
+      // Its validation is unchanged: current or future month, the DEFAULT
+      // partition, another table, an injected name — refused.
+      expect(await run(`SELECT drop_audit_events_partition('${FUTURE_NAME}')`)).toBe('22023');
+      expect(await run(`SELECT drop_audit_events_partition('audit_events_default')`)).toBe('22023');
+      expect(await run(`SELECT drop_audit_events_partition('patients')`)).toBe('22023');
+      expect(await run(`SELECT drop_audit_events_partition('audit_events_2099_01; DROP TABLE patients')`)).toBe('22023');
+      // It reads no audit event and no clinical row, and holds no DDL.
+      expect(await run('SELECT 1 FROM audit_events LIMIT 1')).toBe('42501');
+      expect(await run('SELECT 1 FROM patients LIMIT 1')).toBe('42501');
+      expect(await run(`DROP TABLE ${PAST_NAME}`)).toBe('42501');
+      // A month wholly in the past: dropped.
+      expect(await run(`SELECT create_audit_events_partition('${PAST}'::date)`)).toBe('ok');
+      expect(await run(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('ok');
+      const gone = await owner.query('SELECT to_regclass($1) AS rel', [`public.${PAST_NAME}`]);
+      expect(gone.rows[0]).toEqual({ rel: null });
+    } finally {
+      await maintenance.end();
+      await owner.query(`DROP OWNED BY ${login}`);
+      await owner.query(`DROP ROLE ${login}`);
+      await owner.query('DROP OWNED BY medora_audit_maintenance');
+      await owner.query('DROP ROLE medora_audit_maintenance');
+    }
+  });
+});
+
+describe('legacy clinical rows stay isolated without an explicit system lookup (H2)', () => {
+  it('hides a legacy allergy from no context and from every hospital; only system scope reads it', async () => {
+    await owner.query(
+      `INSERT INTO patient_allergies (patient_id, allergen, severity, reaction, updated_at)
+       VALUES ($1, 'LegacyProbe', 'severe', 'probe', now())`,
+      [ids.patientA],
+    );
+    const count = (context: Context) =>
+      as(context, async (client) =>
+        Number(
+          (
+            await client.query<{ n: string }>(
+              "SELECT count(*) AS n FROM patient_allergies WHERE patient_id = $1 AND allergen = 'LegacyProbe'",
+              [ids.patientA],
+            )
+          ).rows[0]?.n,
+        ),
+      );
+    expect(await count({})).toBe(0);
+    expect(await count({ scope: 'hospital', hospitalId: ids.hospitalA })).toBe(0);
+    expect(await count({ scope: 'hospital', hospitalId: ids.hospitalB })).toBe(0);
+    expect(await count({ scope: 'platform' })).toBe(0);
+    // The safety screen's narrow lookup (SafetyRepository.legacyAllergiesFor).
+    expect(await count({ scope: 'system' })).toBe(1);
+  });
+});
+
+describe('idempotency records are their caller’s own (M1)', () => {
+  it('shows a cached response only to the user who made the request, and to the system sweep', async () => {
+    const key = `probe-${randomUUID()}`;
+    await owner.query(
+      `INSERT INTO idempotency_records (user_id, key, endpoint, fingerprint, status, response_body, completed_at, expires_at)
+       VALUES ($1, $2, 'POST /probe', repeat('a', 64), 'completed', '{"phi":"probe"}', now(), now() + interval '1 hour')`,
+      [ids.doctorUserA, key],
+    );
+    try {
+      const visible = (context: Context) =>
+        as(context, async (client) =>
+          Number(
+            (await client.query<{ n: string }>('SELECT count(*) AS n FROM idempotency_records WHERE key = $1', [key]))
+              .rows[0]?.n,
+          ),
+        );
+      expect(await visible({})).toBe(0);
+      expect(await visible({ userId: ids.requesterB })).toBe(0);
+      expect(await visible({ scope: 'hospital', hospitalId: ids.hospitalA, userId: ids.requesterB })).toBe(0);
+      expect(await visible({ userId: ids.doctorUserA })).toBe(1);
+      expect(await visible({ scope: 'hospital', hospitalId: ids.hospitalA, userId: ids.doctorUserA })).toBe(1);
+      expect(await visible({ scope: 'system' })).toBe(1);
+
+      // Nobody writes a record into someone else's name.
+      await expect(
+        as({ userId: ids.requesterB }, (client) =>
+          client.query(
+            `INSERT INTO idempotency_records (user_id, key, endpoint, fingerprint, expires_at)
+             VALUES ($1, $2, 'POST /probe', repeat('b', 64), now() + interval '1 hour')`,
+            [ids.doctorUserA, `${key}-forged`],
+          ),
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      await owner.query('DELETE FROM idempotency_records WHERE key LIKE $1', [`${key}%`]);
+    }
+  });
+});
+
+describe('legacy ownership needs evidence; the evidence is append-only (M2, S2)', () => {
+  async function legacyAllergy(allergen: string): Promise<string> {
+    const row = await owner.query<{ id: string }>(
+      `INSERT INTO patient_allergies (patient_id, allergen, severity, reaction, updated_at)
+       VALUES ($1, $2, 'severe', 'probe', now()) RETURNING id`,
+      [ids.patientA, allergen],
+    );
+    return row.rows[0]!.id;
+  }
+
+  const evidenceRows: string[] = [];
+
+  async function recordEvidence(rowId: string, hospitalId: string): Promise<void> {
+    evidenceRows.push(rowId);
+    await as({ scope: 'system' }, (client) =>
+      client.query(
+        `INSERT INTO ownership_assignments (table_name, row_id, hospital_id, evidence_rule, evidence)
+         VALUES ('patient_allergies', $1, $2, 'probe', '{}')`,
+        [rowId, hospitalId],
+      ),
+    );
+  }
+
+  afterAll(async () => {
+    // Evidence is append-only even for the owner; a test fixture is the one
+    // case that must go, or its hospital (ON DELETE RESTRICT) cannot.
+    await owner.query('ALTER TABLE ownership_assignments DISABLE TRIGGER ownership_assignments_append_only_trg');
+    try {
+      await owner.query('DELETE FROM ownership_assignments WHERE row_id = ANY($1::uuid[])', [evidenceRows]);
+    } finally {
+      await owner.query('ALTER TABLE ownership_assignments ENABLE TRIGGER ownership_assignments_append_only_trg');
+    }
+  });
+
+  const stamp = (rowId: string) =>
+    as({ scope: 'system' }, (client) =>
+      client.query(
+        'UPDATE patient_allergies SET hospital_id = $2, hospital_medical_record_id = $3 WHERE id = $1',
+        [rowId, ids.hospitalA, ids.recordA],
+      ),
+    );
+
+  it('refuses to fill a legacy NULL hospital in place without an evidence row, even under system scope', async () => {
+    const rowId = await legacyAllergy('M2Unproven');
+    await expect(stamp(rowId)).rejects.toMatchObject({ code: '23514' });
+    const after = await owner.query('SELECT hospital_id FROM patient_allergies WHERE id = $1', [rowId]);
+    expect(after.rows[0]).toEqual({ hospital_id: null });
+  });
+
+  it('does not accept evidence recorded for another hospital', async () => {
+    const rowId = await legacyAllergy('M2OtherHospital');
+    await recordEvidence(rowId, ids.hospitalB);
+    await expect(stamp(rowId)).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('accepts the fill once the evidence for that row and hospital is recorded', async () => {
+    const rowId = await legacyAllergy('M2Proven');
+    await recordEvidence(rowId, ids.hospitalA);
+    await stamp(rowId);
+    const after = await owner.query('SELECT hospital_id FROM patient_allergies WHERE id = $1', [rowId]);
+    expect(after.rows[0]).toEqual({ hospital_id: ids.hospitalA });
+  });
+
+  it('keeps ownership evidence append-only, system-scoped and well-formed', async () => {
+    const rowId = randomUUID();
+    evidenceRows.push(rowId);
+    const insert = (context: Context, table = 'patient_allergies') =>
+      as(context, (client) =>
+        client.query(
+          `INSERT INTO ownership_assignments (table_name, row_id, hospital_id, evidence_rule, evidence)
+           VALUES ($1, $2, $3, 'probe', '{}')`,
+          [table, rowId, ids.hospitalA],
+        ),
+      );
+    // A hospital-scoped request cannot write evidence.
+    await expect(insert({ scope: 'hospital', hospitalId: ids.hospitalA })).rejects.toMatchObject({ code: '42501' });
+    // Not free text.
+    await expect(insert({ scope: 'system' }, 'patients; DROP TABLE x')).rejects.toMatchObject({ code: '23514' });
+    await insert({ scope: 'system' });
+    // One evidence row per assigned row.
+    await expect(insert({ scope: 'system' })).rejects.toMatchObject({ code: '23505' });
+    for (const sql of [
+      'UPDATE ownership_assignments SET hospital_id = hospital_id WHERE row_id = $1',
+      'DELETE FROM ownership_assignments WHERE row_id = $1',
+    ]) {
+      await expect(as({ scope: 'system' }, (client) => client.query(sql, [rowId]))).rejects.toMatchObject({
+        code: '55000',
+      });
+    }
+    await expect(as({ scope: 'system' }, (client) => client.query('TRUNCATE ownership_assignments'))).rejects.toMatchObject(
+      { code: '42501' },
+    );
   });
 });

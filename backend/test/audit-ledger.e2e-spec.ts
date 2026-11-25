@@ -624,14 +624,35 @@ describe('M28.5 — retention drops partitions, never rows', () => {
     );
 
     const result = await retention.sweep(now);
+    const { AuditRepository } = await import('../src/modules/audit/repositories/audit.repository');
+    // H1: only the ledger owner or the audit maintenance role may drop. The
+    // application connected as the restricted runtime role (runtime-role
+    // e2e mode) defers instead, and the month survives until the
+    // maintenance process runs.
+    const entitled = await harness.app.get(AuditRepository).retentionEntitled();
 
     expect(result.retentionDays).toBe(days);
-    // January 2026 is more than `auditLogDays` behind June 2027.
-    expect(result.dropped).toContain(partitionNameFor(oldMonth));
+    if (entitled) {
+      // January 2026 is more than `auditLogDays` behind June 2027.
+      expect(result.dropped).toContain(partitionNameFor(oldMonth));
+      expect(result.deferred).toEqual([]);
+    } else {
+      expect(result.dropped).toEqual([]);
+      expect(result.deferred).toContain(partitionNameFor(oldMonth));
+      const kept = await harness.prisma.$queryRawUnsafe<{ rel: string | null }[]>(
+        `SELECT to_regclass('public.${partitionNameFor(oldMonth)}')::text AS rel`,
+      );
+      expect(kept[0]?.rel).not.toBeNull();
+      // Clean up as the owner, which the fixture connection is.
+      await harness.prisma.$executeRawUnsafe(
+        `SELECT drop_audit_events_partition('${partitionNameFor(oldMonth)}')`,
+      );
+    }
     // The month before "now" is inside the window and must survive —
     // dropping a partition whose month merely *starts* before the cutoff
     // would take retained events with it.
     expect(result.dropped).not.toContain(partitionNameFor(recentMonth));
+    expect(result.deferred).not.toContain(partitionNameFor(recentMonth));
     // And the twelve months from `now` exist.
     expect(result.created).toContain(partitionNameFor(new Date(Date.UTC(2027, 5, 1))));
   });

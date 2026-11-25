@@ -53,6 +53,7 @@ export class AuditJobs implements OnModuleInit {
           retentionDays: result.retentionDays,
           created: result.created.length,
           dropped: result.dropped.length,
+          deferred: result.deferred.length,
           kept: result.kept,
         };
       },

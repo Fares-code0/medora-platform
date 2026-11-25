@@ -1,5 +1,10 @@
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import {
+  AppointmentRepository,
+  AppointmentUnattributable,
+} from '../src/modules/appointments/repositories/appointment.repository';
 
 import {
   type AuthHarness,
@@ -220,6 +225,28 @@ describe('POST /appointments (§5.3) — booking and the conflict rules', () => 
     expect(view.patient.id).toBe(patientId);
     expect(view.patient.mrn).not.toBe('');
     expect(view.availableActions).toEqual(['reschedule', 'cancel']);
+  });
+
+  it('answers 409, not 500, when the booking loses its hospital between the scope check and the insert (L2)', async () => {
+    const doctor = await seedDoctor('unattributable');
+    const patientId = await seedPatient(doctor.token);
+    // The race `reachAt` cannot see: the doctor's employment ended (or a
+    // second began) after the scope check, so the repository finds no stamp.
+    const spy = vi
+      .spyOn(harness.app.get(AppointmentRepository), 'create')
+      .mockRejectedValueOnce(new AppointmentUnattributable());
+    try {
+      const response = await book(doctor.token, patientId);
+
+      expect(response.status).toBe(409);
+      expect(errorBody(response).code).toBe('conflict');
+      expect(JSON.stringify(response.body)).not.toMatch(/AppointmentUnattributable|stack/);
+      expect(
+        await harness.prisma.appointment.count({ where: { patient: { publicId: patientId } } }),
+      ).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('refuses a slot outside the working grid with 409 naming the rule', async () => {

@@ -45,7 +45,7 @@ import { Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../../../generated/prisma/client';
 import type { PrescriptionStatus } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { PrismaService, runAsSystem } from '../../../shared/database';
 
 /**
  * A Prisma client that may be a transaction's.
@@ -108,6 +108,80 @@ export class SafetyRepository {
     });
 
     return rows.map((row) => ({ allergen: row.allergen, severity: row.severity }));
+  }
+
+  /**
+   * The patient's **legacy** allergies: rows written before hospital
+   * attribution (`hospital_id IS NULL`), whose source hospital is unknown
+   * (security remediation H2; owner decision #17, 2026-11-24).
+   *
+   * A legacy row is invisible to every hospital under RLS and DR-05, which
+   * is right for browsing the chart — and wrong for the one question an
+   * allergy exists to answer: may this drug hurt this patient? So the
+   * safety screen, and only the safety screen, consults them, and only for
+   * a patient the prescriber has already been proven to reach at their own
+   * hospital (`SafetyService.screen` calls `reachAt` first). The read is a
+   * `system`-scoped lookup narrowed to this patient's unattributed rows —
+   * never another hospital's attributed ones — and the caller audits it as
+   * `legacy_clinical_record.read`.
+   *
+   * Read outside a caller's transaction (`tx` is not taken): legacy rows
+   * are not written by the prescription flow, so the committed view is the
+   * same one the authoritative pass would see.
+   */
+  async legacyAllergiesFor(patientId: string): Promise<readonly AllergyRow[]> {
+    const rows = await runAsSystem(
+      async () =>
+        await this.prisma.patientAllergy.findMany({
+          where: { patientId, hospitalId: null, deletedAt: null },
+          select: { allergen: true, severity: true },
+          orderBy: { allergen: 'asc' },
+        }),
+    );
+
+    return rows.map((row) => ({ allergen: row.allergen, severity: row.severity }));
+  }
+
+  /**
+   * The patient's live **legacy** prescriptions (`hospital_id IS NULL`),
+   * for the duplicate-therapy and interaction checks — under exactly the
+   * rule `legacyAllergiesFor` states.
+   */
+  async legacyCurrentMedicationsFor(
+    patientId: string,
+    options: { readonly excludePrescriptionId?: string | undefined } = {},
+  ): Promise<readonly CurrentMedicationRow[]> {
+    const rows = await runAsSystem(
+      async () =>
+        await this.prisma.prescription.findMany({
+          where: {
+            patientId,
+            hospitalId: null,
+            deletedAt: null,
+            status: { in: [...LIVE_PRESCRIPTION_STATUSES] },
+            ...(options.excludePrescriptionId === undefined
+              ? {}
+              : { NOT: { id: options.excludePrescriptionId } }),
+          },
+          select: {
+            publicId: true,
+            medicationId: true,
+            medication: {
+              select: { name: true, genericName: true, category: true, isHighRisk: true },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
+    );
+
+    return rows.map((row) => ({
+      prescriptionId: row.publicId,
+      medicationId: row.medicationId,
+      name: row.medication.name,
+      genericName: row.medication.genericName,
+      category: row.medication.category,
+      isHighRisk: row.medication.isHighRisk,
+    }));
   }
 
   /**

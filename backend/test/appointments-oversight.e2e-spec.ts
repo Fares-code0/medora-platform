@@ -643,6 +643,18 @@ describe('POST /admin/appointments/{id}/reassign (§5.10)', () => {
     expect(row.doctorId).toBe(from.id);
   });
 
+  it('cannot meet a receiving doctor with ambiguous standing: a second active employment is refused (L3)', async () => {
+    // DR-05 standing is exactly one active clinical employment. The
+    // reassignment checks the receiving doctor's active employment at this
+    // hospital; the database guarantees there is no second one elsewhere.
+    const to = await seedDoctor('reassign-ambiguous-to', 'Cardiology');
+    await expect(
+      harness.prisma.doctorEmployment.create({
+        data: { doctorId: to.id, hospitalId: await fixtureHospital(harness.prisma, 'b') },
+      }),
+    ).rejects.toMatchObject({ code: 'P2002' });
+  });
+
   it('lets exactly one of two concurrent reassignments win (F-07)', async () => {
     const admin = await seedAdmin('reassign-race-admin');
     const from = await seedDoctor('reassign-race-from', 'Cardiology');

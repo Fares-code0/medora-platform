@@ -1,5 +1,7 @@
 import type { PrismaService } from '../../src/shared/database';
 
+import { fixtureHospital } from './auth-app';
+
 /**
  * A `doctors` row owned by one spec file.
  *
@@ -120,6 +122,19 @@ export async function createTestDoctor(
     licenseNumber,
     contactEmail,
   };
+}
+
+/**
+ * Gives the fixture doctor an active employment at a fixture hospital.
+ *
+ * A patient is offered only doctors who hold one (L6): verified and actively
+ * practising is no longer enough to appear in the patient directory.
+ * `destroyTestDoctor` removes it again.
+ */
+export async function employTestDoctor(prisma: PrismaService, doctorId: string, hospital = 'a'): Promise<void> {
+  await prisma.doctorEmployment.create({
+    data: { doctorId, hospitalId: await fixtureHospital(prisma, hospital) },
+  });
 }
 
 /**

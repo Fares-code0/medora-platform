@@ -4864,49 +4864,79 @@ the next refresh was open.
 
 ## ADR-047 — Multi-Hospital Authorization Is Enforced: Standing, Scope, DR-05, Controlled Access and RLS
 
-**Status:** Proposed (Backend + Database, 2026-11-23); accepted when its pull request is approved ·
-**Implements:** the owner's approved multi-hospital decisions (#16, comment 7105706963) and audit
-findings A-1..A-22 · **Builds on:** ADR-046 (as corrected), RLS_DESIGN.md, RLS_BACKEND_CONTRACT.md ·
-**Resolves:** OD-07 (Platform Admin mapping), DR-05
+**Status:** Proposed (Backend + Database, 2026-11-23; reconciled with the implementation after the
+security remediation, 2026-11-25); accepted when its pull request is approved ·
+**Implements:** the owner's approved multi-hospital decisions (#16, comment 7105706963), audit findings
+A-1..A-22 and the remediation findings F-01..F-20, H1, H2, M1, M2, L1, L2, L5, L6 · **Builds on:**
+ADR-046 (as corrected), RLS_DESIGN.md, RLS_BACKEND_CONTRACT.md · **Resolves:** OD-07 (Platform Admin
+mapping), DR-05
 
 ### Decision
 
 1. **Effective authorization is server-derived, never claimed.** `PermissionResolver` combines matrix,
    custom-role bundle and overrides, re-applies locks, then the server policy overlay
-   (`shared/authz/authz-policy.ts`): admin holds no standing PHI; platform administration is
-   admin-only; each staff category has a ceiling; a custom role is capped by its base category, and
-   one derived from `admin` holds nothing. The cache is keyed `user|role|authz_version` (ADR-046).
-2. **Organizational standing gates every doctor and staff capability.** A doctor needs VERIFIED,
-   ACTIVE or VACATION practice and one active employment at an ACTIVE hospital; staff need one active
-   affiliation. Unverified, suspended or never-employed doctors sign in but hold nothing (self-service
-   routes need no capability). Terminated accounts (employment/affiliation ended, none active) are
-   refused at login and refresh; termination revokes every session in the same transaction.
+   (`shared/authz/authz-policy.ts`). Each staff category has an **explicit allow-list ceiling** (a new
+   capability is held by no category until listed); administrators hold no standing PHI; platform
+   administration is admin-only. A custom role is hospital-bound: it confers capability only while its
+   holder works at the role's own hospital. The cache is keyed `user|role|authz_version` (ADR-046).
+2. **Organizational standing gates every doctor and staff member.** A doctor's standing is VERIFIED,
+   ACTIVE or VACATION practice and **exactly one** active employment at an ACTIVE hospital (the
+   database allows no second one). Outside standing — unverified, suspended, never employed, between
+   employments — an account reaches only the routes marked `@OutsideClinicalStanding()` (its own
+   account, profile, security settings, verification documents); every other route, `@Authenticated()`
+   ones included, answers 403 `clinical_standing_required`. Terminated accounts are refused at login,
+   at refresh, and again after the second factor (L5); termination revokes every session in the same
+   transaction. Standing is read live on every request (F-20).
 3. **Platform Admin is explicit (OD-07).** `platform_admin_grants` holds it, exclusive with a Hospital
-   Admin assignment (triggers), never self-granted, never the last one revoked. An administrator with
-   neither — including the legacy dev/test accounts, left unchanged — has no administrative reach.
-   `@PlatformScope()` routes refuse Hospital Admins; Hospital Admins act for exactly one hospital.
+   Admin assignment, never self-granted; the database refuses any commit that would leave no effective
+   Platform Admin (F-10). A Platform Admin holds no clinical access: appointment oversight, the queue
+   and waiting room, the record-issue queue and the masked patient directory are hospital functions
+   (`@HospitalScope()`), confined to the caller's hospital, and a Platform Admin is refused there or
+   sees nothing. Hospital Admins act for exactly one hospital.
 4. **DR-05.** A doctor reaches a patient iff the patient has a Hospital Medical Record at the doctor's
-   clinical hospital; assignment shapes "My Patients" lists only. Registration opens the HMR. New
-   records, lab orders, prescriptions (and derived rows) are stamped with hospital, HMR and employment.
-5. **Controlled cross-hospital access.** Exceptional Access / Emergency Override
-   (`exceptional_access_grants`) and information requests (`information_requests`) replace the unused
-   `patient_access_grants`; rules in `controlled-access.service.ts`. Every read under them is audited.
-6. **RLS is enforced** for a non-owner, NOBYPASSRLS runtime role, with transaction-local context
-   (`app.scope`, `app.hospital_id`, `app.user_id`, `app.patient_id`), fail-closed; the service refuses
-   to start in production on a role that would bypass it.
-7. **Legacy rows stay isolated** until an evidence-based backfill; the dry-run tool proposes owners
+   one clinical hospital; every clinical read by id is filtered to that hospital, and worklists are the
+   doctor's own or live-care rows there. Registration opens the record and the primary care assignment
+   in one transaction with its `patient.create` audit row (L1). Every clinical write — records, lab
+   orders, prescriptions, history, notes, vitals, documents, allergies, alerts, **appointments**, AI and
+   patient-tagged conversations, availability — is stamped with hospital, record and employment from a
+   server source, or refused. An appointment's hospital and record are frozen; reassignment moves it
+   only to another doctor actively employed at the same hospital, and across hospitals is refused (422
+   `cross_hospital_reassignment`: cancel and rebook).
+5. **Controlled cross-hospital access.** Exceptional Access always waits for an independent approval
+   by the target hospital's own Hospital Admin (never the requester, never a Platform Admin); Emergency
+   Override is for doctors in standing only; information requests share only approved items, for a
+   limited time. Administrative message-content access (ADR-006) requires re-authentication, a second
+   administrator's approval and a live, revocable, per-read-audited grant, enforced in RLS as well.
+6. **Audit.** Every successful PHI read writes `phi.read` before the response is released and fails
+   closed; disclosures go through the throwing writer. Ledger events carry `hospital_id`; Hospital
+   Admins read only their hospital's events. The ledger is append-only for the application: no UPDATE
+   or DELETE, partitions owner-only, and **retention (dropping a month) belongs to the audit maintenance
+   role alone** (H1; `DATABASE_ROLES.md` §4).
+7. **RLS is enforced** on 74 tables for a non-owner, NOBYPASSRLS runtime role, with transaction-local
+   context (`app.scope` ∈ hospital/platform/patient/system, `app.hospital_id`, `app.user_id`,
+   `app.patient_id`); anything else, including the `self` scope of a caller with no tenant, fails
+   closed. Only reviewed call sites select `system` (`tenant-scope-callsites.spec.ts`); untrusted input
+   never chooses a scope. The service refuses to start in production on a role that would bypass RLS.
+   FORCE RLS was assessed and not adopted (`RLS_BACKEND_CONTRACT.md`).
+8. **Legacy rows stay isolated** until an evidence-based backfill: invisible to every hospital, and
+   the database refuses to give one an owner without an `ownership_assignments` evidence row (M2). The
+   one exception is the prescription safety screen, which — for a patient the prescriber already
+   reaches — also screens against that patient's legacy allergies and prescriptions, marked as legacy
+   and audited (`legacy_clinical_record.read`; H2, owner decision #17). The dry-run tool proposes owners
    from evidence only and never writes.
 
 ### Consequences and limits
 
-- Custom roles are hospital-scoped; the permission matrix and per-user overrides are platform-tier.
+- The permission matrix and per-user overrides are platform-tier; custom roles are hospital-scoped.
 - Break-Glass eligibility is a server rule, not a matrix capability: adding a catalogue capability
   needs a coordinated frontend change (parity specs), out of this change's scope.
-- Appointment stamping is deferred: Phase 22 makes an appointment's employment key immutable, which
-  conflicts with in-place reassignment; it lands with the slot-based booking flow.
-- Production steps (not run here): provision the runtime role and point the service at it; delete
-  the dev/test administrator accounts; review and apply the ownership backfill.
-
+- Appointment transfer across hospitals and a "primary doctor per patient per hospital" are **not**
+  decided here; both wait for the owner.
+- `satisfaction_surveys`, `patient_access_grants` and `domain_events` have no RLS until their owner
+  decisions are made (`RLS_DESIGN.md` §9).
+- Production steps (not run here): provision the runtime and audit maintenance roles and point the
+  service and the retention schedule at them; delete the dev/test administrator accounts; review and
+  apply the ownership backfill (owner approval required).
 ---
 
 *End of decision register. Backend implementation is under way: M0–M8 complete, plus M7 (authorization, ADR-027) and M9 bar its exit gate. ADR-030 (patient identity) was accepted and implemented on 2026-09-02, and ADR-034 corrected the mobile refresh variant with it. The patient mobile client's Phase 1 foundation landed in PR #88; its branch model is ADR-032. **ADR-035 (2026-09-06) closed public administrator self-registration, enforced `users.status` and administrator MFA at login, made a doctor's professional block required so that verification is reachable, and wired patient registration end to end — closing RA-025.1.** **ADR-036 (2026-09-11) made `/me/profile` one route owned by the users module, which unblocked M9.1–M9.2.** **ADR-037 (2026-09-16) kept billing deferred, recorded the `invoices`/`invoice_lines`/`payments` sketch M17.1 asked for, and fixed the flag-off revenue alternate — leaving RA-037.1 open on the two new enums.** **ADR-038 (2026-09-16) kept payments deferred and shipped no code for them, because unlike the revenue slot there is no contract surface to reserve; it declines to sketch payment *processing* at all and records the six decisions that must precede it as RA-038.1.** **ADR-039 (2026-09-18, owner decision) closed RA-037.1: `invoice_status` is `draft|issued|paid|cancelled` and `payment_method` is `cash|card|insurance`; `partially-paid`, `void`, `disputed` and `transfer` are rejected, and overdue is a derived predicate rather than a stored status. It supersedes ADR-037 §2's proposed values, ships no code, and carries the fifteen decisions that remain before a billing migration as RA-039.1.** **ADR-031 (results release) and ADR-033 (patient appointment actions) remain proposed and awaiting a product/clinical owner.** No patient-readable clinical route may ship until ADR-031 is decided, and no patient appointment *write* route until ADR-033 is.*

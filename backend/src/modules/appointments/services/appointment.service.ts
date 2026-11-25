@@ -60,7 +60,11 @@ import type {
   RejectAppointmentInput,
   RescheduleAppointmentInput,
 } from '../dto/appointment.schema';
-import { AppointmentRepository, type BookRow } from '../repositories/appointment.repository';
+import {
+  AppointmentRepository,
+  AppointmentUnattributable,
+  type BookRow,
+} from '../repositories/appointment.repository';
 
 import { assertSlotDateArrived, appointmentStatusMachine } from './appointment-status.machine';
 import { civilDate, civilMoment } from './clinic-calendar';
@@ -210,6 +214,19 @@ export class AppointmentService {
         },
         tx,
       );
+    }).catch((error: unknown) => {
+      // L2: `reachAt` above proved the stamp existed; it is gone only if the
+      // doctor's standing or the patient's record changed in between (an
+      // employment ended, a second one began). A client error that says
+      // the booking was not made — never a 500, and never an unattributed
+      // appointment.
+      if (error instanceof AppointmentUnattributable) {
+        throw AppException.conflict(
+          'The appointment cannot be booked: the doctor has no clinical hospital holding this patient’s record',
+          'conflict',
+        );
+      }
+      throw error;
     });
 
     await this.afterWrite({

@@ -36,6 +36,7 @@
     "openapi:generate": "nest build && node dist/cli/openapi-generate.js",
     "openapi:check": "nest build && node dist/cli/openapi-generate.js --check",
     "crypto:reencrypt": "node dist/cli/reencrypt-envelopes.js",
+    "audit:retention": "node dist/cli/audit-retention.js",
     "db:reset": "prisma migrate reset --force",
     "db:backfill:dry-run": "tsx prisma/backfill/ownership-dry-run.ts",
     "db:check": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema --exit-code"

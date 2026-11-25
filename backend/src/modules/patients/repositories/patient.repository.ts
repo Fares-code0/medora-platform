@@ -290,7 +290,14 @@ export class PatientRepository {
       readonly notes?: string | null | undefined;
     }[];
     readonly conditionIds: readonly string[];
-  }): Promise<PatientRow> {
+  },
+  /**
+   * Runs inside the registration transaction after the chart, its Hospital
+   * Medical Record and its care assignment exist (L1): the caller's
+   * mandatory audit, so the ownership and its evidence commit together.
+   */
+  onCreated?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<PatientRow> {
     return this.prisma.$transaction(async (tx) => {
       // §2.15: names the patient this transaction registers, so Row-Level
       // Security lets it read back the row it is creating before its Hospital
@@ -369,6 +376,8 @@ export class PatientRepository {
           ...(UUID.test(input.actorId) ? { grantedBy: input.actorId } : {}),
         },
       });
+
+      if (onCreated !== undefined) await onCreated(tx);
 
       return tx.patient.findUniqueOrThrow({ where: { id: patient.id }, select: PATIENT_SELECT });
     });

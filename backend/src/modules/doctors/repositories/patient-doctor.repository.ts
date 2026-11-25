@@ -25,7 +25,7 @@
 
 import { Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../../../shared/database';
+import { PrismaService, runAsSystem } from '../../../shared/database';
 import type { PatientDoctorDetail, PatientDoctorSummary } from '../dto/patient-doctor.dto';
 
 /**
@@ -52,10 +52,21 @@ export interface DoctorPage {
   readonly totalItems: number;
 }
 
-/** Applied to every patient-facing read. Not overridable by any caller. */
+/**
+ * Applied to every patient-facing read. Not overridable by any caller.
+ *
+ * L6: and the doctor holds an active employment at an active hospital — a
+ * doctor never employed, or whose last employment ended, has nowhere to see
+ * a patient and is not offered to one (multi-hospital §2.6).
+ *
+ * Employment rows are tenant data: under RLS a patient's own scope sees none
+ * of them, so these reads run under `system` scope. They project only the
+ * explicit public profile below (`patient-doctor.dto.spec.ts`), never PHI.
+ */
 const PATIENT_VISIBLE = {
   verificationStatus: 'VERIFIED',
   practiceStatus: 'ACTIVE',
+  employments: { some: { endedAt: null, hospital: { is: { status: 'ACTIVE', deletedAt: null } } } },
 } as const;
 
 const SUMMARY_SELECT = {
@@ -89,16 +100,19 @@ export class PatientDoctorRepository {
       ...(criteria.departmentId === undefined ? {} : { departmentId: criteria.departmentId }),
     };
 
-    const [rows, totalItems] = await Promise.all([
-      this.prisma.db.doctor.findMany({
-        where,
-        select: SUMMARY_SELECT,
-        orderBy: orderFor(criteria.sort),
-        skip: (criteria.page - 1) * criteria.pageSize,
-        take: criteria.pageSize,
-      }),
-      this.prisma.db.doctor.count({ where }),
-    ]);
+    const [rows, totalItems] = await runAsSystem(
+      async () =>
+        await Promise.all([
+          this.prisma.db.doctor.findMany({
+            where,
+            select: SUMMARY_SELECT,
+            orderBy: orderFor(criteria.sort),
+            skip: (criteria.page - 1) * criteria.pageSize,
+            take: criteria.pageSize,
+          }),
+          this.prisma.db.doctor.count({ where }),
+        ]),
+    );
 
     return { items: rows.map(toSummary), totalItems };
   }
@@ -113,22 +127,25 @@ export class PatientDoctorRepository {
   async findById(doctorId: string): Promise<PatientDoctorDetail | null> {
     if (!UUID.test(doctorId)) return null;
 
-    const row = await this.prisma.db.doctor.findFirst({
-      where: { id: doctorId, ...PATIENT_VISIBLE },
-      select: {
-        ...SUMMARY_SELECT,
-        biography: true,
-        education: true,
-        certifications: true,
-        skills: true,
-        officeLocation: true,
-        officeHours: true,
-        specialties: {
-          select: { specialty: { select: { id: true, name: true } } },
-          orderBy: { isPrimary: 'desc' },
-        },
-      },
-    });
+    const row = await runAsSystem(
+      async () =>
+        await this.prisma.db.doctor.findFirst({
+          where: { id: doctorId, ...PATIENT_VISIBLE },
+          select: {
+            ...SUMMARY_SELECT,
+            biography: true,
+            education: true,
+            certifications: true,
+            skills: true,
+            officeLocation: true,
+            officeHours: true,
+            specialties: {
+              select: { specialty: { select: { id: true, name: true } } },
+              orderBy: { isPrimary: 'desc' },
+            },
+          },
+        }),
+    );
 
     if (row === null) return null;
 

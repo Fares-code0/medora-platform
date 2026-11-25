@@ -234,6 +234,19 @@ export class AuditRepository {
   }
 
   /**
+   * Whether this connection may run audit retention (H1): the ledger's
+   * owner or the audit maintenance role, never the application runtime
+   * role. The same predicate `drop_audit_events_partition` enforces.
+   */
+  async retentionEntitled(): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<{ entitled: boolean }[]>`
+      SELECT public.audit_retention_entitled() AS entitled
+    `;
+
+    return rows[0]?.entitled === true;
+  }
+
+  /**
    * Drops one monthly partition.
    *
    * `$executeRawUnsafe` because a table name cannot be a bind parameter.

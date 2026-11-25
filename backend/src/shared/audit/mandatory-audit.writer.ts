@@ -17,6 +17,7 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../database';
 import { currentAuditAttribution } from './audit-attribution';
 import type { AuditEvent } from './audit.types';
@@ -31,6 +32,19 @@ export class MandatoryAuditWriter {
 
   /** Writes the event or throws 503 `audit_unavailable`. */
   async record(event: AuditEvent): Promise<void> {
+    await this.writer.recordWithin(this.prisma, this.attributed(event));
+  }
+
+  /**
+   * Writes the event on the caller's transaction, so it commits or rolls
+   * back with the change it records (L1: a patient's registration and its
+   * ownership evidence). Throws, like `record`.
+   */
+  async recordIn(tx: Prisma.TransactionClient, event: AuditEvent): Promise<void> {
+    await this.writer.recordWithin(tx, this.attributed(event));
+  }
+
+  private attributed(event: AuditEvent): AuditEvent {
     const attribution = currentAuditAttribution();
     const attributed: AuditEvent =
       attribution === undefined
@@ -43,6 +57,6 @@ export class MandatoryAuditWriter {
                 ? { ...event.actor, sessionId: attribution.sessionId }
                 : event.actor,
           };
-    await this.writer.recordWithin(this.prisma, attributed);
+    return attributed;
   }
 }

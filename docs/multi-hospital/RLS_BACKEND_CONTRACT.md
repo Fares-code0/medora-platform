@@ -1,8 +1,15 @@
 # Backend ↔ PostgreSQL Tenant-Context Contract (for #20)
 
-**Status:** PROPOSED by database engineering, **pending Backend agreement** (#20). Nothing here is
-implemented in the Backend, and no policy is active. Every PostgreSQL behaviour stated is proven by a
-test on PostgreSQL 16 (references in brackets).
+**Status:** **IMPLEMENTED** (PR #61). The Backend applies the contract and the policies are active
+(`RLS_DESIGN.md`, Appendix A). What was built differs from the proposal below in one respect: the
+context is a **scope** plus ids, not a single hospital id — `app.scope` (`hospital`, `platform`,
+`patient`, `system`; any other value, including the `self` scope of a caller with no tenant, reads as
+NULL and fails closed), `app.hospital_id`, `app.user_id` and `app.patient_id`, all transaction-local,
+resolved per request by `TenantContextResolver` (in `AuthorizationGuard`) and applied by
+`tenant-context.adapter.ts` (`IMPLEMENTATION_CONTRACTS.md` §6). The threat model and the FORCE RLS
+assessment are at the end of this document. Sections 1–6 are the original proposal (2026-11-23),
+kept as the design record; every PostgreSQL behaviour they state is proven by a test on PostgreSQL 16
+(references in brackets).
 
 ## 1. What PostgreSQL needs
 

@@ -50,6 +50,12 @@ export interface RetentionResult {
   readonly retentionDays: number;
   readonly created: readonly string[];
   readonly dropped: readonly string[];
+  /**
+   * Expired months this connection may not drop (H1): the application
+   * runtime role never runs retention. The audit maintenance process
+   * (`npm run audit:retention`) drops them.
+   */
+  readonly deferred: readonly string[];
   readonly kept: number;
 }
 
@@ -84,6 +90,10 @@ export class AuditRetentionService {
     const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
     const partitions = await this.audit.partitions();
     const dropped: string[] = [];
+    const deferred: string[] = [];
+    // Asked once, of the database itself: the same predicate the drop
+    // function enforces, so the sweep never attempts what it would be refused.
+    const entitled = await this.audit.retentionEntitled();
 
     for (const partition of partitions) {
       // The month's **end**, not its start. A partition still holding
@@ -94,6 +104,11 @@ export class AuditRetentionService {
 
       if (monthEnd.getTime() > cutoff.getTime()) continue;
 
+      if (!entitled) {
+        deferred.push(partition.name);
+        continue;
+      }
+
       await this.audit.dropPartition(partition.name);
       dropped.push(partition.name);
       this.logger.log(
@@ -102,10 +117,18 @@ export class AuditRetentionService {
       );
     }
 
+    if (deferred.length > 0) {
+      this.logger.warn(
+        { partitions: deferred, retentionDays },
+        'Expired audit partitions left for the audit maintenance role (npm run audit:retention)',
+      );
+    }
+
     return {
       retentionDays,
       created,
       dropped,
+      deferred,
       kept: partitions.length - dropped.length,
     };
   }

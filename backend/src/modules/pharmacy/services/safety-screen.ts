@@ -91,7 +91,15 @@ export interface CurrentMedication {
   readonly genericName: string;
   readonly category: string;
   readonly isHighRisk: boolean;
+  /**
+   * A legacy prescription (`hospital_id IS NULL`, source hospital unknown),
+   * consulted under the safety exception (H2). Shown as such; never hidden.
+   */
+  readonly legacy?: boolean | undefined;
 }
+
+/** How a legacy row is named wherever the screen shows it (H2). */
+export const LEGACY_MARK = 'legacy record, source hospital unknown';
 
 /** One `drug_interactions` row, already resolved to the partner drug. */
 export interface InteractionFinding {
@@ -106,6 +114,8 @@ export interface PatientAllergy {
   readonly allergen: string;
   /** `mild | moderate | severe`, wire form. */
   readonly severity: string;
+  /** A legacy allergy (`hospital_id IS NULL`), consulted under H2. */
+  readonly legacy?: boolean | undefined;
 }
 
 export interface ScreenSubject {
@@ -188,6 +198,7 @@ function allergyWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
   const hasSevere = subject.allergies.some((allergy) => sameTerm(allergy.severity, 'severe'));
   const names = matched.map((allergy) => allergy.allergen);
   const label = subject.allergyClass ?? subject.genericName;
+  const anyLegacy = matched.some((allergy) => allergy.legacy === true);
 
   return [
     {
@@ -199,8 +210,12 @@ function allergyWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
         `${subject.patientName} has a recorded ${names.join(', ')} allergy` +
         `${hasSevere ? ', flagged severe' : ''}. ` +
         `${subject.brandName} (${subject.genericName}) belongs to that class and may ` +
-        `cross-react. Choose a different medication — this cannot be overridden.`,
-      against: names.map((name) => `Recorded allergy: ${name}`),
+        `cross-react. Choose a different medication — this cannot be overridden.` +
+        `${anyLegacy ? ` At least one matching allergy is a ${LEGACY_MARK}.` : ''}`,
+      against: matched.map(
+        (allergy) =>
+          `Recorded allergy: ${allergy.allergen}${allergy.legacy === true ? ` (${LEGACY_MARK})` : ''}`,
+      ),
       blocking: true,
     },
   ];
@@ -232,7 +247,7 @@ function interactionWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
     // pairs drawn from that list, so this is a guard, not a path.
     if (partner === undefined) return [];
 
-    const label = `${partner.name} (${partner.genericName})`;
+    const label = `${partner.name} (${partner.genericName})${legacyNote(partner)}`;
 
     return [
       {
@@ -267,7 +282,7 @@ function duplicateWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
 
   if (sameDrug.length > 0) {
     const names = sameDrug.map(
-      (medication) => `${medication.name} · ${medication.prescriptionId}`,
+      (medication) => `${medication.name} · ${medication.prescriptionId}${legacyNote(medication)}`,
     );
 
     return [
@@ -292,7 +307,9 @@ function duplicateWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
 
   if (sameClass.length === 0) return [];
 
-  const names = sameClass.map((medication) => `${medication.name} (${medication.genericName})`);
+  const names = sameClass.map(
+    (medication) => `${medication.name} (${medication.genericName})${legacyNote(medication)}`,
+  );
 
   return [
     {
@@ -307,6 +324,10 @@ function duplicateWarnings(subject: ScreenSubject): readonly ScreenWarning[] {
       blocking: false,
     },
   ];
+}
+
+function legacyNote(medication: CurrentMedication): string {
+  return medication.legacy === true ? ` — ${LEGACY_MARK}` : '';
 }
 
 const SEVERITY_ORDER: Record<ScreenSeverity, number> = { critical: 0, warning: 1, info: 2 };
