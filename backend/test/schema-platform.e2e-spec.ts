@@ -479,22 +479,48 @@ describe('platform, audit and triggers (RM M5.10)', () => {
      * is that a usable index exists and is chosen once scanning is not
      * free — not that this database is large.
      */
-    async function planFor(sql: string): Promise<string> {
+    async function planFor(sql: string, alsoDisable: readonly string[] = []): Promise<string> {
       return prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+        for (const setting of alsoDisable)
+          await tx.$executeRawUnsafe(`SET LOCAL enable_${setting} = off`);
         const rows = await tx.$queryRawUnsafe<Array<Record<string, string>>>(`EXPLAIN ${sql}`);
         return rows.map((row) => Object.values(row)[0] ?? '').join('\n');
       });
     }
 
+    /**
+     * What this index is for is serving one doctor's calendar already in
+     * `starts_at` order. Among the indexes on `appointments`, only
+     * `(doctor_id, starts_at)` can do that; any other plan needs a sort.
+     *
+     * The query cost alone does not settle it on a table of a few rows.
+     * `appointments_status_starts_at_idx` plus a filter and a sort costs
+     * within a hundredth of the calendar index, and `appointments` is
+     * shared by every suite in a parallel run. This file's own
+     * status-machine tests also book rows for the clinic doctor and delete
+     * them again. An autoanalyze that samples the table in between records
+     * that doctor as most of the table, and with those statistics the
+     * planner takes the status index (reproduced; a fresh ANALYZE does not
+     * cure it, because an empty sample keeps the old statistics).
+     *
+     * So the sort is taken off the table along with the sequential scan,
+     * and the assertion is the stronger one: the calendar index is used
+     * and nothing is sorted. Drop the index, or break its column order,
+     * and the plan falls back to a sort and fails here.
+     */
     it('uses the doctor calendar index for the appointment list', async () => {
-      const plan = await planFor(`
+      const plan = await planFor(
+        `
         SELECT * FROM appointments
         WHERE doctor_id = '${clinic.doctorId}' AND starts_at >= now()
         ORDER BY starts_at
-      `);
+      `,
+        ['sort'],
+      );
 
       expect(plan).toContain('appointments_doctor_id_starts_at_idx');
+      expect(plan).not.toMatch(/\bSort\b/);
     });
 
     /**
