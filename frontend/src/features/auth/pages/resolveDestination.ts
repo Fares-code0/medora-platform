@@ -46,9 +46,31 @@ function translateLegacy(path: string): string {
  * On a cold boot straight onto /login the two race, and RequireGuest used to
  * win with a plain role-landing redirect — silently dropping returnTo and
  * breaking every deep link that required signing in first.
+ *
+ * `account` makes a returnTo the property of the account it was captured
+ * for (A-W1). `RequireAuth` captures one whenever a session in this tab
+ * ends, so it is the path the PREVIOUS account was on — `/doctor/patients/
+ * <id>`, say. When this tab knows who that was and someone else has signed
+ * in, the next user must not land on it: they go to their own landing page.
+ * With no previous account known (a fresh load onto a bookmarked deep link)
+ * there is no one else's path to carry over, and the role rule alone
+ * applies, as before. Ids stay in memory; none is ever put in the URL.
  */
-export function resolveDestination(returnTo: string | null, role: Role | undefined): string {
+export interface ReturnToAccount {
+  /** The account now signed in. */
+  readonly userId: string | undefined;
+  /** The account whose session last ended in this tab; null when none has. */
+  readonly previousUserId: string | null;
+}
+
+export function resolveDestination(
+  returnTo: string | null,
+  role: Role | undefined,
+  account?: ReturnToAccount,
+): string {
   if (!returnTo || !role) return routes.root;
+
+  if (account?.previousUserId && account.previousUserId !== account.userId) return routes.root;
 
   const decoded = translateLegacy(decodeSafely(returnTo));
 
