@@ -34,6 +34,7 @@ import {
   type TabItem,
 } from '@/components/ui';
 import { useDisclosure } from '@/hooks/useDisclosure';
+import { useT, type MessageKey } from '@/i18n';
 import { routes } from '@/routes';
 import { pageSlice } from '@/utils/pagination';
 
@@ -114,31 +115,32 @@ function bulkVerb(patch: NotificationPatch): string {
 
 const VIEW_EMPTY: Record<
   NotificationStatusFilter,
-  { readonly title: string; readonly description: string }
+  { readonly title: MessageKey; readonly description: MessageKey }
 > = {
   active: {
-    title: 'Your inbox is clear',
-    description: 'Nothing is waiting here. Archived notifications are under Archived.',
+    title: 'notifications.empty.active.title',
+    description: 'notifications.empty.active.body',
   },
   unread: {
-    title: "You're all caught up",
-    description: 'Every notification has been read.',
+    title: 'notifications.empty.unread.title',
+    description: 'notifications.empty.unread.body',
   },
   read: {
-    title: 'No read notifications',
-    description: 'Notifications you have opened or marked as read appear here.',
+    title: 'notifications.empty.read.title',
+    description: 'notifications.empty.read.body',
   },
   starred: {
-    title: 'No starred notifications',
-    description: 'Star a notification from its actions menu to keep it here.',
+    title: 'notifications.empty.starred.title',
+    description: 'notifications.empty.starred.body',
   },
   archived: {
-    title: 'Nothing archived',
-    description: 'Archived notifications leave the inbox and are kept here.',
+    title: 'notifications.empty.archived.title',
+    description: 'notifications.empty.archived.body',
   },
 };
 
 export function NotificationsPage() {
+  const t = useT();
   const { toast } = useToast();
   const list = useNotificationListState();
   const filtersDrawer = useDisclosure();
@@ -212,17 +214,17 @@ export function NotificationsPage() {
         () =>
           toast({
             variant: 'error',
-            title: `Could not update ${ids.length === 1 ? 'the notification' : `${String(ids.length)} notifications`}`,
+            title: t('notifications.toast.updateFailed', { count: ids.length }),
             // One write per row: a bulk failure may have landed part-way,
             // and the reconcile shows exactly what was kept.
             description:
               ids.length === 1
-                ? 'Nothing was changed.'
-                : 'Some or all of them were not changed. The list shows what was saved.',
+                ? t('notifications.toast.updateFailedOne')
+                : t('notifications.toast.updateFailedMany'),
           }),
       );
     },
-    [updateNotifications, toast],
+    [updateNotifications, toast, t],
   );
 
   const bulkPatch = (value: NotificationPatch) => {
@@ -256,11 +258,11 @@ export function NotificationsPage() {
   const emptyState = isNarrowed ? (
     <EmptyState
       icon={SearchX}
-      title="No notifications match"
-      description="Nothing in this view matches the current search and filters."
+      title={t('notifications.empty.noMatch.title')}
+      description={t('notifications.empty.noMatch.body')}
       action={
         <Button variant="secondary" onClick={clearSearchAndFilters}>
-          Clear filters
+          {t('notifications.clearFilters')}
         </Button>
       }
     />
@@ -268,20 +270,20 @@ export function NotificationsPage() {
     <EmptyState
       icon={BellOff}
       tone="error"
-      title="No notifications yet"
-      description="New notifications appear here as clinical activity happens."
+      title={t('notifications.empty.none.title')}
+      description={t('notifications.empty.none.body')}
     />
   ) : (
     <EmptyState
       icon={view === 'unread' ? CheckCheck : view === 'starred' ? Star : Inbox}
       tone={view === 'unread' ? 'success' : 'neutral'}
-      title={VIEW_EMPTY[view].title}
-      description={VIEW_EMPTY[view].description}
+      title={t(VIEW_EMPTY[view].title)}
+      description={t(VIEW_EMPTY[view].description)}
     />
   );
 
   const listError = listQuery.isError
-    ? { title: "Couldn't load notifications", onRetry: () => void listQuery.refetch() }
+    ? { title: t('notifications.error.load'), onRetry: () => void listQuery.refetch() }
     : undefined;
 
   const showRows = !listQuery.isPending && !listQuery.isError && pageRows.length > 0;
@@ -296,8 +298,8 @@ export function NotificationsPage() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="w-full min-w-0 sm:w-auto sm:min-w-[14rem] sm:flex-1">
           <SearchBar
-            label="Search notifications"
-            placeholder="Search title, message, sender…"
+            label={t('notifications.search.label')}
+            placeholder={t('notifications.search.placeholder')}
             value={searchInput}
             onValueChange={setSearchInput}
             onDebouncedChange={list.setQuery}
@@ -308,7 +310,7 @@ export function NotificationsPage() {
             and the actions wrap below them: with `min-w-0` alone, a 320px
             screen squeezed them to "A…" and "N…" (seen in a real browser). */}
         <Select
-          aria-label="Filter by category"
+          aria-label={t('notifications.filter.category')}
           containerClassName="min-w-[8.5rem] flex-1 basis-[8.5rem] sm:w-44 sm:flex-none sm:basis-auto"
           options={[
             { value: ALL_CATEGORIES, label: 'All categories' },
@@ -323,7 +325,7 @@ export function NotificationsPage() {
           }
         />
         <Select
-          aria-label="Sort notifications"
+          aria-label={t('notifications.sort.label')}
           containerClassName="min-w-[8.5rem] flex-1 basis-[8.5rem] sm:w-40 sm:flex-none sm:basis-auto"
           options={NOTIFICATION_SORTS.map((sort) => ({
             value: sort,
@@ -334,7 +336,9 @@ export function NotificationsPage() {
             if (isNotificationSort(value)) list.setSort(value);
           }}
         />
-        <div className="flex items-center gap-1">
+        {/* Wraps on a phone: with Clear read and Preferences in this group it
+            can outgrow a 320px row. */}
+        <div className="flex flex-wrap items-center gap-1">
           <Button
             variant="secondary"
             size="sm"
@@ -342,20 +346,44 @@ export function NotificationsPage() {
             onClick={filtersDrawer.open}
             aria-expanded={filtersDrawer.isOpen}
           >
-            Filters{drawerFacetCount > 0 ? ` (${String(drawerFacetCount)})` : ''}
+            {drawerFacetCount > 0
+              ? t('notifications.filtersCount', { count: drawerFacetCount })
+              : t('notifications.filters')}
           </Button>
-          <Tooltip content="Refresh">
+          <Tooltip content={t('notifications.refresh')}>
             <IconButton
               icon={RefreshCw}
               size="sm"
-              aria-label="Refresh notifications"
+              aria-label={t('notifications.refreshLabel')}
               loading={listQuery.isFetching && !listQuery.isPending}
               onClick={() => void listQuery.refetch()}
             />
           </Tooltip>
           {isNarrowed ? (
             <Button variant="ghost" size="sm" leadingIcon={X} onClick={clearSearchAndFilters}>
-              Clear filters
+              {t('notifications.clearFilters')}
+            </Button>
+          ) : null}
+          {/* Inbox-level actions: they act on the inbox, so they sit with the
+              inbox's own controls (and only on the Notifications tab). */}
+          {notificationCapabilities.clearRead ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={MailCheck}
+              onClick={() => setConfirmClearRead(true)}
+            >
+              {t('notifications.clearRead')}
+            </Button>
+          ) : null}
+          {notificationCapabilities.preferences ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={Settings2}
+              onClick={preferencesDrawer.open}
+            >
+              {t('notifications.preferences')}
             </Button>
           ) : null}
         </div>
@@ -373,7 +401,7 @@ export function NotificationsPage() {
   const selectionBar = showRows ? (
     <div className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 rounded-surface border border-border bg-surface px-3 py-1.5">
       <Checkbox
-        aria-label="Select all notifications on this page"
+        aria-label={t('notifications.selectAll')}
         checked={allVisibleSelected}
         indeterminate={selectedVisible > 0 && !allVisibleSelected}
         onChange={(event) => setSelectedIds(event.target.checked ? visibleIds : [])}
@@ -390,7 +418,7 @@ export function NotificationsPage() {
               leadingIcon={MailOpen}
               onClick={() => bulkPatch({ read: true })}
             >
-              Mark read
+              {t('notifications.bulk.markRead')}
             </Button>
             <Button
               variant="ghost"
@@ -398,7 +426,7 @@ export function NotificationsPage() {
               leadingIcon={MailCheck}
               onClick={() => bulkPatch({ read: false })}
             >
-              Mark unread
+              {t('notifications.bulk.markUnread')}
             </Button>
             {notificationCapabilities.organize ? (
               <Button
@@ -407,7 +435,7 @@ export function NotificationsPage() {
                 leadingIcon={Archive}
                 onClick={() => bulkPatch({ archived: true })}
               >
-                Archive
+                {t('notifications.bulk.archive')}
               </Button>
             ) : null}
             {notificationCapabilities.remove ? (
@@ -417,19 +445,23 @@ export function NotificationsPage() {
                 leadingIcon={Trash2}
                 onClick={() => setConfirmDelete(selectedIds)}
               >
-                Delete
+                {t('notifications.bulk.delete')}
               </Button>
             ) : null}
             <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
-              Clear selection
+              {t('notifications.bulk.clearSelection')}
             </Button>
           </div>
         </>
       ) : (
         <p className="text-caption tabular-nums text-text-secondary">
           {firstRow === lastRow
-            ? `${String(firstRow)} of ${String(sorted.length)}`
-            : `${String(firstRow)}–${String(lastRow)} of ${String(sorted.length)}`}
+            ? t('notifications.range.one', { first: firstRow, total: sorted.length })
+            : t('notifications.range.many', {
+                first: firstRow,
+                last: lastRow,
+                total: sorted.length,
+              })}
         </p>
       )}
     </div>
@@ -477,10 +509,10 @@ export function NotificationsPage() {
   );
 
   const tabs: readonly TabItem[] = [
-    { value: 'inbox', label: 'Notifications', count: summary.unread, content: inboxTab },
+    { value: 'inbox', label: t('nav.notifications'), count: summary.unread, content: inboxTab },
     {
       value: 'messages',
-      label: 'Messages',
+      label: t('nav.messages'),
       count: unreadMessages,
       content: (
         <CommunicationCenter
@@ -495,48 +527,23 @@ export function NotificationsPage() {
     <PageContainer width="2xl">
       <PageSections gap={3}>
         <ContentHeader
-          title="Notifications"
-          caption="Clinical alerts, reminders and team updates."
+          title={t('nav.notifications')}
           icon={Bell}
           tone="error"
           breadcrumb={
             <Breadcrumb
               items={[
-                { label: 'Overview', href: routes.doctor.overview },
-                { label: 'Notifications' },
+                { label: t('nav.overview'), href: routes.doctor.overview },
+                { label: t('nav.notifications') },
               ]}
             />
-          }
-          actions={
-            <>
-              {notificationCapabilities.clearRead ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leadingIcon={MailCheck}
-                  onClick={() => setConfirmClearRead(true)}
-                >
-                  Clear read
-                </Button>
-              ) : null}
-              {notificationCapabilities.preferences ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leadingIcon={Settings2}
-                  onClick={preferencesDrawer.open}
-                >
-                  Preferences
-                </Button>
-              ) : null}
-            </>
           }
         />
 
         <NotificationSummaryLine summary={summary} loading={listQuery.isPending} />
 
         <Tabs
-          aria-label="Notifications and messages"
+          aria-label={t('notifications.tabsLabel')}
           items={tabs}
           value={list.tab}
           onValueChange={list.setTab}
@@ -584,11 +591,9 @@ export function NotificationsPage() {
           }
           setConfirmDelete(null);
         }}
-        title={`Delete ${String(confirmDelete?.length ?? 0)} notification${
-          (confirmDelete?.length ?? 0) === 1 ? '' : 's'
-        }?`}
-        description="Deleted notifications cannot be recovered on this device."
-        confirmLabel="Delete"
+        title={t('notifications.delete.title', { count: confirmDelete?.length ?? 0 })}
+        description={t('notifications.delete.body')}
+        confirmLabel={t('notifications.bulk.delete')}
         tone="destructive"
       />
 
@@ -611,9 +616,9 @@ export function NotificationsPage() {
           });
           setConfirmClearRead(false);
         }}
-        title="Archive all read notifications?"
-        description="Read notifications move to the Archived view; nothing is deleted."
-        confirmLabel="Archive read"
+        title={t('notifications.clearRead.title')}
+        description={t('notifications.clearRead.body')}
+        confirmLabel={t('notifications.clearRead.confirm')}
         tone="primary"
       />
     </PageContainer>

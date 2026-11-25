@@ -4,6 +4,7 @@ import { LOCALE_CODES } from '@/i18n/locales';
 import { loadAllCatalogues, type PartialMessages } from '@/i18n/messages';
 import { workspaceFor } from '@/routes/workspaces';
 
+import { isItemActive } from './active-item';
 import { adminNavigation, doctorNavigation, receptionNavigation } from './navigation';
 
 describe('doctorNavigation', () => {
@@ -59,16 +60,55 @@ describe('doctorNavigation Appointments group', () => {
     .flatMap((section) => section.items)
     .find((item) => item.id === 'appointments');
 
-  it('keeps its own path for the bottom bar and search, and nests the list and the booking page', () => {
+  it('keeps its own path for the bottom bar and search, and nests the list, the booking page and the two time-off pages', () => {
     expect(appointments?.path).toBe('/doctor/appointments');
     expect(appointments?.children?.map((child) => [child.id, child.labelKey, child.path])).toEqual([
       ['appointments-all', 'nav.appointments', '/doctor/appointments'],
       ['appointments-new', 'nav.appointmentsNew', '/doctor/appointments/new'],
+      ['appointments-time-off', 'nav.appointmentsUpcomingTimeOff', '/doctor/appointments/time-off'],
+      [
+        'appointments-block-time-off',
+        'nav.appointmentsBlockTimeOff',
+        '/doctor/appointments/time-off/new',
+      ],
     ]);
+  });
+
+  it('gates the time-off children exactly as their siblings (no permission of their own)', () => {
+    expect(appointments?.children?.every((child) => child.requiredPermission === undefined)).toBe(
+      true,
+    );
+  });
+
+  it('lights exactly one child on each appointments route', () => {
+    const children = appointments?.children ?? [];
+    const paths = children.map((child) => child.path);
+    const lit = (pathname: string) =>
+      children
+        .filter((child) => isItemActive(pathname, child.path, paths))
+        .map((child) => child.id);
+    expect(lit('/doctor/appointments')).toEqual(['appointments-all']);
+    expect(lit('/doctor/appointments/APT-2401')).toEqual(['appointments-all']);
+    expect(lit('/doctor/appointments/new')).toEqual(['appointments-new']);
+    expect(lit('/doctor/appointments/time-off')).toEqual(['appointments-time-off']);
+    expect(lit('/doctor/appointments/time-off/new')).toEqual(['appointments-block-time-off']);
   });
 
   it('stays in the bottom bar under its own path', () => {
     expect(doctorNavigation.bottomTabIds).toContain('appointments');
+  });
+
+  it('labels the two time-off children in English and Arabic; fa/fr/tr fall back to English per key', async () => {
+    const catalogues = await loadAllCatalogues();
+    expect(catalogues.en['nav.appointmentsUpcomingTimeOff']).toBe('Upcoming Time Off');
+    expect(catalogues.en['nav.appointmentsBlockTimeOff']).toBe('Block Time Off');
+    expect(catalogues.ar['nav.appointmentsUpcomingTimeOff']).toBe('الإجازات القادمة');
+    expect(catalogues.ar['nav.appointmentsBlockTimeOff']).toBe('حجز إجازة');
+    // No translation of their own: the repository's per-key English fallback applies.
+    for (const code of ['fa', 'fr', 'tr'] as const) {
+      expect(catalogues[code]['nav.appointmentsUpcomingTimeOff']).toBeUndefined();
+      expect(catalogues[code]['nav.appointmentsBlockTimeOff']).toBeUndefined();
+    }
   });
 
   it('labels Add Appointment in every locale', async () => {

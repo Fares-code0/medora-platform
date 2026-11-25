@@ -23,7 +23,7 @@ import { ChatWorkspace } from '../components/ChatWorkspace';
 import { ConversationDetailsDrawer } from '../components/ConversationDetailsDrawer';
 import { ConversationListPane } from '../components/ConversationListPane';
 import { FolderRail } from '../components/FolderRail';
-import { NewMessageDialog } from '../components/NewMessageDialog';
+import { useStartNewMessage } from '../hooks/useStartNewMessage';
 import {
   FOLDER_LABELS,
   MESSAGING_FOLDERS,
@@ -63,7 +63,7 @@ export function MessagesPage() {
   const remove = useDeleteConversationMutation();
 
   const detailsDrawer = useDisclosure();
-  const newMessage = useDisclosure();
+  const startNewMessage = useStartNewMessage();
 
   const conversations = useMemo(() => conversationsQuery.data ?? [], [conversationsQuery.data]);
   const contacts = useMemo(() => contactsQuery.data ?? [], [contactsQuery.data]);
@@ -95,13 +95,12 @@ export function MessagesPage() {
   // dropped by a StrictMode remount — the Phase 10 lesson.
   const openContact = useCallback(
     (contactId: string) => {
-      newMessage.close();
       void messagingService.openDirectConversation(contactId).then((id) => {
         void queryClient.invalidateQueries({ queryKey: messagingKeys.all });
         navigate(routes.doctor.conversation(id));
       });
     },
-    [navigate, newMessage, queryClient],
+    [navigate, queryClient],
   );
 
   const backToList = useCallback(() => navigate(routes.doctor.messages), [navigate]);
@@ -109,11 +108,12 @@ export function MessagesPage() {
   /*
    * D-24 — the entry points from outside this feature.
    *
-   * `?compose=1` opens the picker; `?patient=<id>` skips it and opens that
+   * `?compose=1` goes to the New Message page (`routes.doctor.newMessage`),
+   * replacing this history entry; `?patient=<id>` skips it and opens that
    * patient's thread, which is what "Send message" on a patient profile
    * means. They are consumed once and stripped from the URL: a compose
-   * intent is an action, not a view, and leaving it in place would reopen
-   * the dialog on every back-navigation to the inbox.
+   * intent is an action, not a view, and leaving it in place would repeat
+   * it on every back-navigation to the inbox.
    *
    * The guard is a ref rather than the param itself, because opening a
    * thread is asynchronous — without it the effect re-runs on the render
@@ -147,17 +147,16 @@ export function MessagesPage() {
       clearEntryParams();
       /*
        * No contact means this patient has no portal messaging. Falling back
-       * to the picker is honest — it says "choose someone" rather than
-       * opening a thread with a person who cannot receive it.
+       * to the patient picker is honest — it says "choose someone" rather
+       * than opening a thread with a person who cannot receive it.
        */
-      if (contact === undefined) newMessage.open();
+      if (contact === undefined) navigate(routes.doctor.newMessage, { replace: true });
       else openContact(contact.id);
       return;
     }
 
-    clearEntryParams();
-    newMessage.open();
-  }, [composeParam, patientParam, contactsQuery.data, newMessage, openContact, setSearchParams]);
+    navigate(routes.doctor.newMessage, { replace: true });
+  }, [composeParam, patientParam, contactsQuery.data, navigate, openContact, setSearchParams]);
 
   const chatPane =
     active !== null ? (
@@ -194,7 +193,7 @@ export function MessagesPage() {
         title="Select a conversation"
         description="Pick a thread from the list, or start a new message to a colleague or patient."
         action={
-          <Button size="sm" onClick={newMessage.open}>
+          <Button size="sm" onClick={startNewMessage}>
             New message
           </Button>
         }
@@ -247,7 +246,7 @@ export function MessagesPage() {
             counts={counts}
             contacts={contacts}
             onFolderChange={(next) => setParam('folder', next)}
-            onNewMessage={newMessage.open}
+            onNewMessage={startNewMessage}
             onOpenContact={openContact}
           />
         </div>
@@ -282,7 +281,7 @@ export function MessagesPage() {
               size="sm"
               variant="ghost"
               className="ms-auto shrink-0"
-              onClick={newMessage.open}
+              onClick={startNewMessage}
             >
               New
             </Button>
@@ -323,14 +322,6 @@ export function MessagesPage() {
           }}
         />
       ) : null}
-
-      <NewMessageDialog
-        open={newMessage.isOpen}
-        onClose={newMessage.close}
-        contacts={contacts}
-        pending={false}
-        onPick={openContact}
-      />
     </div>
   );
 }

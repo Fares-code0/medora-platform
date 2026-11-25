@@ -147,6 +147,9 @@ export function LabDetailPage() {
           title={test.id}
           icon={FlaskConical}
           tone="info"
+          // Shown: the caption names the patient above the document, and the
+          // patient summary card stacks after it below lg.
+          showCaption
           caption={`${test.testName} · ${test.category} · ${formatDate(test.requestedDate)} · ${test.patient.name}`}
           breadcrumb={breadcrumb}
           actions={

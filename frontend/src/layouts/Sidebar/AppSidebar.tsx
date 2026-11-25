@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { CircleHelp, Settings } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import { useAuth, useCan, useDoctorProfile } from '@/app/providers';
@@ -30,7 +30,8 @@ import { ActiveHospital } from './ActiveHospital';
  * Renders the presentational ui/Sidebar from the role NavigationConfig:
  * permission-filtered items, active detection from the location, live
  * badge counts from the notifications feature, and the bottom-pinned
- * Settings · Help · user card region (UX §2), with the light/dark switch
+ * Settings · user card region (UX §2) — there is no separate Help item;
+ * Settings → About is reached through Settings — with the light/dark switch
  * just above the account card — no label beside it; the pill names itself
  * for assistive technology. On the collapsed rail it stacks vertically to
  * fit 64px. An item with `children` renders as a SidebarGroup — an inline
@@ -43,7 +44,7 @@ export interface AppSidebarProps {
   onNavigate?: (() => void) | undefined;
   className?: string | undefined;
   /**
-   * A tighter footer (Settings · Help · theme · account) for the mobile
+   * A tighter footer (Settings · theme · account) for the mobile
    * drawer, where vertical space is short: less padding and spacing, 40px
    * rather than 44px touch rows, and room for the home indicator. Type sizes
    * are unchanged. The desktop sidebar never sets it.
@@ -119,8 +120,6 @@ export function AppSidebar({
   // is its own Settings Center (DEC-006a), which also carries About.
   const settingsPath =
     config.role === 'admin' ? routes.admin.settings() : workspaceFor(config.role).settings();
-  const helpPath = config.role === 'admin' ? null : workspaceFor(config.role).settings('about');
-  const onHelp = helpPath !== null && pathname === helpPath;
   const settingsRoot = settingsPath.split('/').slice(0, 3).join('/');
 
   /*
@@ -147,24 +146,16 @@ export function AppSidebar({
           data-footer-density={compactFooter ? 'compact' : undefined}
           className={cn('flex flex-col', compactFooter ? 'gap-0.5' : 'gap-1')}
         >
+          {/* Settings owns every settings section, About included: with no
+              separate Help item it stays lit there too. */}
           <SidebarItem
             icon={Settings}
             label={t('shell.settings')}
             href={settingsPath}
-            active={pathname.startsWith(settingsRoot) && !onHelp}
+            active={pathname.startsWith(settingsRoot)}
             onClick={onNavigate}
             className={compactFooter ? 'touch:h-10' : undefined}
           />
-          {helpPath !== null ? (
-            <SidebarItem
-              icon={CircleHelp}
-              label={t('shell.help')}
-              href={helpPath}
-              active={onHelp}
-              onClick={onNavigate}
-              className={compactFooter ? 'touch:h-10' : undefined}
-            />
-          ) : null}
           <div
             className={cn(
               'flex px-3',

@@ -47,6 +47,13 @@ export const routes = {
       options?.patientId === undefined || options.patientId === ''
         ? '/doctor/appointments/new'
         : `/doctor/appointments/new?patient=${encodeURIComponent(options.patientId)}`,
+    /**
+     * The doctor's time off as pages of their own (API §3.9): the upcoming
+     * list and the block form. Static segments under the book's path, so
+     * react-router ranks them above `:appointmentId`.
+     */
+    upcomingTimeOff: '/doctor/appointments/time-off',
+    blockTimeOff: '/doctor/appointments/time-off/new',
     medicalRecords: '/doctor/medical-records',
     medicalRecord: (recordId: string) => `/doctor/medical-records/${recordId}`,
     /**
@@ -99,6 +106,12 @@ export const routes = {
       options?.patientId === undefined
         ? '/doctor/messages?compose=1'
         : `/doctor/messages?patient=${options.patientId}`,
+    /**
+     * New message, step one: choose the patient to write to. A static
+     * segment under the inbox, so react-router ranks it above
+     * `:conversationId`.
+     */
+    newMessage: '/doctor/messages/new',
     conversation: (conversationId: string) => `/doctor/messages/${conversationId}`,
     notifications: '/doctor/notifications',
     reports: '/doctor/reports',

@@ -15,6 +15,7 @@ import {
 
 import { ErrorState, Skeleton } from '@/components/feedback';
 import { Checkbox, Dropdown, IconButton, type MenuEntry } from '@/components/ui';
+import { useT, type TranslateFn } from '@/i18n';
 import { cn } from '@/utils/cn';
 import { dayDiffFromToday, formatDate, formatTime } from '@/utils/dates';
 
@@ -57,6 +58,7 @@ export interface NotificationListProps {
 }
 
 function rowMenu(
+  t: TranslateFn,
   notification: DoctorNotification,
   onPatch: NotificationListProps['onPatch'],
   onDelete: NotificationListProps['onDelete'],
@@ -66,13 +68,13 @@ function rowMenu(
   const readEntry: MenuEntry = notification.read
     ? {
         id: 'unread',
-        label: 'Mark as unread',
+        label: t('notifications.row.markUnread'),
         icon: Mail,
         onSelect: () => onPatch(one, { read: false }),
       }
     : {
         id: 'read',
-        label: 'Mark as read',
+        label: t('notifications.row.markRead'),
         icon: MailOpen,
         onSelect: () => onPatch(one, { read: true }),
       };
@@ -80,12 +82,13 @@ function rowMenu(
   if (!organize && !remove) return [readEntry];
   return [
     readEntry,
-    ...organizeEntries(notification, onPatch, organize),
-    ...(remove ? deleteEntries(notification, onDelete) : []),
+    ...organizeEntries(t, notification, onPatch, organize),
+    ...(remove ? deleteEntries(t, notification, onDelete) : []),
   ];
 }
 
 function organizeEntries(
+  t: TranslateFn,
   notification: DoctorNotification,
   onPatch: NotificationListProps['onPatch'],
   organize: boolean,
@@ -95,33 +98,35 @@ function organizeEntries(
   return [
     {
       id: 'favorite',
-      label: notification.favorite ? 'Remove favorite' : 'Add to favorites',
+      label: notification.favorite
+        ? t('notifications.row.removeFavorite')
+        : t('notifications.row.addFavorite'),
       icon: Star,
       onSelect: () => onPatch(one, { favorite: !notification.favorite }),
     },
     notification.pinned
       ? {
           id: 'unpin',
-          label: 'Unpin',
+          label: t('notifications.row.unpin'),
           icon: PinOff,
           onSelect: () => onPatch(one, { pinned: false }),
         }
       : {
           id: 'pin',
-          label: 'Pin to top',
+          label: t('notifications.row.pin'),
           icon: Pin,
           onSelect: () => onPatch(one, { pinned: true }),
         },
     notification.archived
       ? {
           id: 'unarchive',
-          label: 'Move to inbox',
+          label: t('notifications.row.moveToInbox'),
           icon: ArchiveRestore,
           onSelect: () => onPatch(one, { archived: false }),
         }
       : {
           id: 'archive',
-          label: 'Archive',
+          label: t('notifications.row.archive'),
           icon: Archive,
           onSelect: () => onPatch(one, { archived: true }),
         },
@@ -129,6 +134,7 @@ function organizeEntries(
 }
 
 function deleteEntries(
+  t: TranslateFn,
   notification: DoctorNotification,
   onDelete: NotificationListProps['onDelete'],
 ): MenuEntry[] {
@@ -136,7 +142,7 @@ function deleteEntries(
     { type: 'separator', id: 'sep' },
     {
       id: 'delete',
-      label: 'Delete',
+      label: t('notifications.row.delete'),
       icon: Trash2,
       destructive: true,
       onSelect: () => onDelete(notification),
@@ -168,6 +174,7 @@ function NotificationRow({
   onPatch: NotificationListProps['onPatch'];
   onDelete: NotificationListProps['onDelete'];
 }) {
+  const t = useT();
   const unread = !notification.read;
   const patient = notification.related.patientName ?? notification.related.patientId;
   return (
@@ -180,7 +187,7 @@ function NotificationRow({
     >
       <div className="relative z-10 flex h-6 items-center" onClick={stop} onKeyDown={stop}>
         <Checkbox
-          aria-label={`Select "${notification.title}"`}
+          aria-label={t('notifications.row.select', { title: notification.title })}
           checked={selected}
           onChange={(event) => onToggle(notification.id, event.target.checked)}
         />
@@ -205,11 +212,11 @@ function NotificationRow({
             )}
           >
             {notification.title}
-            {unread ? <span className="sr-only"> Unread.</span> : null}
+            {unread ? <span className="sr-only"> {t('notifications.row.unread')}</span> : null}
           </button>
           {notification.pinned ? (
             <Pin
-              aria-label="Pinned"
+              aria-label={t('notifications.row.pinned')}
               role="img"
               className="h-3.5 w-3.5 shrink-0 text-text-secondary"
               strokeWidth={2}
@@ -217,7 +224,7 @@ function NotificationRow({
           ) : null}
           {notification.favorite ? (
             <Star
-              aria-label="Starred"
+              aria-label={t('notifications.row.starred')}
               role="img"
               className="h-3.5 w-3.5 shrink-0 fill-current text-warning"
               strokeWidth={2}
@@ -237,9 +244,7 @@ function NotificationRow({
         {/* Read and unread bodies share secondary: the message is content,
             not metadata, and read state is already carried by the dot and
             the title weight (text-roles.test.ts keeps tertiary for metadata). */}
-        <p className="truncate text-body-sm text-text-secondary">
-          {notification.body}
-        </p>
+        <p className="truncate text-body-sm text-text-secondary">{notification.body}</p>
         <p className="flex min-w-0 items-center gap-1.5 text-caption text-text-tertiary">
           <span className="truncate">{notification.sender}</span>
           {patient !== null ? (
@@ -248,7 +253,7 @@ function NotificationRow({
               <span className="inline-flex min-w-0 items-center gap-1 text-text-secondary">
                 <UserRound aria-hidden="true" className="h-3 w-3 shrink-0" strokeWidth={2} />
                 <span className="truncate">
-                  <span className="sr-only">Patient: </span>
+                  <span className="sr-only">{t('notifications.row.patient')} </span>
                   {patient}
                 </span>
               </span>
@@ -261,12 +266,12 @@ function NotificationRow({
         <Dropdown
           align="end"
           menuLabel={`Actions for "${notification.title}"`}
-          entries={rowMenu(notification, onPatch, onDelete)}
+          entries={rowMenu(t, notification, onPatch, onDelete)}
           trigger={
             <IconButton
               icon={EllipsisVertical}
               size="sm"
-              aria-label={`Actions for "${notification.title}"`}
+              aria-label={t('notifications.row.actions', { title: notification.title })}
             />
           }
         />
@@ -277,10 +282,11 @@ function NotificationRow({
 
 /** Skeleton rows shaped like the compact rows they stand in for. */
 function NotificationListSkeleton() {
+  const t = useT();
   return (
     <div
       aria-busy="true"
-      aria-label="Loading notifications"
+      aria-label={t('notifications.loading')}
       className="divide-y divide-border overflow-hidden rounded-surface border border-border bg-surface"
     >
       {Array.from({ length: 8 }, (_, index) => (
@@ -336,11 +342,12 @@ export function NotificationList({
   emptyState,
   groups,
 }: NotificationListProps) {
+  const t = useT();
   if (loading) return <NotificationListSkeleton />;
 
   if (error) {
     return (
-      <ErrorState title={error.title ?? "Couldn't load notifications"} onRetry={error.onRetry} />
+      <ErrorState title={error.title ?? t('notifications.error.load')} onRetry={error.onRetry} />
     );
   }
 
@@ -377,7 +384,7 @@ export function NotificationList({
           />
         ))
       ) : (
-        <ul aria-label="Notifications" className="divide-y divide-border">
+        <ul aria-label={t('nav.notifications')} className="divide-y divide-border">
           {notifications.map(renderRow)}
         </ul>
       )}

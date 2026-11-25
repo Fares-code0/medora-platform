@@ -82,6 +82,9 @@ export function SettingsLayout({
           className="mt-2"
           title={title}
           caption={caption}
+          // A settings page's caption states its scope — personal preferences
+          // versus platform-wide configuration — so it stays visible.
+          showCaption
           icon={icon}
           tone={tone}
           actions={actions}

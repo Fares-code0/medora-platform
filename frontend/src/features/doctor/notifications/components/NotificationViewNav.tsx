@@ -1,5 +1,6 @@
 import { Archive, Inbox, Mail, MailOpen, Star, type LucideIcon } from 'lucide-react';
 
+import { useT } from '@/i18n';
 import { cn } from '@/utils/cn';
 
 import type { NotificationViewCounts } from '../model/selectors';
@@ -40,8 +41,9 @@ export function NotificationViewNav({
   onChange,
   views = NOTIFICATION_STATUS_FILTERS,
 }: NotificationViewNavProps) {
+  const t = useT();
   return (
-    <nav aria-label="Notification views" className="min-w-0">
+    <nav aria-label={t('notifications.viewsLabel')} className="min-w-0">
       {/* `relative` makes this scroller the containing block of the count
           pills' sr-only spans (position: absolute). Without it they resolved
           against <main> at their scrolled-off static position and widened

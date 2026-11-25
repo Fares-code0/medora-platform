@@ -368,7 +368,6 @@ describe('Reception Queue and Waiting Room', () => {
       'Waiting Room',
       'Patients',
       'Settings',
-      'Help',
     ]);
   });
 

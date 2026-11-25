@@ -446,8 +446,28 @@ describe('AppSidebar Appointments group', () => {
     ).toEqual([
       ['Appointments', '/doctor/appointments'],
       ['Add Appointment', '/doctor/appointments/new'],
+      ['Upcoming Time Off', '/doctor/appointments/time-off'],
+      ['Block Time Off', '/doctor/appointments/time-off/new'],
     ]);
     expect(screen.queryByRole('link', { name: /book=/ })).not.toBeInTheDocument();
+  });
+
+  it('lights Upcoming Time Off alone on its page', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, false, '/doctor/appointments/time-off');
+    expect(parent()).toHaveAttribute('aria-expanded', 'true');
+    expect(link('Upcoming Time Off')).toHaveAttribute('aria-current', 'page');
+    for (const name of ['Appointments', 'Add Appointment', 'Block Time Off']) {
+      expect(link(name), name).not.toHaveAttribute('aria-current');
+    }
+  });
+
+  it('lights Block Time Off alone on its page — not Upcoming Time Off, not Appointments', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, false, '/doctor/appointments/time-off/new');
+    expect(parent()).toHaveAttribute('aria-expanded', 'true');
+    expect(link('Block Time Off')).toHaveAttribute('aria-current', 'page');
+    for (const name of ['Appointments', 'Add Appointment', 'Upcoming Time Off']) {
+      expect(link(name), name).not.toHaveAttribute('aria-current');
+    }
   });
 
   it('follows back and forward', () => {
@@ -712,7 +732,7 @@ describe('MobileNavDrawer groups', () => {
 });
 
 /**
- * The footer (Settings · Help · theme · account) is tighter in the mobile
+ * The footer (Settings · theme · account) is tighter in the mobile
  * drawer only: less padding and spacing, 40px touch rows, a safe-area inset
  * at the bottom. The desktop sidebar keeps its original footer, and neither
  * changes a font size.
@@ -732,7 +752,7 @@ describe('AppSidebar footer density', () => {
     expect(stack).toHaveClass('gap-1');
     expect(stack).not.toHaveAttribute('data-footer-density');
     expect(settings).toHaveClass('touch:h-11', 'text-body-sm');
-    expect(screen.getByRole('link', { name: 'Help' })).toHaveClass('touch:h-11');
+    expect(screen.queryByRole('link', { name: 'Help' })).not.toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Theme' }).parentElement).toHaveClass('mt-2');
     expect(screen.getByText('Dr. Amelia Chen').closest('.gap-3')).toHaveClass('py-2');
   });
@@ -761,9 +781,9 @@ describe('AppSidebar footer density', () => {
     expect(stack).not.toHaveClass('gap-1');
     expect(settings).toHaveClass('touch:h-10', 'text-body-sm');
     expect(settings).not.toHaveClass('touch:h-11');
-    expect(within(drawer).getByRole('link', { name: 'Help', hidden: true })).toHaveClass(
-      'touch:h-10',
-    );
+    expect(
+      within(drawer).queryByRole('link', { name: 'Help', hidden: true }),
+    ).not.toBeInTheDocument();
     const theme = within(drawer).getByRole('radiogroup', { name: 'Theme', hidden: true });
     expect(theme.parentElement).toHaveClass('mt-1');
     expect(theme.parentElement).not.toHaveClass('mt-2');
@@ -776,7 +796,7 @@ describe('AppSidebar footer density', () => {
 /**
  * The collapsed rail shows icons only: no tooltip and no native `title`
  * appears beside any of them on hover or focus — the navigation items, the
- * footer's Settings and Help, the theme switch, the Pharmacy group. Every
+ * footer's Settings, the theme switch, the Pharmacy group. Every
  * icon keeps its name as its accessible label.
  */
 describe('AppSidebar collapsed rail — no hover labels', () => {
@@ -812,7 +832,7 @@ describe('AppSidebar collapsed rail — no hover labels', () => {
 
   it('keeps every icon’s accessible name', () => {
     renderAs('doctor', 'Amelia Chen', doctorNavigation, true, '/doctor/overview');
-    for (const name of ['Overview', 'Messages', 'Settings', 'Help']) {
+    for (const name of ['Overview', 'Messages', 'Settings']) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument();
     }
     expect(screen.getByRole('button', { name: 'Patients' })).toBeInTheDocument();
@@ -916,6 +936,44 @@ describe('AppSidebar — administrator Settings destination', () => {
     );
     expect(screen.queryByRole('link', { name: 'Help' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /preferences/i })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The footer has no Help item for any role. Settings → About (where Help used
+ * to point) is a settings section, so Settings stays lit there; the theme
+ * switch is untouched.
+ */
+describe('AppSidebar footer — no Help', () => {
+  it.each([
+    ['doctor', 'Amelia Chen', doctorNavigation, '/doctor/settings/about'],
+    ['reception', 'Sara Haddad', receptionNavigation, '/reception/settings/about'],
+    ['pharmacist', 'Omar Said', pharmacyNavigation, '/pharmacy/settings/about'],
+  ] as const)('%s: no Help link, expanded or collapsed', (role, name, config, aboutPath) => {
+    for (const collapsed of [false, true]) {
+      auth.user = { id: `${role}-1`, name, role };
+      const { unmount } = render(
+        <ThemeProvider>
+          <MemoryRouter initialEntries={[aboutPath]}>
+            <AppSidebar config={config} collapsed={collapsed} />
+          </MemoryRouter>
+        </ThemeProvider>,
+      );
+      expect(screen.queryByRole('link', { name: 'Help' })).not.toBeInTheDocument();
+      const settings = screen.getByRole('link', { name: 'Settings' });
+      expect(settings.getAttribute('href')).toMatch(/\/settings\//);
+      // About belongs to Settings now, so Settings is the lit item there.
+      expect(settings).toHaveAttribute('aria-current', 'page');
+      unmount();
+    }
+  });
+
+  it('keeps a working theme switch', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, false, '/doctor/overview');
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
+    const dark = screen.getByRole('radio', { name: 'Dark theme' });
+    fireEvent.click(dark);
+    expect(dark).toHaveAttribute('aria-checked', 'true');
   });
 });
 

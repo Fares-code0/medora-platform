@@ -1,4 +1,5 @@
-import type { TimeOffKind, TimeOffService } from '../model/time-off-service';
+import type { ImpactedAppointment, TimeOffKind, TimeOffService } from '../model/time-off-service';
+import type { Appointment } from '../model/types';
 
 import { mockAppointmentsOverlapping, mockUpdateAppointment } from './mock-appointment-service';
 
@@ -27,6 +28,14 @@ function impactOf(blockId: string) {
   return mockAppointmentsOverlapping(block.from, block.to);
 }
 
+const toImpacted = (appointment: Appointment): ImpactedAppointment => ({
+  id: appointment.id,
+  scheduledAt: appointment.dateTime,
+  durationMin: appointment.durationMin,
+  status: appointment.status,
+  patientId: appointment.patient.id,
+});
+
 export const mockTimeOffService: TimeOffService = {
   async createBlock({ from, to, kind }) {
     await delay();
@@ -34,13 +43,7 @@ export const mockTimeOffService: TimeOffService = {
     blocks.set(id, { from: new Date(from), to: new Date(to), kind });
     return {
       block: { id, startsAt: from, endsAt: to, kind },
-      impacted: impactOf(id).map((appointment) => ({
-        id: appointment.id,
-        scheduledAt: appointment.dateTime,
-        durationMin: appointment.durationMin,
-        status: appointment.status,
-        patientId: appointment.patient.id,
-      })),
+      impacted: impactOf(id).map(toImpacted),
     };
   },
 
@@ -92,6 +95,12 @@ export const mockTimeOffService: TimeOffService = {
         endsAt: block.to.toISOString(),
         kind: block.kind,
       }));
+  },
+
+  async previewImpact(block) {
+    await delay();
+    if (!blocks.has(block.id)) throw new Error('Time off not found');
+    return impactOf(block.id).map(toImpacted);
   },
 
   async removeBlock(blockId) {
