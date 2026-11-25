@@ -35,8 +35,11 @@ const SRC = join(process.cwd(), 'src');
 
 /** Utilities whose meaning is a physical side rather than a reading side. */
 const BANNED = [
-  /(?<![\w-])(?:ml|mr|pl|pr)-(?:\d|auto|px|\[)/,
-  /(?<![\w-])(?:left|right)-(?:\d|auto|full|px|\[)/,
+  // The optional leading `-` catches negative utilities (`-mr-1.5`,
+  // `md:-left-[3px]`); the lookbehind still rejects `scroll-mr-2` and
+  // leaves logical `-me-`, `-ms-`, `-start-`, `-end-` unmatched.
+  /(?<![\w-])-?(?:ml|mr|pl|pr)-(?:\d|auto|px|\[)/,
+  /(?<![\w-])-?(?:left|right)-(?:\d|auto|full|px|\[)/,
   /(?<![\w-])text-(?:left|right)(?![\w-])/,
   /(?<![\w-])border-[lr](?![\w-])/,
   /(?<![\w-])rounded-[lr](?:-|(?![\w-]))/,
@@ -84,6 +87,17 @@ describe('layout is written in logical properties', () => {
     },
     WHOLE_TREE_SCAN_TIMEOUT_MS,
   );
+
+  it('the patterns catch negative physical utilities and spare logical ones', () => {
+    const flagged = (line: string) => BANNED.some((pattern) => pattern.test(line));
+
+    for (const caught of ['-mr-1.5', 'md:-left-[3px]', '-right-2', 'absolute -left-[37px] flex']) {
+      expect(flagged(`className="${caught}"`), caught).toBe(true);
+    }
+    for (const spared of ['-me-1.5', '-start-[3px]', 'ms-2', 'md:-end-2', 'scroll-mr-2']) {
+      expect(flagged(`className="${spared}"`), spared).toBe(false);
+    }
+  });
 
   it('finds files to scan at all', () => {
     // Guards the guard: a broken walker would report zero offenders forever.

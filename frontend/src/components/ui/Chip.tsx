@@ -72,7 +72,7 @@ export function Chip({
       disabled={disabled}
       aria-label={removeLabel ?? t('ui.removeItem', { label })}
       onClick={onRemove}
-      className="hit-target touch-target -mr-1.5 inline-flex h-4 w-4 [--touch-x:14px] [--touch-y:14px] touch:mx-[14px] shrink-0 items-center justify-center rounded-pill text-current transition-colors duration-fast hover:bg-border disabled:cursor-not-allowed"
+      className="hit-target touch-target -me-1.5 inline-flex h-4 w-4 [--touch-x:14px] [--touch-y:14px] touch:mx-[14px] shrink-0 items-center justify-center rounded-pill text-current transition-colors duration-fast hover:bg-border disabled:cursor-not-allowed"
     >
       <X aria-hidden="true" className="h-3.5 w-3.5" strokeWidth={2} />
     </button>

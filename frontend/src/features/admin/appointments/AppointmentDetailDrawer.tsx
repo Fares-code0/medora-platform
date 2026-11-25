@@ -179,7 +179,7 @@ export function AppointmentDetailDrawer({
                   >
                     <span
                       aria-hidden="true"
-                      className="absolute -left-[3px] top-3.5 h-1.5 w-1.5 rounded-pill bg-border-strong"
+                      className="absolute -start-[3px] top-3.5 h-1.5 w-1.5 rounded-pill bg-border-strong"
                     />
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-body-sm font-medium text-text-primary">
