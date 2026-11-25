@@ -25,7 +25,9 @@ function httpError(status: number, body: unknown = {}) {
 describe('isSessionRejection', () => {
   it('reads 401 unauthorized as the server refusing the token', async () => {
     expect(
-      isSessionRejection(await httpError(401, { message: 'Session expired', code: 'unauthorized' })),
+      isSessionRejection(
+        await httpError(401, { message: 'Session expired', code: 'unauthorized' }),
+      ),
     ).toBe(true);
   });
 
@@ -42,6 +44,23 @@ describe('isSessionRejection', () => {
     ['a 401 with no code', () => httpError(401)],
     ['a cancellation', () => Promise.resolve(normalizeCancellationError())],
   ])('reads %s as no answer about the token', async (_label, make) => {
+    expect(isSessionRejection(await make())).toBe(false);
+  });
+});
+
+describe('an explicit 403 is never a session rejection', () => {
+  // A hospital-authorization refusal says "you may not do this here", not
+  // "your session is over" (ADR-042). Reading it as a rejection would
+  // delete the refresh token of a patient whose session is fine. The
+  // backend defines no hospital 403 code yet: the codes below are
+  // deliberately hypothetical placeholders, not a contract.
+  it.each([
+    ['with no code', () => httpError(403)],
+    ['with no code and a message', () => httpError(403, { message: 'Forbidden' })],
+    ['with a hypothetical scope code', () => httpError(403, { code: 'example_scope_refusal' })],
+    ['with another hypothetical code', () => httpError(403, { code: 'example_other_refusal' })],
+    ['carrying the session code', () => httpError(403, { code: 'unauthorized' })],
+  ])('reads a 403 %s as no answer about the token', async (_label, make) => {
     expect(isSessionRejection(await make())).toBe(false);
   });
 });
