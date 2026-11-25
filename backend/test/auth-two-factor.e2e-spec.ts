@@ -654,6 +654,14 @@ describe('the account is checked again after the second factor (L5)', () => {
     expect(redeemed.status).toBe(403);
     expect(errorBody(redeemed).code).toBe('account_inactive');
     expect(await sessionsOf(email)).toBe(before);
+
+    // The refusal spent nothing: once the doctor is employed again, the same
+    // recovery code still signs in.
+    await makeClinicalDoctor(harness.prisma, email);
+    const again = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const { otpToken: second } = dataOf<{ otpToken: string }>(again);
+    const reused = await request(harness.server).post('/api/v1/auth/otp/recovery').send({ otpToken: second, recoveryCode });
+    expect(reused.status, JSON.stringify(reused.body)).toBe(200);
   });
 });
 

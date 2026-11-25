@@ -356,7 +356,11 @@ describe('M28.3 — the investigation surface', () => {
   });
 
   it('returns the retention window in meta, so an empty page is readable', async () => {
-    const page = dataOf<Page>(await list(`incidentRef=${INCIDENT}`));
+    const response = await list(`incidentRef=${INCIDENT}`);
+    // Status and body first: an intermittent failure of this case was once
+    // seen without its output, so a recurrence must say what came back.
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const page = dataOf<Page>(response);
 
     // A reader looking at nothing for last year needs to know whether
     // the platform deleted it or nothing happened.

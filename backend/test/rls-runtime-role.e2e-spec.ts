@@ -16,7 +16,20 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Client, Pool, type PoolClient } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { ConsoleLogger } from '@nestjs/common';
+
+import {
+  EXIT_NO_URL,
+  EXIT_NOT_ENTITLED,
+  openAuditRetention,
+  runAuditRetentionCommand,
+} from '../src/cli/audit-retention.command';
+import { AuditRetentionCliModule } from '../src/cli/audit-retention.module';
+
+import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import { applyRoleStatement, withRoleProvisioningLock } from './support/role-provisioning-lock';
 
 const OWNER_URL = process.env['DATABASE_URL'] ?? '';
 const ROLE = 'medora_runtime_e2e';
@@ -118,8 +131,10 @@ beforeAll(async () => {
   const template = readFileSync(join(__dirname, '../prisma/roles/provision-runtime-role.sql'), 'utf8')
     .replaceAll('__RUNTIME_ROLE__', ROLE)
     .replaceAll('__OWNER_ROLE__', ownerRole);
-  await owner.query(template);
-  await owner.query(`ALTER ROLE ${ROLE} LOGIN PASSWORD '${PASSWORD}'`);
+  await withRoleProvisioningLock(owner, async () => {
+    await applyRoleStatement(owner, template);
+    await owner.query(`ALTER ROLE ${ROLE} LOGIN PASSWORD '${PASSWORD}'`);
+  });
 
   for (const [id, name] of [
     [ids.hospitalA, 'A'],
@@ -164,8 +179,10 @@ afterAll(async () => {
   await owner.query('DELETE FROM hospitals WHERE id = ANY($1::uuid[])', [[ids.hospitalA, ids.hospitalB]]);
   // F-16: the LOGIN role this suite provisioned does not outlive it.
   // `DROP OWNED` removes its grants in this database first (it owns nothing).
-  await owner.query(`DROP OWNED BY ${ROLE}`).catch(() => undefined);
-  await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
+  await withRoleProvisioningLock(owner, async () => {
+    await applyRoleStatement(owner, `DROP OWNED BY ${ROLE}`).catch(() => undefined);
+    await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
+  });
   await owner.end();
 });
 
@@ -521,70 +538,221 @@ describe('audit ledger partitions (F-05): no bypass by naming a partition', () =
   });
 
   it('refuses the runtime role even if EXECUTE on the drop is granted again (the function guards itself)', async () => {
-    await owner.query(`GRANT EXECUTE ON FUNCTION drop_audit_events_partition(text) TO ${ROLE}`);
-    try {
-      expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('42501');
-    } finally {
-      await owner.query(`REVOKE EXECUTE ON FUNCTION drop_audit_events_partition(text) FROM ${ROLE}`);
-    }
+    await withRoleProvisioningLock(owner, async () => {
+      await owner.query(`GRANT EXECUTE ON FUNCTION drop_audit_events_partition(text) TO ${ROLE}`);
+      try {
+        expect(await attempt(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('42501');
+      } finally {
+        await owner.query(`REVOKE EXECUTE ON FUNCTION drop_audit_events_partition(text) FROM ${ROLE}`);
+      }
+    });
     const still = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${PAST_NAME}`]);
     expect(still.rows[0]).toEqual({ present: true });
   });
 
-  it('lets the audit maintenance role drop only a past month partition of audit_events (H1)', async () => {
-    const login = `medora_e2e_audit_retention_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
-    const password = `am_${randomUUID().replace(/-/g, '')}`;
-    await owner.query(
-      readFileSync(join(__dirname, '../prisma/roles/provision-audit-maintenance-role.sql'), 'utf8').replaceAll(
-        '__MAINTENANCE_LOGIN__',
-        login,
-      ),
-    );
-    await owner.query(`ALTER ROLE ${login} LOGIN PASSWORD '${password}'`);
-    const url = new URL(OWNER_URL);
-    url.username = login;
-    url.password = password;
+});
+
+describe('the audit maintenance role and the retention command (H1)', () => {
+  const PAST = '1989-01-01';
+  const PAST_NAME = 'audit_events_1989_01';
+  const FUTURE_NAME = 'audit_events_2099_01';
+  const login = `medora_e2e_audit_retention_${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const password = `am_${randomUUID().replace(/-/g, '')}`;
+  const template = readFileSync(join(__dirname, '../prisma/roles/provision-audit-maintenance-role.sql'), 'utf8').replaceAll(
+    '__MAINTENANCE_LOGIN__',
+    login,
+  );
+  let maintenance: Client;
+  let isolated: IsolatedDatabase | undefined;
+
+  function urlFor(base: string, user: string, secret: string): string {
+    const url = new URL(base);
+    url.username = user;
+    url.password = secret;
     url.searchParams.delete('schema');
-    const maintenance = new Client({ connectionString: url.toString() });
-    await maintenance.connect();
-    const run = async (sql: string): Promise<string> => {
-      try {
-        await maintenance.query(sql);
-        return 'ok';
-      } catch (error) {
-        return (error as { code?: string }).code ?? 'error';
-      }
-    };
+    return url.toString();
+  }
+
+  async function run(sql: string): Promise<string> {
     try {
-      const facts = await owner.query<{ s: boolean; b: boolean }>(
-        'SELECT rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = $1',
-        [login],
-      );
-      expect(facts.rows[0]).toEqual({ s: false, b: false });
-      expect((await maintenance.query<{ e: boolean }>('SELECT audit_retention_entitled() AS e')).rows[0]?.e).toBe(true);
-      // Its validation is unchanged: current or future month, the DEFAULT
-      // partition, another table, an injected name — refused.
-      expect(await run(`SELECT drop_audit_events_partition('${FUTURE_NAME}')`)).toBe('22023');
-      expect(await run(`SELECT drop_audit_events_partition('audit_events_default')`)).toBe('22023');
-      expect(await run(`SELECT drop_audit_events_partition('patients')`)).toBe('22023');
-      expect(await run(`SELECT drop_audit_events_partition('audit_events_2099_01; DROP TABLE patients')`)).toBe('22023');
-      // It reads no audit event and no clinical row, and holds no DDL.
-      expect(await run('SELECT 1 FROM audit_events LIMIT 1')).toBe('42501');
-      expect(await run('SELECT 1 FROM patients LIMIT 1')).toBe('42501');
-      expect(await run(`DROP TABLE ${PAST_NAME}`)).toBe('42501');
-      // A month wholly in the past: dropped.
-      expect(await run(`SELECT create_audit_events_partition('${PAST}'::date)`)).toBe('ok');
-      expect(await run(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('ok');
-      const gone = await owner.query('SELECT to_regclass($1) AS rel', [`public.${PAST_NAME}`]);
-      expect(gone.rows[0]).toEqual({ rel: null });
-    } finally {
-      await maintenance.end();
-      await owner.query(`DROP OWNED BY ${login}`);
-      await owner.query(`DROP ROLE ${login}`);
-      await owner.query('DROP OWNED BY medora_audit_maintenance');
-      await owner.query('DROP ROLE medora_audit_maintenance');
+      await maintenance.query(sql);
+      return 'ok';
+    } catch (error) {
+      return (error as { code?: string }).code ?? 'error';
     }
+  }
+
+  function capture(): { log: string[]; error: string[]; out: { log(l: string): void; error(l: string): void } } {
+    const log: string[] = [];
+    const error: string[] = [];
+    return { log, error, out: { log: (line) => log.push(line), error: (line) => error.push(line) } };
+  }
+
+  beforeAll(async () => {
+    await withRoleProvisioningLock(owner, async () => {
+      await applyRoleStatement(owner, template);
+      await owner.query(`ALTER ROLE ${login} LOGIN PASSWORD '${password}'`);
+    });
+    maintenance = new Client({ connectionString: urlFor(OWNER_URL, login, password) });
+    await maintenance.connect();
   });
+
+  afterAll(async () => {
+    await maintenance.end();
+    await isolated?.drop();
+    await owner.query(`DROP TABLE IF EXISTS ${PAST_NAME}`);
+    await withRoleProvisioningLock(owner, async () => {
+      await applyRoleStatement(owner, `DROP OWNED BY ${login}`);
+      await owner.query(`DROP ROLE ${login}`);
+      await applyRoleStatement(owner, 'DROP OWNED BY medora_audit_maintenance');
+      await owner.query('DROP ROLE medora_audit_maintenance');
+    });
+  });
+
+  it('is a restricted role entitled to retention, holding nothing but the retention setting and the two partition functions', async () => {
+    const facts = await owner.query<{ s: boolean; b: boolean }>(
+      'SELECT rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = $1',
+      [login],
+    );
+    expect(facts.rows[0]).toEqual({ s: false, b: false });
+    expect((await maintenance.query<{ e: boolean }>('SELECT audit_retention_entitled() AS e')).rows[0]?.e).toBe(true);
+
+    // Least privilege: one table, read only — never sessions, users, the ledger or a chart.
+    const tables = await owner.query<{ t: string; p: string }>(
+      `SELECT table_name AS t, privilege_type AS p FROM information_schema.role_table_grants
+        WHERE grantee IN ('medora_audit_maintenance', $1) ORDER BY 1, 2`,
+      [login],
+    );
+    expect(tables.rows).toEqual([{ t: 'platform_settings', p: 'SELECT' }]);
+    for (const table of ['sessions', 'users', 'audit_events', 'patients']) {
+      const has = await owner.query<{ h: boolean }>("SELECT has_table_privilege($1, $2, 'SELECT') AS h", [
+        login,
+        `public.${table}`,
+      ]);
+      expect(has.rows[0]?.h, table).toBe(false);
+    }
+    // Of the owner-only functions, exactly the two partition operations.
+    const functions = await owner.query<{ f: string }>(
+      `SELECT p.proname AS f FROM pg_proc p
+        WHERE p.pronamespace = 'public'::regnamespace
+          AND p.proname IN ('create_audit_events_partition', 'drop_audit_events_partition', 'audit_events_secure_partition',
+                            'audit_events_secure_all_partitions', 'platform_admin_count', 'assert_platform_admin_survives')
+          AND has_function_privilege($1, p.oid, 'EXECUTE') ORDER BY 1`,
+      [login],
+    );
+    expect(functions.rows.map((row) => row.f)).toEqual(['create_audit_events_partition', 'drop_audit_events_partition']);
+  });
+
+  it('drops only an ended month partition of audit_events, with the validation unchanged', async () => {
+    // Current or future month, the DEFAULT partition, another table, an injected name — refused.
+    expect(await run(`SELECT create_audit_events_partition('2099-01-01'::date)`)).toBe('ok');
+    expect(await run(`SELECT drop_audit_events_partition('${FUTURE_NAME}')`)).toBe('22023');
+    const future = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${FUTURE_NAME}`]);
+    expect(future.rows[0]).toEqual({ present: true });
+    await owner.query(`DROP TABLE ${FUTURE_NAME}`);
+    expect(await run(`SELECT drop_audit_events_partition('audit_events_default')`)).toBe('22023');
+    expect(await run(`SELECT drop_audit_events_partition('patients')`)).toBe('22023');
+    expect(await run(`SELECT drop_audit_events_partition('audit_events_2099_01; DROP TABLE patients')`)).toBe('22023');
+    // It reads no audit event and no clinical row, and holds no DDL.
+    expect(await run('SELECT 1 FROM audit_events LIMIT 1')).toBe('42501');
+    expect(await run('SELECT 1 FROM patients LIMIT 1')).toBe('42501');
+    // A month wholly in the past: not by DDL of its own, only through the function.
+    expect(await run(`SELECT create_audit_events_partition('${PAST}'::date)`)).toBe('ok');
+    expect(await run(`DROP TABLE ${PAST_NAME}`)).toBe('42501');
+    expect(await run(`ALTER TABLE audit_events DETACH PARTITION ${PAST_NAME}`)).toBe('42501');
+    expect(await run(`SELECT drop_audit_events_partition('${PAST_NAME}')`)).toBe('ok');
+    const gone = await owner.query('SELECT to_regclass($1) AS rel', [`public.${PAST_NAME}`]);
+    expect(gone.rows[0]).toEqual({ rel: null });
+  });
+
+  it('builds the retention command from configuration, the database, the policy and the two audit classes only', () => {
+    const module = AuditRetentionCliModule.forConnection('postgresql://unused@localhost/none');
+    const names = (module.providers ?? []).map((provider) =>
+      typeof provider === 'function'
+        ? provider.name
+        : ((p: unknown) => (typeof p === 'function' ? p.name : String(p)))((provider as { provide: unknown }).provide),
+    );
+    expect(names.sort()).toEqual(
+      [
+        'AuditRepository',
+        'AuditRetentionService',
+        'ConfigService',
+        'PolicyService',
+        'PrismaService',
+        'Symbol(PLATFORM_POLICY_SOURCE)',
+      ].sort(),
+    );
+    expect(module.imports ?? []).toEqual([]);
+  });
+
+  it('refuses to run without a maintenance connection, or on the runtime role, and drops nothing', async () => {
+    const none = capture();
+    expect(await runAuditRetentionCommand(undefined, openAuditRetention, none.out)).toBe(EXIT_NO_URL);
+    expect(none.log).toEqual([]);
+
+    await owner.query(`SELECT create_audit_events_partition('${PAST}'::date)`);
+    const refused = capture();
+    expect(await runAuditRetentionCommand(runtimeUrl(), openAuditRetention, refused.out)).toBe(EXIT_NOT_ENTITLED);
+    expect(refused.log).toEqual([]);
+    const still = await owner.query('SELECT to_regclass($1) IS NOT NULL AS present', [`public.${PAST_NAME}`]);
+    expect(still.rows[0]).toEqual({ present: true });
+    await owner.query(`DROP TABLE ${PAST_NAME}`);
+  });
+
+  it(
+    'runs retention end to end as the maintenance role, with no startup work touching anything else (isolated database)',
+    async () => {
+      isolated = await createIsolatedDatabase(OWNER_URL, 'auditret');
+      const isolatedOwner = new Client({ connectionString: isolated.url.replace(/\?.*$/, '') });
+      await isolatedOwner.connect();
+      try {
+        await applyRoleStatement(isolatedOwner, template);
+        await isolatedOwner.query(`SELECT create_audit_events_partition('${PAST}'::date)`);
+      } finally {
+        await isolatedOwner.end();
+      }
+
+      const errors = vi.spyOn(ConsoleLogger.prototype, 'error');
+      const warnings = vi.spyOn(ConsoleLogger.prototype, 'warn');
+      const result = capture();
+      try {
+        const code = await runAuditRetentionCommand(
+          urlFor(isolated.url, login, password),
+          openAuditRetention,
+          result.out,
+        );
+        expect(code, result.error.join('\n')).toBe(0);
+        // No other module booted: nothing failed or warned at startup (the
+        // refresh-successor sweep that used to query `sessions` is not here).
+        expect(errors).not.toHaveBeenCalled();
+        expect(warnings.mock.calls.filter(([message]) => !String(message).includes('deferred'))).toEqual([]);
+      } finally {
+        errors.mockRestore();
+        warnings.mockRestore();
+      }
+
+      expect(result.error).toEqual([]);
+      const swept = JSON.parse(result.log[0] ?? '{}') as { dropped: string[]; deferred: string[]; created: string[] };
+      expect(swept.dropped).toContain(PAST_NAME);
+      expect(swept.deferred).toEqual([]);
+      expect(swept.created).toHaveLength(12);
+      for (const name of swept.dropped) expect(name).toMatch(/^audit_events_\d{4}_\d{2}$/);
+
+      const check = new Client({ connectionString: isolated.url.replace(/\?.*$/, '') });
+      await check.connect();
+      try {
+        const state = await check.query<{ past: boolean; dflt: boolean; current: boolean }>(
+          `SELECT to_regclass('public.${PAST_NAME}') IS NOT NULL AS past,
+                  to_regclass('public.audit_events_default') IS NOT NULL AS dflt,
+                  to_regclass('public.audit_events_' || to_char(now(), 'YYYY_MM')) IS NOT NULL AS current`,
+        );
+        expect(state.rows[0]).toEqual({ past: false, dflt: true, current: true });
+      } finally {
+        await check.end();
+      }
+    },
+    180_000,
+  );
 });
 
 describe('legacy clinical rows stay isolated without an explicit system lookup (H2)', () => {

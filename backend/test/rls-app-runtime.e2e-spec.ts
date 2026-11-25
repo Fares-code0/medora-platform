@@ -19,6 +19,8 @@ import { Client } from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { applyRoleStatement, withRoleProvisioningLock } from './support/role-provisioning-lock';
+
 import {
   type AuthHarness,
   createAuthHarness,
@@ -57,12 +59,15 @@ beforeAll(async () => {
   owner = new Client({ connectionString: ownerUrl.replace(/\?.*$/, '') });
   await owner.connect();
   const ownerRole = (await owner.query<{ r: string }>('SELECT current_user AS r')).rows[0]?.r ?? '';
-  await owner.query(
-    readFileSync(join(__dirname, '../prisma/roles/provision-runtime-role.sql'), 'utf8')
-      .replaceAll('__RUNTIME_ROLE__', ROLE)
-      .replaceAll('__OWNER_ROLE__', ownerRole),
-  );
-  await owner.query(`ALTER ROLE ${ROLE} LOGIN PASSWORD '${PASSWORD}'`);
+  await withRoleProvisioningLock(owner, async () => {
+    await applyRoleStatement(
+      owner,
+      readFileSync(join(__dirname, '../prisma/roles/provision-runtime-role.sql'), 'utf8')
+        .replaceAll('__RUNTIME_ROLE__', ROLE)
+        .replaceAll('__OWNER_ROLE__', ownerRole),
+    );
+    await owner.query(`ALTER ROLE ${ROLE} LOGIN PASSWORD '${PASSWORD}'`);
+  });
 
   for (const [id, name] of [
     [ids.hospitalA, 'A'],
@@ -143,8 +148,10 @@ afterAll(async () => {
   await owner.query('DELETE FROM hospitals WHERE id = ANY($1::uuid[])', [[ids.hospitalA, ids.hospitalB]]);
   // F-16: the LOGIN role this suite provisioned does not outlive it.
   // `DROP OWNED` removes its grants in this database first (it owns nothing).
-  await owner.query(`DROP OWNED BY ${ROLE}`).catch(() => undefined);
-  await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
+  await withRoleProvisioningLock(owner, async () => {
+    await applyRoleStatement(owner, `DROP OWNED BY ${ROLE}`).catch(() => undefined);
+    await owner.query(`DROP ROLE IF EXISTS ${ROLE}`);
+  });
   await owner.end();
 });
 

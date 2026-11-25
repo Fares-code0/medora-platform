@@ -71,7 +71,10 @@ functions with a pinned `search_path = pg_catalog, public` and schema-qualified 
   - the in-app sweep still keeps future months ready, and reports expired months as `deferred`;
   - retention is `npm run audit:retention` (`src/cli/audit-retention.ts`), run by operations with
     `AUDIT_MAINTENANCE_DATABASE_URL`, refusing to start unless the database says the connection is
-    entitled. The drop's own rules are unchanged: only an ended `audit_events_YYYY_MM` month, never the
+    entitled. It boots only `AuditRetentionCliModule` (configuration, one database client, the
+    retention policy, the audit repository and retention service) — never the application module, whose
+    lifecycle hooks (for example the refresh-successor sweep over `sessions`) would run under a role
+    that may not read those tables, and must not be granted them. The drop's own rules are unchanged: only an ended `audit_events_YYYY_MM` month, never the
     DEFAULT partition or another table; the window is `retention.auditLogDays`.
 - Proven by `rls-runtime-role.e2e-spec.ts` (the runtime role is refused every route to removing a month —
   the drop, the owner-only helpers, `DROP`/`DETACH`/`TRUNCATE` — even after an explicit re-grant; the

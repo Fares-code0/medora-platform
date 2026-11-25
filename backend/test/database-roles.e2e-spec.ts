@@ -14,6 +14,8 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { applyRoleStatement, withRoleProvisioningLock } from './support/role-provisioning-lock';
+
 import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
 import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
@@ -62,15 +64,21 @@ async function withRuntimeRole(
 ): Promise<void> {
   const owner = (await client.query<{ u: string }>('SELECT current_user AS u')).rows[0]!.u;
   const runtime = 'medora_app_test_' + tag();
-  await client.query('BEGIN');
-  try {
-    await client.query(
-      TEMPLATE.replaceAll('__RUNTIME_ROLE__', runtime).replaceAll('__OWNER_ROLE__', owner),
-    );
-    await work(runtime, owner);
-  } finally {
-    await client.query('ROLLBACK');
-  }
+  // The template's catalog changes stay uncommitted until the rollback, so the
+  // whole transaction holds the provisioning lock (see role-provisioning-lock).
+  await withRoleProvisioningLock(client, async () => {
+    await client.query('BEGIN');
+    try {
+      await applyRoleStatement(
+        client,
+        TEMPLATE.replaceAll('__RUNTIME_ROLE__', runtime).replaceAll('__OWNER_ROLE__', owner),
+        { inTransaction: true },
+      );
+      await work(runtime, owner);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
 }
 
 async function asRuntime(runtime: string): Promise<void> {
