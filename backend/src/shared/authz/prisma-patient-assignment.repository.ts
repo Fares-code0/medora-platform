@@ -35,7 +35,7 @@ import { Injectable } from '@nestjs/common';
 import { DoctorVerificationStatus } from '../../generated/prisma/enums';
 import { PrismaService } from '../database';
 import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
-import type { ClinicalReach, PatientAssignmentRepository } from './authz.types';
+import type { ClinicalEmployment, ClinicalReach, PatientAssignmentRepository } from './authz.types';
 
 @Injectable()
 export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
@@ -53,6 +53,11 @@ export class PrismaPatientAssignmentRepository implements PatientAssignmentRepos
    * to and the hospital a write is stamped with can never differ.
    */
   async clinicalHospital(doctorUserId: string): Promise<string | null> {
+    return (await this.clinicalEmployment(doctorUserId))?.hospitalId ?? null;
+  }
+
+  /** The one employment behind `clinicalHospital`; the same rule, one query. */
+  async clinicalEmployment(doctorUserId: string): Promise<ClinicalEmployment | null> {
     const rows = await this.prisma.db.doctorEmployment.findMany({
       where: {
         endedAt: null,
@@ -66,10 +71,13 @@ export class PrismaPatientAssignmentRepository implements PatientAssignmentRepos
           },
         },
       },
-      select: { hospitalId: true },
+      select: { id: true, hospitalId: true, doctorId: true },
       take: 2,
     });
-    return rows.length === 1 ? (rows[0]?.hospitalId ?? null) : null;
+    const row = rows.length === 1 ? rows[0] : undefined;
+    return row === undefined
+      ? null
+      : { doctorId: row.doctorId, doctorEmploymentId: row.id, hospitalId: row.hospitalId };
   }
 
   async clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null> {

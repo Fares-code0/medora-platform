@@ -148,6 +148,39 @@ describe('M21.1 verify — doctor scope is own data only', () => {
     expect(snapshot.kpis.find((kpi) => kpi.id === 'appointments')?.value).toBe(3);
   });
 
+  it('counts only bookings at the doctor’s clinical hospital, never a legacy one (S4)', async () => {
+    const me = await harness.prisma.db.doctor.findFirstOrThrow({
+      where: { user: { email: { contains: 'reports-busy' } } },
+      select: { id: true },
+    });
+    const patient = await harness.prisma.db.patient.findUniqueOrThrow({
+      where: { publicId: patientId },
+      select: { id: true },
+    });
+    const visitType = await harness.prisma.db.visitType.findFirstOrThrow({ select: { id: true } });
+    const now = new Date();
+    // The doctor's own booking this month, but with no hospital (written
+    // before attribution, #17): not this hospital's practice.
+    await harness.prisma.db.appointment.create({
+      data: {
+        publicId: `APT-RL${Math.floor(Math.random() * 1_000_000)}`,
+        patientId: patient.id,
+        doctorId: me.id,
+        visitTypeId: visitType.id,
+        startsAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 3, 15, 0)),
+        status: 'COMPLETED',
+        durationMin: 30,
+        reason: 'Legacy consultation',
+      },
+    });
+
+    const response = await get(busyToken, `${ANALYTICS}?category=appointments&range=month`).expect(
+      200,
+    );
+    const snapshot = dataOf<{ kpis: { id: string; value: number }[] }>(response);
+    expect(snapshot.kpis.find((kpi) => kpi.id === 'appointments')?.value).toBe(3);
+  });
+
   /** The cross-doctor test the verify step names. */
   it('shows the idle doctor zero, not the clinic’s three', async () => {
     const response = await get(idleToken, `${ANALYTICS}?category=appointments&range=month`).expect(

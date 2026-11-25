@@ -75,6 +75,7 @@ GET /api/v1/dashboard/doctor/schedule                                     .D.L..
 GET /api/v1/dashboard/doctor/trends                                       .D.L...  can:records.view
 GET /api/v1/doctors                                                       A......  can:doctors.manage
 GET /api/v1/doctors/:doctorId                                             A......  can:doctors.manage
+GET /api/v1/doctors/:doctorId/employments                                 A......  can:doctors.manage
 GET /api/v1/exceptional-access/:grantId/data                              ADRLPTN  authenticated
 GET /api/v1/files/:fileId                                                 ADRLPTN  authenticated
 GET /api/v1/files/:fileId/download                                        ADRLPTN  authenticated

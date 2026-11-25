@@ -40,6 +40,18 @@ export interface StaffingResult {
   readonly sessionsRevoked: number;
 }
 
+/** One employment as `GET /doctors/{doctorId}/employments` returns it. */
+export interface EmploymentView {
+  readonly id: string;
+  readonly doctorId: string;
+  readonly hospital: { readonly id: string; readonly name: string };
+  readonly hospitalDepartmentId: string | null;
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+  /** `endedAt === null`: the one employment that yields clinical context (DR-02). */
+  readonly active: boolean;
+}
+
 @Injectable()
 export class HospitalStaffingService {
   constructor(
@@ -85,6 +97,30 @@ export class HospitalStaffingService {
       reason: input.reason,
     });
     return { id, hospitalId, sessionsRevoked: 0 };
+  }
+
+  /**
+   * A doctor's employment history (OD-12; ported from PR #63). A Platform
+   * Admin sees every employment; a Hospital Admin only its own hospital's,
+   * and a doctor its hospital never employed is unknown (404, ADR-022).
+   */
+  async listEmployments(actor: AuthenticatedUser, doctorId: string): Promise<EmploymentView[]> {
+    const hospitalId = await this.scopes.hospitalFilterFor(actor);
+    const doctor = await this.staffing.doctor(doctorId);
+    if (doctor === null || doctor.deletedAt !== null || doctor.roleCode !== 'doctor') {
+      throw AppException.notFound('Doctor not found');
+    }
+    const rows = await this.staffing.employmentsOf(doctor.id, hospitalId);
+    if (hospitalId !== null && rows.length === 0) throw AppException.notFound('Doctor not found');
+    return rows.map((row) => ({
+      id: row.id,
+      doctorId: row.doctorId,
+      hospital: { id: row.hospitalId, name: row.hospitalName },
+      hospitalDepartmentId: row.hospitalDepartmentId,
+      startedAt: row.startedAt.toISOString(),
+      endedAt: row.endedAt === null ? null : row.endedAt.toISOString(),
+      active: row.endedAt === null,
+    }));
   }
 
   async endEmployment(

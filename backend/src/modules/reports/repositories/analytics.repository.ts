@@ -10,6 +10,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import { PrismaService } from '../../../shared/database';
 
 export interface VisitTypeCount {
@@ -35,7 +37,7 @@ export class AnalyticsRepository {
    * — it is a request, not a visit.
    */
   async topVisitTypes(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     from: Date,
     to: Date,
     limit: number,
@@ -43,7 +45,9 @@ export class AnalyticsRepository {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['visitTypeId'],
       where: {
-        doctorId,
+        // The active hospital's book only (S4).
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         deletedAt: null,
         startsAt: { gte: from, lte: to },
         status: { in: ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED', 'COMPLETED'] },
@@ -70,15 +74,5 @@ export class AnalyticsRepository {
       label: nameById.get(row.visitTypeId) ?? 'Unknown',
       value: row._count._all,
     }));
-  }
-
-  /** The `doctors` row behind an account, or null for a non-clinician. */
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    const doctor = await this.prisma.db.doctor.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
   }
 }

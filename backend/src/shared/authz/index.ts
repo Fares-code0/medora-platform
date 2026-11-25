@@ -49,6 +49,7 @@ export {
   PERMISSION_CACHE,
   ROLE_REPOSITORY,
   type EffectivePermissions,
+  type ClinicalEmployment,
   type ClinicalReach,
   type PatientAssignmentRepository,
   type PatientSelfRepository,

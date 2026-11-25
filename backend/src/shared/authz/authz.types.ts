@@ -183,7 +183,20 @@ export interface PatientAssignmentRepository {
    * reads must belong to H; every row they write is stamped with H.
    */
   clinicalHospital(doctorUserId: string): Promise<string | null>;
+  /** The same standing, with the doctor and the employment it rests on. */
+  clinicalEmployment(doctorUserId: string): Promise<ClinicalEmployment | null>;
   clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null>;
+}
+
+/**
+ * A doctor's one clinical employment (DR-05): who, through which
+ * employment, at which hospital. The scope of the doctor's own lists and
+ * reports (S4).
+ */
+export interface ClinicalEmployment {
+  readonly doctorId: string;
+  readonly doctorEmploymentId: string;
+  readonly hospitalId: string;
 }
 
 /** Where a doctor reaches a patient: the hospital and the record there. */

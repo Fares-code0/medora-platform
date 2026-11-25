@@ -37,6 +37,17 @@ export interface EmploymentRow {
   readonly userId: string;
 }
 
+/** One employment in a doctor's history (OD-12, ported from PR #63). */
+export interface EmploymentHistoryRow {
+  readonly id: string;
+  readonly doctorId: string;
+  readonly hospitalId: string;
+  readonly hospitalName: string;
+  readonly hospitalDepartmentId: string | null;
+  readonly startedAt: Date;
+  readonly endedAt: Date | null;
+}
+
 export interface AffiliationRow {
   readonly id: string;
   readonly staffId: string;
@@ -85,6 +96,30 @@ export class HospitalStaffingRepository {
     return row === null
       ? null
       : { id: row.id, userId: row.userId, deletedAt: row.deletedAt, roleCode: row.user.role.code };
+  }
+
+  /**
+   * A doctor's employments, active and ended, newest first; `hospitalId`
+   * confines them to one hospital (a Hospital Admin's own), `null` lists all.
+   */
+  async employmentsOf(
+    doctorId: string,
+    hospitalId: string | null,
+  ): Promise<EmploymentHistoryRow[]> {
+    const rows = await this.prisma.db.doctorEmployment.findMany({
+      where: { doctorId, ...(hospitalId === null ? {} : { hospitalId }) },
+      select: {
+        id: true,
+        doctorId: true,
+        hospitalId: true,
+        hospitalDepartmentId: true,
+        startedAt: true,
+        endedAt: true,
+        hospital: { select: { name: true } },
+      },
+      orderBy: [{ startedAt: 'desc' }, { id: 'asc' }],
+    });
+    return rows.map(({ hospital, ...row }) => ({ ...row, hospitalName: hospital.name }));
   }
 
   async activeEmploymentOf(doctorId: string): Promise<EmploymentRow | null> {
@@ -300,7 +335,10 @@ export class HospitalStaffingRepository {
     actorId: string;
   }): Promise<{ id: string; sessionsRevoked: number }> {
     return this.prisma.$transaction(async (tx) => {
-      const role = await tx.role.findUniqueOrThrow({ where: { code: 'admin' }, select: { id: true } });
+      const role = await tx.role.findUniqueOrThrow({
+        where: { code: 'admin' },
+        select: { id: true },
+      });
       const created = await tx.hospitalRoleAssignment.create({
         data: {
           userId: input.userId,

@@ -69,8 +69,10 @@ export class DoctorVerificationRepository {
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    // A soft-deleted practitioner is not one (ported from #63): `findUnique`
+    // bypasses the soft-delete extension, so the filter is stated.
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 

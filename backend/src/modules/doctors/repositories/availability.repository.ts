@@ -21,6 +21,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { Weekday } from '../../../generated/prisma/enums';
+import { AppException } from '../../../common/errors/app.exception';
 import { PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -72,8 +73,10 @@ export class AvailabilityRepository {
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    // A soft-deleted practitioner is not one (ported from #63): `findUnique`
+    // bypasses the soft-delete extension, so the filter is stated.
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 
@@ -84,8 +87,8 @@ export class AvailabilityRepository {
   async schedulingFor(userId: string): Promise<DoctorSchedulingRow | null> {
     if (!UUID.test(userId)) return null;
 
-    return this.prisma.db.doctor.findUnique({
-      where: { userId },
+    return this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: {
         id: true,
         defaultDurationMin: true,
@@ -135,14 +138,16 @@ export class AvailabilityRepository {
         });
       }
 
-      await tx.doctor.update({
-        where: { id: input.doctorId },
+      const { count } = await tx.doctor.updateMany({
+        where: { id: input.doctorId, deletedAt: null },
         data: {
           defaultDurationMin: input.defaultDurationMin,
           bufferMin: input.bufferMin,
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
       });
+      // Soft-deleted mid-request: the grid written above rolls back with it.
+      if (count === 0) throw AppException.notFound('No doctor profile for this account');
     });
   }
 

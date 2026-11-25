@@ -1,9 +1,18 @@
-import { Body, Controller, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+} from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can, HospitalScope, PlatformScope } from '../../../shared/authz';
+import { Can, HospitalScope, NotPhi, PlatformScope } from '../../../shared/authz';
 import {
   endAccessSchema,
   grantAdminSchema,
@@ -17,6 +26,7 @@ import {
   type TransferInput,
 } from '../dto/hospital-staffing.schema';
 import {
+  type EmploymentView,
   HospitalStaffingService,
   type StaffingResult,
 } from '../services/hospital-staffing.service';
@@ -44,6 +54,18 @@ export class HospitalStaffingController {
     @Body(zodBody(startEmploymentSchema)) body: StartEmploymentInput,
   ): Promise<StaffingResult> {
     return this.staffing.startEmployment(actor, hospitalId, body);
+  }
+
+  /** A doctor's employments, active and ended, newest first (OD-12). */
+  @Can('doctors.manage')
+  @HospitalScope()
+  @NotPhi('employment history: hospital, department and dates, no clinical content')
+  @Get('doctors/:doctorId/employments')
+  listEmployments(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('doctorId', uuidParam) doctorId: string,
+  ): Promise<EmploymentView[]> {
+    return this.staffing.listEmployments(actor, doctorId);
   }
 
   @Can('doctors.manage')

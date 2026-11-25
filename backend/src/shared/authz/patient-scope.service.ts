@@ -44,6 +44,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { AppException } from '../../common/errors/app.exception';
 import { runAsSystem } from '../database';
 import {
+  type ClinicalEmployment,
   type ClinicalReach,
   PATIENT_ASSIGNMENT_REPOSITORY,
   type PatientAssignmentRepository,
@@ -177,5 +178,14 @@ export class PatientScopeService {
   async clinicalHospitalOf(principal: Principal): Promise<string | null> {
     if (principal.roleCode !== 'doctor') return null;
     return runAsSystem(() => this.assignments.clinicalHospital(principal.userId));
+  }
+
+  /**
+   * The employment behind `clinicalHospitalOf` — the scope of the doctor's
+   * own reports (S4) — or `null` without unambiguous clinical standing.
+   */
+  async clinicalEmployment(principal: Principal): Promise<ClinicalEmployment | null> {
+    if (principal.roleCode !== 'doctor') return null;
+    return runAsSystem(() => this.assignments.clinicalEmployment(principal.userId));
   }
 }

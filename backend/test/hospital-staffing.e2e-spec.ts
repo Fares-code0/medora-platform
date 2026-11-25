@@ -266,6 +266,52 @@ describe('doctor standing (§2.6): login vs clinical access', () => {
     expect(session.activeHospital?.id).toBe(b);
   });
 
+  it('lists a doctor’s employment history: all to a Platform Admin, its own hospital’s to a Hospital Admin (OD-12)', async () => {
+    const admin = await seedAdmin('platformhistory', { platform: true });
+    const a = await hospital('HistoryFrom');
+    const b = await hospital('HistoryTo');
+    const c = await hospital('HistoryElsewhere');
+    const doctor = await seedDoctor('historydoc');
+    expect((await hire(admin.token, a, doctor.doctorId)).status).toBe(201);
+    const moved = await request(harness.server)
+      .post(`/api/v1/doctors/${doctor.doctorId}/transfer`)
+      .set(as(admin.token))
+      .send({ toHospitalId: b, reason: REASON });
+    expect(moved.status).toBe(200);
+
+    const history = (token: string, doctorId = doctor.doctorId) =>
+      request(harness.server).get(`/api/v1/doctors/${doctorId}/employments`).set(as(token));
+    type Row = { hospital: { id: string }; active: boolean; endedAt: string | null };
+
+    // Platform Admin: the whole history, newest first.
+    const all = await history(admin.token);
+    expect(all.status, JSON.stringify(all.body)).toBe(200);
+    expect(dataOf<Row[]>(all).map((row) => [row.hospital.id, row.active])).toEqual([
+      [b, true],
+      [a, false],
+    ]);
+
+    // Each Hospital Admin: its own hospital's employments only.
+    const adminOfA = await seedAdmin('historyadmina', { hospitalId: a });
+    const ofA = await history(adminOfA.token);
+    expect(ofA.status).toBe(200);
+    expect(dataOf<Row[]>(ofA).map((row) => [row.hospital.id, row.active])).toEqual([[a, false]]);
+    const adminOfB = await seedAdmin('historyadminb', { hospitalId: b });
+    expect(dataOf<Row[]>(await history(adminOfB.token)).map((row) => row.hospital.id)).toEqual([b]);
+
+    // A hospital that never employed the doctor learns nothing (404, ADR-022).
+    const adminOfC = await seedAdmin('historyadminc', { hospitalId: c });
+    expect((await history(adminOfC.token)).status).toBe(404);
+    // An unknown or malformed doctor is unknown; an unmapped administrator has no reach.
+    expect((await history(admin.token, randomUUID())).status).toBe(404);
+    expect((await history(admin.token, 'not-a-uuid')).status).toBe(404);
+    const unmapped = await seedAdmin('historyunmapped', 'none');
+    expect((await history(unmapped.token)).status).toBe(403);
+    // A doctor holds no `doctors.manage`.
+    const self = await signIn(doctor.email);
+    expect((await history(self.token)).status).toBe(403);
+  });
+
   it('refuses a second concurrent employment (one hospital at a time)', async () => {
     const admin = await seedAdmin('platformtwice', { platform: true });
     const a = await hospital('First');
