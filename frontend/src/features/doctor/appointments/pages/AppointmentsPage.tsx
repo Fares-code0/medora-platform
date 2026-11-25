@@ -30,7 +30,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '@/constants';
 import { useDisclosure } from '@/hooks/useDisclosure';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { formatDateTime } from '@/i18n';
+import { formatDateTime, useT } from '@/i18n';
 import { routes } from '@/routes';
 import { isApiError } from '@/types/api';
 import { runExport, type ExportDataset } from '@/utils/export';
@@ -46,7 +46,6 @@ import { AppointmentCardList } from '../components/AppointmentCardList';
 import { AppointmentDetailsDrawer } from '../components/AppointmentDetailsDrawer';
 import { AppointmentFiltersDrawer } from '../components/AppointmentFiltersDrawer';
 import { AppointmentsSummaryCards } from '../components/AppointmentsSummaryCards';
-import { BlockTimeOffDialog } from '../components/BlockTimeOffDialog';
 import { CalendarDateNavigator } from '../components/calendar/CalendarDateNavigator';
 import { CalendarDayView } from '../components/calendar/CalendarDayView';
 import { CalendarMonthView } from '../components/calendar/CalendarMonthView';
@@ -54,12 +53,8 @@ import { CalendarWeekView } from '../components/calendar/CalendarWeekView';
 import { ProposeSlotsDialog } from '../components/ProposeSlotsDialog';
 import { ReasonDialog } from '../components/ReasonDialog';
 import { RescheduleDialog } from '../components/RescheduleDialog';
-import { UpcomingTimeOffDrawer } from '../components/UpcomingTimeOffDrawer';
 import { useAppointmentListState, type AppointmentsView } from '../hooks/useAppointmentListState';
-import {
-  REJECT_CATEGORY_LABELS,
-  type RejectCategory,
-} from '../model/appointment-service';
+import { REJECT_CATEGORY_LABELS, type RejectCategory } from '../model/appointment-service';
 import { toActiveFilterChips } from '../model/filters';
 import { filterAppointments, sortAppointments, summarizeAppointments } from '../model/selectors';
 import { type Appointment, type AppointmentAction } from '../model/types';
@@ -146,12 +141,11 @@ function appointmentsDataset(rows: readonly Appointment[]): ExportDataset {
 
 export function AppointmentsPage() {
   const navigate = useNavigate();
+  const t = useT();
   const { toast } = useToast();
   const { appointmentId } = useParams();
   const isMd = useMediaQuery('(min-width: 768px)');
   const filtersDrawer = useDisclosure();
-  const timeOffDialog = useDisclosure();
-  const timeOffList = useDisclosure();
 
   /*
    * NEW-06's `?book=<patientId>` once opened a dialog here. Booking is now
@@ -326,11 +320,19 @@ export function AppointmentsPage() {
             <>
               {/* Icon-only below sm, label kept for assistive tech: three
                   labelled buttons do not fit a 375px header. */}
-              <Button variant="ghost" leadingIcon={CalendarRange} onClick={timeOffList.open}>
-                <span className="sr-only sm:not-sr-only">Upcoming time off</span>
+              <Button
+                variant="ghost"
+                leadingIcon={CalendarRange}
+                onClick={() => navigate(routes.doctor.upcomingTimeOff)}
+              >
+                <span className="sr-only sm:not-sr-only">{t('route.upcomingTimeOff')}</span>
               </Button>
-              <Button variant="secondary" leadingIcon={CalendarOff} onClick={timeOffDialog.open}>
-                Block time off
+              <Button
+                variant="secondary"
+                leadingIcon={CalendarOff}
+                onClick={() => navigate(routes.doctor.blockTimeOff)}
+              >
+                {t('route.blockTimeOff')}
               </Button>
               <Button
                 leadingIcon={CalendarPlus}
@@ -534,9 +536,6 @@ export function AppointmentsPage() {
           )}
         </Stack>
       </PageSections>
-
-      <BlockTimeOffDialog open={timeOffDialog.isOpen} onClose={timeOffDialog.close} />
-      <UpcomingTimeOffDrawer open={timeOffList.isOpen} onClose={timeOffList.close} />
 
       <AppointmentFiltersDrawer
         doctors={doctors}

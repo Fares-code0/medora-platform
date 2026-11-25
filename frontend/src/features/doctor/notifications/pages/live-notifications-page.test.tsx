@@ -179,6 +179,43 @@ describe('NotificationsPage over the API', () => {
     );
   });
 
+  it('keeps Clear read and Preferences in the inbox toolbar, not the page header', async () => {
+    stubApi(baseRoutes);
+    renderPage();
+
+    const clearRead = await screen.findByRole('button', { name: 'Clear read' });
+    const preferences = screen.getByRole('button', { name: 'Preferences' });
+    // The page header carries the page's identity and breadcrumb, not inbox actions.
+    const header = screen.getByRole('heading', { level: 1, name: 'Notifications' }).closest('header');
+    expect(header).not.toBeNull();
+    expect(header).not.toContainElement(clearRead);
+    expect(header).not.toContainElement(preferences);
+    // They share the toolbar row with the search and the Filters button.
+    const group = screen.getByRole('button', { name: /^Filters/ }).parentElement;
+    expect(group).toContainElement(clearRead);
+    expect(group).toContainElement(preferences);
+    expect(group).toHaveClass('flex-wrap');
+
+    await userEvent.click(preferences);
+    expect(await screen.findByText('Notification preferences')).toBeInTheDocument();
+  });
+
+  it('shows Clear read and Preferences on the Notifications tab only, not on Messages', async () => {
+    stubApi(baseRoutes);
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Clear read' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: /Messages/ }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Clear read' })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('button', { name: 'Preferences' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: /Notifications/ }));
+    expect(await screen.findByRole('button', { name: 'Clear read' })).toBeInTheDocument();
+  });
+
   it('offers no Delete, because no branch serves one', async () => {
     stubApi(baseRoutes);
     renderPage();

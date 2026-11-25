@@ -51,6 +51,10 @@ export interface SettingsPageProps {
    * a section outside the list is neither listed nor reachable by URL.
    */
   sections?: readonly SettingsSection[];
+  /** Page heading; "Settings" by default. */
+  title?: string;
+  /** Line under the heading; the doctor/staff caption by default. */
+  caption?: string;
 }
 
 const doctorSectionPath = (section: SettingsSection) => routes.doctor.settings(section);
@@ -59,6 +63,8 @@ export function SettingsPage({
   buildSectionPath = doctorSectionPath,
   backHref = routes.doctor.overview,
   sections,
+  title = 'Settings',
+  caption = 'Manage your profile, account, and workspace preferences.',
 }: SettingsPageProps = {}) {
   const { section } = useParams<{ section: string }>();
   const navigate = useNavigate();
@@ -74,8 +80,8 @@ export function SettingsPage({
 
   return (
     <SettingsLayout
-      title="Settings"
-      caption="Manage your profile, account, and workspace preferences."
+      title={title}
+      caption={caption}
       backHref={backHref}
       backLabel="Back to Overview"
       navigation={

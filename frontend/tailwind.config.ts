@@ -79,6 +79,7 @@ export default {
         'ai-launcher': {
           DEFAULT: token('ai-launcher'),
           border: token('ai-launcher-border'),
+          icon: token('ai-launcher-icon'),
         },
         tab: {
           'active-text': token('tab-active-text'),

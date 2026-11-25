@@ -136,12 +136,16 @@
      already painted: 12.30:1. */
   --color-ai-badge: var(--palette-gray-200);
   --color-ai-badge-text: var(--palette-gray-900);
-  /* The navbar's Medora AI button — its own roles: a white tile with a black
-     edge in BOTH themes (not redeclared in `.dark`). Its boundary is the
-     edge on a light navbar (19.47:1 on white) and the fill on a dark one
-     (15.55:1 on ink-800). */
+  /* The navbar's Medora AI button — its own roles: a white tile (fill not
+     redeclared in `.dark`) with a subtle neutral edge. The edge is the
+     control-boundary gray: 3.48:1 on a light navbar; `.dark` re-points it to
+     the dark boundary gray (4.03:1 on ink-800, 3.86:1 against the white
+     fill), and the fill itself is the boundary there (15.55:1 on ink-800). */
   --color-ai-launcher: var(--palette-white);
-  --color-ai-launcher-border: var(--palette-ink-950);
+  --color-ai-launcher-border: var(--palette-gray-400);
+  /* The launcher's icon sits on the white fill in BOTH themes, so it is fixed
+     too (not redeclared in `.dark`): 19.47:1 on white. */
+  --color-ai-launcher-icon: var(--palette-ink-950);
 
   /* ── Color: status ────────────────────────────── */
   /* The one deliberate exception to the palette. A critical alert, an
@@ -469,6 +473,8 @@
      against all three grounds AND the overlay a modal's fields sit on:
      surface 4.03, sunken 4.41, background 4.75, overlay 3.48. */
   --color-border-strong: color-mix(in srgb, var(--palette-gray-300) 35%, var(--palette-gray-600));
+  /* The navbar AI button's edge follows the dark boundary gray (see :root). */
+  --color-ai-launcher-border: var(--color-border-strong);
   /* 14.49:1 on the card, 17.09:1 on the page. */
   --color-text-primary: var(--palette-gray-50);
   /* 300 for both, as in light (where 600 does the job). 6.99:1 on the card,

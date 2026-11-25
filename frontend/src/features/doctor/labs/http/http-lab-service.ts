@@ -303,24 +303,62 @@ async function readOrder(request: Promise<unknown>): Promise<LabTest> {
   }
 }
 
-/** Every item, `limit` at a time, in the input's order. */
+/**
+ * Every item, `limit` at a time, in the input's order.
+ *
+ * The queue stops taking items once `signal` aborts or any item fails:
+ * `Promise.all` rejects on the first failure but cannot stop the other
+ * workers, so without the check a cancelled or failed worklist read went on
+ * issuing the rest of its (up to 2,000) detail GETs nobody would read.
+ */
 async function mapLimited<T, U>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<U>,
+  signal?: AbortSignal,
 ): Promise<U[]> {
   const out = new Array<U>(items.length);
   let next = 0;
+  let failed = false;
   const worker = async () => {
-    while (next < items.length) {
+    while (next < items.length && !failed) {
+      signal?.throwIfAborted();
       const index = next;
       next += 1;
       const item = items[index] as T;
-      out[index] = await fn(item);
+      try {
+        out[index] = await fn(item);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
+}
+
+/**
+ * The worklist: every order's summary, then each order's detail. `signal`
+ * (TanStack's, from the query function) cancels the drain and the detail
+ * queue when the query is cancelled or its last observer unmounts.
+ */
+export async function listLabTests(
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<readonly LabTest[]> {
+  const { signal } = options;
+  const transport = signal === undefined ? {} : { signal };
+  const summaries = await fetchAllPages(
+    (page, pageSize) =>
+      apiClient.get('/lab-orders', { page, pageSize, sort: 'requestedAt:desc' }, transport),
+    'lab orders',
+  );
+  return mapLimited(
+    summaries.map(idOf),
+    DETAIL_CONCURRENCY,
+    (id) => readOrder(apiClient.get(orderPath(id), undefined, transport)),
+    signal,
+  );
 }
 
 function idOf(value: unknown): string {
@@ -340,16 +378,7 @@ export const httpLabService: LabService = {
       .map(toTestSpec);
   },
 
-  async listLabTests() {
-    const summaries = await fetchAllPages(
-      (page, pageSize) =>
-        apiClient.get('/lab-orders', { page, pageSize, sort: 'requestedAt:desc' }),
-      'lab orders',
-    );
-    return mapLimited(summaries.map(idOf), DETAIL_CONCURRENCY, (id) =>
-      readOrder(apiClient.get(orderPath(id))),
-    );
-  },
+  listLabTests,
 
   getLabTest(labId) {
     return readOrder(apiClient.get(orderPath(labId)));

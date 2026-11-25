@@ -50,10 +50,10 @@ import { SETTINGS_SECTIONS } from './settings/model/types';
  * hooks share the cache with the pages that own them, so mounting this at the
  * shell warms them rather than duplicating them.
  *
- * Lab orders are deliberately **not** indexed: the placeholder does not
- * promise them, and a lab search that matches test names wants the Labs
- * screen's own filters (status, priority, abnormal) rather than a
- * seven-row navbar panel.
+ * Lab orders and prescriptions are indexed too (ported from #63, so a
+ * patient's name surfaces the rest of their chart). Over HTTP the lab
+ * worklist is one GET per order, so its observer here opts out of the focus
+ * refetch; it is still fetched once, on first activation.
  */
 
 /**
@@ -85,7 +85,7 @@ const RANK_CONTAINS = 2;
 const RANK_NONE = 3;
 
 /** Searchable strings carried beside the shell's display shape. */
-interface IndexEntry {
+export interface IndexEntry {
   readonly result: ShellSearchResult;
   /** Lowercased. Matched in order, so the primary field ranks first. */
   readonly terms: readonly string[];
@@ -128,6 +128,115 @@ function rankEntry(entry: IndexEntry, query: string): EntryRank {
   return { rank: best, matchedLength };
 }
 
+const DOMAIN_ORDER: Readonly<Record<Domain, number>> = {
+  patient: 0,
+  appointment: 1,
+  lab: 2,
+  prescription: 3,
+  record: 4,
+  destination: 5,
+};
+
+interface Ranked {
+  readonly entry: IndexEntry;
+  readonly rank: EntryRank;
+  readonly order: number;
+}
+
+/**
+ * The index, matched and ordered for `term`. Pure, so the shell can call it
+ * on every keystroke over a doctor's whole caseload.
+ */
+export function searchIndex(
+  index: readonly IndexEntry[],
+  term: string,
+): readonly ShellSearchResult[] {
+  const query = term.trim().toLowerCase();
+  if (query.length === 0) return [];
+
+  const ranked: Ranked[] = [];
+  index.forEach((entry, order) => {
+    const rank = rankEntry(entry, query);
+    if (rank.rank !== RANK_NONE) ranked.push({ entry, rank, order });
+  });
+
+  // The shell shows only the first seven, so ranking is not cosmetic — an
+  // exact patient-name match must not be pushed off the panel by the
+  // appointments that happen to mention them. Index order is the last
+  // tie-break, which is why patients are pushed first.
+  ranked.sort((a, b) => {
+    if (a.rank.rank !== b.rank.rank) return a.rank.rank - b.rank.rank;
+    if (a.rank.matchedLength !== b.rank.matchedLength) {
+      return a.rank.matchedLength - b.rank.matchedLength;
+    }
+    return a.order - b.order;
+  });
+
+  /*
+   * Interleave equally-ranked results across domains, then cap how much
+   * of the head any one domain may take. Sorting alone is not enough:
+   * a patient and five of their appointments are ALL prefix matches on
+   * the same name, so they sit in one band, the patient's lane empties
+   * after one item, and the rest of the panel goes to appointments —
+   * which is what both browser runs of this feature actually showed.
+   *
+   * Round-robin happens strictly WITHIN a band, never across one, so a
+   * better match still beats a worse one and only genuine ties spread.
+   *
+   * A band is `rank` AND `matchedLength`, not rank alone. Keying on rank
+   * by itself discards the tightness tie-break and lets a domain earlier
+   * in `DOMAINS` win a comparison it had already lost: "lab" put a "Lab
+   * review" APPOINTMENT above the Labs destination, because both are
+   * prefix matches and appointments sort first. Two tests caught it —
+   * including the one written for that exact tie-break the first time
+   * round.
+   *
+   * The sort keys on rank and then matchedLength, so each band is one
+   * contiguous run of `ranked`, in band order. Walking those runs once is
+   * linear; it used to rescan the whole list per band (bands × matches,
+   * building a string key per item), on every keystroke.
+   */
+  const interleaved: Ranked[] = [];
+  let start = 0;
+  while (start < ranked.length) {
+    const first = ranked[start] as Ranked;
+    const lanes: Ranked[][] = DOMAINS.map(() => []);
+    let end = start;
+    for (; end < ranked.length; end += 1) {
+      const item = ranked[end] as Ranked;
+      if (
+        item.rank.rank !== first.rank.rank ||
+        item.rank.matchedLength !== first.rank.matchedLength
+      ) {
+        break;
+      }
+      (lanes[DOMAIN_ORDER[item.entry.domain]] as Ranked[]).push(item);
+    }
+    const ordered = lanes.filter((lane) => lane.length > 0);
+    const deepest = Math.max(...ordered.map((lane) => lane.length));
+    for (let depth = 0; depth < deepest; depth += 1) {
+      for (const lane of ordered) {
+        const item = lane[depth];
+        if (item) interleaved.push(item);
+      }
+    }
+    start = end;
+  }
+
+  // Nothing is dropped — the overflow is deferred, not discarded, so a
+  // caller that wants everything still gets everything.
+  const head: Ranked[] = [];
+  const tail: Ranked[] = [];
+  const seen = new Map<Domain, number>();
+  for (const item of interleaved) {
+    const count = seen.get(item.entry.domain) ?? 0;
+    seen.set(item.entry.domain, count + 1);
+    (count < HEAD_PER_DOMAIN ? head : tail).push(item);
+  }
+
+  return [...head, ...tail].map(({ entry }) => entry.result);
+}
+
 export function useDoctorSearchIndex(): ShellSearchValue {
   const can = useCan();
   const t = useT();
@@ -144,7 +253,7 @@ export function useDoctorSearchIndex(): ShellSearchValue {
   const patients = usePatientsQuery(enabled);
   const appointments = useAppointmentsQuery(enabled);
   const records = useMedicalRecordsQuery(enabled);
-  const labs = useLabTestsQuery(enabled);
+  const labs = useLabTestsQuery({ ...enabled, refetchOnWindowFocus: false });
   const prescriptions = usePrescriptionsQuery(enabled);
 
   const index = useMemo<readonly IndexEntry[]>(() => {
@@ -275,83 +384,7 @@ export function useDoctorSearchIndex(): ShellSearchValue {
   }, [patients.data, appointments.data, records.data, labs.data, prescriptions.data, can, t]);
 
   const search = useCallback(
-    (term: string): readonly ShellSearchResult[] => {
-      const query = term.trim().toLowerCase();
-      if (query.length === 0) return [];
-
-      const ranked: { entry: IndexEntry; rank: EntryRank; order: number }[] = [];
-      index.forEach((entry, order) => {
-        const rank = rankEntry(entry, query);
-        if (rank.rank !== RANK_NONE) ranked.push({ entry, rank, order });
-      });
-
-      // The shell shows only the first seven, so ranking is not cosmetic — an
-      // exact patient-name match must not be pushed off the panel by the
-      // appointments that happen to mention them. Index order is the last
-      // tie-break, which is why patients are pushed first.
-      ranked.sort((a, b) => {
-        if (a.rank.rank !== b.rank.rank) return a.rank.rank - b.rank.rank;
-        if (a.rank.matchedLength !== b.rank.matchedLength) {
-          return a.rank.matchedLength - b.rank.matchedLength;
-        }
-        return a.order - b.order;
-      });
-
-      /*
-       * Interleave equally-ranked results across domains, then cap how much
-       * of the head any one domain may take. Sorting alone is not enough:
-       * a patient and five of their appointments are ALL prefix matches on
-       * the same name, so they sit in one band, the patient's lane empties
-       * after one item, and the rest of the panel goes to appointments —
-       * which is what both browser runs of this feature actually showed.
-       *
-       * Round-robin happens strictly WITHIN a band, never across one, so a
-       * better match still beats a worse one and only genuine ties spread.
-       *
-       * A band is `rank` AND `matchedLength`, not rank alone. Keying on rank
-       * by itself discards the tightness tie-break and lets a domain earlier
-       * in `DOMAINS` win a comparison it had already lost: "lab" put a "Lab
-       * review" APPOINTMENT above the Labs destination, because both are
-       * prefix matches and appointments sort first. Two tests caught it —
-       * including the one written for that exact tie-break the first time
-       * round.
-       */
-      const bandKey = (item: (typeof ranked)[number]) =>
-        `${String(item.rank.rank)}:${String(item.rank.matchedLength)}`;
-
-      const interleaved: typeof ranked = [];
-      for (const band of new Set(ranked.map(bandKey))) {
-        const lanes = new Map<Domain, typeof ranked>();
-        for (const item of ranked) {
-          if (bandKey(item) !== band) continue;
-          const lane = lanes.get(item.entry.domain);
-          if (lane) lane.push(item);
-          else lanes.set(item.entry.domain, [item]);
-        }
-        const ordered = [...lanes.entries()]
-          .sort(([a], [b]) => DOMAINS.indexOf(a) - DOMAINS.indexOf(b))
-          .map(([, lane]) => lane);
-        for (let depth = 0; ordered.some((lane) => lane.length > depth); depth += 1) {
-          for (const lane of ordered) {
-            const item = lane[depth];
-            if (item) interleaved.push(item);
-          }
-        }
-      }
-
-      // Nothing is dropped — the overflow is deferred, not discarded, so a
-      // caller that wants everything still gets everything.
-      const head: typeof interleaved = [];
-      const tail: typeof interleaved = [];
-      const seen = new Map<Domain, number>();
-      for (const item of interleaved) {
-        const count = seen.get(item.entry.domain) ?? 0;
-        seen.set(item.entry.domain, count + 1);
-        (count < HEAD_PER_DOMAIN ? head : tail).push(item);
-      }
-
-      return [...head, ...tail].map(({ entry }) => entry.result);
-    },
+    (term: string): readonly ShellSearchResult[] => searchIndex(index, term),
     [index],
   );
 

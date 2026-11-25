@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Bell } from 'lucide-react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ShellBadgesContext, type ShellBadgesValue } from '../badge-context';
 
@@ -52,6 +52,11 @@ function renderBell(value = badges()) {
 const bell = () => screen.getByRole('button', { name: /^Notifications/ });
 
 describe('the notification bell', () => {
+  // A stubbed visualViewport must not leak into later tests if one fails.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('opens the feed in a dialog the bell controls', async () => {
     const user = userEvent.setup();
     renderBell();
@@ -107,5 +112,63 @@ describe('the notification bell', () => {
 
     await user.click(screen.getByRole('button', { name: 'Mark all as read' }));
     expect(value.markAllRead).toHaveBeenCalled();
+  });
+
+  it('follows the bell when the page scrolls, and when the visual viewport resizes', async () => {
+    const user = userEvent.setup();
+    renderBell();
+
+    let top = 6;
+    const rect = () =>
+      ({
+        top,
+        bottom: top + 40,
+        left: 900,
+        right: 940,
+        width: 40,
+        height: 40,
+        x: 900,
+        y: top,
+      }) as DOMRect;
+    vi.spyOn(bell(), 'getBoundingClientRect').mockImplementation(rect);
+
+    await user.click(bell());
+    const panel = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(panel.style.top).toBe('54px');
+
+    // A scroll anywhere (captured, so a scrolling ancestor counts too).
+    top = -30;
+    fireEvent.scroll(window);
+    await waitFor(() => expect(panel.style.top).toBe('18px'));
+
+    // The mobile visual viewport (keyboard, pinch) — when the browser has one.
+    const listeners = new Map<string, EventListener>();
+    const visualViewport = {
+      addEventListener: vi.fn((type: string, listener: EventListener) =>
+        listeners.set(type, listener),
+      ),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal('visualViewport', visualViewport);
+    // Re-subscribe with the stub in place: close and reopen.
+    await user.click(bell());
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await user.click(bell());
+    const reopened = await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(listeners.has('resize')).toBe(true);
+
+    top = 100;
+    act(() => listeners.get('resize')?.(new Event('resize')));
+    await waitFor(() => expect(reopened.style.top).toBe('148px'));
+  });
+
+  it('does not close when the panel itself is clicked', async () => {
+    const user = userEvent.setup();
+    renderBell();
+
+    await user.click(bell());
+    const panel = await screen.findByRole('dialog', { name: 'Notifications' });
+    await user.click(panel);
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeInTheDocument();
   });
 });

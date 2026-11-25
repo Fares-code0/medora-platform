@@ -440,8 +440,12 @@ export function ApiKeysPanel({ document }: { document: AdminSettingsDocument }) 
 
   return (
     <Panel title={info.label} description={info.description} icon={info.icon}>
+      {/* Top-aligned, so a validation message under the field does not drag
+          the button down with it; `mt-6` is the field label's height
+          (1.125rem line + mb-1.5), which keeps the button level with the
+          input. */}
       <form
-        className="flex items-end gap-2"
+        className="flex flex-wrap items-start gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           createKey();
@@ -455,9 +459,11 @@ export function ApiKeysPanel({ document }: { document: AdminSettingsDocument }) 
           error={labelError}
           containerClassName="flex-1 sm:max-w-xs"
         />
-        <Button type="submit" size="md" leadingIcon={Plus} loading={create.isPending}>
-          Create key
-        </Button>
+        <div className="mt-6 shrink-0">
+          <Button type="submit" size="md" leadingIcon={Plus} loading={create.isPending}>
+            Create key
+          </Button>
+        </div>
       </form>
 
       <ul className="mt-4 flex flex-col divide-y divide-border">

@@ -57,7 +57,7 @@ export function MobileNavDrawer({ open, onClose, config }: MobileNavDrawerProps)
             transition={{ duration, ease: EASE_EMPHASIZED }}
             className="h-full overflow-hidden rounded-e-surface shadow-modal"
           >
-            <AppSidebar config={config} onNavigate={onClose} className="h-full" />
+            <AppSidebar config={config} onNavigate={onClose} className="h-full" compactFooter />
           </m.div>
         ) : null}
       </AnimatePresence>

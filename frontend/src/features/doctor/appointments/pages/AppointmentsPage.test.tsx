@@ -121,6 +121,61 @@ describe('AppointmentsPage — loading, data, empty, error', () => {
   });
 });
 
+/**
+ * The time-off buttons are links to their own pages now (they opened a drawer
+ * and a dialog); the rest of the toolbar and the book are untouched.
+ */
+describe('AppointmentsPage — time-off pages', () => {
+  function renderWithTimeOffRoutes() {
+    return render(
+      <MemoryRouter initialEntries={['/doctor/appointments']}>
+        <AppProviders>
+          <Routes>
+            <Route path="/doctor/appointments" element={<AppointmentsPage />} />
+            <Route path="/doctor/appointments/time-off" element={<p>Upcoming time off page</p>} />
+            <Route path="/doctor/appointments/time-off/new" element={<p>Block time off page</p>} />
+          </Routes>
+        </AppProviders>
+      </MemoryRouter>,
+    );
+  }
+
+  it('keeps the view switch and the four summary cards', async () => {
+    vi.spyOn(appointmentService, 'listAppointments').mockResolvedValue([appointment()]);
+    renderWithTimeOffRoutes();
+
+    expect(await screen.findByText('Omar Farouk', undefined, LOAD)).toBeInTheDocument();
+    const views = screen.getByRole('tablist', { name: 'Appointments view' });
+    expect(
+      within(views)
+        .getAllByRole('tab')
+        .map((tab) => tab.textContent),
+    ).toEqual(['List', 'Day', 'Week', 'Month']);
+    for (const label of ['Today', 'Upcoming', 'Completed', 'Cancelled']) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+    expect(screen.getByRole('button', { name: 'New appointment' })).toBeInTheDocument();
+  });
+
+  it('"Upcoming time off" navigates to its page, opening no drawer', async () => {
+    vi.spyOn(appointmentService, 'listAppointments').mockResolvedValue([]);
+    renderWithTimeOffRoutes();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Upcoming time off' }, LOAD));
+    expect(await screen.findByText('Upcoming time off page')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('"Block time off" navigates to its page, opening no dialog', async () => {
+    vi.spyOn(appointmentService, 'listAppointments').mockResolvedValue([]);
+    renderWithTimeOffRoutes();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Block time off' }, LOAD));
+    expect(await screen.findByText('Block time off page')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
 describe('AppointmentsPage — transitions', () => {
   it('offers only the transitions the server allows on that appointment', async () => {
     vi.spyOn(appointmentService, 'listAppointments').mockResolvedValue([

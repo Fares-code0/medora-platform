@@ -5,7 +5,6 @@ import {
   NOTIFICATION_CATEGORY_META,
   NOTIFICATION_KIND_META,
   NOTIFICATION_PRIORITY_META,
-  NOTIFICATION_STATUS_LABELS,
   type NotificationCategory,
   type NotificationKind,
   type NotificationPriority,
@@ -34,11 +33,13 @@ export function isValidDateKey(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(value).getTime());
 }
 
+/**
+ * Chips for the facets that narrow the current view. The view itself
+ * (`status`) is the page's navigation, which already shows it selected, so
+ * it is not repeated as a removable chip.
+ */
 export function toActiveFilterChips(filters: NotificationListFilters): readonly ActiveFilter[] {
   const chips: ActiveFilter[] = [];
-  if (filters.status !== DEFAULT_STATUS) {
-    chips.push({ id: 'status', label: `Status: ${NOTIFICATION_STATUS_LABELS[filters.status]}` });
-  }
   if (filters.category) {
     chips.push({
       id: 'category',

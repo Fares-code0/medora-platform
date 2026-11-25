@@ -255,7 +255,7 @@ function AvailabilityEditor({ saved }: { readonly saved: WeeklyAvailability }) {
             error={errors.defaultDurationMin}
             disabled={busy}
             onChange={(value) => edit({ ...week, defaultDurationMin: Number(value) })}
-            containerClassName="w-56"
+            containerClassName="w-56 max-w-full"
           />
           <Input
             type="number"
@@ -273,7 +273,7 @@ function AvailabilityEditor({ saved }: { readonly saved: WeeklyAvailability }) {
                 bufferMin: event.target.value === '' ? Number.NaN : Number(event.target.value),
               })
             }
-            containerClassName="w-72"
+            containerClassName="w-72 max-w-full"
           />
         </div>
       </section>

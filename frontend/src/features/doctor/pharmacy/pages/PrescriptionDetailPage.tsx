@@ -140,6 +140,9 @@ export function PrescriptionDetailPage() {
           title={prescription.id}
           icon={Pill}
           tone="success"
+          // Shown: the caption names the patient above the document, and the
+          // patient summary card stacks after it below lg.
+          showCaption
           caption={`${prescription.medication.name} (${prescription.medication.genericName}) · ${prescription.dosage} · ${prescription.patient.name} · ${formatDate(prescription.startDate)}`}
           breadcrumb={breadcrumb}
           actions={

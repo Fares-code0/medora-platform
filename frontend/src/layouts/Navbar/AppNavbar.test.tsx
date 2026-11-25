@@ -50,6 +50,17 @@ describe('the navbar AI entry', () => {
     expect(screen.getByRole('button', { name: 'Open Medora AI' })).toBeInTheDocument();
   });
 
+  it('draws its icon in the launcher icon colour, not the ai variant’s inverse text', () => {
+    // The tile is white in both themes; text-inverse is white in light mode,
+    // which rendered the Sparkles icon invisible (seen in a real browser).
+    can.mockImplementation((permission: string) => permission === 'ai.use');
+    renderNavbar();
+
+    const launcher = screen.getByRole('button', { name: 'Open Medora AI' });
+    expect(launcher).toHaveClass('bg-ai-launcher', 'border-ai-launcher-border', 'text-ai-launcher-icon');
+    expect(launcher.querySelector('svg[data-brand="medora-ai"]')).not.toBeNull();
+  });
+
   it('is withheld from a doctor who does not, matching the sidebar', () => {
     can.mockImplementation(() => false);
     renderNavbar();

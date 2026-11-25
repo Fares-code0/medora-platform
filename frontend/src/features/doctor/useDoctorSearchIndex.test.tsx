@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { AuthProvider } from '@/app/providers/AuthProvider';
 import { MOCK_PATIENTS } from '@/features/shared-domain/patient-identity';
 
+import { labKeys } from './labs/api/useLabTestsQuery';
 import { useDoctorSearchIndex } from './useDoctorSearchIndex';
 
 /**
@@ -62,6 +63,29 @@ describe('the doctor search index', () => {
 
     expect(result.current.pending).toBe(false);
     expect(result.current.search('khaled')).toEqual([]);
+  });
+
+  it('does not refetch the lab worklist on window focus', () => {
+    // Over HTTP the worklist is one GET per order; the shell mounts this
+    // index on every doctor page, so its observer must not re-run that
+    // fan-out each time the tab regains focus.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const { result } = renderHook(() => useDoctorSearchIndex(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <AuthProvider>{children}</AuthProvider>
+          </MemoryRouter>
+        </QueryClientProvider>
+      ),
+    });
+    act(() => {
+      result.current.onActivate?.();
+    });
+
+    const labs = client.getQueryCache().find({ queryKey: labKeys.lists(), exact: true });
+    expect(labs?.observers).toHaveLength(1);
+    expect(labs?.observers[0]?.options.refetchOnWindowFocus).toBe(false);
   });
 
   it('reports pending once engaged, so the panel cannot claim "no matches"', () => {

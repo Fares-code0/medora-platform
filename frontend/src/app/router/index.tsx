@@ -137,8 +137,15 @@ function AreaFallback() {
  * feature module importing another; the app layer is the sanctioned composer
  * (the same reason ShellBadgesProvider and the search providers live here).
  */
+const ADMIN_PREFERENCES_TITLE = 'My Preferences';
+const ADMIN_PREFERENCES_CAPTION =
+  'Your own account, security and display preferences. Platform-wide configuration is under Settings in the sidebar.';
+
 const adminPreferencesRoute: RouteObject = {
   path: 'preferences',
+  // "Preferences", not "Settings": the sidebar's Settings is Platform
+  // Settings (/admin/settings). Two pages both titled Settings was the
+  // ambiguity this naming removes. The crumb is the localized section label.
   handle: { titleKey: 'admin.section.preferences' } satisfies RouteHandle,
   children: [
     {
@@ -164,6 +171,8 @@ const adminPreferencesRoute: RouteObject = {
               buildSectionPath={buildSectionPath}
               backHref={routes.admin.root}
               sections={sections}
+              title={ADMIN_PREFERENCES_TITLE}
+              caption={ADMIN_PREFERENCES_CAPTION}
             />
           ),
         };

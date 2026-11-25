@@ -35,6 +35,8 @@ export interface SidebarProps {
   header?: ReactNode;
   /** Bottom-pinned region (settings, help, user card — DS §8.16). */
   footer?: ReactNode;
+  /** Extra classes for the footer region (e.g. a tighter mobile-drawer footer). */
+  footerClassName?: string | undefined;
   'aria-label'?: string;
   className?: string | undefined;
   children: ReactNode;
@@ -44,6 +46,7 @@ export function Sidebar({
   collapsed = false,
   header,
   footer,
+  footerClassName,
   'aria-label': ariaLabel,
   className,
   children,
@@ -72,7 +75,13 @@ export function Sidebar({
           {children}
         </div>
         {footer ? (
-          <div className={cn('shrink-0 border-t border-border p-3', collapsed && 'px-2')}>
+          <div
+            className={cn(
+              'shrink-0 border-t border-border p-3',
+              collapsed && 'px-2',
+              footerClassName,
+            )}
+          >
             {footer}
           </div>
         ) : null}
@@ -114,7 +123,7 @@ export interface SidebarItemProps {
   disabled?: boolean;
   href?: string | undefined;
   onClick?: (() => void) | undefined;
-  className?: string;
+  className?: string | undefined;
 }
 
 /** Row classes shared by an item and a group's parent row. */

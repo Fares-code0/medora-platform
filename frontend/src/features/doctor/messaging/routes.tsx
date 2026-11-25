@@ -13,11 +13,23 @@ const lazyPage = async () => {
   return { Component: MessagesPage };
 };
 
+const lazyNewMessagePage = async () => {
+  const { NewMessagePage } = await import('./pages/NewMessagePage');
+  return { Component: NewMessagePage };
+};
+
 export const messagingRoutes: readonly RouteObject[] = [
   {
     path: routes.doctor.messages,
     handle: { titleKey: 'nav.messages' } satisfies RouteHandle,
     lazy: lazyPage,
+  },
+  // Static segment, declared before `:conversationId` so "new" is never
+  // read as a conversation id (react-router ranks it first regardless).
+  {
+    path: routes.doctor.newMessage,
+    handle: { titleKey: 'route.newMessage' } satisfies RouteHandle,
+    lazy: lazyNewMessagePage,
   },
   {
     path: `${routes.doctor.messages}/:conversationId`,

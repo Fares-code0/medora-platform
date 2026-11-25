@@ -159,6 +159,9 @@ export function MessageComposer({
             // ui/internal/styles.ts records: the disabled one is a 3:1
             // non-text token and a placeholder in an active field is text.
             'text-body text-text-primary placeholder:text-text-placeholder focus:outline-none',
+            // 16px on a coarse pointer so iOS Safari does not zoom into the
+            // focused composer (as every text field does, ui/internal/styles.ts).
+            'touch:text-h3',
             'disabled:cursor-not-allowed disabled:text-text-disabled',
           )}
         />

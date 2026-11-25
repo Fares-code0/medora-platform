@@ -120,7 +120,12 @@ export const doctorNavigation: NavigationConfig = {
   sections: [
     {
       items: [
-        { id: 'overview', labelKey: 'nav.overview', icon: LayoutDashboard, path: routes.doctor.overview },
+        {
+          id: 'overview',
+          labelKey: 'nav.overview',
+          icon: LayoutDashboard,
+          path: routes.doctor.overview,
+        },
         {
           id: 'patients',
           labelKey: 'nav.patients',
@@ -153,6 +158,17 @@ export const doctorNavigation: NavigationConfig = {
               id: 'appointments-new',
               labelKey: 'nav.appointmentsNew',
               path: routes.doctor.bookAppointment(),
+            },
+            {
+              // The pages that replaced the book's time-off drawer and dialog.
+              id: 'appointments-time-off',
+              labelKey: 'nav.appointmentsUpcomingTimeOff',
+              path: routes.doctor.upcomingTimeOff,
+            },
+            {
+              id: 'appointments-block-time-off',
+              labelKey: 'nav.appointmentsBlockTimeOff',
+              path: routes.doctor.blockTimeOff,
             },
           ],
         },
@@ -188,7 +204,12 @@ export const doctorNavigation: NavigationConfig = {
     {
       labelKey: 'nav.section.clinical',
       items: [
-        { id: 'my-clinic', labelKey: 'nav.myClinic', icon: Stethoscope, path: routes.doctor.myClinic },
+        {
+          id: 'my-clinic',
+          labelKey: 'nav.myClinic',
+          icon: Stethoscope,
+          path: routes.doctor.myClinic,
+        },
         {
           id: 'labs',
           labelKey: 'nav.labs',
@@ -533,4 +554,3 @@ export const pharmacyNavigation: NavigationConfig = {
   bottomTabIds: ['home', 'patients'],
   searchPlaceholderKey: null,
 };
-

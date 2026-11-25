@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { createKeyFactory } from '@/api/query-keys';
+import { isApiError } from '@/types/api';
 
 import type { PrescriptionDraft } from '../model/authoring';
 import type { Formulary, MedicationMonograph } from '../model/catalogue';
@@ -43,8 +44,12 @@ export function usePrescriptionQuery(prescriptionId: string) {
     queryKey: prescriptionKeys.detail(prescriptionId),
     queryFn: () => prescriptionService.getPrescription(prescriptionId),
     staleTime: 30_000,
-    retry: (failureCount, error) =>
-      error instanceof Error && error.message === PRESCRIPTION_NOT_FOUND ? false : failureCount < 2,
+    // The global rule first (configs/query-client.ts): only a network failure
+    // is retried, so a 403 or 500 is not re-sent twice behind a spinner.
+    retry: (failureCount, error) => {
+      if (isApiError(error) && error.kind !== 'network') return false;
+      return error.message === PRESCRIPTION_NOT_FOUND ? false : failureCount < 2;
+    },
   });
 }
 

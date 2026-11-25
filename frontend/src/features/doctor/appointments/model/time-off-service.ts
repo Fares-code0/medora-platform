@@ -84,6 +84,15 @@ export interface TimeOffService {
   /** The doctor's own blocks that have not finished yet, soonest first. */
   listBlocks(): Promise<readonly TimeOffBlock[]>;
   /**
+   * The appointments an **existing** block disturbs now, by the same rule
+   * `resolve` counts them with — what a follow-up interrupted after
+   * `createBlock` (the page was left, the tab reloaded) re-reads, since the
+   * API returns the impact list only with the create. It is a read: nothing
+   * is booked or moved. `resolve` still checks the count it is sent against
+   * its own, so a list that has changed since is refused, never acted on.
+   */
+  previewImpact(block: TimeOffBlock): Promise<readonly ImpactedAppointment[]>;
+  /**
    * Cancels one of the doctor's own blocks, freeing the time for bookings.
    * Appointments a resolution already acted on stay as they were — removing
    * the block does not undo a cancellation the patient has been sent.

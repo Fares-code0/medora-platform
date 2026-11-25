@@ -125,7 +125,7 @@ function NotificationPreferencesForm({
               />
             }
           />
-          <div className="grid max-w-xs grid-cols-2 gap-3">
+          <div className="grid max-w-xs grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               type="time"
               label="From"

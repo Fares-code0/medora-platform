@@ -200,15 +200,27 @@ describe.each(['light', 'dark'] as const)('ADR-0005 roles — %s', (theme) => {
     }
   });
 
-  it('the navbar AI button keeps one look and a 3:1 boundary on the navbar', () => {
-    for (const role of ['color-ai-launcher', 'color-ai-launcher-border'] as const) {
-      expect(token(role, theme), `--${role}`).toBe(token(role, 'light'));
-    }
+  it('the navbar AI button keeps one fill and a 3:1 boundary on the navbar', () => {
+    expect(token('color-ai-launcher', theme), '--color-ai-launcher').toBe(
+      token('color-ai-launcher', 'light'),
+    );
+    // The edge is a subtle neutral gray, re-pointed per theme so it stays
+    // visible on each navbar — never the near-black it used to be.
+    expect(token('color-ai-launcher-border', theme)).toBe(token('color-border-strong', theme));
     // The navbar is `surface`. The edge carries the boundary on a light bar,
     // the white fill on a dark one — at least one of the two must hold 3:1.
     const edge = ratio(token('color-ai-launcher-border', theme), token('color-surface', theme));
     const fill = ratio(token('color-ai-launcher', theme), token('color-surface', theme));
     expect(Math.max(edge, fill), `AI launcher boundary (${theme})`).toBeGreaterThanOrEqual(3);
+  });
+
+  it('the navbar AI button draws its icon in a colour that reads on its white tile', () => {
+    // Found in a real browser: once the logo became a currentColor icon, the
+    // `ai` variant's text-inverse (white in light) drew it white on white.
+    // The icon gets its own role, fixed in both themes like the fill.
+    expect(token('color-ai-launcher-icon', theme)).toBe(token('color-ai-launcher-icon', 'light'));
+    const icon = ratio(token('color-ai-launcher-icon', theme), token('color-ai-launcher', theme));
+    expect(icon, `AI launcher icon on its fill (${theme})`).toBeGreaterThanOrEqual(4.5);
   });
 });
 

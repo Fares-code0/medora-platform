@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { createKeyFactory } from '@/api/query-keys';
+import { useAuth } from '@/app/providers';
 import { dashboardKeys } from '@/features/doctor/dashboard/api/useDashboardOverviewQuery';
 import { patientKeys } from '@/features/shared-domain/patient-identity';
+import { isApiError } from '@/types/api';
 
 import type { AppointmentCommand, CreateAppointmentInput } from '../model/appointment-service';
 import type { WeeklyAvailability } from '../model/availability';
-import type { ResolutionAction, TimeOffKind } from '../model/time-off-service';
+import { settleRefused, settleSaved, startSaving } from '../model/time-off-follow-up';
+import type { ResolutionAction, TimeOffBlock, TimeOffKind } from '../model/time-off-service';
 import { appointmentService, availabilityService, timeOffService } from '../service';
 
 /**
@@ -71,15 +74,69 @@ export function useCreateAppointmentMutation() {
 /** Books a block of time off; returns the appointments it would disturb. */
 const timeOffKey = [...appointmentKeys.all, 'time-off'] as const;
 
+/**
+ * A failure that proves the server booked nothing: it answered, and the
+ * answer was a refusal. A dropped connection, a timeout or a 5xx proves
+ * nothing — the block may exist — so those keep the `saving` record.
+ */
+function provesNothingBooked(error: unknown): boolean {
+  return (
+    isApiError(error) &&
+    (error.kind === 'validation' ||
+      error.kind === 'conflict' ||
+      error.kind === 'forbidden' ||
+      error.kind === 'auth' ||
+      error.kind === 'not_found' ||
+      error.kind === 'rate_limited')
+  );
+}
+
+/**
+ * Books a block. The follow-up record (`model/time-off-follow-up.ts`) is
+ * kept in the **mutation's** callbacks, not the caller's: TanStack runs
+ * these even when the page that started the request has unmounted, so a
+ * block confirmed after the doctor navigated away is still recorded as
+ * needing its follow-up.
+ */
 export function useCreateTimeOffMutation() {
   const queryClient = useQueryClient();
+  const userId = useAuth().user?.id ?? null;
   return useMutation({
     mutationFn: (input: { from: string; to: string; kind: TimeOffKind }) =>
       timeOffService.createBlock(input),
-    onSuccess: () => {
+    onMutate: (input) => ({
+      recordId: userId === null ? null : startSaving(userId, input),
+    }),
+    onSuccess: (created, _input, context) => {
+      if (userId !== null && context?.recordId != null) {
+        settleSaved(userId, context.recordId, created.block, created.impacted.length);
+      }
+      void queryClient.invalidateQueries({ queryKey: timeOffKey });
+    },
+    onError: (error, _input, context) => {
+      if (userId !== null && context?.recordId != null && provesNothingBooked(error)) {
+        settleRefused(userId, context.recordId);
+      }
+      // Whatever happened, the list is re-read: a block may exist now.
       void queryClient.invalidateQueries({ queryKey: timeOffKey });
     },
   });
+}
+
+/** The doctor's blocks, read now rather than from cache — the duplicate check before a create. */
+export function useFreshTimeOffFetcher() {
+  const queryClient = useQueryClient();
+  return () =>
+    queryClient.fetchQuery({
+      queryKey: timeOffKey,
+      queryFn: () => timeOffService.listBlocks(),
+      staleTime: 0,
+    });
+}
+
+/** What an existing block disturbs now — the interrupted follow-up's re-read. */
+export function usePreviewImpactFetcher() {
+  return (block: TimeOffBlock) => timeOffService.previewImpact(block);
 }
 
 /** The doctor's upcoming time off (API §3.9), soonest first. */

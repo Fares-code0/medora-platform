@@ -65,6 +65,7 @@ export const WEB_TOKENS = [
   '--color-ai-badge-text',
   '--color-ai-launcher',
   '--color-ai-launcher-border',
+  '--color-ai-launcher-icon',
   '--color-success',
   '--color-success-subtle',
   '--color-warning',
@@ -165,6 +166,7 @@ export const TOKEN_META: readonly TokenMeta[] = [
   meta('--color-ai-badge-text', 'ai', 'AI Badge Text', 'Label of the AI badge (web only)', null),
   meta('--color-ai-launcher', 'ai', 'AI Launcher', 'Fill of the Medora AI button in the navbar — fixed in both modes (web only)', null),
   meta('--color-ai-launcher-border', 'ai', 'AI Launcher Border', 'Edge of the Medora AI button in the navbar (web only)', null),
+  meta('--color-ai-launcher-icon', 'ai', 'AI Launcher Icon', 'Icon of the Medora AI button, on its white fill — fixed in both modes (web only)', null),
   meta('--color-success', 'status', 'Success', 'Success alerts, badges, toasts'),
   meta('--color-success-subtle', 'status', 'Success Subtle', 'Success alert/badge background'),
   meta('--color-warning', 'status', 'Warning', 'Warning alerts, badges, toasts'),
@@ -257,4 +259,5 @@ export const LEGACY_FILLS: Readonly<Partial<Record<WebToken, LegacyFill>>> = {
   // The navbar AI button had no roles of its own before ADR-0005 §11.
   '--color-ai-launcher': { original: true },
   '--color-ai-launcher-border': { original: true },
+  '--color-ai-launcher-icon': { original: true },
 };

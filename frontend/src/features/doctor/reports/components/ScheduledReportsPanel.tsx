@@ -245,7 +245,7 @@ function ScheduleDialog({
           onChange={(event) => setName(event.target.value)}
           placeholder="e.g. Weekly revenue report"
         />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select
             label="Category"
             value={category}

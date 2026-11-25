@@ -44,6 +44,13 @@ export interface SendMessageInput {
 export interface NotificationService {
   /* ── Notifications ─────────────────────────────────────────── */
   fetchNotifications(): Promise<readonly DoctorNotification[]>;
+  /**
+   * The newest `limit` unarchived notifications, in the server's order
+   * (pinned first, then newest) — the shell bell's feed. One small read,
+   * never the full drain `fetchNotifications` does: the bell is mounted on
+   * every page and shows a handful of rows.
+   */
+  fetchRecent(limit: number): Promise<readonly DoctorNotification[]>;
   /** Applies a patch to many ids at once; single-row actions pass one id. */
   updateNotifications(ids: readonly string[], patch: NotificationPatch): Promise<void>;
   /**

@@ -38,6 +38,7 @@ export function DashboardGreeting({ name, summary, actions }: DashboardGreetingP
     // gradient used to start from, laid flat.
     <div className="rounded-surface border border-border bg-primary-subtle px-4 py-4 md:px-5">
       <ContentHeader
+        showCaption
         title={t(greetingForHour(now.getHours()), { name })}
         caption={summary === undefined ? today : `${today} · ${summary}`}
         actions={actions}

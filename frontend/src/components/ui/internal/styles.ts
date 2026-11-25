@@ -132,6 +132,14 @@ export const FIELD_ACTION_CLASSES =
   'rounded-control text-text-tertiary transition-colors duration-fast hover:text-text-primary ' +
   'touch:end-0 touch:h-11 touch:w-11';
 
+/**
+ * 16px typed text on a coarse pointer (`text-h3` is the type scale's 1rem
+ * step — the only 16px on it), so iOS Safari does not zoom into a
+ * focused field. Shared by every text-entry control, including the ones
+ * that do not use `fieldInputClasses` (OTP cells, the message composer).
+ */
+export const TEXT_ENTRY_TOUCH_FONT = 'touch:text-h3';
+
 /** Text-field classes — DS §8.2, compact heights (32px md / 36px lg). */
 export function fieldInputClasses(options: {
   size?: FieldSize | undefined;
@@ -139,6 +147,11 @@ export function fieldInputClasses(options: {
   leading?: boolean | undefined;
   trailing?: boolean | undefined;
   multiline?: boolean | undefined;
+  /**
+   * A field the user types into (the default). `false` for a control that
+   * only borrows the field's look — the Select trigger is a button.
+   */
+  textEntry?: boolean | undefined;
   className?: string | undefined;
 }): string {
   const {
@@ -147,9 +160,15 @@ export function fieldInputClasses(options: {
     leading = false,
     trailing = false,
     multiline = false,
+    textEntry = true,
   } = options;
   return cn(
     'w-full min-w-0 max-w-full rounded-surface border bg-surface text-body text-text-primary',
+    // iOS Safari zooms the page into any focused text field set below 16px.
+    // On a coarse pointer the typed text is 16px (`h3`, the scale's 1rem
+    // step), so it never does; a mouse and keyboard keep the compact 13px. (The viewport meta is left alone:
+    // disabling zoom would take pinch-zoom away from people who need it.)
+    textEntry && TEXT_ENTRY_TOUCH_FONT,
     // iOS date/time inputs have an intrinsic min width and a centred value.
     '[&::-webkit-date-and-time-value]:text-start',
     /*

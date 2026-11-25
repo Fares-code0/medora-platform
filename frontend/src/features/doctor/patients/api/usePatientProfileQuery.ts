@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { isApiError } from '@/types/api';
+
 import {
   PATIENT_NOT_FOUND,
   type ChartNoteInput,
@@ -33,7 +35,13 @@ import { patientKeys } from './usePatientsQuery';
 
 export { PATIENT_NOT_FOUND };
 
+/**
+ * The global rule first (configs/query-client.ts): only a network failure is
+ * retried, so a 403 or 500 is not re-sent twice behind a spinner. A chart
+ * that does not exist is never retried either.
+ */
 function retryUnlessNotFound(failureCount: number, error: Error): boolean {
+  if (isApiError(error) && error.kind !== 'network') return false;
   return error.message === PATIENT_NOT_FOUND ? false : failureCount < 2;
 }
 

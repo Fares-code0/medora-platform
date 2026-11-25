@@ -34,6 +34,23 @@ export const appointmentsRoutes: readonly RouteObject[] = [
     },
   },
   {
+    // Static segments, declared before `:appointmentId` for the same reason.
+    path: routes.doctor.upcomingTimeOff,
+    handle: { titleKey: 'route.upcomingTimeOff' } satisfies RouteHandle,
+    lazy: async () => {
+      const { UpcomingTimeOffPage } = await import('./pages/UpcomingTimeOffPage');
+      return { Component: UpcomingTimeOffPage };
+    },
+  },
+  {
+    path: routes.doctor.blockTimeOff,
+    handle: { titleKey: 'route.blockTimeOff' } satisfies RouteHandle,
+    lazy: async () => {
+      const { BlockTimeOffPage } = await import('./pages/BlockTimeOffPage');
+      return { Component: BlockTimeOffPage };
+    },
+  },
+  {
     path: `${routes.doctor.appointments}/:appointmentId`,
     handle: { titleKey: 'route.appointment' } satisfies RouteHandle,
     lazy: lazyPage,

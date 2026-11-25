@@ -149,6 +149,9 @@ export function MedicalRecordDetailPage() {
           title={record.id}
           icon={FolderHeart}
           tone="secondary"
+          // Shown: the caption names the patient above the document, and the
+          // patient summary card stacks after it below lg.
+          showCaption
           caption={`${record.visitType} · ${record.department} · ${formatDate(record.visitDate)} · ${record.patient.name}`}
           breadcrumb={breadcrumb}
           actions={

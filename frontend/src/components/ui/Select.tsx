@@ -222,7 +222,13 @@ export function Select({
           onClick={() => (open ? close() : openList())}
           onKeyDown={onTriggerKeyDown}
           className={cn(
-            fieldInputClasses({ size, invalid: Boolean(error), trailing: true, className }),
+            fieldInputClasses({
+              size,
+              invalid: Boolean(error),
+              trailing: true,
+              textEntry: false,
+              className,
+            }),
             // `relative` so the chevron below anchors to THIS button. It used
             // to anchor to the wrapper div, which is the field's full width —
             // so any trigger narrower than its wrapper flung the chevron to

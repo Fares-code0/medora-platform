@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { lockBodyScroll } from './scroll-lock';
+
 /** Longer than the longest dialog exit (the 700ms customize panel). */
 const EXIT_BACKSTOP_MS = 1200;
 
@@ -57,13 +59,11 @@ export function useModalDialog(open: boolean, onCancel: () => void) {
     return () => window.clearTimeout(timer);
   }, [closing, onExitComplete]);
 
+  // Shared and reference-counted, so stacked dialogs closing in any order
+  // (or in one commit) restore the body's original overflow.
   useEffect(() => {
     if (!open) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
+    return lockBodyScroll();
   }, [open]);
 
   // Held in a ref so a caller's inline handler does not re-bind the listener.

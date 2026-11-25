@@ -15,6 +15,9 @@ import type {
   TimeOffKind,
   TimeOffService,
 } from '../model/time-off-service';
+import type { AppointmentStatus } from '../model/types';
+
+import { httpAppointmentService } from './http-appointment-service';
 
 /**
  * Time off over HTTP (FE-10.4): `POST /me/time-off` (API §3.9, the doctors
@@ -25,6 +28,15 @@ import type {
  */
 
 const KINDS: readonly TimeOffKind[] = ['vacation', 'emergency-block'];
+
+/** The backend's `LIVE_STATUSES` (appointment.repository.ts), in this client's spelling. */
+const LIVE_STATUSES: ReadonlySet<AppointmentStatus> = new Set<AppointmentStatus>([
+  'scheduled',
+  'confirmed',
+  'pending',
+  'rescheduled',
+  'awaiting-patient',
+]);
 
 function toImpacted(value: unknown): ImpactedAppointment {
   const what = 'impacted';
@@ -104,6 +116,35 @@ export const httpTimeOffService: TimeOffService = {
     const items = readData(await apiClient.get('/me/time-off'), 'time off');
     if (!Array.isArray(items)) throw malformedResponse('time off');
     return items.map(toBlock);
+  },
+
+  /*
+   * The API has no impact read for an existing block: `POST /me/time-off`
+   * returns it once, and `resolve` recomputes it server-side. So this reads
+   * the doctor's book (`GET /appointments`, the same collection the
+   * appointment list uses) and applies the server's own rule —
+   * `impactedByTimeOff`: a live status (scheduled, confirmed, pending,
+   * rescheduled, awaiting-patient) and a start inside [startsAt, endsAt).
+   * Should the two ever disagree, `resolve`'s count check refuses with
+   * `blast_radius_changed` and nothing is sent.
+   */
+  async previewImpact(block) {
+    const from = new Date(block.startsAt).getTime();
+    const to = new Date(block.endsAt).getTime();
+    const book = await httpAppointmentService.listAppointments();
+    return book
+      .filter((appointment) => {
+        const start = new Date(appointment.dateTime).getTime();
+        return LIVE_STATUSES.has(appointment.status) && start >= from && start < to;
+      })
+      .sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime())
+      .map((appointment) => ({
+        id: appointment.id,
+        scheduledAt: appointment.dateTime,
+        durationMin: appointment.durationMin,
+        status: appointment.status,
+        patientId: appointment.patient.id,
+      }));
   },
 
   async removeBlock(blockId) {

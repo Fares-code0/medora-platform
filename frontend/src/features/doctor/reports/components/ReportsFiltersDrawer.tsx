@@ -81,7 +81,7 @@ export function ReportsFiltersDrawer({
           </p>
         ) : null}
         {filters.range === 'custom' ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               type="date"
               label="From"
@@ -129,7 +129,7 @@ export function ReportsFiltersDrawer({
             options={options(LAB_TEST_OPTIONS, 'All lab tests')}
           />
         ) : null}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select
             label="Age band"
             value={filters.age}

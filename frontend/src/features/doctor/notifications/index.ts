@@ -9,6 +9,7 @@ export { notificationsRoutes } from './routes';
 export {
   useNotificationBadgesQuery,
   useNotificationsListQuery,
+  useRecentNotificationsQuery,
   useUpdateNotificationsMutation,
   useMarkAllNotificationsReadMutation,
   useArchiveAllReadMutation,
