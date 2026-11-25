@@ -51,7 +51,7 @@ export function ActiveHospitalMark() {
   return (
     <span
       data-active-hospital-mark=""
-      className="absolute -end-1 -top-1 flex size-4 items-center justify-center rounded-pill border border-border bg-surface text-text-tertiary"
+      className="absolute -end-1 -top-1 flex size-4 items-center justify-center rounded-pill border border-border bg-surface text-text-secondary"
     >
       <Building2 className="size-2.5 shrink-0" aria-hidden="true" />
       <span className="sr-only">
