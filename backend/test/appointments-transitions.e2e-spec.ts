@@ -8,9 +8,12 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 
 /**
@@ -89,6 +92,8 @@ async function seedDoctor(local: string): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -178,6 +183,7 @@ async function seedPending(doctor: Doctor, patientPublicId: string): Promise<str
 
   await harness.prisma.appointment.create({
     data: {
+      ...(await clinicalStampFor(harness.prisma, doctorRow.id, patient.id)),
       publicId,
       patientId: patient.id,
       doctorId: doctorRow.id,
@@ -230,6 +236,15 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    await purgeHospitalRecords(
+      harness.prisma,
+      (
+        await harness.prisma.patient.findMany({
+          where: { publicId: { in: createdCharts } },
+          select: { id: true },
+        })
+      ).map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 

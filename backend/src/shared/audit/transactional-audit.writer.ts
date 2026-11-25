@@ -51,7 +51,11 @@ export class TransactionalAuditWriter {
    */
   async recordWithin(tx: Prisma.TransactionClient, event: AuditEvent): Promise<void> {
     try {
-      await tx.auditEvent.create({ data: auditRowOf(event) });
+      // `createMany`, not `create`: it inserts without RETURNING. Under
+      // Row-Level Security a RETURNING clause is checked against the SELECT
+      // policy, which a hospital- or patient-scoped request need not satisfy
+      // for an event it may legitimately append (audit finding F-04).
+      await tx.auditEvent.createMany({ data: [auditRowOf(event)] });
     } catch (error) {
       this.logger.error(
         { err: describeError(error), action: event.action, entityId: event.entityId },

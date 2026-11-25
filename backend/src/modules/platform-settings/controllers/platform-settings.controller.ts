@@ -13,7 +13,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import {
   apiKeySchema,
   integrationPatchSchema,
@@ -63,6 +63,7 @@ export class PlatformSettingsController {
   ) {}
 
   /** §19.1 — the full document. */
+  @NotPhi('platform configuration')
   @Get()
   read() {
     return this.settings.read();
@@ -75,6 +76,7 @@ export class PlatformSettingsController {
    * capture them anyway — these are `/api-keys` under a different verb
    * and a different depth. The ordering is for a reader, not for Nest.
    */
+  @NotPhi('platform configuration')
   @Get('api-keys')
   listApiKeys() {
     return this.apiKeys.list();
@@ -97,6 +99,7 @@ export class PlatformSettingsController {
 
   /* ── Backups (§19.6, M24.5) ──────────────────────────────────── */
 
+  @NotPhi('platform configuration')
   @Get('backups')
   listBackups() {
     return this.backups.list();
@@ -148,6 +151,7 @@ export class PlatformSettingsController {
 export class PlatformIntegrationController {
   constructor(private readonly integrations: IntegrationService) {}
 
+  @NotPhi('platform configuration')
   @Get()
   list() {
     return this.integrations.list();

@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put } from '@
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type { AiMessageView, AiModelView, AiPromptView, AiSettingsView } from '../dto/ai.dto';
 import {
   messageFeedbackSchema,
@@ -27,6 +27,7 @@ export class AiPromptController {
   constructor(private readonly settings: AiSettingsService) {}
 
   /** API §11.5 — the library, marked with the caller's favourites. */
+  @NotPhi('AI configuration; no patient data')
   @Get('prompts')
   prompts(@CurrentUser() user: AuthenticatedUser): Promise<readonly AiPromptView[]> {
     return this.settings.prompts(user);
@@ -41,6 +42,7 @@ export class AiPromptController {
    * is the honest bit: false until a provider is wired, matching what
    * `/health` already reports (ADR-016).
    */
+  @NotPhi('AI configuration; no patient data')
   @Get('model')
   model(): AiModelView {
     return this.settings.model();
@@ -72,6 +74,8 @@ export class AiPromptController {
 @Controller('me/ai-settings')
 export class AiUserSettingsController {
   constructor(private readonly settings: AiSettingsService) {}
+
+  @NotPhi('AI configuration; no patient data')
 
   @Get()
   read(@CurrentUser() user: AuthenticatedUser): Promise<AiSettingsView> {

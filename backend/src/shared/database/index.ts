@@ -8,7 +8,12 @@
  * any schema change.
  */
 export { DatabaseModule } from './database.module';
-export { conflictingFields, isLockNotGranted, isUniqueViolation } from './prisma-errors';
+export {
+  conflictingFields,
+  isLastPlatformAdminViolation,
+  isLockNotGranted,
+  isUniqueViolation,
+} from './prisma-errors';
 export { PrismaService } from './prisma.service';
 export {
   applySoftDeleteFilter,
@@ -27,3 +32,13 @@ export {
   type SoftDeleteColumns,
   type UpdateAuditColumns,
 } from './audit-columns';
+export { hospitalStampFor, type HospitalStamp, type StampClient } from './hospital-stamp';
+export {
+  currentTenantContext,
+  runAsSystem,
+  runInTenantScope,
+  runWithTenantContext,
+  setTenantContext,
+  type TenantContext,
+  type TenantScope,
+} from './tenant-context';

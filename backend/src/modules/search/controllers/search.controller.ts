@@ -3,7 +3,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, PhiRead } from '../../../shared/authz';
 import { searchQuerySchema, type SearchQuery } from '../dto/search.schema';
 import { SearchService } from '../services/search.service';
 
@@ -20,6 +20,8 @@ import { SearchService } from '../services/search.service';
 @Controller('search')
 export class SearchController {
   constructor(private readonly search: SearchService) {}
+
+  @PhiRead('search')
 
   @Get()
   run(@CurrentUser() user: AuthenticatedUser, @Query(zodQuery(searchQuerySchema)) query: SearchQuery) {

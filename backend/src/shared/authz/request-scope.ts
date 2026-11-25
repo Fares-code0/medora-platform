@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 
+import { runInTenantScope } from '../database';
+
 /**
  * Per-request memo for Phase 22 lookups (Node's own AsyncLocalStorage; no
  * dependency).
@@ -83,6 +85,8 @@ export function memoizeInRequest<T>(key: string, lookup: () => Promise<T>): Prom
 @Injectable()
 export class RequestScopeMiddleware implements NestMiddleware {
   use(_request: unknown, _response: unknown, next: () => void): void {
-    runInRequestScope(next);
+    // Also opens the request's tenant-context store (§2.15), filled by the
+    // authorization guard once the caller is resolved.
+    runInRequestScope(() => runInTenantScope(next));
   }
 }

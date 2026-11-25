@@ -67,13 +67,16 @@ function repositoryFor(options: {
     findRoleByCode: vi.fn((code: string) =>
       Promise.resolve(
         (options.knownRoles ?? ['doctor', 'nurse', 'reception', 'admin']).includes(code)
-          ? { id: `role_${code}`, code }
+          ? { id: `role_${code}`, code, hospitalId: null }
           : null,
       ),
     ),
     countActiveWithRole: vi.fn().mockResolvedValue(options.activeWithRole ?? 3),
     update,
     revokeSessions,
+    // Counted before a role change: the database trigger revokes them inside
+    // the update (G4, migration 20261125103000).
+    liveSessionCount: vi.fn().mockResolvedValue(0),
     list: vi.fn(),
     findByPublicId: vi.fn(),
   } as unknown as PlatformUserRepository;
@@ -94,6 +97,7 @@ function serviceFor(stub: RepoStub): PlatformUserService {
     accounts as never,
     audit,
     activity,
+    { forget: vi.fn().mockResolvedValue(undefined) } as never,
   );
 }
 
@@ -200,5 +204,30 @@ describe('PlatformUserService.update — the four refusals', () => {
 
     (stub.repository.findIdentity as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     expect(await statusOf(service.update(ACTOR, 'usr_missing', { active: false }))).toBe(404);
+  });
+});
+
+describe('PlatformUserService.update — the database’s last-Platform-Admin invariant (F-10)', () => {
+  it('answers 409 when the commit is refused, even after the role count passed', async () => {
+    // Other `admin` accounts exist (Hospital Admins), so the count passes;
+    // the database judges Platform Admin standing itself, under a lock.
+    const stub = repositoryFor({ targetRole: 'admin', activeWithRole: 5 });
+    stub.update.mockRejectedValueOnce(
+      Object.assign(new Error('Transaction failed'), {
+        cause: { originalCode: '23514', originalMessage: 'last_platform_admin' },
+      }),
+    );
+    const service = serviceFor(stub);
+
+    expect(await statusOf(service.update(ACTOR, 'usr_target', { role: 'doctor' }))).toBe(409);
+    expect(stub.revokeSessions).not.toHaveBeenCalled();
+  });
+
+  it('propagates any other database failure unchanged', async () => {
+    const stub = repositoryFor({ targetRole: 'admin', activeWithRole: 5 });
+    stub.update.mockRejectedValueOnce(new Error('connection reset'));
+    const service = serviceFor(stub);
+
+    await expect(service.update(ACTOR, 'usr_target', { role: 'doctor' })).rejects.toThrow('connection reset');
   });
 });

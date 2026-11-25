@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type { PlatformUserView } from '../dto/account.dto';
 import {
   activityQuerySchema,
@@ -62,6 +62,7 @@ export class PlatformUserController {
   constructor(private readonly users: PlatformUserService) {}
 
   /** API §2.10 — the paginated, filterable account list. */
+  @NotPhi('user accounts; no clinical data')
   @Get()
   list(
     @Query(zodQuery(platformUserQuerySchema)) query: PlatformUserQuery,
@@ -70,6 +71,7 @@ export class PlatformUserController {
   }
 
   /** One account, by the `usr_…` id the list returned. */
+  @NotPhi('a user account; no clinical data')
   @Get(':userId')
   detail(@Param('userId') userId: string): Promise<PlatformUserView> {
     return this.users.detail(userId);
@@ -94,6 +96,7 @@ export class PlatformUserController {
    * masking question here, unlike every admin projection of a `patients`
    * row (API §4.11).
    */
+  @NotPhi('account activity metadata')
   @Get(':userId/activity')
   activity(
     @Param('userId') userId: string,

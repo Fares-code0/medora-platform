@@ -22,6 +22,7 @@ import {
   dataOf,
   endGraceWindow,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   rotatedSecondsAgo,
@@ -135,6 +136,8 @@ beforeEach(async () => {
 describe('refresh', () => {
   it('returns a new access token and the session user', async () => {
     const email = await seedAccount('amelia');
+    // A registered doctor holds no capability until in clinical standing (§2.6).
+    await makeClinicalDoctor(harness.prisma, email);
     const { refreshToken } = await signIn(email);
 
     const response = await request(harness.server).post(REFRESH).set('Cookie', withCookie(refreshToken));

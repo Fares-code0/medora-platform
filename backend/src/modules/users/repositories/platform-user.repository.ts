@@ -118,8 +118,22 @@ export class PlatformUserRepository {
     });
   }
 
-  findRoleByCode(code: string): Promise<{ id: string; code: string } | null> {
-    return this.prisma.db.role.findUnique({ where: { code }, select: { id: true, code: true } });
+  findRoleByCode(code: string): Promise<{ id: string; code: string; hospitalId: string | null } | null> {
+    return this.prisma.db.role.findUnique({ where: { code }, select: { id: true, code: true, hospitalId: true } });
+  }
+
+  /** Whether the account works at `hospitalId` now (employment or affiliation) — F-17. */
+  async worksAt(userId: string, hospitalId: string): Promise<boolean> {
+    const count = await this.prisma.db.user.count({
+      where: {
+        id: userId,
+        OR: [
+          { doctor: { is: { employments: { some: { hospitalId, endedAt: null } } } } },
+          { staffMember: { some: { hospitalAffiliations: { some: { hospitalId, endedAt: null } } } } },
+        ],
+      },
+    });
+    return count > 0;
   }
 
   /**
@@ -135,15 +149,48 @@ export class PlatformUserRepository {
     userId: string,
     actorId: string,
     data: { readonly roleId?: string | undefined; readonly status?: UserStatus | undefined },
-  ): Promise<PlatformUserRow> {
-    return this.prisma.db.user.update({
-      where: { id: userId },
-      data: {
-        ...(data.roleId === undefined ? {} : { roleId: data.roleId }),
-        ...(data.status === undefined ? {} : { status: data.status }),
-        ...(UUID.test(actorId) ? { updatedBy: actorId } : {}),
-      },
-      select: LIST_SELECT,
+  ): Promise<PlatformUserRow & { readonly adminScopesEnded: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(data.roleId === undefined ? {} : { roleId: data.roleId }),
+          ...(data.status === undefined ? {} : { status: data.status }),
+          ...(UUID.test(actorId) ? { updatedBy: actorId } : {}),
+          // Role and status are authorization: the cached permission set and
+          // any token minted before this write are stale (ADR-046, §2.10).
+          ...(data.roleId === undefined && data.status === undefined
+            ? {}
+            : { authzVersion: { increment: 1 } }),
+        },
+        select: LIST_SELECT,
+      });
+
+      // One model of admin standing (audit F-10): a Platform Admin grant or
+      // a Hospital Admin assignment means something only on an `admin`
+      // account. A demotion ends them in the same transaction, so a grant
+      // never lingers to revive on a later re-promotion, and the database's
+      // last-Platform-Admin invariant judges the demotion and the
+      // revocation together at COMMIT.
+      let adminScopesEnded = 0;
+      if (data.roleId !== undefined && updated.role.code !== 'admin') {
+        const now = new Date();
+        const revokedBy = UUID.test(actorId) ? actorId : null;
+        adminScopesEnded += (
+          await tx.platformAdminGrant.updateMany({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: now, ...(revokedBy === null ? {} : { revokedBy }) },
+          })
+        ).count;
+        adminScopesEnded += (
+          await tx.hospitalRoleAssignment.updateMany({
+            where: { userId, revokedAt: null, role: { is: { code: 'admin' } } },
+            data: { revokedAt: now },
+          })
+        ).count;
+      }
+
+      return { ...updated, adminScopesEnded };
     });
   }
 
@@ -155,6 +202,11 @@ export class PlatformUserRepository {
    * account being used right now. `RefreshService` refuses a non-ACTIVE
    * account as a second line of defence; this is the first.
    */
+  /** Live sessions of an account — what a role change is about to end. */
+  liveSessionCount(userId: string): Promise<number> {
+    return this.prisma.db.session.count({ where: { userId, revokedAt: null } });
+  }
+
   async revokeSessions(userId: string): Promise<number> {
     const result = await this.prisma.db.session.updateMany({
       where: { userId, revokedAt: null },

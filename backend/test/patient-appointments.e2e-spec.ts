@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -225,17 +227,33 @@ describe('GET /me/appointments', () => {
     const pt = await linkTo(session, 0);
     await seedAppointment(pt, new Date('2026-10-01T09:00:00Z'));
 
+    // The zone served is the clinic's configured one: `platform_settings`
+    // `localization.timezone`, a single global row. It is read around the
+    // request rather than assumed to be the seed's UTC, because
+    // `platform-settings.e2e-spec` writes that row mid-run (and restores
+    // it only in its afterAll) while this file runs in parallel against the
+    // same database.
+    const storedZone = async (): Promise<string> => {
+      const row = await harness.prisma.platformSetting.findUnique({
+        where: { key: 'localization' },
+      });
+      const zone = (row?.value as { timezone?: unknown } | undefined)?.timezone;
+      return typeof zone === 'string' && zone.length > 0 ? zone : 'UTC';
+    };
+    const before = await storedZone();
+
     const response = await request(harness.server)
       .get(APPOINTMENTS)
       .set('Authorization', `Bearer ${session.token}`)
       .expect(200);
 
+    const after = await storedZone();
     const page = dataOf<{ items: { startsAt: string; status: string }[]; clinicTimezone: string }>(
       response,
     );
 
     expect(page.items[0]!.startsAt).toBe('2026-10-01T09:00:00.000Z');
-    expect(page.clinicTimezone).toBe('UTC');
+    expect([before, after]).toContain(page.clinicTimezone);
     // ADR-023: the wire vocabulary, never the Prisma member name.
     expect(page.items[0]!.status).toBe('confirmed');
   });
@@ -349,8 +367,23 @@ describe('GET /me/appointments/:id', () => {
     // the actor would make the assertion below pass for the wrong
     // reason. An administrator who touched the booking appears nowhere
     // else, so their name is a clean probe for the leak.
-    const actor = await harness.prisma.user.findFirstOrThrow({
-      where: { role: { code: 'admin' } },
+    // This suite's own administrator, with a name no other row carries:
+    // "any admin" raced other suites' fixtures, some of which share the
+    // treating doctor's display name and made the probe meaningless.
+    const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
+    const tag = randomUUID().slice(0, 8);
+    const actor = await harness.prisma.user.create({
+      data: {
+        publicId: `usr_apptprobe_${tag}`,
+        firstName: 'Probe',
+        lastName: `Admin ${tag}`,
+        displayName: `Probe Admin ${tag}`,
+        email: testEmail(`appt-probe-admin-${tag}`),
+        phone: '+1 555 000 0003',
+        roleId: adminRole.id,
+        termsAcceptedAt: new Date(),
+        privacyAcceptedAt: new Date(),
+      },
     });
 
     await harness.prisma.db.appointmentEvent.create({

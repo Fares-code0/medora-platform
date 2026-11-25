@@ -23,7 +23,12 @@ import {
   registrationBody,
   testEmail,
 } from './support/auth-app';
-import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import {
+  createTestDoctor,
+  destroyTestDoctor,
+  employTestDoctor,
+  type DoctorRecord,
+} from './support/doctor-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -433,6 +438,8 @@ describe('the doctor photo on the patient surfaces (§3, §4)', () => {
         practiceStatus: 'ACTIVE',
       },
     });
+    // And employed (L6): the patient directory offers only employed doctors.
+    await employTestDoctor(harness.prisma, doctor.id);
 
     records = await createPatientRecords(harness.prisma, TAG, 1);
     const record = records[0]!;

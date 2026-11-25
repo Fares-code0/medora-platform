@@ -30,7 +30,9 @@ import { Injectable } from '@nestjs/common';
 
 import { AppException } from '../../../common/errors/app.exception';
 import { WaitingStatus } from '../../../generated/prisma/enums';
-import { isUniqueViolation } from '../../../shared/database';
+import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { TenantContextResolver } from '../../../shared/authz';
+import { isUniqueViolation, runAsSystem } from '../../../shared/database';
 import { maskMrn } from '../../../shared/phi';
 import {
   HOLIDAY_KIND_FROM_WIRE,
@@ -83,7 +85,21 @@ function minutesSince(at: Date, now: Date): number {
 
 @Injectable()
 export class OperationsService {
-  constructor(private readonly operations: OperationsRepository) {}
+  constructor(
+    private readonly operations: OperationsRepository,
+    private readonly tenants: TenantContextResolver,
+  ) {}
+
+  /**
+   * The operator's hospital (F-01, OD-07): a Hospital Admin's assignment or
+   * a receptionist's affiliation. The queue and the waiting room are a
+   * hospital's own; a caller without one is refused.
+   */
+  private async hospitalOf(user: AuthenticatedUser): Promise<string> {
+    const tenant = await runAsSystem(() => this.tenants.resolve(user));
+    if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
+    throw AppException.forbidden('The queue and waiting room are a hospital function', 'hospital_scope_required');
+  }
 
   /* ── M23.3 — schedule ──────────────────────────────────────── */
 
@@ -198,8 +214,8 @@ export class OperationsService {
 
   /* ── M23.4 — queue and waiting room ────────────────────────── */
 
-  async queue(now: Date = new Date()) {
-    return (await this.operations.queue()).map((row) => toQueueView(row, now));
+  async queue(user: AuthenticatedUser, now: Date = new Date()) {
+    return (await this.operations.queue(await this.hospitalOf(user))).map((row) => toQueueView(row, now));
   }
 
   /**
@@ -210,35 +226,37 @@ export class OperationsService {
    * because `queue_entries` has no status column — the queue *is* the
    * set of people still waiting.
    */
-  async advance(id: string): Promise<void> {
-    const entry = await this.operations.queueEntry(id);
+  async advance(user: AuthenticatedUser, id: string): Promise<void> {
+    const hospitalId = await this.hospitalOf(user);
+    const entry = await this.operations.queueEntry(id, hospitalId);
 
     if (entry === null) throw AppException.notFound('Queue entry not found');
 
-    await this.operations.removeFromQueue(id);
+    await this.operations.removeFromQueue(id, hospitalId);
   }
 
-  async assignRoom(id: string, roomId: string, now: Date = new Date()) {
-    const row = await this.operations.assignRoom(id, roomId);
+  async assignRoom(user: AuthenticatedUser, id: string, roomId: string, now: Date = new Date()) {
+    const row = await this.operations.assignRoom(id, roomId, await this.hospitalOf(user));
 
     if (row === null) throw AppException.notFound('Queue entry not found');
 
     return toQueueView(row, now);
   }
 
-  async removeFromQueue(id: string): Promise<void> {
-    if ((await this.operations.removeFromQueue(id)) === 0) {
+  async removeFromQueue(user: AuthenticatedUser, id: string): Promise<void> {
+    if ((await this.operations.removeFromQueue(id, await this.hospitalOf(user))) === 0) {
       throw AppException.notFound('Queue entry not found');
     }
   }
 
-  async waitingRoom(now: Date = new Date()) {
-    return (await this.operations.waitingRoom()).map((row) => toWaitingView(row, now));
+  async waitingRoom(user: AuthenticatedUser, now: Date = new Date()) {
+    return (await this.operations.waitingRoom(await this.hospitalOf(user))).map((row) => toWaitingView(row, now));
   }
 
   /** `call` moves `waiting → called`; `seat` moves `called → in-room`. */
-  async moveWaiting(id: string, action: 'call' | 'seat', now: Date = new Date()) {
-    const entry = await this.operations.waitingEntry(id);
+  async moveWaiting(user: AuthenticatedUser, id: string, action: 'call' | 'seat', now: Date = new Date()) {
+    const hospitalId = await this.hospitalOf(user);
+    const entry = await this.operations.waitingEntry(id, hospitalId);
 
     if (entry === null) throw AppException.notFound('Waiting-room entry not found');
 
@@ -254,7 +272,7 @@ export class OperationsService {
       );
     }
 
-    const moved = await this.operations.transitionWaiting(id, expected, target);
+    const moved = await this.operations.transitionWaiting(id, expected, target, hospitalId);
 
     // Zero means another operator moved the row between the read and the
     // write: the same 409, reached by the compare-and-set rather than by
@@ -266,7 +284,7 @@ export class OperationsService {
       );
     }
 
-    const updated = await this.operations.waitingEntry(id);
+    const updated = await this.operations.waitingEntry(id, hospitalId);
 
     return toWaitingView(updated ?? entry, now);
   }

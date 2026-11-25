@@ -5,9 +5,12 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
@@ -98,6 +101,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   return dataOf<SessionPayload>(
     await request(harness.server)
@@ -211,7 +216,7 @@ async function prescribeFromRecord(
 
 beforeAll(async () => {
   harness = await createAuthHarness('rx-record-link');
-  sweeper = harness.app.get(PrescriptionSweepService);
+  sweeper = asJob(harness.app.get(PrescriptionSweepService));
 
   amoxilId = (
     await harness.prisma.medication.findFirstOrThrow({
@@ -234,6 +239,15 @@ afterAll(async () => {
     // CASCADE and the rows would otherwise outlive nothing.
     await harness.prisma.prescription.deleteMany({ where: owned });
     await harness.prisma.medicalRecord.deleteMany({ where: owned });
+    await purgeHospitalRecords(
+      harness.prisma,
+      (
+        await harness.prisma.patient.findMany({
+          where: { publicId: { in: createdCharts } },
+          select: { id: true },
+        })
+      ).map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({
       where: { publicId: { in: createdCharts } },
     });

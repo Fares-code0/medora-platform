@@ -16,6 +16,7 @@ function serviceWith(overrides: Partial<HospitalContextRepository> = {}): Hospit
   const repository: HospitalContextRepository = {
     activeDoctorEmploymentHospitals: vi.fn().mockResolvedValue([]),
     activeHospitalAdminHospitals: vi.fn().mockResolvedValue([]),
+    hasActivePlatformAdminGrant: vi.fn().mockResolvedValue(false),
     ...overrides,
   };
   return new HospitalContextService(repository);
@@ -102,6 +103,25 @@ describe('HospitalContextService shadow resolution', () => {
       kind: 'unresolved',
       reason: 'admin_scope_not_mapped',
     });
+  });
+
+  it('derives platform scope only from an explicit platform grant, never clinical', async () => {
+    await expect(
+      serviceWith({ hasActivePlatformAdminGrant: vi.fn().mockResolvedValue(true) }).resolve(
+        user('admin'),
+      ),
+    ).resolves.toEqual({ kind: 'platform', clinicalDataAccess: false });
+  });
+
+  it('gives no scope to an administrator holding both a platform grant and a hospital', async () => {
+    await expect(
+      serviceWith({
+        hasActivePlatformAdminGrant: vi.fn().mockResolvedValue(true),
+        activeHospitalAdminHospitals: vi
+          .fn()
+          .mockResolvedValue([{ id: 'hospital-a', name: 'North Hospital' }]),
+      }).resolve(user('admin')),
+    ).resolves.toEqual({ kind: 'unresolved', reason: 'ambiguous_hospital_admin_scope' });
   });
 
   it('keeps patient context unresolved until a resource is known', async () => {

@@ -42,7 +42,10 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AppException } from '../../common/errors/app.exception';
+import { runAsSystem } from '../database';
 import {
+  type ClinicalEmployment,
+  type ClinicalReach,
   PATIENT_ASSIGNMENT_REPOSITORY,
   type PatientAssignmentRepository,
   type Principal,
@@ -78,7 +81,9 @@ export class PatientScopeService {
     // still propagates from here, before any shadow work starts.
     const allowed =
       principal.roleCode === 'doctor'
-        ? await this.assignments.isAssigned(principal.userId, patientId)
+        ? // The DR-05 check itself reads the patient's records across the
+          // tenant boundary it decides: a trusted `system`-scope lookup.
+          await runAsSystem(() => this.assignments.reachesPatient(principal.userId, patientId))
         : false;
 
     // Started, never awaited: the decision above is returned at once, however
@@ -148,5 +153,39 @@ export class PatientScopeService {
     // distinguish "not yours" from "does not exist" (MG §11.6 also
     // forbids PHI in error messages).
     throw AppException.notFound('Patient not found');
+  }
+
+  /**
+   * `assertCanReach`, returning where the reach holds (audit F-01): the
+   * doctor's clinical hospital and the patient's record there. A clinical
+   * read filters every row by `hospitalId`; a clinical write is stamped with
+   * both. Same 404 as `assertCanReach` otherwise.
+   */
+  async reachAt(principal: Principal, patientId: string): Promise<ClinicalReach> {
+    const reach =
+      principal.roleCode === 'doctor'
+        ? await runAsSystem(() => this.assignments.clinicalReach(principal.userId, patientId))
+        : null;
+    this.observeShadow(principal, patientId, reach !== null);
+    if (reach !== null) return reach;
+    throw AppException.notFound('Patient not found');
+  }
+
+  /**
+   * The hospital a doctor's clinical lists are scoped to, or `null` (no
+   * unambiguous clinical standing: such a list is empty, never unscoped).
+   */
+  async clinicalHospitalOf(principal: Principal): Promise<string | null> {
+    if (principal.roleCode !== 'doctor') return null;
+    return runAsSystem(() => this.assignments.clinicalHospital(principal.userId));
+  }
+
+  /**
+   * The employment behind `clinicalHospitalOf` — the scope of the doctor's
+   * own reports (S4) — or `null` without unambiguous clinical standing.
+   */
+  async clinicalEmployment(principal: Principal): Promise<ClinicalEmployment | null> {
+    if (principal.roleCode !== 'doctor') return null;
+    return runAsSystem(() => this.assignments.clinicalEmployment(principal.userId));
   }
 }

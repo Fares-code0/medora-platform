@@ -185,6 +185,21 @@ model User {
   clinicHoursCreated ClinicOperatingHour[] @relation("ClinicOperatingHourCreatedBy")
   clinicHoursUpdated ClinicOperatingHour[] @relation("ClinicOperatingHourUpdatedBy")
 
+  /// Authorization freshness (ADR-046 rev.). Bumped in the same transaction
+  /// as any change to this account's role, status, permission overrides,
+  /// hospital membership or doctor lifecycle state. Part of the permission
+  /// cache key, so a cached effective set can never outlive the change.
+  authzVersion Int @default(0) @map("authz_version")
+  exceptionalAccessRequested ExceptionalAccessGrant[] @relation("ExceptionalAccessRequester")
+  exceptionalAccessDecided   ExceptionalAccessGrant[] @relation("ExceptionalAccessApprover")
+  exceptionalAccessReviewed  ExceptionalAccessGrant[] @relation("ExceptionalAccessReviewer")
+  informationRequestsMade    InformationRequest[]     @relation("InformationRequester")
+  informationRequestsDecided InformationRequest[]     @relation("InformationDecider")
+  ownershipAssignments       OwnershipAssignment[]
+  platformAdminGrants        PlatformAdminGrant[]     @relation("PlatformAdminGrantee")
+  platformAdminGrantsGiven   PlatformAdminGrant[]     @relation("PlatformAdminGranter")
+  platformAdminGrantsRevoked PlatformAdminGrant[]     @relation("PlatformAdminRevoker")
+
   @@map("users")
 }
 

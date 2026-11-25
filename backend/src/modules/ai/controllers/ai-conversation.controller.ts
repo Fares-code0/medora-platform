@@ -14,7 +14,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import type { AiConversationDetailView, AiConversationView } from '../dto/ai.dto';
 import {
   createConversationSchema,
@@ -52,6 +52,7 @@ export class AiConversationController {
   constructor(private readonly conversations: AiConversationService) {}
 
   /** API §11.1 — `GET /ai/conversations?q=&favorite=`. */
+  @PhiRead('ai_conversation_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -61,6 +62,7 @@ export class AiConversationController {
   }
 
   /** API §11.2 — one thread with its turns. */
+  @PhiRead('ai_conversation')
   @Get(':conversationId')
   detail(
     @CurrentUser() user: AuthenticatedUser,

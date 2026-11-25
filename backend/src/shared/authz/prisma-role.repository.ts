@@ -26,7 +26,14 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../database';
-import type { PermissionOverrides, RoleRepository } from './authz.types';
+import { DoctorVerificationStatus } from '../../generated/prisma/enums';
+import type {
+  PermissionOverrides,
+  RoleRepository,
+  Standing,
+  StandingKind,
+} from './authz.types';
+import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
 import { isPermission, type Permission } from './permission-catalogue';
 
 /**
@@ -109,6 +116,15 @@ export class PrismaRoleRepository implements RoleRepository {
    * Soft-deleted users are excluded by the middleware of M4.2, so a
    * departed account does not keep a cache entry alive.
    */
+  async baseRoleCodeOf(roleCode: string): Promise<string | null> {
+    const row = await this.prisma.db.role.findUnique({
+      where: { code: roleCode },
+      select: { baseRole: { select: { code: true } } },
+    });
+
+    return row?.baseRole?.code ?? null;
+  }
+
   async userIdsWithRole(roleCode: string): Promise<readonly string[]> {
     const rows = await this.prisma.db.user.findMany({
       where: { role: { code: roleCode } },
@@ -116,5 +132,67 @@ export class PrismaRoleRepository implements RoleRepository {
     });
 
     return rows.map((row) => row.id);
+  }
+
+  /** See `RoleRepository.standingOf`. Two indexed reads at most. */
+  async standingOf(userId: string, kind: StandingKind, hospitalId?: string): Promise<Standing> {
+    return kind === 'doctor' ? this.doctorStanding(userId, hospitalId) : this.staffStanding(userId, hospitalId);
+  }
+
+  /** See `RoleRepository.roleHospitalOf`. */
+  async roleHospitalOf(roleCode: string): Promise<string | null> {
+    const row = await this.prisma.db.role.findUnique({ where: { code: roleCode }, select: { hospitalId: true } });
+    return row?.hospitalId ?? null;
+  }
+
+  private async doctorStanding(userId: string, hospitalId?: string): Promise<Standing> {
+    const doctor = await this.prisma.db.doctor.findUnique({
+      where: { userId },
+      select: {
+        deletedAt: true,
+        verificationStatus: true,
+        practiceStatus: true,
+        employments: {
+          select: { endedAt: true, hospitalId: true, hospital: { select: { status: true, deletedAt: true } } },
+          orderBy: { startedAt: 'desc' },
+          take: 2,
+        },
+      },
+    });
+    if (doctor === null || doctor.deletedAt !== null) return 'restricted';
+
+    const active = doctor.employments.find((employment) => employment.endedAt === null);
+    // Ever employed and nothing active: terminated (§2.6). Never employed
+    // follows the unverified policy instead — restricted, not terminated.
+    if (active === undefined) return doctor.employments.length > 0 ? 'terminated' : 'restricted';
+
+    const hospitalActive =
+      active.hospital.status === ACTIVE_HOSPITAL_FILTER.status && active.hospital.deletedAt === null;
+    // A hospital-bound custom role (F-17): only at its own hospital.
+    const atRoleHospital = hospitalId === undefined || active.hospitalId === hospitalId;
+    const clinical =
+      hospitalActive &&
+      atRoleHospital &&
+      doctor.verificationStatus === DoctorVerificationStatus.VERIFIED &&
+      CLINICAL_PRACTICE_STATUSES.includes(doctor.practiceStatus);
+
+    return clinical ? 'clinical' : 'restricted';
+  }
+
+  private async staffStanding(userId: string, hospitalId?: string): Promise<Standing> {
+    const affiliations = await this.prisma.db.hospitalStaffAffiliation.findMany({
+      where: { staff: { is: { userId, deletedAt: null } } },
+      select: { endedAt: true, hospitalId: true, hospital: { select: { status: true, deletedAt: true } } },
+      orderBy: { startedAt: 'desc' },
+      take: 2,
+    });
+    const active = affiliations.find((affiliation) => affiliation.endedAt === null);
+    if (active === undefined) return affiliations.length > 0 ? 'terminated' : 'restricted';
+
+    return active.hospital.status === ACTIVE_HOSPITAL_FILTER.status &&
+      active.hospital.deletedAt === null &&
+      (hospitalId === undefined || active.hospitalId === hospitalId)
+      ? 'clinical'
+      : 'restricted';
   }
 }

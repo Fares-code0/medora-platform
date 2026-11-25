@@ -10,6 +10,8 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -91,6 +93,8 @@ async function signUpDoctor(local: string): Promise<{ auth: string; userId: stri
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing (F-09): outside it, this route is refused.
+  await makeClinicalDoctor(harness.prisma, email);
 
   const auth = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -124,6 +128,7 @@ async function signUpAdmin(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),

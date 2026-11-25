@@ -3,11 +3,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { IdempotencyStore } from '../src/shared/idempotency';
 import {
+  asJob,
   type AuthHarness,
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -49,6 +52,8 @@ async function signIn(local: string): Promise<Account> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server)
@@ -135,6 +140,14 @@ afterAll(async () => {
     const owned = { patient: { publicId: { in: charts } } };
     await harness.prisma.patientMedication.deleteMany({ where: owned });
     await harness.prisma.prescription.deleteMany({ where: owned });
+    const rows = await harness.prisma.patient.findMany({
+      where: { publicId: { in: charts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      rows.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
   }
 
@@ -332,7 +345,9 @@ describe('failures, concurrency and expiry', () => {
       data: { expiresAt: new Date(Date.now() - 1_000) },
     });
 
-    expect(await store.purgeExpired()).toBeGreaterThanOrEqual(1);
+    // As JobRunnerService runs the sweep: under explicit `system` scope
+    // (idempotency_records is owner-scoped under RLS, M1).
+    expect(await asJob(store).purgeExpired()).toBeGreaterThanOrEqual(1);
 
     const keys = (
       await harness.prisma.idempotencyRecord.findMany({

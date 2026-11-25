@@ -6,9 +6,12 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
+  soleRecordOf,
 } from './support/auth-app';
 
 /**
@@ -86,6 +89,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   return dataOf<SessionPayload>(
     await request(harness.server)
@@ -197,6 +202,14 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    const rows = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      rows.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -448,6 +461,7 @@ describe('RM M13.4 verify — renew copies the source Rx correctly', () => {
     });
     await harness.prisma.patientAllergy.create({
       data: {
+        ...(await soleRecordOf(harness.prisma, patient.id)),
         patientId: patient.id,
         allergen: 'Penicillin',
         severity: 'SEVERE',

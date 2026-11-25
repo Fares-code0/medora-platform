@@ -85,9 +85,15 @@ export class RolesRepository {
    * every active user's id into memory to take `.length`, which is a
    * table scan per role on a real roster.
    */
-  async roles(): Promise<readonly RoleRow[]> {
+  /**
+   * `hospitalId` set (a Hospital Admin, F-17): the system roles and that
+   * hospital's own custom roles only, with member counts limited to people
+   * working there — no other hospital's roles or headcounts.
+   */
+  async roles(hospitalId?: string): Promise<readonly RoleRow[]> {
     const [rows, counts] = await Promise.all([
       this.prisma.db.role.findMany({
+        ...(hospitalId === undefined ? {} : { where: { OR: [{ hospitalId: null }, { hospitalId }] } }),
         select: {
           id: true,
           code: true,
@@ -97,7 +103,7 @@ export class RolesRepository {
         },
         orderBy: { code: 'asc' },
       }),
-      this.memberCountsByRoleId(),
+      this.memberCountsByRoleId(hospitalId),
     ]);
 
     return rows.map((row) => {
@@ -125,11 +131,12 @@ export class RolesRepository {
    * `activeMembers <= members` holds by construction rather than by
    * timing.
    */
-  private async memberCountsByRoleId(): Promise<
-    Readonly<Record<string, { members: number; activeMembers: number }>>
-  > {
+  private async memberCountsByRoleId(
+    hospitalId?: string,
+  ): Promise<Readonly<Record<string, { members: number; activeMembers: number }>>> {
     const grouped = await this.prisma.db.user.groupBy({
       by: ['roleId', 'status'],
+      ...(hospitalId === undefined ? {} : { where: worksAt(hospitalId) }),
       _count: { _all: true },
     });
 
@@ -142,6 +149,11 @@ export class RolesRepository {
     }
 
     return counts;
+  }
+
+  /** Whether the account works at `hospitalId` now (employment, affiliation or admin assignment). */
+  async worksAt(userId: string, hospitalId: string): Promise<boolean> {
+    return (await this.prisma.db.user.count({ where: { id: userId, ...worksAt(hospitalId) } })) > 0;
   }
 
   findRoleByCode(code: string): Promise<{ id: string; code: string; isSystem: boolean } | null> {
@@ -278,6 +290,15 @@ export class RolesRepository {
       });
       await tx.rolePermission.createMany({ data: rows });
 
+      // Every member of an edited role gets a new authorization version in
+      // this transaction, so a permission set cached before the edit is
+      // never served again (multi-hospital §2.9), even if the cache
+      // eviction that follows the commit fails.
+      await tx.user.updateMany({
+        where: { role: { code: { in: Object.keys(input.grid) } } },
+        data: { authzVersion: { increment: 1 } },
+      });
+
       const saved = await tx.permissionMatrixState.findUniqueOrThrow({
         where: { id: MATRIX_STATE_ID },
         select: { revision: true, updatedAt: true, updater: { select: { publicId: true } } },
@@ -291,11 +312,20 @@ export class RolesRepository {
     });
   }
 
+  async hospitalIsActive(hospitalId: string): Promise<boolean> {
+    const row = await this.prisma.db.hospital.findFirst({
+      where: { id: hospitalId, status: 'ACTIVE', deletedAt: null },
+      select: { id: true },
+    });
+    return row !== null;
+  }
+
   /** Creates a custom role carrying a copy of the template's bundle. */
   async createFromTemplate(input: {
     readonly code: string;
     readonly label: string;
     readonly baseRoleId: string;
+    readonly hospitalId: string;
     readonly actorId: string;
   }): Promise<RoleRow> {
     return this.prisma.$transaction(async (tx) => {
@@ -304,6 +334,7 @@ export class RolesRepository {
           code: input.code,
           label: input.label,
           baseRoleId: input.baseRoleId,
+          hospitalId: input.hospitalId,
           // `is_system` false is what marks a role an administrator made,
           // and it is what a later "delete this role" would check.
           isSystem: false,
@@ -400,6 +431,24 @@ export class RolesRepository {
         .filter((row): row is NonNullable<typeof row> => row !== null);
 
       if (rows.length > 0) await tx.userPermission.createMany({ data: rows });
+
+      // Same transaction as the overrides: the cached set is stale the moment
+      // this commits (§2.9).
+      await tx.user.update({
+        where: { id: input.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
     });
   }
+}
+
+/** People working at a hospital now: a doctor's employment, a staff affiliation, an admin assignment. */
+function worksAt(hospitalId: string) {
+  return {
+    OR: [
+      { doctor: { is: { employments: { some: { hospitalId, endedAt: null } } } } },
+      { staffMember: { some: { hospitalAffiliations: { some: { hospitalId, endedAt: null } } } } },
+      { hospitalRoleAssignments: { some: { hospitalId, revokedAt: null } } },
+    ],
+  };
 }

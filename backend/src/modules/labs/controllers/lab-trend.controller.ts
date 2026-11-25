@@ -3,7 +3,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import type { LabTrendsView } from '../dto/lab-trend.dto';
 import { labTrendSchema, type LabTrendQuery } from '../dto/lab-order.schema';
 import { LabTrendService } from '../services/lab-trend.service';
@@ -38,6 +38,7 @@ export class LabTrendController {
   constructor(private readonly labTrends: LabTrendService) {}
 
   /** API §8.8 — `?analytes=a,b,c&from=&to=`, at most three. */
+  @PhiRead('lab_trend')
   @Get(':patientId/lab-trends')
   trends(
     @CurrentUser() user: AuthenticatedUser,

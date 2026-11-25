@@ -42,6 +42,10 @@ const EXPECTED_MODULES = [
   'files',
   'search',
   'dashboard',
+  // Multi-hospital §2.2–§2.6: staffing lifecycle and administrative scope.
+  'hospitals',
+  // Multi-hospital §2.11–§2.12: Exceptional Access and information requests.
+  'controlled-access',
 ] as const;
 
 const REQUIRED_SUBFOLDERS = ['controllers', 'services', 'dto', 'repositories'] as const;
@@ -62,7 +66,7 @@ describe('module graph (RM M2)', () => {
     await app.close();
   });
 
-  it('registers all nineteen domain modules', () => {
+  it('registers all twenty-one domain modules', () => {
     expect(DOMAIN_MODULES).toHaveLength(EXPECTED_MODULES.length);
 
     // `app.get(Module)` throws if the module is not in the graph, which

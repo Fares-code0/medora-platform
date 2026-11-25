@@ -88,6 +88,8 @@ export class StepUpService {
     // Deactivated between the password check and the code. Rare, and the
     // one case where a valid code must still not produce a session.
     if (user === null) throw otpInvalid();
+    // L5: suspended or terminated while the challenge was open.
+    await this.login.assertMaySignIn(user, context);
 
     return this.login.establishSession(user, challenge.rememberMe, context);
   }
@@ -137,6 +139,10 @@ export class StepUpService {
 
     const user = await this.identity.findById(challenge.userId);
     if (user === null) throw otpInvalid();
+    // L5, before anything is redeemed: an account suspended or terminated
+    // while the challenge was open is refused without spending one of its
+    // recovery codes (nor the challenge).
+    await this.login.assertMaySignIn(user, context);
 
     const outcome = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT user_id FROM user_credentials WHERE user_id = ${user.id}::uuid FOR UPDATE`;

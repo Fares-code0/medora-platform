@@ -34,6 +34,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { TenantContextResolver } from '../../../shared/authz';
+import { runAsSystem } from '../../../shared/database';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type { AppointmentStatus } from '../../../generated/prisma/enums';
 import { appointmentStatusToWire, STATUS_FROM_WIRE } from '../dto/appointment-enums';
@@ -50,6 +52,7 @@ import type {
 import {
   AppointmentRepository,
   type BookRow,
+  CrossHospitalReassignment,
   type ScheduleTx,
 } from '../repositories/appointment.repository';
 
@@ -89,7 +92,21 @@ export class AppointmentOversightService {
     @Inject(CLINIC_TIMEZONE) private readonly timezone: ClinicTimezoneSource,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(OUTBOX) private readonly outbox: OutboxPort,
+    private readonly tenants: TenantContextResolver,
   ) {}
+
+  /**
+   * The hospital this overseer acts for (F-01, OD-07): a Hospital Admin's
+   * assignment or a staff member's affiliation, from the server's records.
+   * Appointment oversight is a hospital function — a Platform Admin holds no
+   * clinical access, so a caller without a hospital is refused rather than
+   * shown an empty (or, without RLS, every hospital's) book.
+   */
+  private async hospitalOf(user: AuthenticatedUser): Promise<string> {
+    const tenant = await runAsSystem(() => this.tenants.resolve(user));
+    if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
+    throw AppException.forbidden('Appointment oversight is a hospital function', 'hospital_scope_required');
+  }
 
   /**
    * API §5.10 — the cross-doctor table.
@@ -108,8 +125,12 @@ export class AppointmentOversightService {
    * the client can say which number it is rendering rather than
    * guessing.
    */
-  async list(query: OversightListQuery): Promise<PaginatedOversight & { flaggedItems: number }> {
+  async list(
+    user: AuthenticatedUser,
+    query: OversightListQuery,
+  ): Promise<PaginatedOversight & { flaggedItems: number }> {
     const { rows, totalItems } = await this.appointments.oversightList({
+      hospitalId: await this.hospitalOf(user),
       from: query.from,
       to: query.to,
       status: query.status?.map((value) => STATUS_FROM_WIRE[value] as AppointmentStatus),
@@ -144,12 +165,13 @@ export class AppointmentOversightService {
   }
 
   /** API §5.11's administrator strip. */
-  async summary(): Promise<AppointmentAdminSummaryView> {
+  async summary(user: AuthenticatedUser): Promise<AppointmentAdminSummaryView> {
     const now = new Date();
     const weekStart = new Date(now.getTime() - 7 * DAY_MS);
+    const hospitalId = await this.hospitalOf(user);
     const [admin, doctorless] = await Promise.all([
-      this.appointments.adminSummary({ weekStart, now }),
-      this.appointments.platformCounts({ now }),
+      this.appointments.adminSummary({ weekStart, now, hospitalId }),
+      this.appointments.platformCounts({ now, hospitalId }),
     ]);
 
     return {
@@ -189,7 +211,7 @@ export class AppointmentOversightService {
     publicId: string,
     input: NudgeInput,
   ): Promise<OversightAppointmentView> {
-    const row = await this.require(publicId);
+    const row = await this.require(user, publicId);
 
     // Only a row that is waiting on someone can be nudged. Nudging a
     // completed appointment would send a patient a reminder for a visit
@@ -272,7 +294,8 @@ export class AppointmentOversightService {
     publicId: string,
     input: ReassignInput,
   ): Promise<OversightAppointmentView> {
-    const row = await this.require(publicId);
+    const overseerHospital = await this.hospitalOf(user);
+    const row = await this.require(user, publicId);
 
     if (appointmentStatusMachine.isTerminal(row.status)) {
       throw AppException.conflict(
@@ -291,6 +314,17 @@ export class AppointmentOversightService {
     const receiving = await this.appointments.doctorSummary(input.doctorId);
     if (receiving === null) {
       throw AppException.validation({ doctorId: ['Unknown doctor'] }, 'No such doctor');
+    }
+
+    // F-07, before anything else about the receiving doctor: they must
+    // practise at this appointment's hospital. Asked first, so the answer
+    // does not depend on whether their schedule elsewhere is visible.
+    if (!(await this.appointments.practisesAt(receiving.id, overseerHospital))) {
+      throw AppException.validation(
+        { doctorId: ['The receiving doctor does not practise at this appointment’s hospital'] },
+        'Reassignment cannot cross hospitals; cancel and rebook instead',
+        'cross_hospital_reassignment',
+      );
     }
 
     if (receiving.specialty !== row.doctor.specialty) {
@@ -314,10 +348,9 @@ export class AppointmentOversightService {
     // slot between this check and the write, landing the appointment on
     // the receiving doctor at a time nobody checked. Both are locked in
     // one statement in id order, and the row is read again under them.
-    const moved = await this.conflicts.underScheduleLock(
-      [row.doctor.id, receiving.id],
-      async (tx) => {
-        const locked = await this.appointments.findAny(publicId, tx);
+    const moved = await this.conflicts
+      .underScheduleLock([row.doctor.id, receiving.id], async (tx) => {
+        const locked = await this.appointments.findAny(publicId, overseerHospital, tx);
         if (locked === null) throw notFound();
 
         if (
@@ -340,8 +373,20 @@ export class AppointmentOversightService {
           },
           tx,
         );
-      },
-    );
+      })
+      .catch((error: unknown) => {
+        // F-07: an appointment belongs to its hospital for good. A doctor
+        // who does not practise there cannot receive it; the booking is
+        // cancelled and the patient rebooked at the other hospital.
+        if (error instanceof CrossHospitalReassignment) {
+          throw AppException.validation(
+            { doctorId: ['The receiving doctor does not practise at this appointment’s hospital'] },
+            'Reassignment cannot cross hospitals; cancel and rebook instead',
+            'cross_hospital_reassignment',
+          );
+        }
+        throw error;
+      });
 
     if (moved === null) {
       throw AppException.conflict(
@@ -395,7 +440,7 @@ export class AppointmentOversightService {
     publicId: string,
     input: AdministrativeCancelInput,
   ): Promise<OversightAppointmentView> {
-    const row = await this.require(publicId);
+    const row = await this.require(user, publicId);
 
     appointmentStatusMachine.assert(row.status, 'CANCELLED');
 
@@ -470,8 +515,8 @@ export class AppointmentOversightService {
     });
   }
 
-  private async require(publicId: string): Promise<BookRow> {
-    const row = await this.appointments.findAny(publicId);
+  private async require(user: AuthenticatedUser, publicId: string): Promise<BookRow> {
+    const row = await this.appointments.findAny(publicId, await this.hospitalOf(user));
     if (row === null) throw notFound();
 
     return row;

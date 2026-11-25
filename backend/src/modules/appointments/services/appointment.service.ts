@@ -60,7 +60,11 @@ import type {
   RejectAppointmentInput,
   RescheduleAppointmentInput,
 } from '../dto/appointment.schema';
-import { AppointmentRepository, type BookRow } from '../repositories/appointment.repository';
+import {
+  AppointmentRepository,
+  AppointmentUnattributable,
+  type BookRow,
+} from '../repositories/appointment.repository';
 
 import { assertSlotDateArrived, appointmentStatusMachine } from './appointment-status.machine';
 import { civilDate, civilMoment } from './clinic-calendar';
@@ -146,8 +150,9 @@ export class AppointmentService {
   async create(user: AuthenticatedUser, input: CreateAppointmentInput): Promise<AppointmentView> {
     const doctorId = await this.requireDoctor(user);
 
-    // The care relationship, before anything is resolved or written.
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    // DR-05, before anything is resolved or written: the patient holds a
+    // record at the doctor's hospital, which the booking is stamped with.
+    await this.scope.reachAt(principalOf(user), input.patientId);
 
     const patient = await this.appointments.patientByPublicId(input.patientId);
     // Unreachable in practice — `assertCanReach` already 404s for a
@@ -209,6 +214,19 @@ export class AppointmentService {
         },
         tx,
       );
+    }).catch((error: unknown) => {
+      // L2: `reachAt` above proved the stamp existed; it is gone only if the
+      // doctor's standing or the patient's record changed in between (an
+      // employment ended, a second one began). A client error that says
+      // the booking was not made — never a 500, and never an unattributed
+      // appointment.
+      if (error instanceof AppointmentUnattributable) {
+        throw AppException.conflict(
+          'The appointment cannot be booked: the doctor has no clinical hospital holding this patient’s record',
+          'conflict',
+        );
+      }
+      throw error;
     });
 
     await this.afterWrite({

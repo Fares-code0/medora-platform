@@ -48,7 +48,7 @@ import {
   type CsvFile,
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type {
@@ -80,6 +80,7 @@ import {
   LabOrderRepository,
   type DetailRow,
   type LabOrderCriteria,
+  type LabWorklist,
   type SpecimenInput,
 } from '../repositories/lab-order.repository';
 import { LabTestRepository } from '../repositories/lab-test.repository';
@@ -124,6 +125,8 @@ const TRANSITION_EVENT: Record<TransitionLabOrderInput['to'], LabTimelineKind> =
 @Injectable()
 export class LabOrderService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly orders: LabOrderRepository,
     private readonly tests: LabTestRepository,
     private readonly scope: PatientScopeService,
@@ -137,10 +140,10 @@ export class LabOrderService {
     user: AuthenticatedUser,
     query: LabOrderListQuery,
   ): Promise<PaginatedLabOrders> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.orders.list(
-      doctorId,
+      worklist,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -166,10 +169,10 @@ export class LabOrderService {
    * the order's own detail serves.
    */
   async export(user: AuthenticatedUser, query: LabOrderExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.orders.list(
-      doctorId,
+      worklist,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
@@ -178,7 +181,7 @@ export class LabOrderService {
     const now = new Date();
     const body = toCsv(EXPORT_COLUMNS, rows.map((row) => toLabOrderView(row, now)));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'lab_order.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'lab_order',
@@ -205,9 +208,7 @@ export class LabOrderService {
    * so the aggregate discloses nothing the list does not.
    */
   async summary(user: AuthenticatedUser): Promise<LabSummaryView> {
-    const doctorId = await this.requireDoctor(user);
-
-    return this.orders.summaryFor(doctorId);
+    return this.orders.summaryFor(await this.requireWorklist(user));
   }
 
   /**
@@ -413,13 +414,28 @@ export class LabOrderService {
    * there is exactly one place an order is resolved.
    */
   async require(user: AuthenticatedUser, publicId: string): Promise<DetailRow> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.orders.findForDoctor(doctorId, publicId);
+    const row = await this.orders.findForDoctor(await this.requireHospital(user), publicId);
     if (row === null) throw AppException.notFound('Lab order not found');
 
     await this.scope.assertCanReach(principalOf(user), row.patient.publicId);
 
     return row;
+  }
+
+  /**
+   * The doctor's one clinical hospital (F-01); every order read is scoped
+   * to it. No unambiguous standing is the same 404 as no order.
+   */
+  async requireHospital(user: AuthenticatedUser): Promise<string> {
+    await this.requireDoctor(user);
+    const hospitalId = await this.scope.clinicalHospitalOf(principalOf(user));
+    if (hospitalId === null) throw AppException.notFound('Lab order not found');
+    return hospitalId;
+  }
+
+  private async requireWorklist(user: AuthenticatedUser): Promise<LabWorklist> {
+    const [doctorId, hospitalId] = await Promise.all([this.requireDoctor(user), this.requireHospital(user)]);
+    return { doctorId, hospitalId };
   }
 
   async requireDoctor(user: AuthenticatedUser): Promise<string> {

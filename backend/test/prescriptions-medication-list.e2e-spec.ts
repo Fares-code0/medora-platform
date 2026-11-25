@@ -5,9 +5,13 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
+  soleRecordOf,
+  asJob,
 } from './support/auth-app';
 import { PrescriptionSweepService } from '../src/modules/pharmacy/services/prescription-sweep.service';
 
@@ -76,6 +80,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   return dataOf<SessionPayload>(
     await request(harness.server)
@@ -159,6 +165,7 @@ async function medicationList(token: string, patientPublicId: string): Promise<M
 async function giveExternalEntry(patientId: string, name = 'Aspirin (self-reported)'): Promise<void> {
   await harness.prisma.patientMedication.create({
     data: {
+      ...(await soleRecordOf(harness.prisma, patientId)),
       patientId,
       name,
       dosage: '75 mg',
@@ -171,7 +178,7 @@ async function giveExternalEntry(patientId: string, name = 'Aspirin (self-report
 
 beforeAll(async () => {
   harness = await createAuthHarness('rx-medlist');
-  sweeper = harness.app.get(PrescriptionSweepService);
+  sweeper = asJob(harness.app.get(PrescriptionSweepService));
 
   const byName = async (name: string): Promise<string> =>
     (await harness.prisma.medication.findFirstOrThrow({ where: { name }, select: { id: true } }))
@@ -210,6 +217,15 @@ afterAll(async () => {
     await harness.prisma.prescription.deleteMany({
       where: { patient: { publicId: { in: createdCharts } } },
     });
+    await purgeHospitalRecords(
+      harness.prisma,
+      (
+        await harness.prisma.patient.findMany({
+          where: { publicId: { in: createdCharts } },
+          select: { id: true },
+        })
+      ).map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
 
@@ -259,6 +275,7 @@ describe('RM M13.6 verify — signing an Rx adds a patient_medications row', () 
 
     await harness.prisma.patientAllergy.create({
       data: {
+        ...(await soleRecordOf(harness.prisma, patient.id)),
         patientId: patient.id,
         allergen: 'Penicillin',
         severity: 'SEVERE',

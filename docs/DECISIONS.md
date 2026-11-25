@@ -73,9 +73,10 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044, ADR-045 and ADR-046 are registered.
+ADR-044, ADR-045, ADR-046 and ADR-047 are registered.
 
-The next unallocated number is **ADR-047** (ADR-046 was allocated 2026-11-23 to the stale role
+The next unallocated number is **ADR-048** (ADR-047 was allocated 2026-11-23 to multi-hospital
+authorization enforcement after the sweep below found it free on every remote branch; ADR-046 was allocated 2026-11-23 to the stale role
 claim, audit F3, after the sweep below found it free on every remote branch; ADR-045 was allocated
 2026-11-21 to the refresh grace window the same way; ADR-044 was allocated 2026-10-24 to BR-DEC-002
 the same way). Before using it, run the `CLAUDE.md` sweep **and**
@@ -4782,7 +4783,9 @@ schema files are reverted too.
 ## ADR-046 — An Access Token Is Refused Once Its Role Claim Is Stale
 
 **Status:** Proposed (Backend, 2026-11-23) — implemented with audit finding F3 (issue #23); accepted
-when its pull request is approved · **Interprets:** API §1.11 ("permissions are static per session
+when its pull request is approved · **Corrected:** 2026-11-23 by the owner's approved multi-hospital
+decision (#16, §2.10): rule 2 now revokes sessions on a role change, rule 5 is replaced, and rule 6
+is new · **Interprets:** API §1.11 ("permissions are static per session
 (changes apply at next issue)") · **Preserves:** ADR-013, ADR-026, ADR-045, PRE-01 (I4, O-13)
 
 ### Context
@@ -4809,38 +4812,134 @@ the next refresh was open.
    more predicate and no extra query. A mismatch is the same 401 `unauthorized` / "Session expired"
    as any dead session: the client's next move is the same (ADR-013, refresh once), and a stolen token
    gives no way to tell a role change from a revocation.
-2. **The session is not revoked.** The refresh family survives, and the one refresh mints a token for
-   the current role. The change takes effect "at next issue" as API §1.11 says. The difference is
-   that the stale token stops working at once. Deactivation still revokes every session, as before.
+2. **A role change revokes every session and refresh token of the account** (corrected; §2.10).
+   `PlatformUserService.update` revokes on a role change exactly as it does on deactivation, in the
+   request that makes the change, so no token minted for the old role, and no refresh family that
+   could mint one, survives it. Rule 1 stays as an independent defence: a role written out of band
+   (a migration, a support query) still makes the stale token a 401 even though nothing revoked it.
 3. **`@AllowEndedSession()` (logout) is unchanged.** It checks identity only, so a demoted account can
    still sign out.
 4. **`GET /auth/session` resolves the hospital context for the database role**, the role the payload
    reports, so `role`, `activeHospital` and `adminScope` always describe one role.
-5. **Out of scope:** a change to a role's *permission set* (`role_permissions`) or to per-user
-   overrides is not detected by this check. Those still take effect at the next issue, within
-   `JWT_ACCESS_TTL`. Changing that needs a permission version on the token or the session, which is a
-   separate decision (#27, session invalidation).
+5. **Permission changes apply on the next request, without revoking sessions** (corrected; §2.10).
+   Authorization never trusts the token's `permissions` claim: `AuthorizationGuard` resolves the
+   effective set from the database through `PermissionResolver`. Every change that can alter it (a
+   role-matrix save, a per-user override, a role or status change, a doctor's verification or
+   practice status, an invitation's activation) increments `users.authz_version` in the same
+   transaction, and the access-token guard reads the live version with the session row it already
+   reads. The token's claim remains display-only for the client's `useCan()`.
+6. **The permission cache is keyed by user, role and `authz_version`** (`user|role|vN`), and the
+   affected user's entries are evicted after every change. Eviction is the fast path; the key is
+   what makes freshness fail closed. If eviction fails (Redis unreachable), the bumped version
+   still misses the stale entry, and a refreshed token for a new role can never be answered from
+   the old role's cached set (audit A-1).
 
 ### Consequences
 
 - A role change can no longer leave a user with permissions they no longer hold (beyond the request
   already in flight).
-- Every open session of the account sees one 401 and one refresh after a role change. Both web
-  clients already refresh once on a 401 that carried a token.
+- A role change signs the account out everywhere; its next sign-in mints a token for the new role
+  and passes whatever that role's sign-in policy requires (administrator MFA, for instance).
+- An ordinary permission edit costs the subject nothing: same session, same token, a different
+  answer on the next request.
 - An administrator promoted from another role must still pass the administrator MFA policy at the
   next password sign-in. The refresh path is unchanged.
-- Tests: `access-token.guard.spec.ts`, `session-user.service.spec.ts` and
-  `account-security.e2e-spec.ts` ("a role change after token issuance") cover promotion, demotion,
-  the session payload, several concurrent sessions, logout and the unchanged-role path.
+- Tests: `access-token.guard.spec.ts`, `session-user.service.spec.ts`,
+  `permission-resolver.service.spec.ts` and `account-security.e2e-spec.ts` ("a role change after
+  token issuance") cover promotion, demotion, the session payload, several concurrent sessions,
+  logout, the unchanged-role path and the doctor → pharmacy cache regression;
+  `users-account.e2e-spec.ts` covers revocation through the API, and `roles-permissions.e2e-spec.ts`
+  covers an override applying on the next request without revocation.
 
 ### Alternatives rejected
 
 | Alternative | Why not |
 |---|---|
-| Revoke every session on a role change | Signs the user out for an administrative change. Rule 2 gets the same security property with one refresh |
+| Keep the refresh family alive across a role change (this ADR's original rule 2) | Superseded by the owner's decision (§2.10): a role change is the one authorization change that must end every session |
+| Revoke sessions on an ordinary permission edit | The owner's decision applies those on the next request instead; rule 5 makes that safe without a sign-out |
 | Resolve context from the token role and report the token role | Keeps the 15-minute stale-privilege window open, which is the real defect |
-| Re-resolve permissions per request | Contradicts API §1.11. The guards and `useCan()` would then disagree within one token's life |
+| Trust the token's `permissions` claim until the next issue | Not adopted (rule 5). The guard already resolved from the database; the claim is display-only, and `useCan()` may briefly show a control the server then refuses, which fails safe |
 
+---
+
+## ADR-047 — Multi-Hospital Authorization Is Enforced: Standing, Scope, DR-05, Controlled Access and RLS
+
+**Status:** Proposed (Backend + Database, 2026-11-23; reconciled with the implementation after the
+security remediation, 2026-11-25); accepted when its pull request is approved ·
+**Implements:** the owner's approved multi-hospital decisions (#16, comment 7105706963), audit findings
+A-1..A-22 and the remediation findings F-01..F-20, H1, H2, M1, M2, L1, L2, L5, L6 · **Builds on:**
+ADR-046 (as corrected), RLS_DESIGN.md, RLS_BACKEND_CONTRACT.md · **Resolves:** OD-07 (Platform Admin
+mapping), DR-05
+
+### Decision
+
+1. **Effective authorization is server-derived, never claimed.** `PermissionResolver` combines matrix,
+   custom-role bundle and overrides, re-applies locks, then the server policy overlay
+   (`shared/authz/authz-policy.ts`). Each staff category has an **explicit allow-list ceiling** (a new
+   capability is held by no category until listed); administrators hold no standing PHI; platform
+   administration is admin-only. A custom role is hospital-bound: it confers capability only while its
+   holder works at the role's own hospital. The cache is keyed `user|role|authz_version` (ADR-046),
+   and the database enforces G4 for every writer: permission and role writes bump the version, and a
+   role change revokes the account's sessions (migration `20261125103000`).
+2. **Organizational standing gates every doctor and staff member.** A doctor's standing is VERIFIED,
+   ACTIVE or VACATION practice and **exactly one** active employment at an ACTIVE hospital (the
+   database allows no second one). Outside standing — unverified, suspended, never employed, between
+   employments — an account reaches only the routes marked `@OutsideClinicalStanding()` (its own
+   account, profile, security settings, verification documents); every other route, `@Authenticated()`
+   ones included, answers 403 `clinical_standing_required`. Terminated accounts are refused at login,
+   at refresh, and again after the second factor (L5); termination revokes every session in the same
+   transaction. Standing is read live on every request (F-20).
+3. **Platform Admin is explicit (OD-07).** `platform_admin_grants` holds it, exclusive with a Hospital
+   Admin assignment, never self-granted; the database refuses any commit that would leave no effective
+   Platform Admin (F-10). A Platform Admin holds no clinical access: appointment oversight, the queue
+   and waiting room, the record-issue queue and the masked patient directory are hospital functions
+   (`@HospitalScope()`), confined to the caller's hospital, and a Platform Admin is refused there or
+   sees nothing. Hospital Admins act for exactly one hospital.
+4. **DR-05.** A doctor reaches a patient iff the patient has a Hospital Medical Record at the doctor's
+   one clinical hospital; every clinical read by id is filtered to that hospital, and worklists — and
+   the doctor's own reports (analytics, snapshots, insights) — are the doctor's own or live-care rows
+   there. Registration opens the record and the primary care assignment
+   in one transaction with its `patient.create` audit row (L1). Every clinical write — records, lab
+   orders, prescriptions, history, notes, vitals, documents, allergies, alerts, **appointments**, AI and
+   patient-tagged conversations, availability — is stamped with hospital, record and employment from a
+   server source, or refused. An appointment's hospital and record are frozen; reassignment moves it
+   only to another doctor actively employed at the same hospital, and across hospitals is refused (422
+   `cross_hospital_reassignment`: cancel and rebook).
+5. **Controlled cross-hospital access.** Exceptional Access always waits for an independent approval
+   by the target hospital's own Hospital Admin (never the requester, never a Platform Admin); Emergency
+   Override is for doctors in standing only; information requests share only approved items, for a
+   limited time. Administrative message-content access (ADR-006) requires re-authentication, a second
+   administrator's approval and a live, revocable, per-read-audited grant, enforced in RLS as well.
+6. **Audit.** Every successful PHI read writes `phi.read` before the response is released and fails
+   closed; disclosures go through the throwing writer. Ledger events carry `hospital_id`; Hospital
+   Admins read only their hospital's events. The ledger is append-only for the application: no UPDATE
+   or DELETE, partitions owner-only, and **retention (dropping a month) belongs to the audit maintenance
+   role alone** (H1; `DATABASE_ROLES.md` §4).
+7. **RLS is enforced** on 74 tables for a non-owner, NOBYPASSRLS runtime role, with transaction-local
+   context (`app.scope` ∈ hospital/platform/patient/system, `app.hospital_id`, `app.user_id`,
+   `app.patient_id`); anything else, including the `self` scope of a caller with no tenant, fails
+   closed. Only reviewed call sites select `system` (`tenant-scope-callsites.spec.ts`); untrusted input
+   never chooses a scope. The service refuses to start in production on a role that would bypass RLS.
+   FORCE RLS was assessed and not adopted (`RLS_BACKEND_CONTRACT.md`).
+8. **Legacy rows stay isolated** until an evidence-based backfill: invisible to every hospital, and
+   the database refuses to give one an owner without an `ownership_assignments` evidence row (M2). The
+   one exception is the prescription safety screen, which — for a patient the prescriber already
+   reaches — also screens against that patient's legacy allergies and prescriptions, marked as legacy
+   and audited (`legacy_clinical_record.read`; H2, owner decision #17). The dry-run tool proposes owners
+   from evidence only and never writes.
+
+### Consequences and limits
+
+- The permission matrix and per-user overrides are platform-tier; custom roles are hospital-scoped.
+- Break-Glass eligibility is a server rule, not a matrix capability: adding a catalogue capability
+  needs a coordinated frontend change (parity specs), out of this change's scope.
+- Appointment transfer across hospitals and a "primary doctor per patient per hospital" are **not**
+  decided here; both wait for the owner.
+- `satisfaction_surveys`, `patient_access_grants` and `domain_events` have no RLS until their owner
+  decisions are made (`RLS_DESIGN.md` §9).
+- Production steps (not run here): provision the runtime and audit maintenance roles and point the
+  service and the retention schedule at them; delete the dev/test administrator accounts; review and
+  apply the ownership backfill (owner approval required).
 ---
 
 *End of decision register. Backend implementation is under way: M0–M8 complete, plus M7 (authorization, ADR-027) and M9 bar its exit gate. ADR-030 (patient identity) was accepted and implemented on 2026-09-02, and ADR-034 corrected the mobile refresh variant with it. The patient mobile client's Phase 1 foundation landed in PR #88; its branch model is ADR-032. **ADR-035 (2026-09-06) closed public administrator self-registration, enforced `users.status` and administrator MFA at login, made a doctor's professional block required so that verification is reachable, and wired patient registration end to end — closing RA-025.1.** **ADR-036 (2026-09-11) made `/me/profile` one route owned by the users module, which unblocked M9.1–M9.2.** **ADR-037 (2026-09-16) kept billing deferred, recorded the `invoices`/`invoice_lines`/`payments` sketch M17.1 asked for, and fixed the flag-off revenue alternate — leaving RA-037.1 open on the two new enums.** **ADR-038 (2026-09-16) kept payments deferred and shipped no code for them, because unlike the revenue slot there is no contract surface to reserve; it declines to sketch payment *processing* at all and records the six decisions that must precede it as RA-038.1.** **ADR-039 (2026-09-18, owner decision) closed RA-037.1: `invoice_status` is `draft|issued|paid|cancelled` and `payment_method` is `cash|card|insurance`; `partially-paid`, `void`, `disputed` and `transfer` are rejected, and overdue is a derived predicate rather than a stored status. It supersedes ADR-037 §2's proposed values, ships no code, and carries the fifteen decisions that remain before a billing migration as RA-039.1.** **ADR-031 (results release) and ADR-033 (patient appointment actions) remain proposed and awaiting a product/clinical owner.** No patient-readable clinical route may ship until ADR-031 is decided, and no patient appointment *write* route until ADR-033 is.*

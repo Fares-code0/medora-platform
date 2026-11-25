@@ -16,7 +16,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { sendCsv } from '../../../common/http/csv-export';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import type {
   MedicalRecordDetailView,
   MedicalRecordView,
@@ -80,6 +80,7 @@ export class RecordController {
   constructor(private readonly records: RecordService) {}
 
   /** API §6.1. */
+  @PhiRead('medical_record_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -89,6 +90,7 @@ export class RecordController {
   }
 
   /** API §6.10 — the cards. Declared before `:recordId`. */
+  @NotPhi('counts by status; no record content')
   @Get('summary')
   summary(@CurrentUser() user: AuthenticatedUser): Promise<RecordSummaryView> {
     return this.records.summary(user);
@@ -98,6 +100,7 @@ export class RecordController {
    * API §6.10 — the filtered list as CSV. Declared before `:recordId`,
    * for the reason `summary` is. A file, not an envelope.
    */
+  @PhiRead('medical_record_export', { auditedByHandler: true })
   @Get('export')
   async export(
     @CurrentUser() user: AuthenticatedUser,
@@ -108,6 +111,7 @@ export class RecordController {
   }
 
   /** API §6.2 — the full clinical document. */
+  @PhiRead('medical_record', { auditedByHandler: true })
   @Get(':recordId')
   detail(
     @CurrentUser() user: AuthenticatedUser,
@@ -117,6 +121,7 @@ export class RecordController {
   }
 
   /** API §6.10 — one record as a `Field,Value` file, care-scoped like the detail. */
+  @PhiRead('medical_record_export', { auditedByHandler: true })
   @Get(':recordId/export')
   async exportOne(
     @CurrentUser() user: AuthenticatedUser,
@@ -127,6 +132,7 @@ export class RecordController {
   }
 
   /** API §6.8 — the before/after trail. */
+  @PhiRead('medical_record_versions')
   @Get(':recordId/versions')
   versions(
     @CurrentUser() user: AuthenticatedUser,
@@ -219,6 +225,7 @@ export class RecordController {
    * them, through the same care scope, so a stricter rule here would
    * guard nothing.
    */
+  @PhiRead('record_attachment', { auditedByHandler: true })
   @Get(':recordId/attachments/:attachmentId/download')
   attachmentDownload(
     @CurrentUser() user: AuthenticatedUser,

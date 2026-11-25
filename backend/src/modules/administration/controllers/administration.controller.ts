@@ -16,7 +16,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Roles } from '../../../shared/authz';
+import { HospitalScope, NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
   announcementPatchSchema,
   announcementSchema,
@@ -96,12 +96,16 @@ export class AdministrationController {
 
   /* ── M23.1 ─────────────────────────────────────────────────── */
 
+  @NotPhi('hospital operations counts')
+
   @Get('overview')
   clinicOverview() {
     return this.overview.build();
   }
 
   /* ── M23.2 — staff ─────────────────────────────────────────── */
+
+  @NotPhi('staff directory')
 
   @Get('staff')
   listStaff(@Query(zodQuery(pageQuerySchema)) query: PageQuery) {
@@ -126,6 +130,8 @@ export class AdministrationController {
   }
 
   /* ── M23.2 — departments ───────────────────────────────────── */
+
+  @NotPhi('hospital configuration')
 
   @Get('departments')
   listDepartments() {
@@ -154,6 +160,8 @@ export class AdministrationController {
 
   /* ── M23.2 — rooms ─────────────────────────────────────────── */
 
+  @NotPhi('hospital configuration')
+
   @Get('rooms')
   listRooms() {
     return this.directory.listRooms();
@@ -177,6 +185,8 @@ export class AdministrationController {
   }
 
   /* ── M23.2 — resources ─────────────────────────────────────── */
+
+  @NotPhi('hospital configuration')
 
   @Get('resources')
   listResources() {
@@ -205,6 +215,8 @@ export class AdministrationController {
 
   /* ── M23.3 — schedule ──────────────────────────────────────── */
 
+  @NotPhi('hospital configuration')
+
   @Get('working-days')
   workingDays() {
     return this.operations.workingDays();
@@ -222,6 +234,8 @@ export class AdministrationController {
     return this.operations.replaceWorkingWeek(body);
   }
 
+  @NotPhi('hospital configuration')
+
   @Get('holidays')
   holidays() {
     return this.operations.holidays();
@@ -238,6 +252,8 @@ export class AdministrationController {
   deleteHoliday(@Param('id') id: string): Promise<void> {
     return this.operations.deleteHoliday(id);
   }
+
+  @NotPhi('staff rota')
 
   @Get('shifts')
   shifts() {
@@ -264,49 +280,67 @@ export class AdministrationController {
    * class's `@Roles('admin')` (the guard reads `getAllAndOverride`), so this
    * widens these two routes only; every write below stays admin-only.
    */
+  // The queue and the waiting room are a hospital's own (F-01, OD-07): a
+  // Hospital Admin (or a receptionist) reaches them, confined to that
+  // hospital by the service; a Platform Admin is refused there.
   @Roles('admin', 'reception')
+  @HospitalScope()
+  @PhiRead('patient_queue')
   @Get('queue')
-  queue() {
-    return this.operations.queue();
+  queue(@CurrentUser() user: AuthenticatedUser) {
+    return this.operations.queue(user);
   }
 
+  @HospitalScope()
   @Post('queue/:id/advance')
   @HttpCode(HttpStatus.NO_CONTENT)
-  advance(@Param('id') id: string): Promise<void> {
-    return this.operations.advance(id);
+  advance(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<void> {
+    return this.operations.advance(user, id);
   }
 
+  @HospitalScope()
   @Post('queue/:id/assign-room')
   @HttpCode(HttpStatus.OK)
-  assignRoom(@Param('id') id: string, @Body(zodBody(assignRoomSchema)) body: AssignRoomBody) {
-    return this.operations.assignRoom(id, body.roomId);
+  assignRoom(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body(zodBody(assignRoomSchema)) body: AssignRoomBody,
+  ) {
+    return this.operations.assignRoom(user, id, body.roomId);
   }
 
+  @HospitalScope()
   @Post('queue/:id/remove')
   @HttpCode(HttpStatus.NO_CONTENT)
-  removeFromQueue(@Param('id') id: string): Promise<void> {
-    return this.operations.removeFromQueue(id);
+  removeFromQueue(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string): Promise<void> {
+    return this.operations.removeFromQueue(user, id);
   }
 
   @Roles('admin', 'reception')
+  @HospitalScope()
+  @PhiRead('waiting_room')
   @Get('waiting-room')
-  waitingRoom() {
-    return this.operations.waitingRoom();
+  waitingRoom(@CurrentUser() user: AuthenticatedUser) {
+    return this.operations.waitingRoom(user);
   }
 
+  @HospitalScope()
   @Post('waiting-room/:id/call')
   @HttpCode(HttpStatus.OK)
-  call(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'call');
+  call(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.operations.moveWaiting(user, id, 'call');
   }
 
+  @HospitalScope()
   @Post('waiting-room/:id/seat')
   @HttpCode(HttpStatus.OK)
-  seat(@Param('id') id: string) {
-    return this.operations.moveWaiting(id, 'seat');
+  seat(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.operations.moveWaiting(user, id, 'seat');
   }
 
   /* ── M23.5 — announcements, policies, templates ────────────── */
+
+  @NotPhi('hospital announcements')
 
   @Get('announcements')
   announcements(@Query('includeExpired') includeExpired?: string) {
@@ -336,6 +370,8 @@ export class AdministrationController {
     return this.operations.deleteAnnouncement(id);
   }
 
+  @NotPhi('hospital policies')
+
   @Get('policies')
   policies() {
     return this.operations.policies();
@@ -357,6 +393,8 @@ export class AdministrationController {
   deletePolicy(@Param('id') id: string): Promise<void> {
     return this.operations.deletePolicy(id);
   }
+
+  @NotPhi('document templates')
 
   @Get('document-templates')
   templates() {
@@ -395,6 +433,7 @@ export class AdministrationController {
    * a smoke test and mislead the one reader who matters: an
    * administrator deciding whether the platform is healthy.
    */
+  @NotPhi('platform health')
   @Get('platform-status')
   platformStatus(): never {
     throw new AppException(501, {
@@ -410,6 +449,7 @@ export class AdministrationController {
    * The thin recent feed. The full audit surface — filters, export,
    * incident bookmarks — is **M28**.
    */
+  @NotPhi('audit ledger metadata; carries identifiers, never clinical content')
   @Get('audit-events')
   auditEvents(@Query('limit') limit?: string) {
     const parsed = Number.parseInt(limit ?? '25', 10);

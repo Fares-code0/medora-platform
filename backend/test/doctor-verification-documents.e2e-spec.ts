@@ -18,6 +18,7 @@ import {
   patientRegistrationBody,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -143,6 +144,7 @@ async function adminToken(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -250,9 +252,36 @@ describe('POST /me/verification-documents — filing an upload', () => {
 
   it('refuses an upload of another kind', async () => {
     const { token } = await seedDoctor('wrongkind');
-    const fileId = await uploadFile(token, 'patient_document');
 
-    const response = await submit(token, { fileId, kind: 'medical_license' });
+    // Outside clinical standing the upload itself is refused (F-09): an
+    // unverified doctor uploads only what restores their standing.
+    const upload = await request(harness.server)
+      .post(FILES)
+      .set(as(token))
+      .field('kind', 'patient_document')
+      .attach('file', PDF, { filename: `${NAME_PREFIX}chart.pdf`, contentType: 'application/pdf' });
+    expect(upload.status).toBe(403);
+
+    // And an upload of another kind the account already holds still cannot
+    // be filed as a verification document.
+    const me = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: testEmail('wrongkind') },
+      select: { id: true },
+    });
+    const other = await harness.prisma.file.create({
+      data: {
+        storageKey: `test/${NAME_PREFIX}other`,
+        originalName: `${NAME_PREFIX}other.pdf`,
+        mimeType: 'application/pdf',
+        sizeBytes: 16n,
+        checksumSha256: '0'.repeat(64),
+        kind: 'patient_document',
+        uploadedBy: me.id,
+      },
+      select: { id: true },
+    });
+
+    const response = await submit(token, { fileId: other.id, kind: 'medical_license' });
 
     expect(response.status).toBe(422);
   });
@@ -488,6 +517,39 @@ describe('GET /me/verification-documents — what the doctor has filed', () => {
       decision: 'rejected',
       rejectReason: 'The scan is cut off at the seal',
     });
+  });
+});
+
+describe('GET /files/:id — a verification document follows the live permission set (A-3)', () => {
+  it('refuses an administrator on the next request after doctors.verify is revoked', async () => {
+    const reviewer = await adminToken('livereviewer');
+    const owner = await adminToken('liveowner');
+    const doctor = await seedDoctor('livedoc');
+    const fileId = await uploadFile(doctor.token);
+    const filed = await submit(doctor.token, { fileId, kind: 'medical_license' });
+    expect(filed.status, JSON.stringify(filed.body)).toBe(201);
+
+    const before = await request(harness.server).get(`${FILES}/${fileId}`).set(as(reviewer));
+    expect(before.status).toBe(200);
+
+    const reviewerUser = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: testEmail('livereviewer') },
+      select: { publicId: true },
+    });
+    const revoked = await request(harness.server)
+      .put(`/api/v1/users/${reviewerUser.publicId}/permissions`)
+      .set(as(owner))
+      .send({ granted: [], revoked: ['doctors.verify'] });
+    expect(revoked.status, JSON.stringify(revoked.body)).toBe(200);
+
+    // Same access token, whose `permissions` claim still lists
+    // doctors.verify: the file is now out of reach, answered as unknown.
+    const after = await request(harness.server).get(`${FILES}/${fileId}`).set(as(reviewer));
+    expect(after.status).toBe(404);
+
+    // The doctor it describes still reads it.
+    const own = await request(harness.server).get(`${FILES}/${fileId}`).set(as(doctor.token));
+    expect(own.status).toBe(200);
   });
 });
 

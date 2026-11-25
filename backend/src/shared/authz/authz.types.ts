@@ -40,6 +40,13 @@ export interface Principal {
   readonly roleCode: string;
   /** The `sid` claim, for cache scoping and audit correlation. */
   readonly sessionId?: string;
+  /**
+   * `users.authz_version` as read with the session on this request. Part of
+   * the permission cache key: any change to the account's authorization
+   * bumps it in the same transaction, so a cached set can never outlive the
+   * change (multi-hospital §2.8–§2.10). Absent → the cache is bypassed.
+   */
+  readonly authzVersion?: number;
 }
 
 /**
@@ -53,7 +60,12 @@ export interface Principal {
  * gone.
  */
 export function principalOf(user: AuthenticatedUser): Principal {
-  return { userId: user.id, roleCode: user.role, sessionId: user.sessionId };
+  return {
+    userId: user.id,
+    roleCode: user.role,
+    sessionId: user.sessionId,
+    ...(user.authzVersion === undefined ? {} : { authzVersion: user.authzVersion }),
+  };
 }
 
 /**
@@ -84,7 +96,36 @@ export interface RoleRepository {
   overridesFor(userId: string): Promise<PermissionOverrides>;
   /** Every user holding a role — what `forgetRole` needs to invalidate. */
   userIdsWithRole(roleCode: string): Promise<readonly string[]>;
+  /**
+   * The base role's code for a custom role (`roles.base_role_id`), `null`
+   * for a system role or an unknown code.
+   */
+  baseRoleCodeOf(roleCode: string): Promise<string | null>;
+  /**
+   * The account's organizational standing for its category (multi-hospital
+   * §2.4–§2.6, DR-05):
+   *
+   * - `clinical` — a doctor who is verified, in ACTIVE or VACATION practice
+   *   and holds an active employment at an ACTIVE hospital; a staff member
+   *   with an active affiliation at an ACTIVE hospital.
+   * - `restricted` — signed in, but no clinical context: unverified,
+   *   suspended, never employed or affiliated, or the hospital is inactive.
+   * - `terminated` — employment or affiliation ended and none is active: no
+   *   login and no clinical access (history is preserved).
+   */
+  standingOf(userId: string, kind: StandingKind, hospitalId?: string): Promise<Standing>;
+  /**
+   * The hospital a custom role belongs to (`roles.hospital_id`), `null` for
+   * a system role (audit F-17). A custom role confers standing — and so any
+   * capability — only while its holder works at that hospital: `standingOf`
+   * is asked with it, and an employment or affiliation elsewhere is
+   * `restricted`.
+   */
+  roleHospitalOf?(roleCode: string): Promise<string | null>;
 }
+
+export type Standing = 'clinical' | 'restricted' | 'terminated';
+export type StandingKind = 'doctor' | 'staff';
 
 export const ROLE_REPOSITORY = Symbol('ROLE_REPOSITORY');
 
@@ -123,7 +164,47 @@ export const PERMISSION_CACHE = Symbol('PERMISSION_CACHE');
  * eventually meet.
  */
 export interface PatientAssignmentRepository {
-  isAssigned(doctorUserId: string, patientId: string): Promise<boolean>;
+  /**
+   * DR-05 (multi-hospital, approved): whether the doctor may reach the
+   * patient's clinical data. All of: the doctor holds clinical standing
+   * (verified, ACTIVE or VACATION practice, not deleted) through an active
+   * employment at an ACTIVE hospital H, and the patient has a Hospital
+   * Medical Record at H. No care assignment is required — assignment only
+   * shapes "My Patients"-type lists. The capability is checked by the route
+   * (`@Can`), and each resource is checked against H by its repository.
+   */
+  reachesPatient(doctorUserId: string, patientId: string): Promise<boolean>;
+
+  /**
+   * DR-05 at resource level (audit F-01): the one hospital H where the
+   * doctor holds clinical standing — `null` when there is none, or more
+   * than one (ambiguous standing is no standing) — and, for `clinicalReach`,
+   * the patient's Hospital Medical Record there. Every clinical row a doctor
+   * reads must belong to H; every row they write is stamped with H.
+   */
+  clinicalHospital(doctorUserId: string): Promise<string | null>;
+  /** The same standing, with the doctor and the employment it rests on. */
+  clinicalEmployment(doctorUserId: string): Promise<ClinicalEmployment | null>;
+  clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null>;
+}
+
+/**
+ * A doctor's one clinical employment (DR-05): who, through which
+ * employment, at which hospital. The scope of the doctor's own lists and
+ * reports (S4).
+ */
+export interface ClinicalEmployment {
+  readonly doctorId: string;
+  readonly doctorEmploymentId: string;
+  readonly hospitalId: string;
+}
+
+/** Where a doctor reaches a patient: the hospital and the record there. */
+export interface ClinicalReach {
+  readonly hospitalId: string;
+  readonly hospitalMedicalRecordId: string;
+  /** `patients.id` (uuid), whatever handle the caller quoted. */
+  readonly patientId: string;
 }
 
 export const PATIENT_ASSIGNMENT_REPOSITORY = Symbol('PATIENT_ASSIGNMENT_REPOSITORY');

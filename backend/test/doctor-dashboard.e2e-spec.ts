@@ -4,9 +4,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CriticalAlertsRepository } from '../src/modules/dashboard/repositories/critical-alerts.repository';
 import {
   type AuthHarness,
+  clinicalStampFor,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
+  recordPatientAt,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -81,6 +84,8 @@ async function signUpDoctor(local: string): Promise<{ auth: string; doctorId: st
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const auth = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -148,9 +153,15 @@ beforeAll(async () => {
 
   const [record] = await createPatientRecords(harness.prisma, TAG, 1);
   patientId = record?.id ?? '';
+  // Written straight to the database: open its Medical Record (DR-05).
+  await recordPatientAt(harness.prisma, patientId);
+
+  // Every clinical row below belongs to the doctor's hospital (F-01/F-06).
+  const stamp = await clinicalStampFor(harness.prisma, doctorId, patientId);
+  const owned = { hospitalId: stamp.hospitalId, hospitalMedicalRecordId: stamp.hospitalMedicalRecordId };
 
   await harness.prisma.patientDoctorAssignment.create({
-    data: { patientId, doctorId, role: 'primary' },
+    data: { ...stamp, patientId, doctorId, role: 'primary' },
   });
 
   const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
@@ -163,6 +174,7 @@ beforeAll(async () => {
   await harness.prisma.appointment.createMany({
     data: [
       {
+        ...stamp,
         publicId: `APT-T${TAG}1`,
         patientId,
         doctorId,
@@ -172,6 +184,7 @@ beforeAll(async () => {
         status: 'COMPLETED',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}2`,
         patientId,
         doctorId,
@@ -181,6 +194,7 @@ beforeAll(async () => {
         status: 'CONFIRMED',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}3`,
         patientId,
         doctorId,
@@ -190,6 +204,7 @@ beforeAll(async () => {
         status: 'PENDING',
       },
       {
+        ...stamp,
         publicId: `APT-T${TAG}4`,
         patientId,
         doctorId,
@@ -204,6 +219,7 @@ beforeAll(async () => {
       // for any run after 20:00 UTC. Tomorrow is always ahead, and lies
       // outside every today-bounded figure the composite asserts.
       {
+        ...stamp,
         publicId: `APT-T${TAG}5`,
         patientId,
         doctorId,
@@ -218,6 +234,7 @@ beforeAll(async () => {
 
   const record0 = await harness.prisma.medicalRecord.create({
     data: {
+      ...stamp,
       publicId: `MR-T${TAG}1`,
       patientId,
       doctorId,
@@ -243,6 +260,7 @@ beforeAll(async () => {
 
   await harness.prisma.prescription.create({
     data: {
+      ...stamp,
       publicId: `RX-T${TAG}1`,
       patientId,
       medicationId: medication.id,
@@ -265,6 +283,7 @@ beforeAll(async () => {
   // the Row-0 banner's first source, and the action queue's.
   await harness.prisma.labOrder.create({
     data: {
+      ...stamp,
       publicId: `LAB-T${TAG}1`,
       patientId,
       testId: test.id,
@@ -278,7 +297,7 @@ beforeAll(async () => {
   });
 
   await harness.prisma.patientClinicalAlert.create({
-    data: { patientId, severity: 'CRITICAL', message: 'Anaphylaxis to penicillin', active: true },
+    data: { ...owned, patientId, severity: 'CRITICAL', message: 'Anaphylaxis to penicillin', active: true },
   });
 
   await harness.prisma.satisfactionSurvey.create({
@@ -508,6 +527,7 @@ describe('M27.3 — the Row-0 banner fails loud', () => {
       const email = `dash-fail@${failing.domain}`;
       await request(failing.server).post(REGISTER).send(registrationBody({ email }));
       await markVerified(failing.prisma, email);
+      await makeClinicalDoctor(failing.prisma, email);
       const auth = dataOf<{ accessToken: string }>(
         await request(failing.server)
           .post(LOGIN)

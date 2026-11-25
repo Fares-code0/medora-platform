@@ -41,12 +41,23 @@ import {
   type SearchResponse,
   type SearchResult,
 } from '../dto/search.dto';
+import {
+  AdminScopeService,
+  PatientScopeService,
+  PermissionResolver,
+  principalOf,
+} from '../../../shared/authz';
 import type { SearchQuery, SearchScope } from '../dto/search.schema';
 import { SearchRepository } from '../repositories/search.repository';
 
 @Injectable()
 export class SearchService {
-  constructor(private readonly search: SearchRepository) {}
+  constructor(
+    private readonly search: SearchRepository,
+    private readonly patientScope: PatientScopeService,
+    private readonly adminScopes: AdminScopeService,
+    private readonly permissions: PermissionResolver,
+  ) {}
 
   async run(user: AuthenticatedUser, query: SearchQuery): Promise<SearchResponse> {
     const scope = this.scopeFor(user, query.scope);
@@ -54,7 +65,7 @@ export class SearchService {
 
     const groups =
       scope === 'admin'
-        ? await this.adminGroups(term, query.limit)
+        ? await this.adminGroups(user, term, query.limit)
         : await this.doctorGroups(user, term, query.limit);
 
     return {
@@ -96,11 +107,19 @@ export class SearchService {
     limit: number,
   ): Promise<SearchGroup[]> {
     const doctorId = await this.search.doctorIdFor(user.id);
+    // F-08: search is a read of the same data its destinations are, and is
+    // held to the same three conditions — clinical standing (one
+    // unambiguous clinical hospital, which a suspended, unverified or
+    // unemployed doctor does not have), the capability each group's own
+    // route requires, and DR-05 scope to that hospital.
+    const principal = principalOf(user);
+    const hospitalId = doctorId === null ? null : await this.patientScope.clinicalHospitalOf(principal);
 
-    // An account with the doctor role but no `doctors` row has no
-    // patients by construction — the destinations still answer, so the
-    // command palette works before the profile does.
-    if (doctorId === null) {
+    // An account with the doctor role but no `doctors` row — or without
+    // clinical standing — has no patients by construction; the
+    // destinations still answer, so the command palette works before the
+    // profile does.
+    if (doctorId === null || hospitalId === null) {
       return [
         group('patients', 'Patients', []),
         group('appointments', 'Appointments', []),
@@ -109,10 +128,16 @@ export class SearchService {
       ];
     }
 
+    const scope = { doctorId, hospitalId };
+    const [canPatients, canAppointments, canRecords] = await Promise.all([
+      this.permissions.can(principal, 'patients.view'),
+      this.permissions.can(principal, 'appointments.manageOwn'),
+      this.permissions.can(principal, 'records.view'),
+    ]);
     const [patients, appointments, records] = await Promise.all([
-      this.search.patients(doctorId, term, limit),
-      this.search.appointments(doctorId, term, limit),
-      this.search.records(doctorId, term, limit),
+      canPatients ? this.search.patients(scope, term, limit) : Promise.resolve([]),
+      canAppointments ? this.search.appointments(scope, term, limit) : Promise.resolve([]),
+      canRecords ? this.search.records(scope, term, limit) : Promise.resolve([]),
     ]);
 
     return [
@@ -159,13 +184,28 @@ export class SearchService {
 
   /* ── M26.2 — the administration index ──────────────────────── */
 
-  private async adminGroups(term: string, limit: number): Promise<SearchGroup[]> {
+  private async adminGroups(
+    user: AuthenticatedUser,
+    term: string,
+    limit: number,
+  ): Promise<SearchGroup[]> {
+    // F-08: the administration index is the caller's administrative scope.
+    // A Platform Admin searches every hospital; a Hospital Admin only
+    // their own (staff affiliated there, its departments, rooms and
+    // resources); an administrator with no scope gets the destinations
+    // and nothing else. Announcements, policies and templates carry no
+    // hospital — they are platform content every administrator reads.
+    const scope = await this.adminScopes.scopeOf(user);
+    if (scope.kind === 'none') {
+      return [group('destinations', 'Go to', matchDestinations(ADMIN_DESTINATIONS, term, limit))];
+    }
+    const hospitalId = scope.kind === 'hospital' ? scope.hospitalId : null;
     const [staff, departments, rooms, resources, announcements, policies, templates] =
       await Promise.all([
-        this.search.staff(term, limit),
-        this.search.departments(term, limit),
-        this.search.rooms(term, limit),
-        this.search.resources(term, limit),
+        this.search.staff(term, limit, hospitalId),
+        this.search.departments(term, limit, hospitalId),
+        this.search.rooms(term, limit, hospitalId),
+        this.search.resources(term, limit, hospitalId),
         this.search.announcements(term, limit),
         this.search.policies(term, limit),
         this.search.templates(term, limit),

@@ -1,5 +1,7 @@
 import type { PrismaService } from '../../src/shared/database';
 
+import { fixtureHospital } from './auth-app';
+
 /**
  * A `doctors` row owned by one spec file.
  *
@@ -123,6 +125,19 @@ export async function createTestDoctor(
 }
 
 /**
+ * Gives the fixture doctor an active employment at a fixture hospital.
+ *
+ * A patient is offered only doctors who hold one (L6): verified and actively
+ * practising is no longer enough to appear in the patient directory.
+ * `destroyTestDoctor` removes it again.
+ */
+export async function employTestDoctor(prisma: PrismaService, doctorId: string, hospital = 'a'): Promise<void> {
+  await prisma.doctorEmployment.create({
+    data: { doctorId, hospitalId: await fixtureHospital(prisma, hospital) },
+  });
+}
+
+/**
  * Removes the doctor `tag` owns, and the user it hangs off.
  *
  * Appointments go first for the reason `destroyPatientRecords` observes:
@@ -139,6 +154,8 @@ export async function destroyTestDoctor(prisma: PrismaService, tag: string): Pro
   if (doctor === null) return;
 
   await prisma.appointment.deleteMany({ where: { doctorId: doctor.id } });
+  // Employments restrict their doctor (history is never cascaded away).
+  await prisma.doctorEmployment.deleteMany({ where: { doctorId: doctor.id } });
   await prisma.doctor.deleteMany({ where: { id: doctor.id } });
   await prisma.user.deleteMany({ where: { id: doctor.userId } });
 }

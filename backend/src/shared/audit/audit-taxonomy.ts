@@ -68,6 +68,16 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // M30.1 — running a background job outside its schedule is one
   // account acting on the platform, which is §14.1's `admin_activity`.
   job: 'admin_activity',
+  // Multi-hospital §2.2–§2.6: staffing lifecycle and administrative scope.
+  hospital: 'admin_activity',
+  platform: 'admin_activity',
+  // §2.11–§2.12: reaching past a hospital boundary, or deciding who can.
+  exceptional_access: 'security',
+  // §2.13: reading the ledger is itself recorded.
+  audit_ledger: 'admin_activity',
+  // §2.13: a read of clinical content or clear identity.
+  phi: 'user_action',
+  information_request: 'user_action',
 
   account: 'user_action',
   settings: 'user_action',
@@ -78,6 +88,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   ai: 'user_action',
   doctor: 'user_action',
   patient: 'user_action',
+  // `legacy_clinical_record.read` — the safety screen consulted a legacy
+  // (unattributed) allergy or prescription (H2).
+  legacy_clinical_record: 'user_action',
   appointment: 'user_action',
   medical_record: 'user_action',
   lab_order: 'user_action',
@@ -120,9 +133,24 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   // Reaching past a privacy boundary, or changing who can.
   'communication_access.approve': 'warning',
   'communication_access.view': 'warning',
+  'communication_access.revoke': 'warning',
   'patient_identity.reveal': 'warning',
   'roles.user_overrides': 'warning',
   'roles.create': 'warning',
+  // Changing who may act at which hospital, or across all of them.
+  'hospital.doctor_employment_ended': 'warning',
+  'hospital.doctor_transferred': 'warning',
+  'hospital.staff_affiliation_ended': 'warning',
+  'hospital.admin_assigned': 'warning',
+  'hospital.admin_revoked': 'warning',
+  'platform.admin_granted': 'critical',
+  'platform.admin_revoked': 'warning',
+  'exceptional_access.emergency_override': 'critical',
+  'exceptional_access.request': 'warning',
+  'exceptional_access.approve': 'warning',
+  'exceptional_access.read': 'warning',
+  'information_request.approve': 'warning',
+  'information_request.read': 'warning',
   'user.administer': 'warning',
   'device.trust': 'warning',
   'session.revoke': 'warning',
@@ -184,6 +212,8 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
 const PARTICIPLES: Readonly<Record<string, string>> = {
   // Whole verbs, where the words have to be reordered or reworded.
   attach_to_record: 'attached to a record',
+  // Multi-hospital §2.11–§2.13.
+  emergency_override: 'used as an Emergency Override',
   cancel_administratively: 'cancelled by an administrator',
   propose_slots: 'slots proposed',
   report_issue: 'issue reported',
@@ -222,6 +252,9 @@ const PARTICIPLES: Readonly<Record<string, string>> = {
   untrust: 'untrusted',
   upload: 'uploaded',
   view: 'viewed',
+  // Verbs whose past tense is not `+d` (multi-hospital §2.11–§2.13).
+  read: 'read',
+  reject: 'rejected',
 };
 
 export interface Classification {

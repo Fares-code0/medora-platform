@@ -5,7 +5,9 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  purgeHospitalRecords,
   testEmail,
+  clinicalStampFor,
 } from './support/auth-app';
 import { seedDoctor, seedPatient } from './support/lab-fixture';
 
@@ -83,6 +85,8 @@ async function bookVisits(
 
     await harness.prisma.appointment.create({
       data: {
+        // Stamped as a booking at the doctor's hospital is (F-06).
+        ...(await clinicalStampFor(harness.prisma, doctor.id, patient.id)),
         publicId: `APT-${String(sequence[0]?.value ?? 0n)}`,
         patientId: patient.id,
         doctorId: doctor.id,
@@ -116,6 +120,16 @@ afterAll(async () => {
     await harness.prisma.appointment.deleteMany({
       where: { patient: { publicId: { in: charts } } },
     });
+    // The charts' Hospital Medical Records (and the care assignments that
+    // cite them and the doctor's employment) restrict the delete (DR-05).
+    const rows = await harness.prisma.patient.findMany({
+      where: { publicId: { in: charts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      rows.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: charts } } });
   }
 

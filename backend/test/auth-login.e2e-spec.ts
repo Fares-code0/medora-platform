@@ -6,9 +6,11 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -96,6 +98,8 @@ describe('sign-in', () => {
 
     it('grants the doctor role bundle the frontend hands out at login', async () => {
       const email = await seedAccount('amelia');
+      // A doctor holds the bundle only in clinical standing (§2.6).
+      await makeClinicalDoctor(harness.prisma, email);
 
       const payload = dataOf<SessionPayload>(
         await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -113,6 +117,8 @@ describe('sign-in', () => {
 
     it('mints an access token carrying sub, role, permissions and sid', async () => {
       const email = await seedAccount('amelia');
+      // A doctor holds the bundle only in clinical standing (§2.6).
+      await makeClinicalDoctor(harness.prisma, email);
 
       const payload = dataOf<SessionPayload>(
         await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -396,6 +402,7 @@ describe('sign-in', () => {
         where: { code: 'admin' },
       });
       await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+      await grantPlatformAdmin(harness.prisma, email);
       return email;
     }
 

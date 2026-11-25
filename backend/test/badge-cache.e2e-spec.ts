@@ -7,9 +7,11 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -59,6 +61,8 @@ async function signUp(local: string): Promise<Session> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server)
@@ -199,7 +203,7 @@ describe('every notification writer invalidates the badge', () => {
         dedupeKey: `badge-cache:${doctor.id}:${String(Date.now())}`,
       },
     });
-    const dispatch = harness.app.get(NotificationDispatchService);
+    const dispatch = asJob(harness.app.get(NotificationDispatchService));
     for (let attempt = 0; attempt < 40; attempt += 1) {
       const written = await harness.prisma.db.notification.count({
         where: { recipientId: alice.userId },

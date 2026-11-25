@@ -3,7 +3,7 @@ import { Body, Controller, Get, Put } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import {
   notificationPreferencesSchema,
   type NotificationPreferencesBody,
@@ -32,6 +32,8 @@ import {
 @Controller('me/notification-preferences')
 export class NotificationPreferenceController {
   constructor(private readonly preferences: NotificationPreferenceService) {}
+
+  @NotPhi('the caller’s own preferences')
 
   @Get()
   read(@CurrentUser() user: AuthenticatedUser): Promise<NotificationPreferencesView> {

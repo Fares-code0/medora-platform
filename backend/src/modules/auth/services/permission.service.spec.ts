@@ -1,131 +1,137 @@
 /**
- * Locks survive the trip through `user_permissions` (RM M6.2 + M7.1).
+ * The token's permission claim is the guard's own computation (RM M6.2 +
+ * M7.1, multi-hospital §2.8).
  *
- * `PermissionService` resolves the bundle once per token issue and the
- * result is copied into the access token, so whatever it returns is what
- * every guard sees for the next fifteen minutes. Before the lock step
- * was added, a single `user_permissions` row could put `roles.manage`
- * into a doctor's token, or take it out of the last administrator's —
- * reaching through API §15.5 exactly the state §15.3 refuses to save.
- *
- * The Prisma client is stubbed rather than hit: the behaviour under test
- * is the set algebra after the two queries, and a database would only
- * make the same assertions slower.
+ * `PermissionService` used to resolve the claim with its own queries, and
+ * for custom roles it disagreed with `PermissionResolver` (audit A-8). It now
+ * delegates to the resolver, so every invariant below — locks survive
+ * `user_permissions`, the server policy overlay caps every role — holds for
+ * the claim exactly as it does for enforcement. The repository is stubbed:
+ * the behaviour under test is the set algebra, not the two queries.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { SEEDED_MATRIX } from '../../../shared/authz';
+import {
+  ADMIN_DENIED_PHI,
+  ADMIN_ONLY,
+  NO_OVERRIDES,
+  PermissionResolver,
+  type PermissionCache,
+  SEEDED_MATRIX,
+  type Permission,
+  type PermissionOverrides,
+  type RoleRepository,
+} from '../../../shared/authz';
 import { PermissionService } from './permission.service';
 
-interface Override {
-  readonly code: string;
-  readonly allowed: boolean;
-}
-
-/** Stands in for `PrismaService` — the two `findMany` calls, nothing else. */
-function serviceWith(bundle: readonly string[], overrides: readonly Override[]): PermissionService {
-  const prisma = {
-    db: {
-      rolePermission: {
-        findMany: () => Promise.resolve(bundle.map((code) => ({ permission: { code } }))),
-      },
-      userPermission: {
-        findMany: () =>
-          Promise.resolve(
-            overrides.map((o) => ({ allowed: o.allowed, permission: { code: o.code } })),
-          ),
-      },
-    },
+function serviceWith(
+  overrides: PermissionOverrides = NO_OVERRIDES,
+  stored: Record<string, readonly string[]> = { ...SEEDED_MATRIX },
+  baseRoles: Record<string, string> = {},
+): PermissionService {
+  const roles: RoleRepository = {
+    currentMatrix: () => Promise.resolve(stored),
+    overridesFor: () => Promise.resolve(overrides),
+    userIdsWithRole: () => Promise.resolve([]),
+    baseRoleCodeOf: (code) => Promise.resolve(baseRoles[code] ?? null),
+    standingOf: () => Promise.resolve('clinical'),
   };
-
-  return new PermissionService(prisma as never);
+  // No caching: every call reads through, which is what the set algebra
+  // under test needs.
+  const cache: PermissionCache = {
+    get: () => Promise.resolve(undefined),
+    set: () => Promise.resolve(),
+    forget: () => Promise.resolve(),
+    forgetMany: () => Promise.resolve(),
+    clear: () => Promise.resolve(),
+  };
+  return new PermissionService(new PermissionResolver(roles, cache));
 }
 
-describe('PermissionService — bundle plus overrides', () => {
-  it('returns the role bundle when nothing overrides', async () => {
-    const service = serviceWith(SEEDED_MATRIX.doctor, []);
+const grant = (...granted: Permission[]): PermissionOverrides => ({ granted, revoked: [] });
+const revoke = (...revoked: Permission[]): PermissionOverrides => ({ granted: [], revoked });
 
-    expect(await service.resolve('u-1', 'role-doctor', 'doctor')).toEqual(
+describe('PermissionService — the claim is the enforced set', () => {
+  it('returns the role bundle, sorted, when nothing overrides', async () => {
+    expect(await serviceWith().resolve('u-1', 'role-doctor', 'doctor')).toEqual(
       [...SEEDED_MATRIX.doctor].sort(),
     );
   });
 
-  it('adds an allowed override the bundle lacks', async () => {
-    const service = serviceWith(SEEDED_MATRIX.doctor, [{ code: 'logs.view', allowed: true }]);
-
-    expect(await service.resolve('u-1', 'role-doctor', 'doctor')).toContain('logs.view');
+  it('adds an allowed override inside the ceiling', async () => {
+    expect(
+      await serviceWith(grant('appointments.cancelAdministratively')).resolve('u-1', 'r', 'reception'),
+    ).toContain('appointments.cancelAdministratively');
   });
 
   it('removes a denied override the bundle carries', async () => {
-    const service = serviceWith(SEEDED_MATRIX.doctor, [
-      { code: 'prescriptions.create', allowed: false },
-    ]);
-
-    expect(await service.resolve('u-1', 'role-doctor', 'doctor')).not.toContain(
-      'prescriptions.create',
-    );
+    expect(
+      await serviceWith(revoke('prescriptions.create')).resolve('u-1', 'r', 'doctor'),
+    ).not.toContain('prescriptions.create');
   });
-});
 
-describe('PermissionService — an override cannot beat a lock', () => {
-  it('refuses to put a locked-off capability in a doctor token', async () => {
-    // The bypass this spec exists for. `roles.manage` is locked off for
-    // every role but admin.
-    const service = serviceWith(SEEDED_MATRIX.doctor, [{ code: 'roles.manage', allowed: true }]);
-
-    expect(await service.resolve('u-1', 'role-doctor', 'doctor')).not.toContain('roles.manage');
+  it('refuses to put a locked-off or admin-only capability in a doctor token', async () => {
+    const claim = await serviceWith(grant('roles.manage', 'logs.view')).resolve(
+      'u-1',
+      'r',
+      'doctor',
+    );
+    expect(claim).not.toContain('roles.manage');
+    expect(claim).not.toContain('logs.view');
   });
 
   it('refuses to take a locked-on capability out of an admin token', async () => {
-    // The mirror image, and the more dangerous one: it is how the
-    // platform loses its last administrator.
-    const service = serviceWith(SEEDED_MATRIX.admin, [
-      { code: 'roles.manage', allowed: false },
-      { code: 'settings.manageSystem', allowed: false },
-      { code: 'logs.view', allowed: false },
-    ]);
-    const resolved = await service.resolve('u-1', 'role-admin', 'admin');
-
-    expect(resolved).toContain('roles.manage');
-    expect(resolved).toContain('settings.manageSystem');
-    expect(resolved).toContain('logs.view');
+    expect(await serviceWith(revoke('roles.manage')).resolve('u-1', 'r', 'admin')).toContain(
+      'roles.manage',
+    );
   });
 
-  it('still honours an override on a cell that is not locked', async () => {
-    // The fix must not become "overrides never work".
-    const service = serviceWith(SEEDED_MATRIX.pharmacy, [{ code: 'labs.review', allowed: true }]);
-
-    expect(await service.resolve('u-1', 'role-pharmacy', 'pharmacy')).toContain('labs.review');
+  it('never puts a PHI capability in an admin token (§2.1)', async () => {
+    const claim = await serviceWith(grant(...ADMIN_DENIED_PHI)).resolve('u-1', 'r', 'admin');
+    for (const capability of ADMIN_DENIED_PHI) expect(claim).not.toContain(capability);
   });
-});
 
-describe('PermissionService — codes outside the union', () => {
   it('drops a stored code the 22-capability union does not contain', async () => {
-    // A hand-edited row. Copying it into the token would advertise a
-    // capability no guard can ever check, which reads in the matrix
-    // editor as a grant that silently does nothing.
-    const service = serviceWith([...SEEDED_MATRIX.doctor, 'billing.manage'], []);
-
-    expect(await service.resolve('u-1', 'role-doctor', 'doctor')).not.toContain('billing.manage');
-  });
-});
-
-describe('PermissionService — a role with no matrix column', () => {
-  it('resolves nurse to whatever it was granted, with no locks applied', async () => {
-    // `nurse` is seeded with an empty bundle and has no column in the
-    // matrix (ADR-017 §6). It must not be emptied by the lock step, and
-    // it must not gain admin's locked-on cells either.
-    const service = serviceWith([], [{ code: 'patients.view', allowed: true }]);
-    const resolved = await service.resolve('u-1', 'role-nurse', 'nurse');
-
-    expect(resolved).toEqual(['patients.view']);
-    expect(resolved).not.toContain('roles.manage');
+    const claim = await serviceWith(NO_OVERRIDES, {
+      ...SEEDED_MATRIX,
+      doctor: [...SEEDED_MATRIX.doctor, 'made.up'],
+    }).resolve('u-1', 'r', 'doctor');
+    expect(claim).not.toContain('made.up');
   });
 
-  it('resolves a nurse with no overrides to nothing at all', async () => {
-    const service = serviceWith([], []);
+  it('caps nurse by its category ceiling, whatever it was granted', async () => {
+    const claim = await serviceWith(grant('patients.view', 'roles.manage', 'records.edit'), {
+      ...SEEDED_MATRIX,
+      nurse: [],
+    }).resolve('u-1', 'r', 'nurse');
+    expect(claim).toEqual(['patients.view']);
+  });
 
-    expect(await service.resolve('u-1', 'role-nurse', 'nurse')).toEqual([]);
+  it('resolves a nurse with no grants to nothing at all', async () => {
+    expect(
+      await serviceWith(NO_OVERRIDES, { ...SEEDED_MATRIX, nurse: [] }).resolve('u-1', 'r', 'nurse'),
+    ).toEqual([]);
+  });
+
+  it('resolves a custom role from its own grants, capped by its base category (A-8)', async () => {
+    const claim = await serviceWith(
+      NO_OVERRIDES,
+      {
+        ...SEEDED_MATRIX,
+        'ward-clerk': ['patients.view', 'appointments.reassign', 'roles.manage'],
+      },
+      { 'ward-clerk': 'reception' },
+    ).resolve('u-1', 'r', 'ward-clerk');
+    expect(claim).toEqual(['appointments.reassign', 'patients.view']);
+  });
+
+  it('gives a custom role derived from admin nothing (§2.8)', async () => {
+    const claim = await serviceWith(
+      grant(...ADMIN_ONLY),
+      { ...SEEDED_MATRIX, 'shadow-admin': [...ADMIN_ONLY] },
+      { 'shadow-admin': 'admin' },
+    ).resolve('u-1', 'r', 'shadow-admin');
+    expect(claim).toEqual([]);
   });
 });

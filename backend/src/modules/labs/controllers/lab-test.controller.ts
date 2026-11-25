@@ -2,7 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 
 import { RevalidatePrivately } from '../../../common/http/cache-policy';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import { labTestListSchema, type LabTestListQuery } from '../dto/lab-test.schema';
 import { LabTestService, type PaginatedLabTests } from '../services/lab-test.service';
 
@@ -32,6 +32,7 @@ export class LabTestController {
   constructor(private readonly tests: LabTestService) {}
 
   /** API §8.1 — code, name, category and the analyte specs. */
+  @NotPhi('lab test reference catalogue')
   @Get('catalogue')
   @RevalidatePrivately()
   catalogue(

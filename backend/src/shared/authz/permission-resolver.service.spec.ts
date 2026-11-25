@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemoryPermissionCache } from './in-memory-permission-cache';
 import { PermissionResolver } from './permission-resolver.service';
+import { ADMIN_DENIED_PHI, ADMIN_ONLY } from './authz-policy';
 import { SEEDED_MATRIX } from './permission-catalogue';
 import {
   NO_OVERRIDES,
@@ -10,10 +11,19 @@ import {
   type PlatformRole,
   type Principal,
   type RoleRepository,
+  type Standing,
+  type StandingKind,
 } from './authz.types';
 
-function principal(roleCode: PlatformRole, userId = 'u-1'): Principal {
-  return { userId, roleCode };
+function principal(roleCode: PlatformRole, userId = 'u-1', authzVersion = 0): Principal {
+  return { userId, roleCode, authzVersion };
+}
+
+/** The seeded bundle as the server policy overlay leaves it (§2.1: no admin PHI). */
+function effectiveSeed(role: PlatformRole): readonly string[] {
+  return SEEDED_MATRIX[role].filter(
+    (capability) => role !== 'admin' || !ADMIN_DENIED_PHI.includes(capability),
+  );
 }
 
 /** A repository whose matrix and overrides the test controls. */
@@ -36,6 +46,19 @@ class StubRoleRepository implements RoleRepository {
   userIdsWithRole(role: PlatformRole): Promise<readonly string[]> {
     return Promise.resolve(this.members.get(role) ?? []);
   }
+
+  baseRoleCodeOf(): Promise<string | null> {
+    return Promise.resolve(null);
+  }
+
+  /** Every account is in good standing unless a test says otherwise. */
+  standings = new Map<string, Standing>();
+  standingCalls: [string, StandingKind][] = [];
+
+  standingOf(userId: string, kind: StandingKind): Promise<Standing> {
+    this.standingCalls.push([userId, kind]);
+    return Promise.resolve(this.standings.get(userId) ?? 'clinical');
+  }
 }
 
 describe('PermissionResolver — the role bundle', () => {
@@ -49,12 +72,19 @@ describe('PermissionResolver — the role bundle', () => {
     resolver = new PermissionResolver(roles, cache);
   });
 
-  it('gives each role exactly its seeded bundle when nothing overrides', async () => {
+  it('gives each role its seeded bundle, capped by the server policy, when nothing overrides', async () => {
     for (const role of ['admin', 'doctor', 'reception', 'laboratory', 'pharmacy'] as const) {
       expect(await resolver.permissionsFor(principal(role, `u-${role}`))).toEqual(
-        SEEDED_MATRIX[role],
+        effectiveSeed(role),
       );
     }
+  });
+
+  it('never gives admin a standing PHI capability, though the seed lists two (§2.1)', async () => {
+    const held = await resolver.permissionsFor(principal('admin', 'u-admin'));
+
+    expect(SEEDED_MATRIX.admin).toContain('patients.revealIdentity');
+    for (const capability of ADMIN_DENIED_PHI) expect(held).not.toContain(capability);
   });
 
   it('answers can() from the bundle', async () => {
@@ -80,7 +110,7 @@ describe('PermissionResolver — the role bundle', () => {
     expect(held).toContain('patients.view');
     expect(held).not.toContain('nonsense');
     // The omitted roles fall back to their seed rather than to nothing.
-    expect(await resolver.permissionsFor(principal('admin', 'u-a'))).toEqual(SEEDED_MATRIX.admin);
+    expect(await resolver.permissionsFor(principal('admin', 'u-a'))).toEqual(effectiveSeed('admin'));
   });
 });
 
@@ -93,10 +123,28 @@ describe('PermissionResolver — per-user overrides', () => {
     resolver = new PermissionResolver(roles, new InMemoryPermissionCache());
   });
 
-  it('adds a granted capability the role does not carry', async () => {
-    roles.overrides.set('u-1', { granted: ['logs.view'], revoked: [] });
+  it('adds a granted capability the role does not carry, inside its ceiling', async () => {
+    // Inside reception's ceiling (F-13), outside its seeded bundle.
+    roles.overrides.set('u-1', { granted: ['appointments.cancelAdministratively'], revoked: [] });
 
-    expect(await resolver.can(principal('doctor'), 'logs.view')).toBe(true);
+    expect(await resolver.can(principal('reception'), 'appointments.cancelAdministratively')).toBe(true);
+  });
+
+  it('never lets an override give a non-admin platform administration (§2.4, §2.8)', async () => {
+    roles.overrides.set('u-1', { granted: [...ADMIN_ONLY], revoked: [] });
+
+    for (const capability of ADMIN_ONLY) {
+      expect(await resolver.can(principal('doctor'), capability), capability).toBe(false);
+      expect(await resolver.can(principal('pharmacy'), capability), capability).toBe(false);
+    }
+  });
+
+  it('never lets an override give admin standing PHI access (§2.1)', async () => {
+    roles.overrides.set('u-9', { granted: [...ADMIN_DENIED_PHI], revoked: [] });
+
+    for (const capability of ADMIN_DENIED_PHI) {
+      expect(await resolver.can(principal('admin', 'u-9'), capability), capability).toBe(false);
+    }
   });
 
   it('removes a revoked capability the role does carry', async () => {
@@ -112,22 +160,29 @@ describe('PermissionResolver — per-user overrides', () => {
   });
 
   it('reports the bundle and the overrides alongside the result', async () => {
-    roles.overrides.set('u-1', { granted: ['logs.view'], revoked: ['ai.use'] });
+    roles.overrides.set('u-1', { granted: ['appointments.cancelAdministratively'], revoked: ['messages.send'] });
 
-    const resolved = await resolver.effectivePermissions(principal('doctor'));
+    const resolved = await resolver.effectivePermissions(principal('reception'));
 
-    expect(resolved.fromRole).toEqual(SEEDED_MATRIX.doctor);
-    expect(resolved.overrides.granted).toEqual(['logs.view']);
-    expect(resolved.permissions).toContain('logs.view');
-    expect(resolved.permissions).not.toContain('ai.use');
+    expect(resolved.fromRole).toEqual(SEEDED_MATRIX.reception);
+    expect(resolved.overrides.granted).toEqual(['appointments.cancelAdministratively']);
+    expect(resolved.permissions).toContain('appointments.cancelAdministratively');
+    expect(resolved.permissions).not.toContain('messages.send');
   });
 
   it('returns permissions in catalogue order', async () => {
-    roles.overrides.set('u-1', { granted: ['logs.view', 'doctors.manage'], revoked: [] });
+    roles.overrides.set('u-1', {
+      granted: ['communications.viewMetadata', 'appointments.cancelAdministratively'],
+      revoked: [],
+    });
 
-    const held = await resolver.permissionsFor(principal('doctor'));
+    const held = await resolver.permissionsFor(principal('reception'));
 
-    expect(held.indexOf('doctors.manage')).toBeLessThan(held.indexOf('logs.view'));
+    // Catalogue order: Scheduling before Communication.
+    expect(held.indexOf('appointments.cancelAdministratively')).toBeGreaterThanOrEqual(0);
+    expect(held.indexOf('appointments.cancelAdministratively')).toBeLessThan(
+      held.indexOf('communications.viewMetadata'),
+    );
   });
 });
 
@@ -175,9 +230,9 @@ describe('PermissionResolver — an override cannot beat a lock', () => {
 
   it('still honours overrides on cells that are not locked', async () => {
     // The lock rule must not become "overrides never work".
-    roles.overrides.set('u-1', { granted: ['labs.review'], revoked: [] });
+    roles.overrides.set('u-1', { granted: ['communications.viewMetadata'], revoked: [] });
 
-    expect(await resolver.can(principal('pharmacy'), 'labs.review')).toBe(true);
+    expect(await resolver.can(principal('pharmacy'), 'communications.viewMetadata')).toBe(true);
   });
 });
 
@@ -232,7 +287,37 @@ describe('PermissionResolver — caching', () => {
     await resolver.forgetRole('doctor');
 
     expect(cache.size).toBe(1);
-    expect(await cache.get('u-3')).toBeDefined();
+    expect(await cache.get('u-3|admin|v0')).toBeDefined();
+  });
+
+  it('never serves an entry cached under an older authz_version (A-3)', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 4));
+    roles.overrides.set('u-1', { granted: [], revoked: ['prescriptions.create'] });
+
+    // Same version: the cached set is still served (no change recorded).
+    expect(await resolver.can(principal('doctor', 'u-1', 4), 'prescriptions.create')).toBe(true);
+    // The change bumped the version: the old entry is unreachable, even
+    // though nothing evicted it.
+    expect(await resolver.can(principal('doctor', 'u-1', 5), 'prescriptions.create')).toBe(false);
+  });
+
+  it('never serves a set cached for another role of the same user (A-3)', async () => {
+    await resolver.permissionsFor(principal('doctor', 'u-1', 0));
+
+    // Same user and version, new role: computed afresh, never the doctor set.
+    expect(await resolver.can(principal('pharmacy', 'u-1', 0), 'ai.use')).toBe(false);
+    expect(await resolver.can(principal('pharmacy', 'u-1', 0), 'records.view')).toBe(false);
+  });
+
+  it('bypasses the cache for a principal without a version', async () => {
+    const spy = vi.spyOn(roles, 'currentMatrix');
+    const unversioned: Principal = { userId: 'u-1', roleCode: 'doctor' };
+
+    await resolver.permissionsFor(unversioned);
+    await resolver.permissionsFor(unversioned);
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(cache.size).toBe(0);
   });
 
   it('forgetAll empties the cache', async () => {
@@ -319,5 +404,48 @@ describe('PermissionResolver — a role with no matrix column', () => {
     expect(await resolver.permissionsFor({ userId: 'u-n', roleCode: 'nurse' })).toEqual([
       'patients.view',
     ]);
+  });
+});
+
+describe('PermissionResolver — organizational standing (§2.4–§2.6, DR-05)', () => {
+  let roles: StubRoleRepository;
+  let resolver: PermissionResolver;
+
+  beforeEach(() => {
+    roles = new StubRoleRepository();
+    resolver = new PermissionResolver(roles, new InMemoryPermissionCache());
+  });
+
+  const as = (userId: string, roleCode: string) =>
+    resolver.effectivePermissions({ userId, roleCode });
+
+  it('gives a doctor in clinical standing the doctor bundle', async () => {
+    const { permissions } = await as('doc', 'doctor');
+    expect(permissions).toContain('records.view');
+    expect(roles.standingCalls).toEqual([['doc', 'doctor']]);
+  });
+
+  it.each<Standing>(['restricted', 'terminated'])(
+    'gives a %s doctor no capability at all, overrides included',
+    async (standing) => {
+      roles.standings.set('doc', standing);
+      roles.overrides.set('doc', { granted: ['appointments.reassign'], revoked: [] });
+      expect((await as('doc', 'doctor')).permissions).toEqual([]);
+    },
+  );
+
+  it.each(['reception', 'laboratory', 'pharmacy', 'nurse'])(
+    'gates %s on staff standing',
+    async (role) => {
+      roles.standings.set('staff', 'restricted');
+      expect((await as('staff', role)).permissions).toEqual([]);
+      expect(roles.standingCalls).toEqual([['staff', 'staff']]);
+    },
+  );
+
+  it('does not consult standing for admin or patient', async () => {
+    await as('a', 'admin');
+    await as('p', 'patient');
+    expect(roles.standingCalls).toEqual([]);
   });
 });

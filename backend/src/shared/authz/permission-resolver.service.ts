@@ -8,8 +8,11 @@
 
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
+import { runAsSystem } from '../database';
+
+import { applyServerPolicy, categoryOf, standingKindOf } from './authz-policy';
 import { applyLocks, normalizeMatrix } from './permission-matrix';
-import { bundleFor, isPlatformRole } from './permission-catalogue';
+import { bundleFor, isPermission, isPlatformRole, orderCapabilities } from './permission-catalogue';
 import {
   PERMISSION_CACHE,
   ROLE_REPOSITORY,
@@ -19,6 +22,7 @@ import {
   type PermissionOverrides,
   type Principal,
   type RoleRepository,
+  type Standing,
 } from './authz.types';
 
 @Injectable()
@@ -43,22 +47,48 @@ export class PermissionResolver {
    * save. A lock that only one of two endpoints honours is not a lock.
    */
   async effectivePermissions(principal: Principal): Promise<EffectivePermissions> {
-    const matrix = normalizeMatrix(await this.roles.currentMatrix());
-    // A role with no matrix column resolves to an empty bundle rather
-    // than to `undefined` — see `bundleFor`. `nurse` can authenticate,
-    // so authorization is asked about it and must answer "nothing".
-    const fromRole = isPlatformRole(principal.roleCode)
+    // Trusted lookups of the caller's own grants and standing (§2.15).
+    return runAsSystem(() => this.computeEffective(principal));
+  }
+
+  private async computeEffective(principal: Principal): Promise<EffectivePermissions> {
+    const stored = await this.roles.currentMatrix();
+    const matrix = normalizeMatrix(stored);
+    const platformRole = isPlatformRole(principal.roleCode);
+    // A system role outside the matrix (`nurse`) or a custom role resolves
+    // from its own stored grants. A custom role used to resolve to the empty
+    // bundle here while the token claim listed its grants — two answers for
+    // one account (audit A-8); both paths now read the same rows.
+    const baseRoleCode = platformRole ? null : await this.roles.baseRoleCodeOf(principal.roleCode);
+    const fromRole = platformRole
       ? matrix[principal.roleCode]
-      : bundleFor(principal.roleCode);
+      : storedGrants(stored, principal.roleCode, bundleFor(principal.roleCode));
     const overrides = await this.overridesFor(principal.userId);
 
     const held = new Set<Permission>(fromRole);
     for (const permission of overrides.granted) held.add(permission);
     for (const permission of overrides.revoked) held.delete(permission);
 
+    // Locks, then the server policy overlay (§2.1, §2.4, §2.8): no override,
+    // matrix edit or custom-role grant can take a role past its category
+    // ceiling, give `admin` standing PHI access, or give anyone else
+    // platform administration. Applied last, so nothing re-adds a capability.
+    const locked = applyLocks(principal.roleCode, held);
+
+    // Organizational standing (§2.4–§2.6, DR-05): a doctor or staff member
+    // without a clinical context — unverified, suspended, never employed,
+    // terminated, or at an inactive hospital — holds no capability at all.
+    // Self-service routes (`@Authenticated()`: own profile, password,
+    // verification documents) need none, so "login allowed, clinical
+    // denied" and "own profile only" both fall out of this one rule.
+    const kind = standingKindOf(categoryOf(principal.roleCode, baseRoleCode));
+    const standing =
+      kind === null ? 'clinical' : await this.roles.standingOf(principal.userId, kind, await this.roleHospital(principal.roleCode, platformRole));
+    const policed = standing === 'clinical' ? applyServerPolicy(principal.roleCode, baseRoleCode, locked) : [];
+
     return {
       principal,
-      permissions: applyLocks(principal.roleCode, held),
+      permissions: orderCapabilities(policed),
       fromRole,
       overrides,
     };
@@ -69,11 +99,19 @@ export class PermissionResolver {
    * miss, never a denial (see `PermissionCache`).
    */
   async permissionsFor(principal: Principal): Promise<readonly Permission[]> {
-    const cached = await this.readCache(principal.userId);
-    if (cached !== undefined) return cached;
+    // Keyed by user, role and `authz_version` (audit A-3). Every change to
+    // an account's authorization bumps the version in the change's own
+    // transaction, so an entry cached before it is simply never read again —
+    // even when the eviction below fails or Redis is unreachable. Without a
+    // version (a caller outside a request) the cache is not used at all.
+    const key = cacheKeyFor(principal);
+    if (key !== null) {
+      const cached = await this.readCache(key);
+      if (cached !== undefined) return cached;
+    }
 
     const { permissions } = await this.effectivePermissions(principal);
-    await this.writeCache(principal.userId, permissions);
+    if (key !== null) await this.writeCache(key, permissions);
 
     return permissions;
   }
@@ -88,6 +126,29 @@ export class PermissionResolver {
     const held = await this.permissionsFor(principal);
 
     return capabilities.every((capability) => held.includes(capability));
+  }
+
+  /**
+   * The account's organizational standing for its role (§2.4–§2.6), with
+   * `clinical` for roles that are not standing-gated (admin, patient).
+   * Login and refresh refuse `terminated`.
+   */
+  async standingFor(userId: string, roleCode: string): Promise<Standing> {
+    return runAsSystem(() => this.computeStanding(userId, roleCode));
+  }
+
+  private async computeStanding(userId: string, roleCode: string): Promise<Standing> {
+    const baseRoleCode = isPlatformRole(roleCode) ? null : await this.roles.baseRoleCodeOf(roleCode);
+    const kind = standingKindOf(categoryOf(roleCode, baseRoleCode));
+    return kind === null
+      ? 'clinical'
+      : this.roles.standingOf(userId, kind, await this.roleHospital(roleCode, isPlatformRole(roleCode)));
+  }
+
+  /** A custom role's own hospital (F-17); `undefined` for a system role. */
+  private async roleHospital(roleCode: string, systemRole: boolean): Promise<string | undefined> {
+    if (systemRole || this.roles.roleHospitalOf === undefined) return undefined;
+    return (await this.roles.roleHospitalOf(roleCode)) ?? undefined;
   }
 
   /** One user's overrides changed (API §15.5). */
@@ -161,4 +222,22 @@ export class PermissionResolver {
 
 function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** `user|role|vVERSION`, or `null` when the principal carries no version. */
+export function cacheKeyFor(principal: Principal): string | null {
+  if (principal.authzVersion === undefined) return null;
+  return `${principal.userId}|${principal.roleCode}|v${principal.authzVersion}`;
+}
+
+/** A non-matrix role's stored grants, or its built-in bundle when it has none. */
+function storedGrants(
+  stored: unknown,
+  roleCode: string,
+  fallback: readonly Permission[],
+): readonly Permission[] {
+  if (typeof stored !== 'object' || stored === null) return fallback;
+  const raw = (stored as Record<string, unknown>)[roleCode];
+  if (!Array.isArray(raw)) return fallback;
+  return raw.filter((id): id is Permission => typeof id === 'string' && isPermission(id));
 }

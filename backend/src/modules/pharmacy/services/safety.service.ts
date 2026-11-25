@@ -27,6 +27,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
+import { MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import { MedicationRepository } from '../repositories/medication.repository';
 import { PrescriptionRepository, type Db } from '../repositories/prescription.repository';
@@ -73,6 +74,7 @@ export class SafetyService {
     private readonly medications: MedicationRepository,
     private readonly safety: SafetyRepository,
     private readonly scope: PatientScopeService,
+    private readonly disclosures: MandatoryAuditWriter,
     @Inject(INTERACTION_SOURCE) private readonly interactions: InteractionSource,
   ) {}
 
@@ -89,7 +91,9 @@ export class SafetyService {
     request: ScreenRequest,
     tx?: Db,
   ): Promise<ScreenOutcome> {
-    await this.scope.assertCanReach(principalOf(user), request.patientId);
+    // DR-05 at resource level (F-01): screened against the chart at the
+    // prescriber's hospital — its allergies and its live prescriptions.
+    const reach = await this.scope.reachAt(principalOf(user), request.patientId);
 
     const patient = await this.prescriptions.patientByPublicId(request.patientId, tx);
     // Reachable when a care relationship exists for a chart that has
@@ -104,22 +108,52 @@ export class SafetyService {
       );
     }
 
-    const [allergies, current] = await Promise.all([
-      this.safety.allergiesFor(patient.id, tx),
+    const [allergies, current, legacyAllergies, legacyCurrent] = await Promise.all([
+      this.safety.allergiesFor(patient.id, reach.hospitalId, tx),
       this.safety.currentMedicationsFor(
         patient.id,
+        reach.hospitalId,
         { excludePrescriptionId: request.excludePrescriptionId },
         tx,
       ),
+      // H2 — the legacy safety exception (owner decision #17, 2026-11-24):
+      // the patient's unattributed allergies and live prescriptions, whose
+      // source hospital is unknown. Only after `reachAt` above, only this
+      // patient's rows with no hospital — never another hospital's.
+      this.safety.legacyAllergiesFor(patient.id),
+      this.safety.legacyCurrentMedicationsFor(patient.id, {
+        excludePrescriptionId: request.excludePrescriptionId,
+      }),
     ]);
 
-    const currentMedications: readonly CurrentMedication[] = current.map((row) => ({
+    // Recorded before anything legacy is used or returned, through the
+    // throwing writer: an unaudited legacy disclosure is a 503, not a screen.
+    if (legacyAllergies.length > 0 || legacyCurrent.length > 0) {
+      await this.disclosures.record({
+        action: 'legacy_clinical_record.read',
+        actor: { userId: user.id, role: user.role },
+        entityType: 'patient',
+        entityId: patient.publicId,
+        hospitalId: reach.hospitalId,
+        metadata: {
+          purpose: 'prescription_safety_screen',
+          legacyAllergies: legacyAllergies.length,
+          legacyPrescriptions: legacyCurrent.length,
+        },
+      });
+    }
+
+    const currentMedications: readonly CurrentMedication[] = [
+      ...current.map((row) => ({ ...row, legacy: false })),
+      ...legacyCurrent.map((row) => ({ ...row, legacy: true })),
+    ].map((row) => ({
       prescriptionId: row.prescriptionId,
       medicationId: row.medicationId,
       name: row.name,
       genericName: row.genericName,
       category: row.category,
       isHighRisk: row.isHighRisk,
+      legacy: row.legacy,
     }));
 
     // Throws on failure. Deliberately not caught here — see the docblock.
@@ -142,10 +176,14 @@ export class SafetyService {
 
     const result = screenPrescription({
       patientName: patient.fullName,
-      allergies: allergies.map((allergy) => ({
-        allergen: allergy.allergen,
-        severity: allergy.severity,
-      })),
+      allergies: [
+        ...allergies.map((allergy) => ({ allergen: allergy.allergen, severity: allergy.severity })),
+        ...legacyAllergies.map((allergy) => ({
+          allergen: allergy.allergen,
+          severity: allergy.severity,
+          legacy: true,
+        })),
+      ],
       medicationId: medication.id,
       brandName: medication.name,
       genericName: medication.genericName,

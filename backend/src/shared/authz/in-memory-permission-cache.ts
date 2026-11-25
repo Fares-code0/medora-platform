@@ -65,16 +65,21 @@ export class InMemoryPermissionCache implements PermissionCache {
     return Promise.resolve();
   }
 
+  /**
+   * Drops every entry of this user. Keys are `user|role|vN` (see
+   * `cacheKeyFor`), so this is a prefix match; a bare user id still matches
+   * for callers that key by user alone.
+   */
   forget(userId: string): Promise<void> {
-    this.entries.delete(userId);
+    for (const key of [...this.entries.keys()]) {
+      if (key === userId || key.startsWith(`${userId}|`)) this.entries.delete(key);
+    }
 
     return Promise.resolve();
   }
 
-  forgetMany(userIds: readonly string[]): Promise<void> {
-    for (const userId of userIds) this.entries.delete(userId);
-
-    return Promise.resolve();
+  async forgetMany(userIds: readonly string[]): Promise<void> {
+    for (const userId of userIds) await this.forget(userId);
   }
 
   clear(): Promise<void> {

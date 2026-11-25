@@ -35,6 +35,8 @@ export interface AuditEventRow {
   readonly device: string | null;
   readonly sessionId: string | null;
   readonly incidentRef: string | null;
+  /** The hospital the event belongs to (§2.13); null for platform-wide. */
+  readonly hospitalId: string | null;
 }
 
 export interface AuditEventDetailRow extends AuditEventRow {
@@ -65,7 +67,11 @@ const LIST_SELECT = {
   device: true,
   sessionId: true,
   incidentRef: true,
+  hospitalId: true,
 } as const;
+
+/** A ledger query with the caller's hospital scope applied (`undefined` = platform). */
+export type ScopedAuditQuery = AuditQuery & { readonly scopeHospitalId?: string };
 
 @Injectable()
 export class AuditRepository {
@@ -86,7 +92,7 @@ export class AuditRepository {
    * that the caller cannot use anyway.
    */
   async page(
-    query: AuditQuery,
+    query: ScopedAuditQuery,
   ): Promise<{ rows: AuditEventRow[]; hasMore: boolean }> {
     const rows = await this.prisma.auditEvent.findMany({
       where: this.whereFor(query),
@@ -174,7 +180,7 @@ export class AuditRepository {
    * older than its cursor — numbers beside the filters that shrank as the
    * reader paged. `filtersOf` is the filter alone.
    */
-  async pivot(query: AuditQuery): Promise<{
+  async pivot(query: ScopedAuditQuery): Promise<{
     byCategory: Record<string, number>;
     bySeverity: Record<string, number>;
   }> {
@@ -228,6 +234,19 @@ export class AuditRepository {
   }
 
   /**
+   * Whether this connection may run audit retention (H1): the ledger's
+   * owner or the audit maintenance role, never the application runtime
+   * role. The same predicate `drop_audit_events_partition` enforces.
+   */
+  async retentionEntitled(): Promise<boolean> {
+    const rows = await this.prisma.$queryRaw<{ entitled: boolean }[]>`
+      SELECT public.audit_retention_entitled() AS entitled
+    `;
+
+    return rows[0]?.entitled === true;
+  }
+
+  /**
    * Drops one monthly partition.
    *
    * `$executeRawUnsafe` because a table name cannot be a bind parameter.
@@ -241,7 +260,10 @@ export class AuditRepository {
       throw new Error(`Refusing to drop "${name}": not an audit_events month partition`);
     }
 
-    await this.prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${name}"`);
+    // Through the owner-run, validated function (migration
+    // 20261125090000): the application holds no DDL right of its own, and
+    // the database refuses a partition whose month has not ended.
+    await this.prisma.$executeRaw`SELECT drop_audit_events_partition(${name})`;
   }
 
   /* ── Incident bookmarks (§14.4) ────────────────────────────── */
@@ -281,20 +303,23 @@ export class AuditRepository {
   }
 
   /** The filters and, when the query carries one, the keyset cursor's bound. */
-  private whereFor(query: AuditQuery): Prisma.AuditEventWhereInput {
+  private whereFor(query: ScopedAuditQuery): Prisma.AuditEventWhereInput {
     return this.conditionsFor(query, parseCursor(query.cursor));
   }
 
   /** The filters alone: the set every page of one listing is drawn from. */
-  private filtersOf(query: AuditQuery): Prisma.AuditEventWhereInput {
+  private filtersOf(query: ScopedAuditQuery): Prisma.AuditEventWhereInput {
     return this.conditionsFor(query, null);
   }
 
   private conditionsFor(
-    query: AuditQuery,
+    query: ScopedAuditQuery,
     cursor: { occurredAt: Date; id: string } | null,
   ): Prisma.AuditEventWhereInput {
     return {
+      // Hospital Admin scope (multi-hospital §2.13): the service sets it from
+      // the caller's administrative scope, never from the query string.
+      ...(query.scopeHospitalId === undefined ? {} : { hospitalId: query.scopeHospitalId }),
       ...(query.q === undefined
         ? {}
         : { summary: { contains: query.q, mode: 'insensitive' } }),

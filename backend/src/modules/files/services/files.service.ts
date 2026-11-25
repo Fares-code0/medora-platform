@@ -44,7 +44,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import {
   assertScanClean,
   checkSignature,
@@ -61,6 +61,8 @@ import { FileAccessService } from './file-access.service';
 @Injectable()
 export class FilesService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly files: FileRepository,
     private readonly access: FileAccessService,
     @Inject(FILE_STORAGE) private readonly storage: FileStoragePort,
@@ -73,6 +75,11 @@ export class FilesService {
     kind: FileKind,
     file: { readonly originalname: string; readonly mimetype: string; readonly buffer: Buffer },
   ) {
+    // F-09: outside clinical standing, only the documents that restore it.
+    if (kind !== 'verification_document' && !(await this.access.inStanding(user))) {
+      throw AppException.forbidden('Clinical standing is required for this upload', 'clinical_standing_required');
+    }
+
     // Before storage, so a rejected type is a 422 naming the field
     // rather than a 503 from a store that was never going to be asked.
     // The declared type first, then whether the bytes are that type.
@@ -135,7 +142,7 @@ export class FilesService {
       disposition: 'attachment',
     });
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',
@@ -182,7 +189,11 @@ export class FilesService {
 
   /** The metadata a client holds between upload and linking. */
   async detail(user: AuthenticatedUser, fileId: string) {
-    return toView(await this.access.readable(user, fileId));
+    const row = await this.access.readable(user, fileId);
+    // F-14: the checksum fingerprints the document's content; only the
+    // uploader, who needs it to confirm their own upload, sees it.
+    const { checksumSha256, ...view } = toView(row);
+    return row.uploadedBy === user.id ? { ...view, checksumSha256 } : view;
   }
 }
 

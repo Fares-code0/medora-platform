@@ -55,7 +55,7 @@ import type {
   Gender,
   Weekday,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -380,15 +380,18 @@ export class AppointmentRepository {
    */
   findForDoctor(doctorId: string, publicId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
     return this.client(tx).appointment.findFirst({
-      where: { publicId, doctorId, deletedAt: null },
+      where: { publicId, doctorId, deletedAt: null, ...CURRENT_EMPLOYMENT },
       select: this.detailSelect(),
     });
   }
 
-  /** One appointment with no doctor scope — the oversight detail. */
-  findAny(publicId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
+  /**
+   * One appointment with no doctor scope — the oversight detail — at the
+   * overseer's hospital only (F-01, OD-07).
+   */
+  findAny(publicId: string, hospitalId: string, tx?: ScheduleTx): Promise<DetailRow | null> {
     return this.client(tx).appointment.findFirst({
-      where: { publicId, deletedAt: null },
+      where: { publicId, hospitalId, deletedAt: null },
       select: this.detailSelect(),
     });
   }
@@ -469,11 +472,17 @@ export class AppointmentRepository {
     outer?: ScheduleTx,
   ): Promise<BookRow> {
     return this.inTransaction(outer, async (tx) => {
+      // F-06/F-07: the booking belongs to the doctor's hospital — its
+      // employment there and the patient's record there — from the moment
+      // it exists, and that ownership never moves (see `reassignTo`).
+      const stamp = await hospitalStampFor(tx, input.doctorId, input.patientId);
+      if (stamp === null) throw new AppointmentUnattributable();
       const created = await tx.appointment.create({
         data: {
           publicId: input.publicId,
           patientId: input.patientId,
           doctorId: input.doctorId,
+          ...stamp,
           departmentId: input.departmentId,
           visitTypeId: input.visitTypeId,
           startsAt: input.startsAt,
@@ -724,14 +733,16 @@ export class AppointmentRepository {
       this.prisma.db.appointment.count({
         where: {
           doctorId,
+          ...CURRENT_EMPLOYMENT,
           startsAt: { gte: bounds.todayStart, lt: bounds.todayEnd },
           status: { in: [...LIVE_STATUSES, 'COMPLETED'] },
         },
       }),
-      this.prisma.db.appointment.count({ where: { doctorId, status: 'PENDING' } }),
+      this.prisma.db.appointment.count({ where: { doctorId, ...CURRENT_EMPLOYMENT, status: 'PENDING' } }),
       this.prisma.db.appointment.count({
         where: {
           doctorId,
+          ...CURRENT_EMPLOYMENT,
           startsAt: { gte: bounds.now },
           status: { in: ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'] },
         },
@@ -739,6 +750,7 @@ export class AppointmentRepository {
       this.prisma.db.appointment.count({
         where: {
           doctorId,
+          ...CURRENT_EMPLOYMENT,
           status: 'COMPLETED',
           startsAt: { gte: bounds.weekStart, lt: bounds.todayEnd },
         },
@@ -756,7 +768,7 @@ export class AppointmentRepository {
    * denominator can decline to draw it.
    */
   async adminSummary(
-    bounds: { readonly weekStart: Date; readonly now: Date },
+    bounds: { readonly weekStart: Date; readonly now: Date; readonly hospitalId: string },
   ): Promise<{
     pendingOverDay: number;
     cancelled7d: number;
@@ -767,16 +779,16 @@ export class AppointmentRepository {
 
     const [pendingOverDay, cancelled7d, noShow7d, window7dTotal] = await Promise.all([
       this.prisma.db.appointment.count({
-        where: { status: 'PENDING', createdAt: { lt: dayAgo } },
+        where: { hospitalId: bounds.hospitalId, status: 'PENDING', createdAt: { lt: dayAgo } },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'CANCELLED', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, status: 'CANCELLED', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'NO_SHOW', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, status: 'NO_SHOW', startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
       this.prisma.db.appointment.count({
-        where: { startsAt: { gte: bounds.weekStart, lt: bounds.now } },
+        where: { hospitalId: bounds.hospitalId, startsAt: { gte: bounds.weekStart, lt: bounds.now } },
       }),
     ]);
 
@@ -793,6 +805,7 @@ export class AppointmentRepository {
    * doctor's book to a caller who asked for their own.
    */
   async oversightList(criteria: {
+    readonly hospitalId: string;
     readonly from?: Date | undefined;
     readonly to?: Date | undefined;
     readonly status?: readonly AppointmentStatus[] | undefined;
@@ -804,6 +817,8 @@ export class AppointmentRepository {
     readonly pageSize: number;
   }): Promise<{ rows: readonly BookRow[]; totalItems: number }> {
     const where = {
+      // The overseer's hospital only (F-01, OD-07).
+      hospitalId: criteria.hospitalId,
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -875,7 +890,7 @@ export class AppointmentRepository {
    * reusing `summaryFor` with a sentinel doctor id would be the kind of
    * "null widens the scope" parameter this repository avoids elsewhere.
    */
-  async platformCounts(bounds: { readonly now: Date }): Promise<{
+  async platformCounts(bounds: { readonly now: Date; readonly hospitalId: string }): Promise<{
     today: number;
     pending: number;
     upcoming: number;
@@ -894,19 +909,21 @@ export class AppointmentRepository {
     const [today, pending, upcoming, completedThisWeek] = await Promise.all([
       this.prisma.db.appointment.count({
         where: {
+          hospitalId: bounds.hospitalId,
           startsAt: { gte: dayStart, lt: dayEnd },
           status: { in: [...LIVE_STATUSES, 'COMPLETED'] },
         },
       }),
-      this.prisma.db.appointment.count({ where: { status: 'PENDING' } }),
+      this.prisma.db.appointment.count({ where: { hospitalId: bounds.hospitalId, status: 'PENDING' } }),
       this.prisma.db.appointment.count({
         where: {
+          hospitalId: bounds.hospitalId,
           startsAt: { gte: bounds.now },
           status: { in: ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'] },
         },
       }),
       this.prisma.db.appointment.count({
-        where: { status: 'COMPLETED', startsAt: { gte: weekStart, lt: dayEnd } },
+        where: { hospitalId: bounds.hospitalId, status: 'COMPLETED', startsAt: { gte: weekStart, lt: dayEnd } },
       }),
     ]);
 
@@ -934,10 +951,46 @@ export class AppointmentRepository {
     outer?: ScheduleTx,
   ): Promise<BookRow | null> {
     return this.inTransaction(outer, async (tx) => {
-      const updated = await tx.appointment.updateMany({
+      // F-07: ownership is the hospital's and never moves. The new doctor
+      // must practise at the appointment's own hospital now — an active
+      // employment there, verified, in clinical standing — and the row
+      // moves to that employment (the composite foreign key keeps doctor,
+      // employment and hospital in agreement). A published slot belonged
+      // to the previous doctor's schedule, so the link to it is dropped.
+      const current = await tx.appointment.findFirst({
         where: { id: input.appointmentId, doctorId: input.fromDoctorId },
+        select: { hospitalId: true },
+      });
+      if (current === null) return null;
+      if (current.hospitalId === null) throw new CrossHospitalReassignment();
+      const employment = await tx.doctorEmployment.findFirst({
+        where: {
+          doctorId: input.toDoctorId,
+          hospitalId: current.hospitalId,
+          endedAt: null,
+          hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+          doctor: {
+            is: {
+              deletedAt: null,
+              verificationStatus: 'VERIFIED',
+              practiceStatus: { in: ['ACTIVE', 'VACATION'] },
+            },
+          },
+        },
+        select: { id: true },
+      });
+      if (employment === null) throw new CrossHospitalReassignment();
+
+      const updated = await tx.appointment.updateMany({
+        where: {
+          id: input.appointmentId,
+          doctorId: input.fromDoctorId,
+          hospitalId: current.hospitalId,
+        },
         data: {
           doctorId: input.toDoctorId,
+          doctorEmploymentId: employment.id,
+          publishedSlotId: null,
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
       });
@@ -960,6 +1013,24 @@ export class AppointmentRepository {
         select: BOOK_SELECT,
       });
     });
+  }
+
+  /** Whether the doctor holds an active, clinical employment at `hospitalId` (F-07). */
+  async practisesAt(doctorId: string, hospitalId: string): Promise<boolean> {
+    if (!UUID.test(doctorId)) return false;
+    const row = await this.prisma.db.doctorEmployment.findFirst({
+      where: {
+        doctorId,
+        hospitalId,
+        endedAt: null,
+        hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+        doctor: {
+          is: { deletedAt: null, verificationStatus: 'VERIFIED', practiceStatus: { in: ['ACTIVE', 'VACATION'] } },
+        },
+      },
+      select: { id: true },
+    });
+    return row !== null;
   }
 
   /** A doctor's id and specialty, for the reassign same-specialty rule. */
@@ -1038,6 +1109,7 @@ export class AppointmentRepository {
   private whereFor(doctorId: string, criteria: BookCriteria) {
     return {
       doctorId,
+      ...CURRENT_EMPLOYMENT,
       ...(criteria.status === undefined || criteria.status.length === 0
         ? {}
         : { status: { in: [...criteria.status] } }),
@@ -1094,4 +1166,32 @@ function patientMatch(q: string) {
       { mrn: { contains: q, mode } },
     ],
   };
+}
+
+/**
+ * Resource-level DR-05 for a doctor's own book (audit F-01): appointments
+ * booked under an employment that is still active. After a transfer or a
+ * termination the former hospital's bookings leave the doctor's book (they
+ * stay that hospital's, for its administrators to reassign); unstamped
+ * legacy rows are outside every book, as under RLS. Conflict detection
+ * (`bookedBetween`) is deliberately not scoped: a doctor's time is one.
+ */
+const CURRENT_EMPLOYMENT = { doctorEmployment: { is: { endedAt: null } } } as const;
+
+/** A booking with no hospital to belong to: the doctor or the patient's record is missing there. */
+export class AppointmentUnattributable extends Error {
+  constructor() {
+    super('The appointment has no hospital to belong to');
+  }
+}
+
+/**
+ * The target doctor does not practise at the appointment's hospital (F-07).
+ * Ownership never crosses hospitals by reassignment: the booking is
+ * cancelled and the patient rebooked at the other hospital instead.
+ */
+export class CrossHospitalReassignment extends Error {
+  constructor() {
+    super('The doctor does not practise at this appointment’s hospital');
+  }
 }

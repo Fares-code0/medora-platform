@@ -3,7 +3,7 @@ import { Body, Controller, Get, Patch, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../../shared/authz';
 import type { AccountView } from '../dto/account.dto';
 import {
   activityQuerySchema,
@@ -33,10 +33,14 @@ import { AccountService, type PaginatedActivity } from '../services/account.serv
  * (ADR-030 §6) and who have an account settings screen like anyone else.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me')
 export class AccountController {
   /** API §2.1 — the Account panel's document. */
   constructor(private readonly accounts: AccountService) {}
+
+  @NotPhi('the caller’s own account')
 
   @Get('account')
   account(@CurrentUser() user: AuthenticatedUser): Promise<AccountView> {
@@ -60,6 +64,7 @@ export class AccountController {
   }
 
   /** API §2.8 — the caller's own activity feed. */
+  @NotPhi('the caller’s own activity')
   @Get('activity')
   activity(
     @CurrentUser() user: AuthenticatedUser,

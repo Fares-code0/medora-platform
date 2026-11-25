@@ -15,7 +15,12 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import {
+  closeThenDrop,
+  createIsolatedDatabase,
+  type IsolatedDatabase,
+} from './support/isolated-database';
+import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 let databaseUrl: URL;
@@ -42,6 +47,8 @@ if (
     'Refusing RLS proposal tests: expected the disposable loopback medora_test database as medora.',
   );
 }
+
+const POST_PROPOSAL_TABLES = new Set(['exceptional_access_grants', 'information_requests']);
 
 const PROPOSAL = readFileSync(
   resolve(__dirname, '../prisma/rls-proposal/phase22-rls-proposal.sql'),
@@ -70,8 +77,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  if (connected) await client.end();
-  await isolated?.drop();
+  // The drop is attempted even if closing the client throws (closeThenDrop).
+  await closeThenDrop(connected ? client : undefined, isolated);
 }, 30_000);
 
 const suffix = (): string => randomUUID().replaceAll('-', '').slice(0, 10);
@@ -259,6 +266,7 @@ async function buildWorld(): Promise<World> {
     )
   ).id;
 
+  await client.query(RESET_TO_PRE_ACTIVATION);
   await client.query(PROPOSAL);
   const role = 'medora_rls_probe_' + suffix();
   await client.query(`CREATE ROLE ${role} NOLOGIN NOSUPERUSER NOBYPASSRLS`);
@@ -569,7 +577,10 @@ describe('proposed RLS policies (never applied; rolled back)', () => {
       .filter((line) => line.startsWith('| `'))
       .map((line) => line.split(' | '))
       .filter((cells) => cells[1] === 'Direct' || cells[1] === 'Indirect')
-      .map((cells) => cells[0]!.replace(/^\| `|`$/g, ''));
+      .map((cells) => cells[0]!.replace(/^\| `|`$/g, ''))
+      // Created after this proposal, by the enforcement migrations; their
+      // policies are the enforced ones, proven in rls-runtime-role.e2e-spec.
+      .filter((table) => !POST_PROPOSAL_TABLES.has(table));
     expect(required.length).toBeGreaterThan(60);
     await inProposal(async () => {
       const covered = await client.query<{ relname: string; enabled: boolean; policies: string }>(

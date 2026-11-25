@@ -41,6 +41,8 @@ import type { Permission, PlatformRole } from './permission-catalogue';
 export const CAN_METADATA = 'medora:authz:can';
 export const ROLES_METADATA = 'medora:authz:roles';
 export const AUTHENTICATED_METADATA = 'medora:authz:authenticated';
+export const PLATFORM_SCOPE_METADATA = 'medora:authz:platform-scope';
+export const HOSPITAL_SCOPE_METADATA = 'medora:authz:hospital-scope';
 
 /**
  * API §0.4's `✓` — any authenticated user, no capability required.
@@ -75,4 +77,43 @@ export function Roles(...roles: readonly PlatformRole[]): CustomDecorator<string
   return SetMetadata(ROLES_METADATA, roles);
 }
 
+/**
+ * Platform-tier route (§2.2, §2.3): only a Platform Admin may call it. A
+ * Hospital Admin holding the same capability is refused, because the route
+ * acts across hospitals (the permission matrix, platform settings,
+ * integrations, the platform audit ledger, platform admin grants).
+ */
+export function PlatformScope(): CustomDecorator<string> {
+  return SetMetadata(PLATFORM_SCOPE_METADATA, true);
+}
+
+/**
+ * Hospital-tier route (§2.3): a Hospital Admin may call it, confined by the
+ * service to its own hospital. Administrative routes are platform-tier by
+ * default (deny by default): a route opens to Hospital Admins only when it
+ * has been built to scope its data to one hospital and says so here.
+ */
+export function HospitalScope(): CustomDecorator<string> {
+  return SetMetadata(HOSPITAL_SCOPE_METADATA, true);
+}
+
 export { IS_PUBLIC_KEY, Public } from '../../common/auth/public.decorator';
+
+export const OUTSIDE_STANDING_METADATA = 'medora:authz:outside-standing';
+
+/**
+ * The allowlist for an account without clinical standing (audit F-09).
+ *
+ * A doctor or staff member who is suspended, unverified, never employed,
+ * between employments or otherwise outside clinical standing may use only
+ * routes carrying this marker: their own account and profile, its
+ * security (password, two-factor, sessions), the session read, the
+ * verification documents that restore standing, the files those are
+ * uploaded through, and the status vocabulary. Every other route —
+ * `@Authenticated()` ones included — answers 403 `clinical_standing_required`
+ * for them. Explicit rather than inferred: a new route is closed to them
+ * until someone decides otherwise.
+ */
+export function OutsideClinicalStanding(): CustomDecorator<string> {
+  return SetMetadata(OUTSIDE_STANDING_METADATA, true);
+}

@@ -144,6 +144,13 @@ export class RefreshService {
       throw expiredSession();
     }
 
+    // §2.6: termination revokes every session when it happens; this is the
+    // second line, for a session that predates it or survived a failure.
+    if (await this.permissions.isTerminated(user.id, user.role.code)) {
+      await this.sessions.revoke(live.sessionId);
+      throw expiredSession();
+    }
+
     const permissions = await this.permissions.resolve(user.id, user.roleId, user.role.code);
     const principal: AuthenticatedUser = {
       id: user.id,

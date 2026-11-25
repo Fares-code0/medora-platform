@@ -601,7 +601,22 @@ export class SessionService {
    * answer it with a cast error, which must be a 401, not a 500.
    */
   async isActive(sessionId: string, userId: string, roleCode?: string): Promise<boolean> {
-    if (!UUID.test(sessionId) || !UUID.test(userId)) return false;
+    return (await this.liveAuthzVersion(sessionId, userId, roleCode)) !== null;
+  }
+
+  /**
+   * The same check as `isActive`, answering with the account's current
+   * `authz_version` (or `null` when the session is not live). The guard
+   * puts the version on the principal; the permission cache is keyed by it
+   * (multi-hospital §2.8–§2.10), so it is read here, in the one query every
+   * request already makes, never taken from the token.
+   */
+  async liveAuthzVersion(
+    sessionId: string,
+    userId: string,
+    roleCode?: string,
+  ): Promise<number | null> {
+    if (!UUID.test(sessionId) || !UUID.test(userId)) return null;
 
     const session = await this.prisma.db.session.findFirst({
       where: {
@@ -615,10 +630,10 @@ export class SessionService {
           ...(roleCode === undefined ? {} : { role: { is: { code: roleCode } } }),
         },
       },
-      select: { id: true },
+      select: { user: { select: { authzVersion: true } } },
     });
 
-    return session !== null;
+    return session === null ? null : session.user.authzVersion;
   }
 
   /**

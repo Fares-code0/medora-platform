@@ -102,6 +102,9 @@ model HospitalRoleAssignment {
   staffAffiliation HospitalStaffAffiliation? @relation(fields: [sourceStaffAffiliationId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "hospital_role_assignments_staff_affiliation_fkey")
   granter User? @relation("HospitalRoleAssignmentGrantedBy", fields: [grantedBy], references: [id], onDelete: SetNull)
   @@unique([userId, hospitalId, roleId], where: raw("revoked_at IS NULL"), map: "hospital_role_assignments_active_key")
+  /// One hospital per account at a time (§2.2 Hospital Admin, §2.4 staff):
+  /// at most one live hospital role assignment per user.
+  @@unique([userId], where: raw("revoked_at IS NULL"), map: "hospital_role_assignments_one_active_per_user_key")
   @@index([hospitalId, userId, revokedAt], map: "hospital_role_assignments_hospital_user_revoked_idx")
   @@index([roleId], map: "hospital_role_assignments_role_idx")
   @@index([sourceDoctorEmploymentId], map: "hospital_role_assignments_doctor_source_idx")
@@ -138,6 +141,9 @@ model HospitalMedicalRecord {
   @@unique([patientId, hospitalId], map: "hospital_medical_records_patient_hospital_key")
   @@unique([id, hospitalId, patientId], map: "hospital_medical_records_id_hospital_patient_key")
   @@index([hospitalId, createdAt(sort: Desc)], map: "hospital_medical_records_hospital_created_idx")
+  exceptionalAccessGrants ExceptionalAccessGrant[]
+  informationRequests     InformationRequest[]
+
   @@map("hospital_medical_records")
 }
 

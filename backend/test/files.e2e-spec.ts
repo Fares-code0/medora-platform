@@ -4,6 +4,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { OrphanSweepService } from '../src/modules/files/services/orphan-sweep.service';
+// A job runs under `system` scope (JobRunnerService); called directly, so does the sweep here.
+import { runAsSystem } from '../src/shared/database';
 import {
   FILE_STORAGE,
   type FileStoragePort,
@@ -18,6 +20,10 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  fixtureHospital,
+  makeClinicalDoctor,
+  recordPatientAt,
+  soleRecordOf,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -174,6 +180,19 @@ beforeAll(async () => {
 
   const [record] = await createPatientRecords(harness.prisma, 'f25', 1);
   patientId = record?.id ?? '';
+
+  // DR-05: reach is a record at the doctor's hospital. The carer (and the
+  // owner) work at hospital A, where the patient is recorded; the stranger
+  // works at hospital B — a colleague at A would reach the chart.
+  const hospitalA = await fixtureHospital(harness.prisma, 'a');
+  await makeClinicalDoctor(harness.prisma, testEmail('files-owner'), hospitalA);
+  await makeClinicalDoctor(harness.prisma, testEmail('files-carer'), hospitalA);
+  await makeClinicalDoctor(
+    harness.prisma,
+    testEmail('files-stranger'),
+    await fixtureHospital(harness.prisma, 'b'),
+  );
+  await recordPatientAt(harness.prisma, patientId, hospitalA);
 
   await harness.prisma.patientDoctorAssignment.create({
     data: { patientId, doctorId: carerDoctorId, role: 'primary' },
@@ -357,8 +376,13 @@ describe('API §17.2 — who may read a file', () => {
       await upload(ownerToken, 'patient_document', 'M25 linked.pdf', 'application/pdf', PDF),
     );
 
+    // Linked as the application links it: the file joins the chart's
+    // hospital and the document is stamped with it (F-06, F-14).
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
     await harness.prisma.patientDocument.create({
       data: {
+        ...stamp,
         patientId,
         name: 'Referral',
         category: 'REFERRAL',
@@ -378,6 +402,36 @@ describe('API §17.2 — who may read a file', () => {
     expect(
       (await request(harness.server).get(`${FILES}/${file.id}`).set(as(strangerToken))).status,
     ).toBe(404);
+  });
+
+  it('keeps a file to its hospital, and the checksum to its uploader (F-14)', async () => {
+    const file = dataOf<FileView>(
+      await upload(ownerToken, 'patient_document', 'M25 scoped.pdf', 'application/pdf', PDF),
+    );
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
+    await harness.prisma.patientDocument.create({
+      data: { ...stamp, patientId, name: 'Scoped', category: 'REFERRAL', sizeKb: 1, fileId: file.id },
+    });
+
+    const asOwner = await request(harness.server).get(`${FILES}/${file.id}`).set(as(ownerToken));
+    expect(asOwner.status).toBe(200);
+    expect(dataOf<Record<string, unknown>>(asOwner)).toHaveProperty('checksumSha256');
+    const asCarer = await request(harness.server).get(`${FILES}/${file.id}`).set(as(carerToken));
+    expect(asCarer.status).toBe(200);
+    expect(dataOf<Record<string, unknown>>(asCarer)).not.toHaveProperty('checksumSha256');
+
+    // The stranger now reaches the patient too — through a record at their
+    // own hospital B — and still cannot open hospital A's file.
+    const hospitalB = await fixtureHospital(harness.prisma, 'b');
+    const recordB = await recordPatientAt(harness.prisma, patientId, hospitalB);
+    try {
+      for (const path of [`${FILES}/${file.id}`, `${FILES}/${file.id}/download`]) {
+        expect((await request(harness.server).get(path).set(as(strangerToken))).status, path).toBe(404);
+      }
+    } finally {
+      await harness.prisma.hospitalMedicalRecord.delete({ where: { id: recordB } });
+    }
   });
 
   it('lets any signed-in user read a profile photo', async () => {
@@ -438,8 +492,10 @@ describe('API §17.3 — delete is the owner’s, and is a soft delete', () => {
       await upload(ownerToken, 'patient_document', 'M25 notyours.pdf', 'application/pdf', PDF),
     );
 
+    const stamp = await soleRecordOf(harness.prisma, patientId);
+    await harness.prisma.file.update({ where: { id: file.id }, data: { hospitalId: stamp.hospitalId } });
     await harness.prisma.patientDocument.create({
-      data: { patientId, name: 'Scan', category: 'REPORT', sizeKb: 1, fileId: file.id },
+      data: { ...stamp, patientId, name: 'Scan', category: 'REPORT', sizeKb: 1, fileId: file.id },
     });
 
     // The carer can read this file — asserted above for its sibling —
@@ -463,7 +519,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     await request(harness.server).delete(`${FILES}/${file.id}`).set(as(ownerToken)).expect(204);
 
     const sweep = harness.app.get(OrphanSweepService);
-    const result = await sweep.sweep();
+    const result = await runAsSystem(() => sweep.sweep());
 
     expect(result.removed).toBeGreaterThanOrEqual(1);
     expect(storage.removed).toContain(before.storageKey);
@@ -481,7 +537,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     // Nothing left to collect, and no failure from trying: a swept row
     // is not offered again, which is what makes the sweep resumable
     // after a crash halfway through a batch.
-    expect((await sweep.sweep()).failed).toBe(0);
+    expect((await runAsSystem(() => sweep.sweep())).failed).toBe(0);
   });
 
   it('keeps a row queued when the store refuses, and does not stop the batch', async () => {
@@ -491,7 +547,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     await request(harness.server).delete(`${FILES}/${file.id}`).set(as(ownerToken)).expect(204);
 
     storage.failRemoval = true;
-    const failing = await harness.app.get(OrphanSweepService).sweep();
+    const failing = await runAsSystem(() => harness.app.get(OrphanSweepService).sweep());
     storage.failRemoval = false;
 
     // At least this file's row, not exactly it: the sweep reads the whole
@@ -508,7 +564,7 @@ describe('M25.5 — the orphan sweep collects the objects', () => {
     const row = await harness.prisma.file.findUniqueOrThrow({ where: { id: file.id } });
     expect(row.storageKey).not.toBe('');
 
-    expect((await harness.app.get(OrphanSweepService).sweep()).removed).toBeGreaterThanOrEqual(1);
+    expect((await runAsSystem(() => harness.app.get(OrphanSweepService).sweep())).removed).toBeGreaterThanOrEqual(1);
     const swept = await harness.prisma.file.findUniqueOrThrow({ where: { id: file.id } });
     expect(swept.storageKey).toBe('');
   });

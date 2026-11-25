@@ -21,6 +21,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { Weekday } from '../../../generated/prisma/enums';
+import { AppException } from '../../../common/errors/app.exception';
 import { PrismaService } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -72,8 +73,10 @@ export class AvailabilityRepository {
   async doctorIdForUser(userId: string): Promise<string | null> {
     if (!UUID.test(userId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { userId },
+    // A soft-deleted practitioner is not one (ported from #63): `findUnique`
+    // bypasses the soft-delete extension, so the filter is stated.
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: { id: true },
     });
 
@@ -84,8 +87,8 @@ export class AvailabilityRepository {
   async schedulingFor(userId: string): Promise<DoctorSchedulingRow | null> {
     if (!UUID.test(userId)) return null;
 
-    return this.prisma.db.doctor.findUnique({
-      where: { userId },
+    return this.prisma.db.doctor.findFirst({
+      where: { userId, deletedAt: null },
       select: {
         id: true,
         defaultDurationMin: true,
@@ -119,10 +122,12 @@ export class AvailabilityRepository {
   }): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await tx.doctorAvailability.deleteMany({ where: { doctorId: input.doctorId } });
+      const employment = await currentEmployment(tx, input.doctorId);
 
       if (input.rows.length > 0) {
         await tx.doctorAvailability.createMany({
           data: input.rows.map((row) => ({
+            ...employment,
             doctorId: input.doctorId,
             weekday: row.weekday,
             startTime: row.startTime,
@@ -133,14 +138,16 @@ export class AvailabilityRepository {
         });
       }
 
-      await tx.doctor.update({
-        where: { id: input.doctorId },
+      const { count } = await tx.doctor.updateMany({
+        where: { id: input.doctorId, deletedAt: null },
         data: {
           defaultDurationMin: input.defaultDurationMin,
           bufferMin: input.bufferMin,
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
       });
+      // Soft-deleted mid-request: the grid written above rolls back with it.
+      if (count === 0) throw AppException.notFound('No doctor profile for this account');
     });
   }
 
@@ -160,7 +167,7 @@ export class AvailabilityRepository {
     });
   }
 
-  createTimeOff(input: {
+  async createTimeOff(input: {
     readonly doctorId: string;
     readonly actorId: string;
     readonly startsAt: Date;
@@ -168,8 +175,10 @@ export class AvailabilityRepository {
     readonly kind: string;
     readonly autoBehavior: string;
   }): Promise<TimeOffRow> {
+    const employment = await currentEmployment(this.prisma.db, input.doctorId);
     return this.prisma.db.doctorTimeOff.create({
       data: {
+        ...employment,
         doctorId: input.doctorId,
         startsAt: input.startsAt,
         endsAt: input.endsAt,
@@ -279,4 +288,22 @@ export class AvailabilityRepository {
       orderBy: { startsAt: 'asc' },
     });
   }
+}
+
+/**
+ * The schedule belongs to the hospital the doctor works at (F-06): rows
+ * carry its id and the employment, so the hospital's own policy admits them
+ * and a transfer leaves them with the old hospital. No active employment, no
+ * stamp — such a doctor is outside clinical standing and cannot reach the
+ * schedule routes at all (F-09).
+ */
+async function currentEmployment(
+  client: { doctorEmployment: { findFirst(args: object): Promise<{ id: string; hospitalId: string } | null> } },
+  doctorId: string,
+): Promise<{ hospitalId: string; doctorEmploymentId: string } | Record<string, never>> {
+  const row = await client.doctorEmployment.findFirst({
+    where: { doctorId, endedAt: null },
+    select: { id: true, hospitalId: true },
+  });
+  return row === null ? {} : { hospitalId: row.hospitalId, doctorEmploymentId: row.id };
 }

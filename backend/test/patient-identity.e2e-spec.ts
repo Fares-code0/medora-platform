@@ -11,6 +11,7 @@ import {
   registrationBody,
   testEmail,
   tokenFromLink,
+  asJob,
 } from './support/auth-app';
 import {
   createPatientRecords,
@@ -418,7 +419,7 @@ describe('the users ↔ patients link (ADR-030 §§1–3)', () => {
 describe('ownership resolution refuses to leak (ADR-030 §6)', () => {
   it('resolves a linked patient account to its own record, and only that one', async () => {
     const session = await signUpPatient();
-    const scope = harness.app.get(PatientSelfScopeService);
+    const scope = asJob(harness.app.get(PatientSelfScopeService));
     const [mine, theirs] = twoPatients();
 
     await harness.prisma.db.patient.update({
@@ -440,7 +441,7 @@ describe('ownership resolution refuses to leak (ADR-030 §6)', () => {
     // against a 403/404 split would disclose the clinic's roster without
     // reading a single chart — the enumeration is the disclosure.
     const session = await signUpPatient();
-    const scope = harness.app.get(PatientSelfScopeService);
+    const scope = asJob(harness.app.get(PatientSelfScopeService));
     const theirs = records[1]!;
 
     const principal = { userId: session.userId, roleCode: 'patient' };
@@ -455,7 +456,7 @@ describe('ownership resolution refuses to leak (ADR-030 §6)', () => {
     // it as an empty collection or a null profile — a success — not as a
     // failure, so the resolver returns null rather than throwing.
     const session = await signUpPatient();
-    const scope = harness.app.get(PatientSelfScopeService);
+    const scope = asJob(harness.app.get(PatientSelfScopeService));
 
     expect(await scope.patientIdFor({ userId: session.userId, roleCode: 'patient' })).toBeNull();
   });
@@ -463,7 +464,7 @@ describe('ownership resolution refuses to leak (ADR-030 §6)', () => {
   it('resolves a doctor or admin principal to no patient record', async () => {
     // Collapsed with the unlinked case on purpose: both mean "this caller
     // has no patient data here", and a route cannot leak which it was.
-    const scope = harness.app.get(PatientSelfScopeService);
+    const scope = asJob(harness.app.get(PatientSelfScopeService));
     const doctor = await harness.prisma.user.findFirstOrThrow({
       where: { role: { code: 'doctor' } },
     });

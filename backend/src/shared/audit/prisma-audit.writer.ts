@@ -73,7 +73,11 @@ export class PrismaAuditWriter implements AuditDispatcher {
     }
 
     try {
-      await this.prisma.auditEvent.create({ data: auditRowOf(event) });
+      // `createMany`, not `create`: it inserts without RETURNING. Under
+      // Row-Level Security a RETURNING clause is checked against the SELECT
+      // policy, which a hospital- or patient-scoped request need not satisfy
+      // for an event it may legitimately append (audit finding F-04).
+      await this.prisma.auditEvent.createMany({ data: [auditRowOf(event)] });
     } catch (error) {
       // Logged with the action and the target so the lost row is
       // reconstructible from the log, which is the only mitigation a

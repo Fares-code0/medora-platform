@@ -1,8 +1,15 @@
 # Backend ↔ PostgreSQL Tenant-Context Contract (for #20)
 
-**Status:** PROPOSED by database engineering, **pending Backend agreement** (#20). Nothing here is
-implemented in the Backend, and no policy is active. Every PostgreSQL behaviour stated is proven by a
-test on PostgreSQL 16 (references in brackets).
+**Status:** **IMPLEMENTED** (PR #61). The Backend applies the contract and the policies are active
+(`RLS_DESIGN.md`, Appendix A). What was built differs from the proposal below in one respect: the
+context is a **scope** plus ids, not a single hospital id — `app.scope` (`hospital`, `platform`,
+`patient`, `system`; any other value, including the `self` scope of a caller with no tenant, reads as
+NULL and fails closed), `app.hospital_id`, `app.user_id` and `app.patient_id`, all transaction-local,
+resolved per request by `TenantContextResolver` (in `AuthorizationGuard`) and applied by
+`tenant-context.adapter.ts` (`IMPLEMENTATION_CONTRACTS.md` §6). The threat model and the FORCE RLS
+assessment are at the end of this document. Sections 1–6 are the original proposal (2026-11-23),
+kept as the design record; every PostgreSQL behaviour they state is proven by a test on PostgreSQL 16
+(references in brackets).
 
 ## 1. What PostgreSQL needs
 
@@ -74,3 +81,43 @@ shadow queries inside one interactive transaction that first sets `statement_tim
 | #25 F6 | `patient_doctor_assignments` scope columns (present) |
 | #26 C1 | §5 above |
 | #27 Enforcement | Policies (#19) are defence in depth; enforcement must not rely on them. Queue rows now carry `hospital_id` (PR #28): new rows must be stamped from context |
+
+## Threat model: who chooses a scope (audit F-15)
+
+- **The context is the server's, never the client's.** `TenantContextResolver` derives the request
+  context from the authenticated caller's own records (Platform Admin grant, Hospital Admin
+  assignment, the doctor's one clinical employment, the staff affiliation, the patient's own record).
+  No header, query parameter, body field or route parameter is read to choose a scope or a hospital,
+  and no caller of any role resolves to `system` (`tenant-context.resolver.spec.ts`).
+- **`system` is chosen by code only**, at a reviewed list of call sites: trusted lookups of the caller's
+  own staffing that precede and decide the context, DR-05 reach checks, audit attribution, the masked
+  directory's reach, and platform maintenance jobs. `tenant-scope-callsites.spec.ts` fails when a new
+  `runAsSystem` / `runWithTenantContext` / `setTenantContext` call site appears, so one cannot be added
+  without review.
+- **What the database still checks** when a trusted path holds `system`: the append-only and
+  attribution rules of the audit ledger (`audit_events_append`), the tenant-key triggers
+  (`prevent_tenant_scope_reassignment`, `validate_scoped_clinical_links`), and the Platform Admin
+  invariant — none of which depends on the scope.
+- **Residual risk**: a bug inside a reviewed `system` call site (e.g. a lookup keyed by an id the
+  caller supplied, without filtering on the caller) could read across tenants. Each listed site
+  filters on the authenticated user's own id; the list is the review surface.
+
+## FORCE ROW LEVEL SECURITY: assessed, not adopted (audit F-18)
+
+Every tenant table (86 relations in `public` with RLS on, the audit partitions of F-05 included) has RLS
+**enabled**; none has it **forced**. FORCE would bind the table owner
+as well.
+
+- **Why not now.** The owner is the migration and backfill identity. Under FORCE every migration,
+  seed, backfill and operator repair would need an explicit `system` context, and a forgotten one would
+  fail closed in production deploys (or, worse, be worked around ad hoc). The protection FORCE adds —
+  against the *application* connecting as the owner — is already provided another way.
+- **The control that replaces it.** The application connects as the provisioned runtime role
+  (`prisma/roles/provision-runtime-role.sql`): NOSUPERUSER, NOBYPASSRLS, owning nothing. In
+  production the service refuses to start on a role that is a superuser, has BYPASSRLS or owns a table
+  (`runtime-role.check.ts`), and `DATABASE_TENANT_CONTEXT` is required. The RLS runtime suites prove
+  the policies bind that role.
+- **Revisit when** any non-owner path must be prevented from ever using the owner credential (e.g. a
+  shared operations account), or when migrations move to a separate migrator role that does not own the
+  tables — then FORCE can be enabled with no deploy-time cost. The remaining exposure is operational:
+  the owner credential must stay out of the application's environment.

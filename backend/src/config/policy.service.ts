@@ -74,6 +74,17 @@ export class PolicyService {
 
     return applyOverrides(defaults, overrides, this.logger);
   }
+
+  /**
+   * The effective policy, or a throw when the database layer cannot be read.
+   *
+   * For a destructive operator command (audit retention): falling back to
+   * the environment defaults is right for login, wrong for a drop — it would
+   * apply a window the administrator never set.
+   */
+  async currentStrict(): Promise<PolicySettings> {
+    return applyOverrides(this.defaults, await this.source.load(), this.logger);
+  }
 }
 
 /**

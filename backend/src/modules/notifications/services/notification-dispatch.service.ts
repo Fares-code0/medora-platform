@@ -26,6 +26,8 @@
  * in-flight set here that a second replica would not share.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { Injectable, Logger } from '@nestjs/common';
 
 
@@ -141,8 +143,32 @@ export class NotificationDispatchService {
     });
 
     await this.prisma.$transaction(async (tx) => {
-      const notification = await tx.notification.create({
+      // A notification about a lab order or an appointment inherits that
+      // row's hospital stamp (§2.7; a Phase 22 trigger requires the pointer
+      // and its target to share a scope).
+      const scope =
+        target.labOrderId !== null
+          ? await tx.labOrder.findUnique({
+              where: { id: target.labOrderId },
+              select: { hospitalId: true, hospitalMedicalRecordId: true },
+            })
+          : target.appointmentId !== null
+            ? await tx.appointment.findUnique({
+                where: { id: target.appointmentId },
+                select: { hospitalId: true, hospitalMedicalRecordId: true },
+              })
+            : null;
+      // Inserted without RETURNING, with the id chosen here: the request
+      // writing a notification for someone else may not read it back under
+      // Row-Level Security (the recipient alone reads it).
+      const notification = { id: randomUUID() };
+      await tx.notification.createMany({
         data: {
+          id: notification.id,
+          ...(scope?.hospitalId == null ? {} : { hospitalId: scope.hospitalId }),
+          ...(scope?.hospitalMedicalRecordId == null
+            ? {}
+            : { hospitalMedicalRecordId: scope.hospitalMedicalRecordId }),
           recipientId: target.userId,
           title: rule.title,
           // The body names the entity by its public id and nothing else.
@@ -159,7 +185,6 @@ export class NotificationDispatchService {
           ...(target.labOrderId === null ? {} : { labOrderId: target.labOrderId }),
           ...(target.appointmentId === null ? {} : { appointmentId: target.appointmentId }),
         },
-        select: { id: true },
       });
 
       await tx.notificationDelivery.createMany({

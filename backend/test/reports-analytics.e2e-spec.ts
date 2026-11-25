@@ -1,7 +1,13 @@
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { type AuthHarness, createAuthHarness, dataOf, errorBody } from './support/auth-app';
+import {
+  type AuthHarness,
+  createAuthHarness,
+  dataOf,
+  errorBody,
+  clinicalStampFor,
+} from './support/auth-app';
 import {
   destroyLabFixtures,
   orderTest,
@@ -79,6 +85,8 @@ async function bookAppointment(token: string, patient: string, at: Date): Promis
 
   await harness.prisma.db.appointment.create({
     data: {
+      // Stamped as a booking at the doctor's hospital is (F-06).
+      ...(await clinicalStampFor(harness.prisma, me.id, doctor.id)),
       publicId: `APT-R${Math.floor(Math.random() * 1_000_000)}`,
       patientId: doctor.id,
       doctorId: me.id,
@@ -137,6 +145,39 @@ describe('M21.1 verify — doctor scope is own data only', () => {
     );
     const snapshot = dataOf<{ kpis: { id: string; value: number }[] }>(response);
 
+    expect(snapshot.kpis.find((kpi) => kpi.id === 'appointments')?.value).toBe(3);
+  });
+
+  it('counts only bookings at the doctor’s clinical hospital, never a legacy one (S4)', async () => {
+    const me = await harness.prisma.db.doctor.findFirstOrThrow({
+      where: { user: { email: { contains: 'reports-busy' } } },
+      select: { id: true },
+    });
+    const patient = await harness.prisma.db.patient.findUniqueOrThrow({
+      where: { publicId: patientId },
+      select: { id: true },
+    });
+    const visitType = await harness.prisma.db.visitType.findFirstOrThrow({ select: { id: true } });
+    const now = new Date();
+    // The doctor's own booking this month, but with no hospital (written
+    // before attribution, #17): not this hospital's practice.
+    await harness.prisma.db.appointment.create({
+      data: {
+        publicId: `APT-RL${Math.floor(Math.random() * 1_000_000)}`,
+        patientId: patient.id,
+        doctorId: me.id,
+        visitTypeId: visitType.id,
+        startsAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 3, 15, 0)),
+        status: 'COMPLETED',
+        durationMin: 30,
+        reason: 'Legacy consultation',
+      },
+    });
+
+    const response = await get(busyToken, `${ANALYTICS}?category=appointments&range=month`).expect(
+      200,
+    );
+    const snapshot = dataOf<{ kpis: { id: string; value: number }[] }>(response);
     expect(snapshot.kpis.find((kpi) => kpi.id === 'appointments')?.value).toBe(3);
   });
 

@@ -16,6 +16,7 @@ import {
   Public,
   ROLES_METADATA,
   SEEDED_MATRIX,
+  ADMIN_DENIED_PHI,
   isPlatformRole,
   type Permission,
 } from '../src/shared/authz';
@@ -23,6 +24,9 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
+  makeClinicalStaff,
   markVerified,
   patientRegistrationBody,
   registrationBody,
@@ -274,7 +278,12 @@ function violationOf(route: Pick<DiscoveredRoute, 'key' | 'rule'>): string | nul
 
 /** The seeded effective set — what each pinned account resolves to. */
 function heldBy(role: Role): ReadonlySet<Permission> {
-  return new Set(isPlatformRole(role) ? SEEDED_MATRIX[role] : []);
+  // The seeded bundle as the server policy overlay leaves it: an
+  // administrator holds no standing PHI capability (multi-hospital §2.1).
+  const seeded = isPlatformRole(role) ? SEEDED_MATRIX[role] : [];
+  return new Set(
+    seeded.filter((capability) => role !== 'admin' || !ADMIN_DENIED_PHI.includes(capability)),
+  );
 }
 
 /** The guard's decision, restated from the rule — see `authorization.guard.ts`. */
@@ -417,6 +426,8 @@ async function createAccount(role: Role): Promise<Account> {
       .set('Authorization', `Bearer ${bootstrap}`)
       .send({ code: currentCode(secret) });
     await setRole(user.id, role);
+    // Admin tiering: the admin routes need an explicit Platform Admin grant.
+    await grantPlatformAdmin(harness.prisma, email);
 
     const { otpToken } = await login(email);
     token = dataOf<{ accessToken: string }>(
@@ -426,6 +437,12 @@ async function createAccount(role: Role): Promise<Account> {
     ).accessToken;
   } else {
     if (role !== 'doctor' && role !== 'patient') await setRole(user.id, role);
+    // Clinical standing (§2.6): a doctor needs a verified, active
+    // employment, a staff role an active affiliation, or it holds nothing.
+    if (role === 'doctor') await makeClinicalDoctor(harness.prisma, email);
+    if (role === 'reception' || role === 'laboratory' || role === 'pharmacy' || role === 'nurse') {
+      await makeClinicalStaff(harness.prisma, email);
+    }
     token = (await login(email)).accessToken ?? '';
   }
 
@@ -443,6 +460,17 @@ async function createAccount(role: Role): Promise<Account> {
 async function setRole(userId: string, code: string): Promise<void> {
   const role = await harness.prisma.role.findUniqueOrThrow({ where: { code } });
   await harness.prisma.user.update({ where: { id: userId }, data: { roleId: role.id } });
+}
+
+/**
+ * `staff_members` outlives its user (SET NULL) and keeps the unique email,
+ * so the clinical-staff rows this suite creates go by address once their
+ * users (and so their affiliations) are gone.
+ */
+async function removeStaffRows(): Promise<void> {
+  await harness.prisma.staffMember.deleteMany({
+    where: { email: { endsWith: `@${harness.domain}` }, userId: null },
+  });
 }
 
 function account(role: Role): Account {
@@ -471,6 +499,7 @@ let guarded: DiscoveredRoute[] = [];
 
 beforeAll(async () => {
   harness = await createAuthHarness('authz-route-matrix');
+  await removeStaffRows();
 
   for (const role of ROLES) accounts.set(role, await createAccount(role));
 
@@ -481,6 +510,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (harness === undefined) return;
   await harness.reset();
+  await removeStaffRows();
   await harness.close();
 });
 

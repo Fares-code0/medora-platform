@@ -70,6 +70,12 @@ export interface ResolvedContext {
   readonly mode: string;
   readonly patient: BoundPatient | null;
   readonly entity: BoundEntity | null;
+  /**
+   * Where the patient was reached (F-01, F-06): the doctor's hospital and
+   * the patient's record there. A thread bound to a patient is stamped with
+   * it, and the bound entity must belong to that hospital.
+   */
+  readonly chart?: { readonly hospitalId: string; readonly hospitalMedicalRecordId: string };
 }
 
 @Injectable()
@@ -91,16 +97,20 @@ export class AiContextService {
     // Step 2. Refuses with 404 and a message identical to a genuinely
     // missing patient's, which is ADR-022's requirement rather than this
     // service's choice.
-    await this.scope.assertCanReach(principalOf(user), input.patientId);
+    const reach = await this.scope.reachAt(principalOf(user), input.patientId);
+    const chart = {
+      hospitalId: reach.hospitalId,
+      hospitalMedicalRecordId: reach.hospitalMedicalRecordId,
+    };
 
     const patient = await this.context.patientByPublicId(input.patientId);
     if (patient === null) throw AppException.notFound('Patient not found');
 
     if (input.refId === undefined) {
-      return { mode: input.mode, patient, entity: null };
+      return { mode: input.mode, patient, entity: null, chart };
     }
 
-    const entity = await this.resolveEntity(input.mode, patient.id, input.refId);
+    const entity = await this.resolveEntity(input.mode, patient.id, reach.hospitalId, input.refId);
 
     // Step 3. Well formed, permitted, and still unresolvable — which is
     // the case §11.4 assigns 409 to. The message names the handle
@@ -129,7 +139,11 @@ export class AiContextService {
    */
   async reresolve(
     user: AuthenticatedUser,
-    stored: { readonly mode: string; readonly patientPublicId: string | null; readonly refId: string | null },
+    stored: {
+      readonly mode: string;
+      readonly patientPublicId: string | null;
+      readonly refId: string | null;
+    },
   ): Promise<ResolvedContext> {
     return this.resolve(user, {
       mode: stored.mode,
@@ -186,15 +200,16 @@ export class AiContextService {
   private resolveEntity(
     mode: string,
     patientId: string,
+    hospitalId: string,
     refId: string,
   ): Promise<BoundEntity | null> {
     switch (mode) {
       case 'record':
-        return this.context.recordFor(patientId, refId);
+        return this.context.recordFor(patientId, hospitalId, refId);
       case 'labs':
-        return this.context.labOrderFor(patientId, refId);
+        return this.context.labOrderFor(patientId, hospitalId, refId);
       case 'pharmacy':
-        return this.context.prescriptionFor(patientId, refId);
+        return this.context.prescriptionFor(patientId, hospitalId, refId);
       default:
         // Unreachable: `assertShape` has already refused a `refId` in
         // any other mode. Returning null rather than throwing keeps the

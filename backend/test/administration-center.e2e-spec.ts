@@ -10,7 +10,11 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
+  fixtureHospital,
+  recordPatientAt,
 } from './support/auth-app';
+import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
 /**
  * The Administration Center — API §18, RM M23.
@@ -48,6 +52,8 @@ const ADMIN = '/api/v1/administration';
 const PASSWORD = 'Medora123!';
 
 let adminToken = '';
+let hospitalAdminToken = '';
+let hospitalId = '';
 let doctorToken = '';
 let departmentId = '';
 
@@ -73,7 +79,7 @@ async function signUpDoctor(local: string): Promise<string> {
 }
 
 /** ADR-035 §7's bootstrap: enrol a factor, take the role, step up. */
-async function signUpAdmin(local: string): Promise<string> {
+async function signUpAdmin(local: string, hospitalId?: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
@@ -97,7 +103,19 @@ async function signUpAdmin(local: string): Promise<string> {
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  if (hospitalId === undefined) {
+    await grantPlatformAdmin(harness.prisma, email);
+  } else {
+    // A Hospital Admin (OD-07): one assignment, no platform grant.
+    await harness.prisma.hospitalRoleAssignment.create({
+      data: { userId: admin.id, hospitalId, roleId: adminRole.id },
+    });
+  }
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),
@@ -136,6 +154,9 @@ const staffBody = (overrides: Record<string, unknown> = {}) => ({
 beforeAll(async () => {
   harness = await createAuthHarness('admin-m23');
   adminToken = await signUpAdmin('admin-center');
+  // The queue and the waiting room are a hospital's own (F-01, OD-07).
+  hospitalId = await fixtureHospital(harness.prisma);
+  hospitalAdminToken = await signUpAdmin('admin-center-hospital', hospitalId);
   doctorToken = await signUpDoctor('admin-doctor');
 
   const department = await harness.prisma.db.department.findFirstOrThrow({ select: { id: true } });
@@ -501,9 +522,20 @@ describe('M23.3 verify — the working week, holidays and shifts', () => {
 });
 
 describe('M23.4 verify — the waiting-room machine and derived minutes', () => {
+  // A hospital function: its own Hospital Admin operates it (F-01, OD-07).
+  const get = (path: string) => request(harness.server).get(`${ADMIN}${path}`).set(as(hospitalAdminToken));
+  const post = (path: string, body: object) =>
+    request(harness.server).post(`${ADMIN}${path}`).set(as(hospitalAdminToken)).send(body);
+
+  it('refuses a Platform Admin, who holds no clinical access', async () => {
+    for (const path of ['/queue', '/waiting-room']) {
+      expect((await request(harness.server).get(`${ADMIN}${path}`).set(as(adminToken))).status, path).toBe(403);
+    }
+  });
+
   async function seedWaiting(status = 'WAITING', checkedInAt = new Date()) {
     const row = await harness.prisma.db.waitingRoomEntry.create({
-      data: { patientName: 'Layla Morsi', area: 'Main', status: status as never, checkedInAt },
+      data: { hospitalId, patientName: 'Layla Morsi', area: 'Main', status: status as never, checkedInAt },
       select: { id: true },
     });
 
@@ -571,25 +603,32 @@ describe('M23.4 verify — the waiting-room machine and derived minutes', () => 
   });
 
   it('masks the patient MRN but keeps the name an operator calls', async () => {
-    const patient = await harness.prisma.db.patient.findFirstOrThrow({
-      select: { id: true, publicId: true },
-    });
-    await harness.prisma.db.waitingRoomEntry.create({
-      data: { patientName: 'Layla Morsi', area: 'Main', patientId: patient.id },
-    });
+    // A patient waiting at this hospital holds a record here (DR-05).
+    const [patient] = await createPatientRecords(harness.prisma, 'adm', 1);
+    if (patient === undefined) throw new Error('fixture patient missing');
+    await recordPatientAt(harness.prisma, patient.id, hospitalId);
+    try {
+      await harness.prisma.db.waitingRoomEntry.create({
+        data: { hospitalId, patientName: 'Layla Morsi', area: 'Main', patientId: patient.id },
+      });
 
-    const rows = dataOf<{ patientMrn: string | null; patientName: string }[]>(
-      await get('/waiting-room').expect(200),
-    );
-    const withPatient = rows.find((row) => row.patientMrn !== null);
+      const rows = dataOf<{ patientMrn: string | null; patientName: string }[]>(
+        await get('/waiting-room').expect(200),
+      );
+      const withPatient = rows.find((row) => row.patientMrn !== null);
 
-    expect(withPatient?.patientMrn).not.toBe(patient.publicId);
-    expect(withPatient?.patientName).toBe('Layla Morsi');
+      expect(withPatient?.patientMrn).not.toBe(patient.publicId);
+      expect(withPatient?.patientName).toBe('Layla Morsi');
+    } finally {
+      await harness.prisma.db.waitingRoomEntry.deleteMany({ where: { patientId: patient.id } });
+      await destroyPatientRecords(harness.prisma, 'adm');
+    }
   });
 
   it('derives the queue’s waiting minutes and delayed flag', async () => {
     await harness.prisma.db.queueEntry.create({
       data: {
+        hospitalId,
         ticket: 'A-001',
         patientName: 'Omar Said',
         reason: 'Follow-up',

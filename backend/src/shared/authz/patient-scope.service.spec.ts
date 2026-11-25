@@ -10,14 +10,45 @@ import {
 } from './hospital-patient-scope.shadow';
 import { PatientScopeService } from './patient-scope.service';
 import { PLATFORM_ROLES } from './permission-catalogue';
-import type { PatientAssignmentRepository, PlatformRole, Principal } from './authz.types';
+import type {
+  ClinicalEmployment,
+  ClinicalReach,
+  PatientAssignmentRepository,
+  PlatformRole,
+  Principal,
+} from './authz.types';
 
-/** Assignments the test controls, as `doctorUserId → patientIds`. */
+/**
+ * DR-05 reach the test controls, as `doctorUserId → patientIds` (the
+ * patients with a record at the doctor's clinical hospital). The repository
+ * query itself is covered against PostgreSQL in `dr05-patient-scope.e2e-spec`.
+ */
 class StubAssignments implements PatientAssignmentRepository {
   constructor(private readonly links: ReadonlyMap<string, readonly string[]>) {}
 
-  isAssigned(doctorUserId: string, patientId: string): Promise<boolean> {
+  reachesPatient(doctorUserId: string, patientId: string): Promise<boolean> {
     return Promise.resolve((this.links.get(doctorUserId) ?? []).includes(patientId));
+  }
+
+  clinicalHospital(doctorUserId: string): Promise<string | null> {
+    return Promise.resolve(this.links.has(doctorUserId) ? `hospital-of-${doctorUserId}` : null);
+  }
+
+  clinicalEmployment(doctorUserId: string): Promise<ClinicalEmployment | null> {
+    return Promise.resolve(
+      this.links.has(doctorUserId)
+        ? {
+            doctorId: `doctor-${doctorUserId}`,
+            doctorEmploymentId: `emp-${doctorUserId}`,
+            hospitalId: `hospital-of-${doctorUserId}`,
+          }
+        : null,
+    );
+  }
+
+  async clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null> {
+    if (!(await this.reachesPatient(doctorUserId, patientId))) return null;
+    return { hospitalId: `hospital-of-${doctorUserId}`, hospitalMedicalRecordId: `hmr-${patientId}`, patientId };
   }
 }
 
@@ -53,7 +84,7 @@ describe('PatientScopeService — the care relationship', () => {
     // ADR-003 removed free-text doctor names so care scoping could not
     // be built on them; this asserts the anchor is the user id.
     const repository = new StubAssignments(new Map([['dr-a', ['PT-1001']]]));
-    const spy = vi.spyOn(repository, 'isAssigned');
+    const spy = vi.spyOn(repository, 'reachesPatient');
 
     await new PatientScopeService(repository).canReach(DOCTOR_A, 'PT-1001');
 
@@ -145,7 +176,10 @@ describe('PatientScopeService — repository failure', () => {
     // Failing closed: an unreachable assignments table must not become
     // "no restriction applies".
     const failing: PatientAssignmentRepository = {
-      isAssigned: () => Promise.reject(new Error('database down')),
+      reachesPatient: () => Promise.reject(new Error('database down')),
+      clinicalHospital: () => Promise.reject(new Error('database down')),
+      clinicalEmployment: () => Promise.reject(new Error('database down')),
+      clinicalReach: () => Promise.reject(new Error('database down')),
     };
     const scope = new PatientScopeService(failing);
 
@@ -154,7 +188,10 @@ describe('PatientScopeService — repository failure', () => {
 
   it('does not even ask when the role cannot hold a relationship', async () => {
     const failing: PatientAssignmentRepository = {
-      isAssigned: () => Promise.reject(new Error('should not be called')),
+      reachesPatient: () => Promise.reject(new Error('should not be called')),
+      clinicalHospital: () => Promise.reject(new Error('should not be called')),
+      clinicalEmployment: () => Promise.reject(new Error('should not be called')),
+      clinicalReach: () => Promise.reject(new Error('should not be called')),
     };
     const scope = new PatientScopeService(failing);
     const role: PlatformRole = 'reception';
@@ -275,7 +312,10 @@ describe('PatientScopeService — Phase 22 shadow comparison never changes a dec
   it('never runs the shadow when the legacy repository fails, and still propagates', async () => {
     const { shadow, spy } = shadowReturning(SHADOWS['always allows']!);
     const failing: PatientAssignmentRepository = {
-      isAssigned: () => Promise.reject(new Error('database down')),
+      reachesPatient: () => Promise.reject(new Error('database down')),
+      clinicalHospital: () => Promise.reject(new Error('database down')),
+      clinicalEmployment: () => Promise.reject(new Error('database down')),
+      clinicalReach: () => Promise.reject(new Error('database down')),
     };
     const scope = new PatientScopeService(failing, shadow);
 
@@ -412,14 +452,14 @@ describe('PatientScopeService — the shadow is detached from the decision (audi
     // shadow (authz.module.ts); the PostgreSQL switch-off test proves the
     // wiring. Here: with no shadow, nothing is started and nothing is logged.
     const assignments = new StubAssignments(new Map(Object.entries(ASSIGNED)));
-    const isAssigned = vi.spyOn(assignments, 'isAssigned');
+    const reachesPatient = vi.spyOn(assignments, 'reachesPatient');
     const scope = new PatientScopeService(assignments);
 
     expect(await scope.canReach(DOCTOR_A, 'PT-1001')).toBe(true);
     await expect(scope.assertCanReach(DOCTOR_A, 'PT-2001')).rejects.toBeInstanceOf(AppException);
     await flush();
 
-    expect(isAssigned).toHaveBeenCalledTimes(2);
+    expect(reachesPatient).toHaveBeenCalledTimes(2);
     expect(warn).not.toHaveBeenCalled();
   });
 });

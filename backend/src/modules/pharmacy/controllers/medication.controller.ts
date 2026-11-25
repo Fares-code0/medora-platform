@@ -2,7 +2,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 
 import { RevalidatePrivately } from '../../../common/http/cache-policy';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type { MedicationMonographView } from '../dto/medication.dto';
 import { medicationListSchema, type MedicationListQuery } from '../dto/medication.schema';
 import { MedicationService, type PaginatedMedications } from '../services/medication.service';
@@ -30,6 +30,7 @@ export class MedicationController {
   constructor(private readonly medications: MedicationService) {}
 
   /** API §7.1 — typeahead over brand and generic, plus the filter chips. */
+  @NotPhi('drug reference catalogue')
   @Get()
   @RevalidatePrivately()
   list(
@@ -39,6 +40,7 @@ export class MedicationController {
   }
 
   /** API §7.2 — prescribing reference. Read-only, and 404 when absent. */
+  @NotPhi('drug reference monograph')
   @Get(':medicationId/monograph')
   @RevalidatePrivately()
   monograph(@Param('medicationId') medicationId: string): Promise<MedicationMonographView> {

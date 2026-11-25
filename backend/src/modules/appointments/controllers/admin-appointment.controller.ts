@@ -12,7 +12,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, HospitalScope, NotPhi, PhiRead } from '../../../shared/authz';
 import type {
   AppointmentAdminSummaryView,
   OversightAppointmentView,
@@ -65,23 +65,29 @@ import {
  * reaching it is a decision made at the router rather than in a `where`
  * clause.
  */
+// A hospital function (F-01, OD-07): a Hospital Admin reaches it, confined to
+// its hospital by the service; a Platform Admin is refused there.
+@HospitalScope()
 @Can('appointments.reassign')
 @Controller('admin/appointments')
 export class AdminAppointmentController {
   constructor(private readonly oversight: AppointmentOversightService) {}
 
   /** API §5.10 — every doctor's book, with `ageInState` and the flags. */
+  @PhiRead('appointment_list')
   @Get()
   list(
+    @CurrentUser() user: AuthenticatedUser,
     @Query(zodQuery(oversightListSchema)) query: OversightListQuery,
   ): Promise<PaginatedOversight & { flaggedItems: number }> {
-    return this.oversight.list(query);
+    return this.oversight.list(user, query);
   }
 
   /** API §5.11's administrator strip. Declared before `:appointmentId`. */
+  @NotPhi('counts by status')
   @Get('summary')
-  summary(): Promise<AppointmentAdminSummaryView> {
-    return this.oversight.summary();
+  summary(@CurrentUser() user: AuthenticatedUser): Promise<AppointmentAdminSummaryView> {
+    return this.oversight.summary(user);
   }
 
   /** API §5.10 — a templated, logged reminder. Changes no status. */

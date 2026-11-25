@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../common/auth/authenticated-user';
 import type { HospitalContext } from '../../common/auth/hospital-context';
+import { runAsSystem } from '../database';
 import { memoizeInRequest } from './request-scope';
 
 export const HOSPITAL_CONTEXT_REPOSITORY = Symbol('HOSPITAL_CONTEXT_REPOSITORY');
@@ -14,6 +15,8 @@ export interface HospitalContextHospital {
 export interface HospitalContextRepository {
   activeDoctorEmploymentHospitals(userId: string): Promise<readonly HospitalContextHospital[]>;
   activeHospitalAdminHospitals(userId: string): Promise<readonly HospitalContextHospital[]>;
+  /** Whether the account holds an active `platform_admin_grants` row (OD-07). */
+  hasActivePlatformAdminGrant(userId: string): Promise<boolean>;
 }
 
 /** Resolves observations only; this service is not an authorization gate. */
@@ -34,8 +37,9 @@ export class HospitalContextService {
    */
   async forRequest(user: Pick<AuthenticatedUser, 'id' | 'role'>): Promise<HospitalContext> {
     try {
+      // Trusted lookup of the caller's own staffing: `system` RLS scope.
       return await memoizeInRequest(`hospital-context:${user.id}:${user.role}`, () =>
-        this.resolve(user),
+        runAsSystem(() => this.resolve(user)),
       );
     } catch {
       this.logger.warn('Hospital context resolution unavailable');
@@ -65,6 +69,7 @@ export class HospitalContextService {
     }
 
     if (user.role === 'admin') {
+      const platform = await this.repository.hasActivePlatformAdminGrant(user.id);
       const hospitals = [
         ...new Map(
           (await this.repository.activeHospitalAdminHospitals(user.id)).map((hospital) => [
@@ -73,9 +78,14 @@ export class HospitalContextService {
           ]),
         ).values(),
       ];
-      if (hospitals.length > 1) {
+      // Platform and hospital scope are exclusive (the database enforces
+      // it; this is the second line). Holding both, or several hospitals,
+      // is ambiguous and yields no administrative scope.
+      if (hospitals.length > 1 || (platform && hospitals.length > 0)) {
         return { kind: 'unresolved', reason: 'ambiguous_hospital_admin_scope' };
       }
+      // Platform scope only from an explicit, audited grant (OD-07).
+      if (platform) return { kind: 'platform', clinicalDataAccess: false };
       if (hospitals.length === 1) {
         const hospital = hospitals.at(0);
         if (hospital !== undefined) {

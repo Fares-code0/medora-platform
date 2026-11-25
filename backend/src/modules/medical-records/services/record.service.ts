@@ -41,7 +41,7 @@ import {
   type CsvFile,
 } from '../../../common/http/csv-export';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import {
   assertScanClean,
@@ -90,6 +90,7 @@ import {
   type DetailRow,
   type RecordChildren,
   type RecordCriteria,
+  type Worklist,
 } from '../repositories/record.repository';
 
 import { assertEditable, recordStatusMachine } from './record-status.machine';
@@ -106,6 +107,8 @@ export interface PaginatedRecords {
 @Injectable()
 export class RecordService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly records: RecordRepository,
     private readonly scope: PatientScopeService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
@@ -116,10 +119,10 @@ export class RecordService {
 
   /** API §6.1. */
   async list(user: AuthenticatedUser, query: RecordListQuery): Promise<PaginatedRecords> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      worklist,
       criteriaFor(query, query.page, query.pageSize),
     );
 
@@ -145,10 +148,10 @@ export class RecordService {
    * count and the filter *names*.
    */
   async export(user: AuthenticatedUser, query: RecordExportQuery): Promise<CsvFile> {
-    const doctorId = await this.requireDoctor(user);
+    const worklist = await this.requireWorklist(user);
 
     const { rows, totalItems } = await this.records.list(
-      doctorId,
+      worklist,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
     );
 
@@ -157,7 +160,7 @@ export class RecordService {
     const now = new Date();
     const body = toCsv(LIST_EXPORT_COLUMNS, rows.map((row) => toView(row, now)));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'medical_record.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'medical_record',
@@ -192,7 +195,7 @@ export class RecordService {
 
     const body = toCsv(FIELD_VALUE_COLUMNS, recordFields(record));
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'medical_record.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'medical_record',
@@ -587,7 +590,7 @@ export class RecordService {
       { fileName: attachment.file.originalName, disposition: 'attachment' },
     );
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',
@@ -638,18 +641,35 @@ export class RecordService {
 
   /** API §6.10 — the cards. */
   async summary(user: AuthenticatedUser): Promise<RecordSummaryView> {
-    return this.records.summaryFor(await this.requireDoctor(user));
+    return this.records.summaryFor(await this.requireWorklist(user));
   }
 
   /** The care-scoped fetch every single-record path begins with. */
   private async require(user: AuthenticatedUser, publicId: string): Promise<DetailRow> {
-    const doctorId = await this.requireDoctor(user);
-    const row = await this.records.findForDoctor(doctorId, publicId);
+    const hospitalId = await this.requireHospital(user);
+    const row = await this.records.findForDoctor(hospitalId, publicId);
     // Identical to a genuinely missing record, and carrying no
     // reference: the caller must not be able to tell the two apart.
     if (row === null) throw recordNotFound();
 
     return row;
+  }
+
+  /**
+   * The doctor's one clinical hospital (F-01): every record read is scoped
+   * to it. Without unambiguous clinical standing there is no chart to read,
+   * which is the same 404 as a record that does not exist.
+   */
+  private async requireHospital(user: AuthenticatedUser): Promise<string> {
+    await this.requireDoctor(user);
+    const hospitalId = await this.scope.clinicalHospitalOf(principalOf(user));
+    if (hospitalId === null) throw recordNotFound();
+    return hospitalId;
+  }
+
+  private async requireWorklist(user: AuthenticatedUser): Promise<Worklist> {
+    const [doctorId, hospitalId] = await Promise.all([this.requireDoctor(user), this.requireHospital(user)]);
+    return { doctorId, hospitalId };
   }
 
   private async requireDoctor(user: AuthenticatedUser): Promise<string> {
@@ -714,7 +734,7 @@ export class RecordService {
     reference: string,
     action: string,
   ): Promise<void> {
-    await this.audit.record({
+    await this.disclosures.record({
       action,
       actor: { userId: user.id, role: user.role },
       entityType: 'medical_record',

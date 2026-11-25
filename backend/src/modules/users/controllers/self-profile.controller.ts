@@ -5,7 +5,7 @@ import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { AppException } from '../../../common/errors/app.exception';
 import { FileUpload } from '../../../common/http/file-upload.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../../shared/authz';
 import type { SelfProfileView } from '../dto/self-profile.dto';
 import {
   updateDoctorProfileSchema,
@@ -45,11 +45,14 @@ import { SelfProfileService } from '../services/self-profile.service';
  * it, so `PATCH` answers 404 for an account with no `doctors` row.
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me/profile')
 export class SelfProfileController {
   constructor(private readonly profiles: SelfProfileService) {}
 
   /** API §2.1 / §3.1 — the composed document. */
+  @NotPhi('the caller’s own profile')
   @Get()
   profile(@CurrentUser() user: AuthenticatedUser): Promise<SelfProfileView> {
     return this.profiles.profile(user.id);

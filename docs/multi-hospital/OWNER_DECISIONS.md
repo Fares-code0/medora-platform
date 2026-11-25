@@ -432,6 +432,100 @@ patient used Medora (the identity-proofing method) is **not decided**.
 - **It does not block the architecture.** It must be defined before record **claiming** is
   implemented (Phase 27, PA-11), and it must not change the Hospital isolation model.
 
+## Approved implementation decisions — 2026-11-23 (#16, #17, #18)
+
+Approved by the Product Owner and relayed in the Multi-Hospital implementation session on 2026-11-23.
+They refine OD-07, DR-05 and OD-12 and are **authoritative**; they are not re-asked.
+
+### OD-07 follow-up (#16) — Hospital Admin
+
+- A Hospital Admin has **exactly one** hospital assignment. Zero or several active admin assignments
+  resolve no Hospital Admin scope (fail closed).
+- **No hospital switching** for Hospital Admins. This supersedes the earlier reading of P2/P3 recorded
+  on #16 (several assigned hospitals with explicit switching).
+- **All** of a Hospital Admin's administrative permissions are restricted to that hospital; rows of
+  another hospital are 404 (ADR-022).
+- A Hospital Admin has **no Platform Admin privileges** and **no unrestricted PHI access**.
+
+How the #16 questions are settled by this and by OD-07:
+
+| # | Question | Resolution |
+|---|---|---|
+| 1 | Platform Admin access to patient data | No unrestricted PHI (P6, this decision). Nothing beyond today's masked, audited directory and reveal is granted |
+| 2 | Temporary, audited exceptional access | Explicit authorization and audit required (P6); no admin PHI path is added |
+| 3 | Impersonation | Not provided (no approved path) |
+| 4 | Permitted operations | OD-07 P1: hospital lifecycle, Hospital Admin management, platform configuration |
+| 5 | Step-up | Unchanged; no new privileged path is added that would need it |
+| 6 | Several hospitals for one Hospital Admin | **No**: exactly one, no switching |
+| 7 | Audit-ledger reads | Hospital Admin: own hospital only. Platform Admin: metadata-only ledger (unchanged contract) |
+| 8 | Mapping existing `admin` accounts (M-13) | Still an **explicit** mapping step (OD-07): an account is a Platform Admin only when deliberately marked; it is never inferred from the `admin` role alone |
+
+### Legacy hospital ownership (#17)
+
+- Never automatically assign a NULL `hospital_id`.
+- Backfill ownership only when reliable evidence supports it; record the evidence and audit every
+  assignment (`IMPLEMENTATION_CONTRACTS.md` §7).
+- Rows of unknown ownership stay **isolated from ordinary clinical access** (no hospital-scoped read
+  returns them). Historical content is preserved.
+- Unknown legacy rows do **not** block S3, S4 or RLS.
+
+**Clinical-safety exception (decided 2026-11-24).**
+- Prescription safety checks (allergy and drug-interaction screening) **must** include legacy
+  allergies and medications with no hospital, for a doctor who already has a live care assignment to
+  that patient. Never silently drop them.
+- They are shown marked "legacy record, source hospital unknown".
+- Every read of a legacy allergy or medication record is audited.
+- The exception covers only allergies and active medications, for safety. All other legacy rows stay
+  hidden.
+- It must not grant access to any patient the doctor cannot already reach.
+
+**Hard deployment prerequisite (decided 2026-11-24).** The S2 ownership backfill must run, and its
+results must be reviewed by the Product Owner, **before any deployment**.
+
+### Doctor lifecycle (#18)
+
+| State | Login | Clinical access |
+|---|---|---|
+| Vacation | Allowed | Allowed |
+| Unverified | Allowed | Denied |
+| Suspended | Own profile only | Denied |
+| Employment terminated | Denied | Denied |
+
+Applied consistently in authentication, hospital context, doctor lists and clinical authorization.
+
+### Immediate permission updates (G4)
+
+- Permission changes apply on the next request; the affected users' permission cache is invalidated
+  after persistence, and an invalidation failure fails closed.
+- Ordinary permission changes do not revoke sessions; role changes keep revoking sessions and
+  rejecting old access tokens (ADR-046).
+
+### How PR #61 implements these decisions (implementation note, not an owner decision)
+
+Recorded here when PR #61 consolidated PR #63 (2026-11-25), so that the decisions above and their
+implementation can be read side by side. Nothing in this note changes a decision.
+
+- **#16:** at most one active Hospital Admin assignment per user (database index); Hospital Admin
+  routes are `@HospitalScope()` and confined to that hospital; administrators hold no standing PHI;
+  a Platform Admin exists only as an explicit `platform_admin_grants` row (OD-07, M-13).
+- **#17:** NULL-hospital rows are invisible to every hospital scope (application and RLS); filling a
+  legacy NULL `hospital_id` requires an `ownership_assignments` evidence row (migration
+  `20261125102000`). The backfill itself is not implemented and has not been run.
+- **#17 clinical-safety exception:** the prescription safety screen includes the patient's legacy
+  allergies and live legacy prescriptions, marked "legacy record, source hospital unknown", and audits
+  every such read (`legacy_clinical_record.read`). The decision's condition — "a doctor who already has
+  a live care assignment to that patient" — was written in PR #63's assignment model, where a live care
+  assignment *is* reach; in PR #61's approved DR-05 model reach is a Hospital Medical Record at the
+  doctor's hospital, which is the condition the exception applies ("It must not grant access to any
+  patient the doctor cannot already reach"). **Owner confirmation of that correspondence is requested.**
+- **#18:** a doctor outside clinical standing reaches only the routes marked
+  `@OutsideClinicalStanding()` (own account and profile, security settings, verification documents);
+  terminated accounts are refused at login, at refresh and after the second factor.
+- **G4:** the permission cache is keyed by `authz_version`, which every application path bumps in the
+  same transaction as the change; since migration `20261125103000` the database also bumps it for every
+  permission write and revokes an account's sessions on any change of its role.
+
+
 ## Implementation specifications delegated by the owner (not owner questions)
 
 - the exact first-interaction trigger (OD-09);

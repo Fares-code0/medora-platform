@@ -33,6 +33,7 @@ export interface FileRow {
   readonly checksumSha256: string;
   readonly kind: string;
   readonly uploadedBy: string | null;
+  readonly hospitalId: string | null;
   readonly scannedAt: Date | null;
   readonly scanResult: string | null;
   readonly createdAt: Date;
@@ -47,6 +48,8 @@ const FILE_SELECT = {
   checksumSha256: true,
   kind: true,
   uploadedBy: true,
+  // The hospital the file belongs to once linked (F-14): reads are scoped by it.
+  hospitalId: true,
   scannedAt: true,
   scanResult: true,
   createdAt: true,

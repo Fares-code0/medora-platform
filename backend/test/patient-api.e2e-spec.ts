@@ -11,7 +11,12 @@ import {
   testEmail,
   tokenFromLink,
 } from './support/auth-app';
-import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import {
+  createTestDoctor,
+  destroyTestDoctor,
+  employTestDoctor,
+  type DoctorRecord,
+} from './support/doctor-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
@@ -85,6 +90,8 @@ beforeAll(async () => {
     where: { id: practitioner.id },
     data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
   });
+  // And employed (L6): the patient directory offers only employed doctors.
+  await employTestDoctor(harness.prisma, practitioner.id);
 });
 
 afterAll(async () => {
@@ -325,6 +332,38 @@ describe('GET /patient/doctors (contract §3)', () => {
       where: { id: visible.id },
       data: { practiceStatus: 'ACTIVE' },
     });
+  });
+
+  it('shows only doctors holding an active employment (L6)', async () => {
+    const { token } = await patientToken();
+    const visible = await practitionerRow();
+    const listed = async (): Promise<string[]> =>
+      dataOf<{ items: { id: string }[] }>(
+        await request(harness.server)
+          .get(`${DOCTORS}?pageSize=100`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200),
+      ).items.map((item) => item.id);
+
+    expect(await listed()).toContain(visible.id);
+
+    // The employment ends: verified and practising, but nowhere to see a
+    // patient — neither listed nor reachable by id (404, never 403).
+    await harness.prisma.doctorEmployment.updateMany({
+      where: { doctorId: visible.id, endedAt: null },
+      data: { endedAt: new Date() },
+    });
+    try {
+      expect(await listed()).not.toContain(visible.id);
+      await request(harness.server)
+        .get(`${DOCTORS}/${visible.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    } finally {
+      await employTestDoctor(harness.prisma, visible.id);
+    }
+
+    expect(await listed()).toContain(visible.id);
   });
 
   it('answers 404 for an unknown id and for a malformed one alike', async () => {

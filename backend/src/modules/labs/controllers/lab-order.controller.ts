@@ -15,7 +15,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { sendCsv } from '../../../common/http/csv-export';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import { Idempotent } from '../../../shared/idempotency';
 import type { LabOrderDetailView, LabSummaryView } from '../dto/lab-order.dto';
 import {
@@ -94,6 +94,7 @@ export class LabOrderController {
   ) {}
 
   /** API §8.2 — the worklist. */
+  @PhiRead('lab_order_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -103,6 +104,7 @@ export class LabOrderController {
   }
 
   /** API §8.11 — the filtered worklist as CSV. Before `:labOrderId`; a file, not an envelope. */
+  @PhiRead('lab_order_export', { auditedByHandler: true })
   @Get('export')
   async export(
     @CurrentUser() user: AuthenticatedUser,
@@ -113,6 +115,7 @@ export class LabOrderController {
   }
 
   /** API §8.10 — the cards, including `criticalUnreviewed`. Before `:id`. */
+  @NotPhi('counts by status; no results')
   @Get('summary')
   summary(@CurrentUser() user: AuthenticatedUser): Promise<LabSummaryView> {
     return this.orders.summary(user);
@@ -144,6 +147,7 @@ export class LabOrderController {
   }
 
   /** API §8.3 — the full order. */
+  @PhiRead('lab_order')
   @Get(':labOrderId')
   detail(
     @CurrentUser() user: AuthenticatedUser,

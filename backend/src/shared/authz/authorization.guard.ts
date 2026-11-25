@@ -49,7 +49,16 @@ import { AppException } from '../../common/errors/app.exception';
 import { PermissionResolver } from './permission-resolver.service';
 import { AUTHENTICATED_USER, type RequestWithUser } from '../../common/auth/authenticated-user';
 import { IS_PUBLIC_KEY } from '../../common/auth/public.decorator';
-import { AUTHENTICATED_METADATA, CAN_METADATA, ROLES_METADATA } from './authz.decorators';
+import { AdminScopeService } from './admin-scope.service';
+import { TenantContextResolver } from './tenant-context.resolver';
+import {
+  AUTHENTICATED_METADATA,
+  OUTSIDE_STANDING_METADATA,
+  CAN_METADATA,
+  HOSPITAL_SCOPE_METADATA,
+  PLATFORM_SCOPE_METADATA,
+  ROLES_METADATA,
+} from './authz.decorators';
 import { principalOf } from './authz.types';
 import type { Permission, PlatformRole } from './authz.types';
 
@@ -58,6 +67,9 @@ export class AuthorizationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly resolver: PermissionResolver,
+    private readonly scopes: AdminScopeService,
+    /** Optional only for unit tests that construct the guard by hand. */
+    private readonly tenants?: TenantContextResolver,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -106,6 +118,16 @@ export class AuthorizationGuard implements CanActivate {
 
     const principal = principalOf(user);
 
+    // F-09: outside clinical standing, only the allowlist. Checked before
+    // any role or capability rule, so it cannot be bypassed by a route that
+    // asks for neither (`@Authenticated()`). Admin and patient accounts are
+    // not standing-gated (`standingFor` answers `clinical` without a query).
+    const outsideAllowed =
+      this.reflector.getAllAndOverride<boolean>(OUTSIDE_STANDING_METADATA, targets) === true;
+    if (!outsideAllowed && (await this.resolver.standingFor(user.id, principal.roleCode)) !== 'clinical') {
+      throw AppException.forbidden('Clinical standing is required for this route', 'clinical_standing_required');
+    }
+
     // Compared as strings: `roleCode` may be a seeded role with no
     // matrix column, which `PlatformRole` cannot express and which no
     // `@Roles(...)` list can name.
@@ -117,6 +139,30 @@ export class AuthorizationGuard implements CanActivate {
     if (!(await this.resolver.canAll(principal, requiredCapabilities))) {
       throw AppException.forbidden();
     }
+
+    const platformOnly =
+      this.reflector.getAllAndOverride<boolean>(PLATFORM_SCOPE_METADATA, targets) === true;
+    const hospitalTier =
+      !platformOnly &&
+      this.reflector.getAllAndOverride<boolean>(HOSPITAL_SCOPE_METADATA, targets) === true;
+
+    // Administrative tiering (§2.2, §2.3, OD-07). An administrator acting
+    // through a capability or role rule needs a resolved scope: platform
+    // (explicit grant) or exactly one hospital. An unmapped or ambiguous
+    // administrator is refused rather than inferred to be platform-wide;
+    // self-service `@Authenticated()` routes are unaffected. Administrative
+    // routes are platform-tier by default: a Hospital Admin reaches only a
+    // route marked `@HospitalScope()`, which confines it to its hospital.
+    if (principal.roleCode === 'admin' && !authenticatedOnly) {
+      const scope = await this.scopes.scopeOf(user);
+      if (scope.kind === 'none') throw AppException.forbidden();
+      if (scope.kind === 'hospital' && !hospitalTier) throw AppException.forbidden();
+    } else if (platformOnly) {
+      throw AppException.forbidden();
+    }
+
+    // §2.15: the request's RLS tenant context, now that the caller is known.
+    await this.tenants?.apply(user);
 
     return true;
   }

@@ -16,6 +16,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  asJob,
 } from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
@@ -198,7 +199,7 @@ beforeAll(async () => {
   harness = await createAuthHarness('push-m412', {
     overrides: [{ token: PUSH_PROVIDER, value: provider }],
   });
-  delivery = harness.app.get(NotificationDeliveryService);
+  delivery = asJob(harness.app.get(NotificationDeliveryService));
   alice = await account('push-alice');
   bob = await account('push-bob');
 }, 90_000);

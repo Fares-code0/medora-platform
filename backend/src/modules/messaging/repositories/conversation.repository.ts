@@ -18,11 +18,14 @@
  * in it.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../../../generated/prisma/client';
 import { BADGE_COUNTS, CacheService } from '../../../shared/cache';
 import { PrismaService } from '../../../shared/database';
+import type { ClinicalReach } from '../../../shared/authz';
 import type { MessagingFolder } from '../dto/messaging-enums';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -176,19 +179,31 @@ export class ConversationRepository {
     readonly authorId: string;
     readonly participantIds: readonly string[];
     readonly topic?: string | undefined;
-    readonly patientId?: string | undefined;
+    /** The patient the thread is about, where the author reached them (F-06). */
+    readonly chart?: ClinicalReach | undefined;
   }): Promise<string> {
     const id = await this.prisma.$transaction(async (tx) => {
-      const conversation = await tx.conversation.create({
+      // The id is chosen here and the row inserted without RETURNING (F-04's
+      // lesson): the author becomes a participant only in the next
+      // statement, so Row-Level Security would not let the new row be
+      // read back yet.
+      const conversation = { id: randomUUID() };
+      await tx.conversation.createMany({
         data: {
+          id: conversation.id,
           // A thread with more than two people is a group, and the kind
           // is derived rather than taken from the client: a `direct`
           // thread with five participants is a state no reader expects.
           kind: input.participantIds.length > 1 ? 'GROUP' : 'DIRECT',
           ...(input.topic === undefined ? {} : { topic: input.topic }),
-          ...(input.patientId === undefined ? {} : { patientId: input.patientId }),
+          ...(input.chart === undefined
+            ? {}
+            : {
+                patientId: input.chart.patientId,
+                hospitalId: input.chart.hospitalId,
+                hospitalMedicalRecordId: input.chart.hospitalMedicalRecordId,
+              }),
         },
-        select: { id: true },
       });
 
       await tx.conversationParticipant.createMany({

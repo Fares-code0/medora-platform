@@ -9,6 +9,8 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
@@ -76,10 +78,15 @@ async function userIdOf(email: string): Promise<string> {
     .id;
 }
 
-async function seedDoctor(local: string): Promise<{ token: string; userId: string }> {
+async function seedDoctor(
+  local: string,
+  hospital = 'a',
+): Promise<{ token: string; userId: string }> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<SessionPayload>(
     await request(harness.server)
@@ -114,7 +121,16 @@ async function seedAdmin(local: string): Promise<{ token: string; userId: string
     .send({ code: currentCode(secret) });
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
-  await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  const admin = await harness.prisma.user.update({
+    where: { email },
+    data: { roleId: adminRole.id },
+    select: { id: true },
+  });
+  // A Hospital Admin of the fixture hospital: the masked directory is a
+  // hospital's own (F-08, OD-07 — a Platform Admin has none).
+  await harness.prisma.hospitalRoleAssignment.create({
+    data: { userId: admin.id, hospitalId: await fixtureHospital(harness.prisma), roleId: adminRole.id },
+  });
   await harness.prisma.doctor.deleteMany({ where: { user: { email } } });
 
   const login = await request(harness.server)
@@ -233,7 +249,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('clinical-exports');
 
   ({ token: doctorToken, userId: doctorUserId } = await seedDoctor('export-doctor'));
-  ({ token: strangerToken } = await seedDoctor('export-stranger'));
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  ({ token: strangerToken } = await seedDoctor('export-stranger', 'b'));
   ({ token: adminToken, userId: adminUserId } = await seedAdmin('export-admin'));
 
   ownPatient = await createPatient(doctorToken, {

@@ -56,6 +56,8 @@ import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { PermissionResolver } from '../../../shared/authz';
+import { isLastPlatformAdminViolation } from '../../../shared/database';
 import { UserStatus } from '../../../generated/prisma/enums';
 import type { PlatformUserView } from '../dto/account.dto';
 import type {
@@ -101,6 +103,7 @@ export class PlatformUserService {
     private readonly accounts: AccountService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   async list(query: PlatformUserQuery): Promise<PaginatedPlatformUsers> {
@@ -174,20 +177,41 @@ export class PlatformUserService {
       );
     }
 
-    const roleId = await this.resolveRole(target.role.code, input.role);
+    const roleId = await this.resolveRole(target.role.code, input.role, target.id);
     const status = resolveStatus(input.active);
 
     await this.assertAdministrationSurvives(target.role.code, input.role, input.active);
 
-    const updated = await this.users.update(target.id, actor.id, { roleId, status });
+    // A role change revokes the account's sessions inside the update itself
+    // (database trigger, migration 20261125103000), so they are counted
+    // first: the audit row records how many the change ended.
+    const liveBefore = roleId !== undefined ? await this.users.liveSessionCount(target.id) : 0;
+
+    const updated = await this.users
+      .update(target.id, actor.id, { roleId, status })
+      .catch((error: unknown) => {
+        // The database's invariant (F-10): judged at COMMIT, under a lock,
+        // so a concurrent revocation cannot slip past a count read here.
+        if (isLastPlatformAdminViolation(error)) {
+          throw AppException.conflict('This is the last Platform Admin; grant another one first', 'conflict');
+        }
+        throw error;
+      });
 
     // Deactivation ends the sessions that are already open. Without this
     // the lever does nothing for the case it is pulled in — an account
     // being used right now — until the access token expires.
-    const revoked =
-      status !== undefined && status !== UserStatus.ACTIVE
-        ? await this.users.revokeSessions(target.id)
-        : 0;
+    //
+    // A role change ends them too (ADR-046 as revised, multi-hospital
+    // §2.10): every session and refresh token of the old role is revoked,
+    // and the account signs in again to hold the new role. Together with
+    // the `authz_version` bump in `users.update`, no request can be
+    // authorized with the old role's permissions after this commits.
+    const roleChanged = roleId !== undefined;
+    const deactivated = status !== undefined && status !== UserStatus.ACTIVE;
+    const revokedNow = roleChanged || deactivated ? await this.users.revokeSessions(target.id) : 0;
+    const revoked = liveBefore + revokedNow;
+    await this.permissions.forget(target.id);
 
     await this.audit.record({
       action: 'user.administer',
@@ -203,6 +227,7 @@ export class PlatformUserService {
         statusBefore: target.status,
         statusAfter: updated.status,
         sessionsRevoked: revoked,
+        adminScopesEnded: updated.adminScopesEnded,
       },
     });
 
@@ -237,6 +262,7 @@ export class PlatformUserService {
   private async resolveRole(
     currentRole: string,
     requested: string | undefined,
+    targetUserId: string,
   ): Promise<string | undefined> {
     if (requested === undefined || requested === currentRole) return undefined;
 
@@ -252,6 +278,15 @@ export class PlatformUserService {
     // user: the user exists, the body does not name a real role.
     if (role === null) {
       throw AppException.validation({ role: ['Unknown role'] }, 'Unknown role');
+    }
+
+    // F-17: a custom role belongs to one hospital, and is held only by
+    // someone working there — never assigned across hospitals.
+    if (role.hospitalId !== null && !(await this.users.worksAt(targetUserId, role.hospitalId))) {
+      throw AppException.validation(
+        { role: ['This role belongs to a hospital the account does not work at'] },
+        'Role belongs to another hospital',
+      );
     }
 
     return role.id;

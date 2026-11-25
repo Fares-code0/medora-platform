@@ -3,7 +3,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import type { AnalyticsSnapshotView, RevenueAlternateView } from '../dto/analytics.dto';
 import { analyticsQuerySchema, type AnalyticsQuery } from '../dto/analytics.schema';
 import { AnalyticsService } from '../services/analytics.service';
@@ -48,6 +48,7 @@ export class AnalyticsController {
    * alternate payload** — not 404 and not 500 (M17.2's verify step,
    * ADR-018 §2).
    */
+  @NotPhi('aggregate reporting; no patient-level data')
   @Get('analytics')
   snapshot(
     @CurrentUser() user: AuthenticatedUser,

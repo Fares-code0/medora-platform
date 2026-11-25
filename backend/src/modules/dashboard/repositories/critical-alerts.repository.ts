@@ -46,7 +46,7 @@ export class CriticalAlertsRepository {
   /** Released, flagged critical, and nobody has looked at it yet. */
   unreviewedCriticalLabs(doctorId: string): Promise<CriticalLabRow[]> {
     return this.prisma.db.labOrder.findMany({
-      where: { orderedBy: doctorId, hasCriticalResult: true, reviewedAt: null },
+      where: { orderedBy: doctorId, hasCriticalResult: true, reviewedAt: null, ...atPractice(doctorId) },
       select: {
         publicId: true,
         requestedAt: true,
@@ -72,9 +72,12 @@ export class CriticalAlertsRepository {
       where: {
         active: true,
         severity: 'CRITICAL',
+        // The alert is the doctor's current hospital's (F-01), on a patient
+        // they see there today.
+        ...atPractice(doctorId),
         patient: {
           appointments: {
-            some: { doctorId, deletedAt: null, startsAt: { gte: dayStart, lt: dayEnd } },
+            some: { doctorId, deletedAt: null, startsAt: { gte: dayStart, lt: dayEnd }, ...atPractice(doctorId) },
           },
         },
       },
@@ -88,6 +91,7 @@ export class CriticalAlertsRepository {
     return this.prisma.db.appointment.findMany({
       where: {
         doctorId,
+        ...atPractice(doctorId),
         priority: 'URGENT',
         status: 'RESCHEDULED',
         startsAt: { gte: from },
@@ -96,4 +100,18 @@ export class CriticalAlertsRepository {
       orderBy: { startsAt: 'asc' },
     });
   }
+}
+
+/**
+ * Resource-level DR-05 for the doctor's own dashboards (audit F-01): rows
+ * belonging to a hospital where the doctor practises now, through the
+ * patient's Hospital Medical Record there. After a transfer, the former
+ * hospital's appointments, orders, notes and alerts leave the dashboard.
+ */
+function atPractice(doctorId: string) {
+  return {
+    hospitalMedicalRecord: {
+      is: { hospital: { is: { doctorEmployments: { some: { doctorId, endedAt: null } } } } },
+    },
+  } as const;
 }

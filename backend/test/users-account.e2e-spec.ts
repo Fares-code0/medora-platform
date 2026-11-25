@@ -10,6 +10,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -141,6 +142,7 @@ async function adminToken(local: string): Promise<{ email: string; token: string
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -591,6 +593,50 @@ describe('PATCH /admin/users/{id} (§2.10)', () => {
     expect(entries[0]?.kind).toBe('login');
     expect(entries[1]?.kind).toBe('security');
     expect(entries[1]?.summary).toContain('role');
+  });
+
+  it('revokes every session and refresh token of the subject on a role change (ADR-046 §2.10)', async () => {
+    const admin = await adminToken('revoker');
+    const email = await seedAccount('revokedbyrole');
+    const login = await request(harness.server)
+      .post(LOGIN)
+      .send({ email, password: PASSWORD, rememberMe: false });
+    const raw: unknown = login.headers['set-cookie'];
+    const cookie = (Array.isArray(raw) ? raw : [raw])
+      .find((value): value is string => typeof value === 'string' && value.startsWith('medora_rt='))
+      ?.split(';')[0];
+    expect(cookie).toBeDefined();
+
+    const response = await request(harness.server)
+      .patch(`${ADMIN_USERS}/${await publicIdOf(email)}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ role: 'nurse' });
+    expect(response.status).toBe(200);
+
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    });
+    await expect(
+      harness.prisma.session.count({ where: { userId: user.id, revokedAt: null } }),
+    ).resolves.toBe(0);
+
+    // The refresh family is dead: no token for either role can be minted
+    // from the old session.
+    const refreshed = await request(harness.server)
+      .post('/api/v1/auth/refresh')
+      .set('Cookie', cookie ?? '');
+    expect(refreshed.status).toBe(401);
+
+    // The audit row records the sessions the change ended, even though the
+    // database trigger (G4, migration 20261125103000) revoked them inside
+    // the update itself.
+    const audit = await harness.prisma.auditEvent.findFirstOrThrow({
+      where: { eventType: 'user.administer', target: { contains: await publicIdOf(email) } },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect(audit.payload).toMatchObject({ roleAfter: 'nurse' });
+    expect((audit.payload as { sessionsRevoked?: number }).sessionsRevoked).toBeGreaterThanOrEqual(1);
   });
 
   it('refuses to promote anyone to admin through this route', async () => {

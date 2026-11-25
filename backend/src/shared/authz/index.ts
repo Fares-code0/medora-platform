@@ -49,19 +49,29 @@ export {
   PERMISSION_CACHE,
   ROLE_REPOSITORY,
   type EffectivePermissions,
+  type ClinicalEmployment,
+  type ClinicalReach,
   type PatientAssignmentRepository,
   type PatientSelfRepository,
   type PermissionCache,
   type PermissionOverrides,
   type Principal,
   type RoleRepository,
+  type Standing,
+  type StandingKind,
 } from './authz.types';
 
 export {
   AUTHENTICATED_METADATA,
   Authenticated,
+  OUTSIDE_STANDING_METADATA,
+  OutsideClinicalStanding,
   CAN_METADATA,
   Can,
+  HospitalScope,
+  HOSPITAL_SCOPE_METADATA,
+  PlatformScope,
+  PLATFORM_SCOPE_METADATA,
   IS_PUBLIC_KEY,
   Public,
   ROLES_METADATA,
@@ -77,3 +87,20 @@ export {
 } from './hospital-context.service';
 export { PatientSelfScopeService } from './patient-self-scope.service';
 export { AuthzKernelModule } from './authz.module';
+
+export { ReauthenticationPort, type ReauthenticationVerifier } from './reauthentication.port';
+
+export {
+  ADMIN_DENIED_PHI,
+  ADMIN_ONLY,
+  applyServerPolicy,
+  categoryOf,
+  ceilingFor,
+  isRoleCategory,
+  type RoleCategory,
+} from './authz-policy';
+
+export { AdminScopeService, type AdminScope } from './admin-scope.service';
+
+export { NotPhi, PhiRead, NOT_PHI_METADATA, PHI_READ_METADATA, type PhiReadSpec } from './phi-read.decorator';
+export { TenantContextResolver } from './tenant-context.resolver';

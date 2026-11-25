@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   type AuthHarness,
   createAuthHarness,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
@@ -157,6 +158,8 @@ describe('the frontend conversation', () => {
     const email = testEmail(local);
     await request(harness.server).post(`${BASE}/auth/register`).send(registrationBody({ email }));
     await markVerified(harness.prisma, email);
+    // Clinical standing (§2.6): without it a registered doctor holds no permission.
+    await makeClinicalDoctor(harness.prisma, email);
     return email;
   }
 

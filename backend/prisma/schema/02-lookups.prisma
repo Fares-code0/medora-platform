@@ -49,6 +49,11 @@ model Role {
   invitations  AdminInvitation[]
   hospitalAssignments HospitalRoleAssignment[]
 
+  /// Custom roles are hospital-scoped (multi-hospital §2.8). System roles
+  /// carry no hospital; the CHECK in migration 20261124100000 enforces it.
+  hospitalId String?   @map("hospital_id") @db.Uuid
+  hospital   Hospital? @relation("HospitalCustomRoles", fields: [hospitalId], references: [id], onDelete: Restrict)
+
   @@map("roles")
 }
 

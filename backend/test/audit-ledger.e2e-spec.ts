@@ -12,6 +12,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 /**
@@ -118,6 +119,7 @@ async function signUpAdmin(local: string): Promise<{ token: string; userId: stri
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),
@@ -190,7 +192,11 @@ async function restorePartitions(): Promise<void> {
   for (const partition of await repository.partitions()) {
     if (partition.from >= keepFrom && partition.from < keepTo) continue;
 
-    await repository.dropPartition(partition.name);
+    // Shared-database housekeeping, as the owner: it also removes *future*
+    // months a simulated-clock sweep created, which the application's
+    // drop path (`drop_audit_events_partition`) rightly refuses.
+    if (!/^audit_events_\d{4}_\d{2}$/.test(partition.name)) continue;
+    await harness.prisma.$executeRawUnsafe(`DROP TABLE IF EXISTS "${partition.name}"`);
   }
 }
 
@@ -350,7 +356,11 @@ describe('M28.3 — the investigation surface', () => {
   });
 
   it('returns the retention window in meta, so an empty page is readable', async () => {
-    const page = dataOf<Page>(await list(`incidentRef=${INCIDENT}`));
+    const response = await list(`incidentRef=${INCIDENT}`);
+    // Status and body first: an intermittent failure of this case was once
+    // seen without its output, so a recurrence must say what came back.
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const page = dataOf<Page>(response);
 
     // A reader looking at nothing for last year needs to know whether
     // the platform deleted it or nothing happened.
@@ -618,14 +628,35 @@ describe('M28.5 — retention drops partitions, never rows', () => {
     );
 
     const result = await retention.sweep(now);
+    const { AuditRepository } = await import('../src/modules/audit/repositories/audit.repository');
+    // H1: only the ledger owner or the audit maintenance role may drop. The
+    // application connected as the restricted runtime role (runtime-role
+    // e2e mode) defers instead, and the month survives until the
+    // maintenance process runs.
+    const entitled = await harness.app.get(AuditRepository).retentionEntitled();
 
     expect(result.retentionDays).toBe(days);
-    // January 2026 is more than `auditLogDays` behind June 2027.
-    expect(result.dropped).toContain(partitionNameFor(oldMonth));
+    if (entitled) {
+      // January 2026 is more than `auditLogDays` behind June 2027.
+      expect(result.dropped).toContain(partitionNameFor(oldMonth));
+      expect(result.deferred).toEqual([]);
+    } else {
+      expect(result.dropped).toEqual([]);
+      expect(result.deferred).toContain(partitionNameFor(oldMonth));
+      const kept = await harness.prisma.$queryRawUnsafe<{ rel: string | null }[]>(
+        `SELECT to_regclass('public.${partitionNameFor(oldMonth)}')::text AS rel`,
+      );
+      expect(kept[0]?.rel).not.toBeNull();
+      // Clean up as the owner, which the fixture connection is.
+      await harness.prisma.$executeRawUnsafe(
+        `SELECT drop_audit_events_partition('${partitionNameFor(oldMonth)}')`,
+      );
+    }
     // The month before "now" is inside the window and must survive —
     // dropping a partition whose month merely *starts* before the cutoff
     // would take retained events with it.
     expect(result.dropped).not.toContain(partitionNameFor(recentMonth));
+    expect(result.deferred).not.toContain(partitionNameFor(recentMonth));
     // And the twelve months from `now` exist.
     expect(result.created).toContain(partitionNameFor(new Date(Date.UTC(2027, 5, 1))));
   });

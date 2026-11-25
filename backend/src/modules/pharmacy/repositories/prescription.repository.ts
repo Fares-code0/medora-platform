@@ -22,7 +22,8 @@ import type {
   SafetyWarningKind,
   SafetyWarningSeverity,
 } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import { hospitalStampFor, PrismaService } from '../../../shared/database';
+import { AppException } from '../../../common/errors/app.exception';
 
 /**
  * A Prisma client that may be a transaction's.
@@ -114,10 +115,18 @@ export class PrescriptionRepository {
     return doctor?.departmentId ?? null;
   }
 
-  /** The visit a prescription was written at (`MR-…`), scoped to its patient. */
-  async recordForPatient(patientId: string, publicId: string): Promise<{ id: string } | null> {
+  /**
+   * The visit a prescription was written at (`MR-…`), scoped to its patient
+   * and to the prescriber's hospital (F-01): a prescription never cites
+   * another hospital's record.
+   */
+  async recordForPatient(
+    patientId: string,
+    publicId: string,
+    hospitalId: string,
+  ): Promise<{ id: string } | null> {
     return this.prisma.db.medicalRecord.findFirst({
-      where: { publicId, patientId },
+      where: { publicId, patientId, hospitalId },
       select: { id: true },
     });
   }
@@ -151,8 +160,12 @@ export class PrescriptionRepository {
     readonly endDate: Date;
     readonly actorId: string;
   }): Promise<DetailRow> {
+    // §2.7: stamped like every doctor-authored clinical row; refused without.
+    const stamp = await hospitalStampFor(this.prisma.db, input.prescribingDoctorId, input.patientId);
+    if (stamp === null) throw AppException.notFound('Patient not found');
     const created = await this.prisma.db.prescription.create({
       data: {
+        ...stamp,
         publicId: input.publicId,
         patientId: input.patientId,
         medicationId: input.medicationId,
@@ -284,10 +297,18 @@ export class PrescriptionRepository {
     // M13.6 — the patient's current-medication list. Written by the
     // same transaction as the signature, because "signing an Rx adds a
     // `patient_medications` row" is a property, not a follow-up job.
+    // The medication-list row inherits the prescription's hospital stamp
+    // (a Phase 22 trigger requires child and parent to share a scope).
+    const scope = await tx.prescription.findUniqueOrThrow({
+      where: { id: input.prescriptionId },
+      select: { hospitalId: true, hospitalMedicalRecordId: true },
+    });
     await tx.patientMedication.create({
       data: {
         patientId: input.patientId,
         prescriptionId: input.prescriptionId,
+        hospitalId: scope.hospitalId,
+        hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
         name: input.medicationName,
         dosage: input.dosage,
         frequency: input.frequency,
@@ -396,7 +417,7 @@ export class PrescriptionRepository {
   /** One prescription by `RX-…`, scoped to the doctor who wrote it. */
   findForDoctor(doctorId: string, publicId: string): Promise<DetailRow | null> {
     return this.prisma.db.prescription.findFirst({
-      where: { publicId, prescribingDoctorId: doctorId, deletedAt: null },
+      where: { publicId, prescribingDoctorId: doctorId, deletedAt: null, ...atPractisingHospital(doctorId) },
       select: DETAIL_SELECT,
     });
   }
@@ -562,8 +583,16 @@ export class PrescriptionRepository {
         },
       });
 
+      // A renewal is attributed like the original therapy: the prescriber's
+      // current hospital and the patient's record there, when both exist.
+      const renewalStamp = await hospitalStampFor(tx, source.prescribingDoctorId, source.patientId);
+      // F-06: never an unattributed renewal. The source was read at the
+      // prescriber's current hospital (`findForDoctor`), so the stamp is
+      // that same hospital, and the copied `recordId` belongs to it.
+      if (renewalStamp === null) throw new RenewalUnattributable();
       const draft = await tx.prescription.create({
         data: {
+          ...renewalStamp,
           publicId: input.publicId,
           // Copied verbatim — the identity of the therapy. Changing any
           // of these would make it a different prescription, not a
@@ -786,7 +815,7 @@ export class PrescriptionRepository {
     highRisk: number;
     newToday: number;
   }> {
-    const mine = { prescribingDoctorId: doctorId, deletedAt: null };
+    const mine = { prescribingDoctorId: doctorId, deletedAt: null, ...atPractisingHospital(doctorId) };
 
     return this.prisma.$transaction(async (tx) => {
       const [total, active, pendingRefills, expired, highRisk, newToday] = await Promise.all([
@@ -806,6 +835,7 @@ export class PrescriptionRepository {
     return {
       prescribingDoctorId: doctorId,
       deletedAt: null,
+      ...atPractisingHospital(doctorId),
       ...(criteria.status === undefined ? {} : { status: { in: [...criteria.status] } }),
       ...(criteria.refillStatus === undefined
         ? {}
@@ -974,4 +1004,29 @@ function toDateOnly(value: Date): Date {
   return new Date(
     Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()),
   );
+}
+
+/**
+ * Resource-level DR-05 for a prescriber's own prescriptions (audit F-01):
+ * written at a hospital where the doctor practises now. Authorship alone no
+ * longer reaches a prescription left behind at a former hospital, and an
+ * unstamped legacy row is outside every hospital's scope, as under RLS.
+ */
+function atPractisingHospital(doctorId: string): Prisma.PrescriptionWhereInput {
+  return {
+    hospitalMedicalRecord: {
+      is: {
+        hospital: {
+          is: { status: 'ACTIVE', deletedAt: null, doctorEmployments: { some: { doctorId, endedAt: null } } },
+        },
+      },
+    },
+  };
+}
+
+/** A renewal whose prescriber has no clinical standing to stamp it with. */
+export class RenewalUnattributable extends Error {
+  constructor() {
+    super('The prescriber has no clinical hospital to renew this prescription at');
+  }
 }

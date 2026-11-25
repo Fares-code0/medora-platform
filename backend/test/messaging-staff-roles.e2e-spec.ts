@@ -5,6 +5,8 @@ import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
+  makeClinicalDoctor,
+  makeClinicalStaff,
   markVerified,
   patientRegistrationBody,
   registrationBody,
@@ -81,6 +83,10 @@ async function signUp(local: string, role?: StaffRole): Promise<Session> {
     const roleRow = await harness.prisma.role.findUniqueOrThrow({ where: { code: role } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: roleRow.id } });
   }
+  // Clinical standing (§2.6): a doctor needs an active employment, a
+  // staff role an active affiliation, or the account holds nothing.
+  if (role === undefined) await makeClinicalDoctor(harness.prisma, email);
+  else await makeClinicalStaff(harness.prisma, email);
 
   return signIn(email);
 }
@@ -102,8 +108,20 @@ async function removeOwnThreads(): Promise<void> {
   });
 }
 
+/**
+ * `staff_members` outlives its user (SET NULL) and keeps the unique email,
+ * so this suite's clinical-staff rows go by address once their users (and
+ * so their affiliations) are gone.
+ */
+async function removeStaffRows(): Promise<void> {
+  await harness.prisma.staffMember.deleteMany({
+    where: { email: { endsWith: `@${harness.domain}` }, userId: null },
+  });
+}
+
 beforeAll(async () => {
   harness = await createAuthHarness('messaging-staff-roles');
+  await removeStaffRows();
 
   doctor = await signUp('staffmsg-doctor');
   outsider = await signUp('staffmsg-outsider', 'reception');
@@ -115,6 +133,7 @@ afterAll(async () => {
   // Threads first: a message's author is a user, and the accounts go next.
   await removeOwnThreads();
   await harness.reset();
+  await removeStaffRows();
   await harness.close();
 });
 
@@ -207,6 +226,8 @@ describe('BR-DEC-006 part 4 — the capability is what admits them', () => {
       harness.prisma.permission.findUniqueOrThrow({ where: { code: 'messages.send' } }),
     ]);
     await harness.prisma.user.update({ where: { id: user.id }, data: { roleId: pharmacyRole.id } });
+    // In clinical standing, so the refusal is the revoked capability alone.
+    await makeClinicalStaff(harness.prisma, email);
 
     // The override row API §15.5 writes, written directly so this suite
     // needs no administrator with a second factor — and before the first

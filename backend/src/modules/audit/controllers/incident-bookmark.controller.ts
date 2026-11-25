@@ -3,7 +3,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi } from '../../../shared/authz';
 import { incidentBookmarkSchema, type IncidentBookmarkInput } from '../dto/audit.schema';
 import { AuditExportService } from '../services/audit-export.service';
 
@@ -24,6 +24,8 @@ import { AuditExportService } from '../services/audit-export.service';
 @Controller('me/incident-bookmarks')
 export class IncidentBookmarkController {
   constructor(private readonly bookmarks: AuditExportService) {}
+
+  @NotPhi('the caller’s own bookmarks')
 
   @Get()
   list(@CurrentUser() user: AuthenticatedUser) {

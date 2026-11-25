@@ -10,6 +10,8 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -87,7 +89,7 @@ function currentCode(secret: string): string {
 async function enrol(
   email: string,
   options: { keepSession?: boolean } = {},
-): Promise<{ secret: string; accessToken: string; refreshCookie: string }> {
+): Promise<{ secret: string; accessToken: string; refreshCookie: string; recoveryCodes: string[] }> {
   const login = await request(harness.server)
     .post(LOGIN)
     .send({ email, password: PASSWORD, rememberMe: false });
@@ -112,7 +114,7 @@ async function enrol(
   const keep = options.keepSession === true ? { id: { not: sidOf(accessToken) } } : {};
   await harness.prisma.session.deleteMany({ where: { user: { email }, ...keep } });
 
-  return { secret: enrolment.secret, accessToken, refreshCookie };
+  return { secret: enrolment.secret, accessToken, refreshCookie, recoveryCodes: enrolment.recoveryCodes };
 }
 
 /** The `sid` claim of an access token this suite was just issued. */
@@ -306,25 +308,30 @@ describe('disabling', () => {
 
   it('refuses an administrator, who may not remove their own factor', async () => {
     const email = await seedAccount('marcus');
-    const { accessToken: doctorToken, refreshCookie } = await enrol(email, { keepSession: true });
+    const { accessToken: doctorToken, refreshCookie, secret } = await enrol(email, { keepSession: true });
 
     const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+    await grantPlatformAdmin(harness.prisma, email);
 
-    // ADR-046: the token minted for the old role is refused outright, and
-    // the session's one refresh mints the administrator token this case is
-    // about. The ADR-035 refusal below is then exercised with a token that
-    // really carries the `admin` role.
+    // ADR-046 / G4: the token minted for the old role is refused outright,
+    // and the role change revoked the session (migration 20261125103000), so
+    // it cannot be refreshed into the new role either. The administrator signs
+    // in afresh with the second factor, and the ADR-035 refusal below is
+    // exercised with a token that really carries the `admin` role.
     const stale = await request(harness.server)
       .post(DISABLE)
       .set('Authorization', `Bearer ${doctorToken}`)
       .send({ password: PASSWORD });
     expect(stale.status).toBe(401);
+    expect((await request(harness.server).post(REFRESH).set('Cookie', refreshCookie)).status).toBe(401);
 
-    const refreshed = await request(harness.server).post(REFRESH).set('Cookie', refreshCookie);
-    expect(refreshed.status).toBe(200);
-    expect(dataOf<SessionPayload>(refreshed).user.role).toBe('admin');
-    const accessToken = dataOf<SessionPayload>(refreshed).accessToken;
+    const login = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const verified = await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: currentCode(secret) });
+    expect(dataOf<SessionPayload>(verified).user.role).toBe('admin');
+    const accessToken = dataOf<SessionPayload>(verified).accessToken;
 
     const response = await request(harness.server)
       .post(DISABLE)
@@ -397,6 +404,8 @@ describe('disabling', () => {
 describe('the login step-up', () => {
   it('completes the round trip with a code from the authenticator', async () => {
     const email = await seedAccount('julian');
+    // Clinical standing (§2.6), so the session carries a doctor's grants.
+    await makeClinicalDoctor(harness.prisma, email);
     const { secret } = await enrol(email);
 
     const challenge = await request(harness.server)
@@ -606,6 +615,60 @@ describe('the login step-up', () => {
  * the database rather than waited for, the way the cooldown tests above
  * rewind `created_at`.
  */
+describe('the account is checked again after the second factor (L5)', () => {
+  async function openChallenge(local: string): Promise<{ email: string; secret: string; recoveryCode: string; otpToken: string }> {
+    const email = await seedAccount(local);
+    await makeClinicalDoctor(harness.prisma, email);
+    const { secret, recoveryCodes } = await enrol(email);
+    const challenge = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const { otpToken } = dataOf<{ requiresOtp: true; otpToken: string }>(challenge);
+    return { email, secret, recoveryCode: recoveryCodes[0] ?? '', otpToken };
+  }
+
+  async function sessionsOf(email: string): Promise<number> {
+    const user = await harness.prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+    return harness.prisma.session.count({ where: { userId: user.id } });
+  }
+
+  it('refuses a valid code for an account suspended while the challenge was open, and opens no session', async () => {
+    const { email, secret, otpToken } = await openChallenge('l5-suspended');
+    const before = await sessionsOf(email);
+    await harness.prisma.user.update({ where: { email }, data: { status: 'SUSPENDED' } });
+
+    const verified = await request(harness.server).post(OTP_VERIFY).send({ otpToken, code: currentCode(secret) });
+
+    expect(verified.status).toBe(403);
+    expect(errorBody(verified).code).toBe('account_inactive');
+    expect(verified.headers['set-cookie']).toBeUndefined();
+    expect(await sessionsOf(email)).toBe(before);
+  });
+
+  it('refuses a valid recovery code for a doctor terminated while the challenge was open', async () => {
+    const { email, recoveryCode, otpToken } = await openChallenge('l5-terminated');
+    const before = await sessionsOf(email);
+    // The doctor's only employment ends: terminated (multi-hospital §2.6).
+    const user = await harness.prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+    await harness.prisma.doctorEmployment.updateMany({
+      where: { doctor: { userId: user.id }, endedAt: null },
+      data: { endedAt: new Date() },
+    });
+
+    const redeemed = await request(harness.server).post('/api/v1/auth/otp/recovery').send({ otpToken, recoveryCode });
+
+    expect(redeemed.status).toBe(403);
+    expect(errorBody(redeemed).code).toBe('account_inactive');
+    expect(await sessionsOf(email)).toBe(before);
+
+    // The refusal spent nothing: once the doctor is employed again, the same
+    // recovery code still signs in.
+    await makeClinicalDoctor(harness.prisma, email);
+    const again = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const { otpToken: second } = dataOf<{ otpToken: string }>(again);
+    const reused = await request(harness.server).post('/api/v1/auth/otp/recovery').send({ otpToken: second, recoveryCode });
+    expect(reused.status, JSON.stringify(reused.body)).toBe(200);
+  });
+});
+
 describe('the ten-minute absolute challenge lifetime', () => {
   const TEN_MINUTES_MS = 10 * 60 * 1_000;
 

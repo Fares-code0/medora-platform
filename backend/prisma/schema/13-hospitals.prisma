@@ -33,6 +33,15 @@ model Hospital {
   waitingRoomEntries WaitingRoomEntry[]
   resources Resource[]
 
+  /// Hospital security policy (§2.11): exceptional PHI access at this
+  /// hospital needs an independent approver before it starts.
+  exceptionalAccessRequiresApproval Boolean @default(false) @map("exceptional_access_requires_approval")
+  customRoles Role[] @relation("HospitalCustomRoles")
+  exceptionalAccessGrants ExceptionalAccessGrant[]
+  informationRequestsTargeted InformationRequest[] @relation("InformationTargetHospital")
+  informationRequestsFrom     InformationRequest[] @relation("InformationRequesterHospital")
+  ownershipAssignments OwnershipAssignment[]
+
   @@map("hospitals")
 }
 

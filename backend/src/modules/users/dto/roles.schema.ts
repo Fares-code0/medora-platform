@@ -70,6 +70,12 @@ export const createRoleSchema = z.object({
   label: z.string().trim().min(2, 'Name the role').max(60, 'Keep it under 60 characters'),
   /** The `roles.code` of the template whose bundle the new role copies. */
   baseRole: z.string().trim().min(1, 'Choose a base role').max(30),
+  /**
+   * The hospital the role belongs to (multi-hospital §2.8: custom roles are
+   * hospital-scoped). A Hospital Admin's role is always its own hospital's;
+   * a Platform Admin names one.
+   */
+  hospitalId: z.string().uuid('Choose a hospital').optional(),
 });
 
 export type CreateRoleInput = z.infer<typeof createRoleSchema>;

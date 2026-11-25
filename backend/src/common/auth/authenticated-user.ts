@@ -33,6 +33,11 @@ export interface AuthenticatedUser {
   readonly permissions: readonly string[];
   /** `sessions.id` — ties the request to the session that minted it. */
   readonly sessionId: string;
+  /**
+   * `users.authz_version`, read from PostgreSQL with the session on every
+   * request (never a token claim). Keys the permission cache.
+   */
+  readonly authzVersion?: number;
 }
 
 /**

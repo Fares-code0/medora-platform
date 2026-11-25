@@ -411,6 +411,14 @@ export const envSchema = z.object({
    */
   HOSPITAL_SCOPE_SHADOW_COMPARISON: booleanish.default(false),
   /**
+   * Multi-hospital §2.15 — open every database transaction with the
+   * request's transaction-local tenant context (`app.scope`,
+   * `app.hospital_id`, …) for Row-Level Security. Required in production,
+   * where the service must connect as the non-owner runtime role; off by
+   * default elsewhere, where the owner connection bypasses RLS anyway.
+   */
+  DATABASE_TENANT_CONTEXT: booleanish.default(false),
+  /**
    * C1 — at most this many shadow comparisons in flight per process. At the
    * cap a comparison is **skipped** (never queued): the authorization
    * decision is already made and never waits for the shadow. Capped below
@@ -481,6 +489,17 @@ export function productionRules(env: Env, ctx: z.RefinementCtx): void {
       path: ['CLAMAV_HOST'],
       message:
         'is required in production — without a scan engine no upload can ever be downloaded (M25.3)',
+    });
+  }
+
+  // §2.15: RLS is the database's own isolation boundary; without the tenant
+  // context every policy fails closed and the service would serve nothing.
+  if (!env.DATABASE_TENANT_CONTEXT) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['DATABASE_TENANT_CONTEXT'],
+      message:
+        'must be on in production — the runtime role is bound by Row-Level Security, which reads the tenant context',
     });
   }
 

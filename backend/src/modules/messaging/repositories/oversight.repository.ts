@@ -110,6 +110,22 @@ export class OversightRepository {
    * row is not a grant, and neither is an approved one past its window —
    * ADR-006 §4.
    */
+  /** F-12: `pending` or `approved` → `terminated`, compare-and-set. */
+  async terminate(requestId: string): Promise<number> {
+    if (!UUID.test(requestId)) return 0;
+    const moved = await this.prisma.db.communicationAccessRequest.updateMany({
+      where: { id: requestId, status: { in: ['pending', 'approved'] } },
+      data: { status: 'terminated' },
+    });
+    return moved.count;
+  }
+
+  /** The hospital a conversation belongs to, if it is tagged to one. */
+  async hospitalOf(tx: Prisma.TransactionClient, conversationId: string): Promise<string | null> {
+    const row = await tx.conversation.findUnique({ where: { id: conversationId }, select: { hospitalId: true } });
+    return row?.hospitalId ?? null;
+  }
+
   activeGrant(
     conversationId: string,
     adminId: string,

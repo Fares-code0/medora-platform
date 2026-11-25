@@ -10,6 +10,9 @@ import {
   patientRegistrationBody,
   registrationBody,
   testEmail,
+  makeClinicalDoctor,
+  clinicalStampFor,
+  recordPatientAt,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -97,6 +100,8 @@ async function seedDoctor(local: string): Promise<string> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing (F-09): outside it, this route is refused.
+  await makeClinicalDoctor(harness.prisma, email);
 
   const response = await request(harness.server)
     .post(LOGIN)
@@ -130,12 +135,19 @@ beforeAll(async () => {
   harness = await createAuthHarness('doctor-availability');
 }, 60_000);
 
+/** The dedicated charts some tests book against, and their appointments. */
+async function removeCharts(): Promise<void> {
+  for (const tag of ['avi', 'avn']) await destroyPatientRecords(harness.prisma, tag);
+}
+
 afterAll(async () => {
+  await removeCharts();
   await harness.reset();
   await harness.close();
 });
 
 beforeEach(async () => {
+  await removeCharts();
   await harness.reset();
 });
 
@@ -452,6 +464,10 @@ describe('PUT /me/availability — stranded appointments (BR-DEC-005)', () => {
       select: { id: true },
     });
     const [patient] = await createPatientRecords(harness.prisma, 'av5', 1);
+    // The patient holds a record at the doctor's hospital, and the bookings
+    // are stamped with it, as the application would write them (F-06).
+    await recordPatientAt(harness.prisma, patient?.id ?? '');
+    const clinical = await clinicalStampFor(harness.prisma, doctor.id, patient?.id ?? '');
     const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
 
     // Two Thursdays out, so both are in the future whenever this runs.
@@ -467,6 +483,7 @@ describe('PUT /me/availability — stranded appointments (BR-DEC-005)', () => {
       [10, 15].map((hour, index) =>
         harness.prisma.appointment.create({
           data: {
+            ...clinical,
             publicId: `APT-T-AV5-${String(index)}-${stamp}`,
             patientId: patient?.id ?? '',
             doctorId: doctor.id,
@@ -567,11 +584,16 @@ describe('/me/time-off (§3.9)', () => {
       where: { user: { email: testEmail('impact') } },
       select: { id: true },
     });
-    const patient = await harness.prisma.patient.findFirstOrThrow({ select: { id: true } });
+    // A dedicated chart at the doctor's hospital (DR-05, F-06).
+    const [patient] = await createPatientRecords(harness.prisma, 'avi', 1);
+    if (patient === undefined) throw new Error('fixture patient missing');
+    await recordPatientAt(harness.prisma, patient.id);
+    const clinical = await clinicalStampFor(harness.prisma, doctor.id, patient.id);
     const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
 
     const appointment = await harness.prisma.appointment.create({
       data: {
+        ...clinical,
         publicId: `APT-IMP-${Date.now().toString(36)}`,
         patientId: patient.id,
         doctorId: doctor.id,
@@ -619,13 +641,16 @@ describe('/me/time-off (§3.9)', () => {
       where: { user: { email: testEmail('nonames') } },
       select: { id: true },
     });
-    const patient = await harness.prisma.patient.findFirstOrThrow({
-      select: { id: true, fullName: true },
-    });
+    // A dedicated chart at the doctor's hospital (DR-05, F-06).
+    const [patient] = await createPatientRecords(harness.prisma, 'avn', 1);
+    if (patient === undefined) throw new Error('fixture patient missing');
+    await recordPatientAt(harness.prisma, patient.id);
+    const clinical = await clinicalStampFor(harness.prisma, doctor.id, patient.id);
     const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
 
     const appointment = await harness.prisma.appointment.create({
       data: {
+        ...clinical,
         publicId: `APT-PHI-${Date.now().toString(36)}`,
         patientId: patient.id,
         doctorId: doctor.id,
@@ -644,7 +669,11 @@ describe('/me/time-off (§3.9)', () => {
 
     // The handle, never the name: this route is about a schedule, not
     // about patients.
-    expect(JSON.stringify(created.body)).not.toContain(patient.fullName);
+    const { fullName } = await harness.prisma.patient.findUniqueOrThrow({
+      where: { id: patient.id },
+      select: { fullName: true },
+    });
+    expect(JSON.stringify(created.body)).not.toContain(fullName);
 
     await harness.prisma.appointment.delete({ where: { id: appointment.id } });
   });

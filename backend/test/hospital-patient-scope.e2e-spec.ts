@@ -3,9 +3,11 @@
  *
  * Every scenario asserts two things against the real module wiring:
  *
- * 1. the legacy `PatientScopeService` decision — the only one that grants
- *    or refuses access — is exactly what the care-assignment rule gave
- *    before Phase 22 (regression);
+ * 1. the enforced `PatientScopeService` decision — the only one that grants
+ *    or refuses access — is DR-05 (multi-hospital, approved): a record at the
+ *    doctor's clinical hospital, no care assignment required. It replaced the
+ *    pre-Phase-22 assignment rule, so a colleague at the same hospital now
+ *    reaches the chart and an assignment alone no longer does;
  * 2. the shadow hospital-aware decision fails closed on missing,
  *    ambiguous, conflicting or unmapped hospital context, and isolates
  *    hospitals, without being enforced anywhere.
@@ -135,6 +137,9 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
         contactEmail: `p22s-${s}@doctor.fixture.test`,
         contactPhone: '+1 (555) 010-2223',
         departmentId,
+        // DR-05 requires clinical standing; verification is not what these
+        // scenarios vary.
+        verificationStatus: 'VERIFIED',
       },
       select: { id: true },
     });
@@ -371,15 +376,20 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       return { principal, publicId: p.publicId };
     }
 
-    /** Holds ACCESS EXCLUSIVE on `public.hospitals` while `work` runs, then rolls back. */
-    async function whileHospitalsLocked<T>(work: () => Promise<T>): Promise<T> {
+    /**
+     * Holds ACCESS EXCLUSIVE on `public.patient_doctor_assignments` while
+     * `work` runs, then rolls back. The shadow reads assignments; the
+     * enforced DR-05 decision does not (it reads the patient's hospital
+     * record), so this blocks exactly the shadow.
+     */
+    async function whileAssignmentsLocked<T>(work: () => Promise<T>): Promise<T> {
       let result: { value: T } | undefined;
       await prisma
         .$transaction(
           async (tx) => {
             // Never queue indefinitely behind another suite's DDL.
             await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '2s'`);
-            await tx.$executeRawUnsafe('LOCK TABLE public.hospitals IN ACCESS EXCLUSIVE MODE');
+            await tx.$executeRawUnsafe('LOCK TABLE public.patient_doctor_assignments IN ACCESS EXCLUSIVE MODE');
             result = { value: await work() };
             throw new Error('rollback');
           },
@@ -395,7 +405,7 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
     it('cancels a lock-blocked shadow query within the timeout and leaves no setting behind', async () => {
       const f = await scopedFixture();
 
-      const outcome = await whileHospitalsLocked(async () => {
+      const outcome = await whileAssignmentsLocked(async () => {
         const started = Date.now();
         const error = await repository.liveAssignmentScopes(f.principal.userId, f.publicId).then(
           () => null,
@@ -429,8 +439,8 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       const compare = vi.spyOn(shadow, 'compare');
       vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-      // The legacy query does not read `hospitals`; the shadow does.
-      await whileHospitalsLocked(async () => {
+      // The enforced query does not read assignments; the shadow does.
+      await whileAssignmentsLocked(async () => {
         const started = Date.now();
         await expect(scope.canReach(f.principal, f.publicId)).resolves.toBe(true);
         expect(Date.now() - started).toBeLessThan(1_000);
@@ -473,7 +483,9 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       recordId: await record(p.id, b),
     });
 
-    await expect(scope.canReach(principal, p.publicId)).resolves.toBe(true);
+    // DR-05: the only record is at the former hospital, so the enforced
+    // decision denies too.
+    await expect(scope.canReach(principal, p.publicId)).resolves.toBe(false);
     await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
       shadow: { allowed: false, reason: 'cross_hospital_assignment' },
       outcome: 'legacy_allow_shadow_deny',
@@ -509,13 +521,14 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       recordId: await record(p.id, a),
     });
 
-    await expect(scope.canReach(principal, p.publicId)).resolves.toBe(true);
+    // DR-05: no active employment, no clinical hospital — denied.
+    await expect(scope.canReach(principal, p.publicId)).resolves.toBe(false);
     await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
       shadow: { allowed: false, reason: 'no_active_employment' },
     });
   });
 
-  it("agrees to deny another doctor's patient at the same hospital", async () => {
+  it("lets a colleague at the same hospital reach the chart (DR-05); the assignment-based shadow still denies", async () => {
     const owner = await doctor();
     const other = await doctor();
     const a = await hospital('P22S Shared Hospital');
@@ -528,7 +541,9 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       recordId: await record(p.id, a),
     });
 
-    await expect(scope.canReach(other.principal, p.publicId)).resolves.toBe(false);
+    // DR-05: a record at the colleague's hospital is the authority, not the
+    // care assignment.
+    await expect(scope.canReach(other.principal, p.publicId)).resolves.toBe(true);
     await expect(shadow.compare(other.principal, p.publicId, false)).resolves.toMatchObject({
       shadow: { allowed: false, reason: 'no_care_assignment' },
       outcome: 'agree_deny',
@@ -579,7 +594,7 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
       ['inactive', { status: 'INACTIVE' }],
       ['soft-deleted', { deletedAt: new Date() }],
     ] as const)(
-      'keeps legacy access but the shadow denies once the hospital is %s',
+      'denies — enforced and shadow alike — once the hospital is %s',
       async (_label, change) => {
         const { principal, hospitalId, patient: p } = await scopedAssignment();
         await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
@@ -588,7 +603,7 @@ describe('Phase 22 hospital-aware patient scope, shadow mode (PostgreSQL)', () =
 
         await prisma.db.hospital.update({ where: { id: hospitalId }, data: change });
 
-        await expect(scope.canReach(principal, p.publicId)).resolves.toBe(true);
+        await expect(scope.canReach(principal, p.publicId)).resolves.toBe(false);
         await expect(shadow.compare(principal, p.publicId, true)).resolves.toMatchObject({
           shadow: { allowed: false, reason: 'no_active_employment' },
           outcome: 'legacy_allow_shadow_deny',

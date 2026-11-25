@@ -1,4 +1,6 @@
 import request from 'supertest';
+
+import { ConfigService } from '../src/config';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Prisma } from '../src/generated/prisma/client';
@@ -9,9 +11,11 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 
 
@@ -68,6 +72,8 @@ async function signUpDoctor(local: string): Promise<Session> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -105,6 +111,7 @@ async function signUpAdmin(local: string, h: AuthHarness = harness): Promise<Ses
 
   const adminRole = await h.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await h.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(h.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(h.server).post(LOGIN).send({ email, password: PASSWORD }),
@@ -149,7 +156,7 @@ async function grantFor(session: Session, reason = 'Investigating a patient comp
   return request(harness.server)
     .post(`${ADMIN}/conversations/${conversationId}/access-request`)
     .set(as(session))
-    .send({ justificationCategory: 'complaint', reason });
+    .send({ justificationCategory: 'complaint', reason, password: PASSWORD });
 }
 
 beforeAll(async () => {
@@ -459,6 +466,89 @@ describe('approval is never self-approval', () => {
   });
 });
 
+describe('F-12 — content access under the Exceptional Access model', () => {
+  let configured: AuthHarness;
+  let requester: Session;
+  let approver: Session;
+
+  beforeAll(async () => {
+    // A lifetime configured, and the self-serve mode ADR-006 allowed turned
+    // on: F-12 holds approval mandatory regardless. The environment is
+    // parsed once per process, so the settings ride on a ConfigService
+    // whose `env` carries them.
+    const base = harness.app.get(ConfigService);
+    const env = { ...base.env, COMMUNICATION_GRANT_TTL_MINUTES: 15, COMMUNICATION_REQUIRE_SECOND_ADMIN_APPROVAL: false };
+    const patched = Object.create(base, { env: { value: env } }) as ConfigService;
+    configured = await createAuthHarness('msg-oversight-f12', {
+      overrides: [{ token: ConfigService, value: patched }],
+    });
+    requester = await signUpAdmin('oversight-f12-requester', configured);
+    approver = await signUpAdmin('oversight-f12-approver', configured);
+  }, 120_000);
+
+  afterAll(async () => {
+    if (configured === undefined) return;
+    await configured.prisma.db.communicationAccessRequest.deleteMany({
+      where: { requestedBy: { in: [requester?.userId ?? '', approver?.userId ?? ''] } },
+    });
+    await configured.reset();
+    await configured.close();
+  });
+
+  const ask = (session: Session, password: string) =>
+    request(configured.server)
+      .post(`${ADMIN}/conversations/${conversationId}/access-request`)
+      .set(as(session))
+      .send({ justificationCategory: 'safety', reason: 'Reviewing a reported safety concern', password });
+  const content = (session: Session) =>
+    request(configured.server).get(`${ADMIN}/conversations/${conversationId}/content`).set(as(session));
+
+  it('re-authenticates the requester: a wrong password creates nothing', async () => {
+    const before = await configured.prisma.db.communicationAccessRequest.count({
+      where: { requestedBy: requester.userId },
+    });
+    expect((await ask(requester, 'not-the-password')).status).toBe(401);
+    await expect(
+      configured.prisma.db.communicationAccessRequest.count({ where: { requestedBy: requester.userId } }),
+    ).resolves.toBe(before);
+  });
+
+  it('always waits for an independent approval, then ends at once when revoked', async () => {
+    const created = await ask(requester, PASSWORD);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const grant = dataOf<{ id: string; status: string }>(created);
+    expect(grant.status).toBe('pending');
+    expect((await content(requester)).status).toBe(403);
+
+    // Never the requester; another administrator approves.
+    await request(configured.server)
+      .post(`${ADMIN}/conversations/access-requests/${grant.id}/approve`)
+      .set(as(requester))
+      .expect(403);
+    await request(configured.server)
+      .post(`${ADMIN}/conversations/access-requests/${grant.id}/approve`)
+      .set(as(approver))
+      .expect(201);
+    expect((await content(requester)).status).toBe(200);
+
+    // Revocation ends it, and is audited.
+    const revoked = await request(configured.server)
+      .post(`${ADMIN}/conversations/access-requests/${grant.id}/revoke`)
+      .set(as(approver));
+    expect(revoked.status, JSON.stringify(revoked.body)).toBe(201);
+    expect((await content(requester)).status).toBe(403);
+    await request(configured.server)
+      .post(`${ADMIN}/conversations/access-requests/${grant.id}/revoke`)
+      .set(as(approver))
+      .expect(409);
+    await expect(
+      configured.prisma.auditEvent.count({
+        where: { eventType: 'communication_access.revoke', actorId: approver.userId },
+      }),
+    ).resolves.toBe(1);
+  });
+});
+
 describe('request validation', () => {
   it('rejects a justification outside the contract vocabulary', async () => {
     await request(harness.server)
@@ -480,7 +570,7 @@ describe('request validation', () => {
     await request(harness.server)
       .post(`${ADMIN}/conversations/00000000-0000-4000-8000-000000000000/access-request`)
       .set(as(adminOne))
-      .send({ justificationCategory: 'audit', reason: 'Quarterly quality audit of this thread' })
+      .send({ justificationCategory: 'audit', reason: 'Quarterly quality audit of this thread', password: PASSWORD })
       .expect(404);
   });
 });

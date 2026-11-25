@@ -12,7 +12,10 @@ import {
   createAuthHarness,
   dataOf,
   errorBody,
+  fixtureHospital,
+  makeClinicalDoctor,
   markVerified,
+  purgeHospitalRecords,
   registrationBody,
   testEmail,
 } from './support/auth-app';
@@ -100,10 +103,12 @@ let patientId = '';
 let otherPatientId = '';
 const createdCharts: string[] = [];
 
-async function seedDoctor(local: string): Promise<Doctor> {
+async function seedDoctor(local: string, hospital = 'a'): Promise<Doctor> {
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at a fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email, await fixtureHospital(harness.prisma, hospital));
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server)
@@ -180,7 +185,8 @@ beforeAll(async () => {
   });
 
   owner = await seedDoctor('pt-doc-owner');
-  stranger = await seedDoctor('pt-doc-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  stranger = await seedDoctor('pt-doc-stranger', 'b');
   patientId = await seedPatient(owner.token, 'Salma Adel');
   otherPatientId = await seedPatient(owner.token, 'Hoda Kamal');
 }, 90_000);
@@ -191,6 +197,14 @@ afterAll(async () => {
   // Charts first: `patient_documents` cascades from the patient and
   // restricts the file, so the files can go only after.
   if (createdCharts.length > 0) {
+    const charts = await harness.prisma.patient.findMany({
+      where: { publicId: { in: createdCharts } },
+      select: { id: true },
+    });
+    await purgeHospitalRecords(
+      harness.prisma,
+      charts.map((row) => row.id),
+    );
     await harness.prisma.patient.deleteMany({ where: { publicId: { in: createdCharts } } });
   }
   await harness.prisma.file.deleteMany({ where: { originalName: { startsWith: NAME_PREFIX } } });

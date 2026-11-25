@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
 
 import { AppModule } from '../../src/app.module';
+import { loadEnv } from '../../src/config/env';
 import { applyBodyLimits } from '../../src/common/http/body-limits';
 import { applyCachePolicy } from '../../src/common/http/cache-policy';
 import { applyCompression } from '../../src/common/http/compression';
@@ -16,7 +17,7 @@ import {
   type PlatformPolicySource,
   type PolicyOverrides,
 } from '../../src/config';
-import { PrismaService } from '../../src/shared/database';
+import { type HospitalStamp, hospitalStampFor, PrismaService, runAsSystem } from '../../src/shared/database';
 import { MAILER } from '../../src/shared/mail';
 import { SmtpMailer } from '../../src/shared/mail/smtp.mailer';
 
@@ -124,6 +125,23 @@ export async function createAuthHarness(
 
   let builder = Test.createTestingModule({ imports: [AppModule] });
 
+  // The runtime-role mode (multi-hospital §2.15; final verification): the
+  // application connects as the provisioned restricted role, with tenant
+  // context on, while fixtures, cleanup and assertions keep the owner
+  // connection below. `npm run test:e2e:runtime-role` sets it.
+  const ownerEnv = loadEnv();
+  // Only on the database the role was provisioned in: a suite that builds a
+  // database of its own (a fresh deployment, an isolated copy) has no
+  // runtime role there and keeps the owner connection.
+  const runtimeUrl = sameDatabase(process.env['E2E_RUNTIME_DATABASE_URL'], ownerEnv.DATABASE_URL)
+    ? process.env['E2E_RUNTIME_DATABASE_URL']
+    : undefined;
+  if (runtimeUrl !== undefined && runtimeUrl !== '') {
+    builder = builder.overrideProvider(ConfigService).useValue(
+      new ConfigService({ ...ownerEnv, DATABASE_URL: runtimeUrl, DATABASE_TENANT_CONTEXT: true }),
+    );
+  }
+
   if (options.realPolicySource !== true) {
     builder = builder.overrideProvider(PLATFORM_POLICY_SOURCE).useValue(policySource);
   }
@@ -176,7 +194,14 @@ export async function createAuthHarness(
   // `app.close()` in `close()` below releases the port.
   await app.listen(0, '127.0.0.1');
 
-  const prisma = app.get(PrismaService);
+  // Fixtures go through the owner (RLS does not bind it, by design); in the
+  // default mode that is the application's own connection.
+  const ownerPrisma =
+    runtimeUrl !== undefined && runtimeUrl !== ''
+      ? new PrismaService(new ConfigService({ ...ownerEnv, DATABASE_TENANT_CONTEXT: false }))
+      : undefined;
+  if (ownerPrisma !== undefined) await ownerPrisma.$connect();
+  const prisma: PrismaService = ownerPrisma === undefined ? app.get(PrismaService) : ownerPrisma;
 
   const harness: AuthHarness = {
     domain,
@@ -187,13 +212,21 @@ export async function createAuthHarness(
     policy,
     async close(): Promise<void> {
       await app.close();
+      await ownerPrisma?.$disconnect();
       await sink.stop();
     },
     async reset(): Promise<void> {
+      // Staffing rows restrict their doctor / user (history is never
+      // cascaded away in production), so a suite's own employments,
+      // affiliations and hospital assignments go first.
+      await removeStaffingOf(prisma, domain);
       // `deleteMany` on the base client, not `db`: a soft-deleted row is
       // still a row holding the unique email, and leaving it behind
       // would make the next run's registration a 409.
       await prisma.user.deleteMany({ where: { email: { endsWith: `@${domain}` } } });
+      // `staff_members.user_id` is SET NULL, so a suite's staff rows (made by
+      // `makeClinicalStaff`, keyed by the account's email) outlive it.
+      await prisma.staffMember.deleteMany({ where: { email: { endsWith: `@${domain}` } } });
       // `login_events` survives its user by design (SET NULL), so the
       // rows have to go by address or they accumulate across runs and the
       // "one row per attempt" assertions start counting history.
@@ -314,6 +347,237 @@ export async function markVerified(prisma: PrismaService, email: string): Promis
   await prisma.user.update({ where: { email }, data: { emailVerifiedAt: new Date() } });
 }
 
+/** Deletes the staffing rows of every account in `domain` (test cleanup only). */
+async function removeStaffingOf(prisma: PrismaService, domain: string): Promise<void> {
+  const users = { email: { endsWith: `@${domain}` } };
+  const ids = async (rows: Promise<{ id: string }[]>) => (await rows).map((row) => row.id);
+  await deleteWithDependents(
+    prisma,
+    'hospital_role_assignments',
+    await ids(prisma.hospitalRoleAssignment.findMany({ where: { user: { is: users } }, select: { id: true } })),
+  );
+  await deleteWithDependents(
+    prisma,
+    'doctor_employments',
+    await ids(
+      prisma.doctorEmployment.findMany({
+        where: { doctor: { is: { user: { is: users } } } },
+        select: { id: true },
+      }),
+    ),
+  );
+  await deleteWithDependents(
+    prisma,
+    'hospital_staff_affiliations',
+    await ids(
+      prisma.hospitalStaffAffiliation.findMany({
+        where: { staff: { is: { user: { is: users } } } },
+        select: { id: true },
+      }),
+    ),
+  );
+}
+
+/**
+ * Test cleanup only: deletes rows of `table` by id after first deleting —
+ * recursively — every row that references them through a RESTRICT / NO
+ * ACTION foreign key (discovered from `pg_constraint`, so it stays correct
+ * as hospital stamping spreads). Cascading and SET NULL references are left
+ * to PostgreSQL. Stamped tenant keys cannot be nulled in place (a Phase 22
+ * trigger), which is why dependents are deleted rather than detached.
+ */
+export async function deleteWithDependents(
+  prisma: PrismaService,
+  table: string,
+  ids: readonly string[],
+  depth = 0,
+): Promise<void> {
+  if (ids.length === 0) return;
+  if (depth > 8) throw new Error(`deleteWithDependents: reference chain too deep at ${table}`);
+  const references = await prisma.$queryRaw<{ child: string; column: string }[]>`
+    SELECT c.conrelid::regclass::text AS child, a.attname AS column
+      FROM pg_constraint c
+      JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = ANY (c.confkey) AND pa.attname = 'id'
+      JOIN pg_attribute a ON a.attrelid = c.conrelid
+       AND a.attnum = c.conkey[array_position(c.confkey, pa.attnum)]
+     WHERE c.contype = 'f' AND c.confrelid = ${table}::regclass AND c.confdeltype IN ('r', 'a')
+       AND c.conrelid <> c.confrelid`;
+  for (const { child, column } of references) {
+    const rows = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id::text AS id FROM ${child} WHERE "${column}" = ANY($1::uuid[])`,
+      ids,
+    );
+    await deleteWithDependents(
+      prisma,
+      child,
+      rows.map((row) => row.id),
+      depth + 1,
+    );
+  }
+  await prisma.$executeRawUnsafe(`DELETE FROM ${table} WHERE id = ANY($1::uuid[])`, ids);
+}
+
+/**
+ * An ACTIVE hospital e2e fixtures employ clinicians at, created once per
+ * key. `a` is the default; a suite that proves isolation puts its second
+ * clinician at `b` (DR-05: a colleague at the same hospital *does* reach
+ * the chart, so "another doctor's patient" means another hospital's).
+ */
+export async function fixtureHospital(prisma: PrismaService, key = 'a'): Promise<string> {
+  const publicId = key === 'a' ? 'hsp_e2e_fixture' : `hsp_e2e_fixture_${key}`;
+  const row = await prisma.hospital.upsert({
+    where: { publicId },
+    create: { publicId, name: `E2E Fixture Hospital ${key.toUpperCase()}` },
+    update: { status: 'ACTIVE', deletedAt: null },
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Opens `patientId`'s Hospital Medical Record at a fixture hospital
+ * (DR-05). A patient registered through the API by a clinical doctor gets
+ * one automatically; a patient written straight to the database does not.
+ */
+export async function recordPatientAt(
+  prisma: PrismaService,
+  patientId: string,
+  hospitalId?: string,
+): Promise<string> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const row = await prisma.hospitalMedicalRecord.upsert({
+    where: { patientId_hospitalId: { patientId, hospitalId: at } },
+    create: { patientId, hospitalId: at },
+    update: {},
+    select: { id: true },
+  });
+  return row.id;
+}
+
+/**
+ * Puts the staff account behind `email` (reception, laboratory, pharmacy,
+ * nurse) in clinical standing: a `staff_members` row and one active
+ * affiliation at `hospitalId` (fixture hospital `a` by default).
+ */
+export async function makeClinicalStaff(
+  prisma: PrismaService,
+  email: string,
+  hospitalId?: string,
+): Promise<{ staffId: string; hospitalId: string }> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { email },
+    select: { id: true, displayName: true, phone: true, role: { select: { code: true } } },
+  });
+  const roleOf: Record<string, 'RECEPTIONIST' | 'LABORATORY' | 'PHARMACY' | 'NURSE'> = {
+    reception: 'RECEPTIONIST',
+    laboratory: 'LABORATORY',
+    pharmacy: 'PHARMACY',
+    nurse: 'NURSE',
+  };
+  const departmentId = (await prisma.department.findFirstOrThrow({ select: { id: true } })).id;
+  const staff =
+    (await prisma.staffMember.findFirst({ where: { userId: user.id }, select: { id: true } })) ??
+    (await prisma.staffMember.create({
+      data: {
+        userId: user.id,
+        name: user.displayName,
+        role: roleOf[user.role.code] ?? 'NURSE',
+        title: 'Fixture staff',
+        departmentId,
+        phone: user.phone,
+        email,
+        workingHours: '09:00-17:00',
+      },
+      select: { id: true },
+    }));
+  const active = await prisma.hospitalStaffAffiliation.findFirst({
+    where: { staffId: staff.id, endedAt: null },
+    select: { id: true },
+  });
+  if (active === null) {
+    await prisma.hospitalStaffAffiliation.create({ data: { staffId: staff.id, hospitalId: at } });
+  }
+  await prisma.user.update({ where: { id: user.id }, data: { authzVersion: { increment: 1 } } });
+  return { staffId: staff.id, hospitalId: at };
+}
+
+/**
+ * Test cleanup only: removes the Hospital Medical Records of `patientIds`
+ * and everything that restricts their deletion. Call it before deleting the
+ * patients themselves — HMRs restrict their patient.
+ */
+export async function purgeHospitalRecords(
+  prisma: PrismaService,
+  patientIds: readonly string[],
+): Promise<void> {
+  if (patientIds.length === 0) return;
+  const records = await prisma.hospitalMedicalRecord.findMany({
+    where: { patientId: { in: [...patientIds] } },
+    select: { id: true },
+  });
+  await deleteWithDependents(
+    prisma,
+    'hospital_medical_records',
+    records.map((row) => row.id),
+  );
+}
+
+
+
+/**
+ * Puts the doctor behind `email` in clinical standing (multi-hospital §2.6,
+ * DR-05): verified, ACTIVE practice, and one active employment at
+ * `hospitalId` (the shared fixture hospital by default). A registered doctor
+ * is otherwise unverified and unemployed, and holds no clinical capability.
+ */
+export async function makeClinicalDoctor(
+  prisma: PrismaService,
+  email: string,
+  hospitalId?: string,
+): Promise<{ doctorId: string; hospitalId: string }> {
+  const at = hospitalId ?? (await fixtureHospital(prisma));
+  const doctor = await prisma.doctor.findFirstOrThrow({
+    where: { user: { is: { email } } },
+    select: { id: true, userId: true },
+  });
+  await prisma.doctor.update({
+    where: { id: doctor.id },
+    data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
+  });
+  const active = await prisma.doctorEmployment.findFirst({
+    where: { doctorId: doctor.id, endedAt: null },
+    select: { id: true },
+  });
+  if (active === null) {
+    await prisma.doctorEmployment.create({ data: { doctorId: doctor.id, hospitalId: at } });
+  }
+  await prisma.user.update({
+    where: { id: doctor.userId },
+    data: { authzVersion: { increment: 1 } },
+  });
+  return { doctorId: doctor.id, hospitalId: at };
+}
+
+/**
+ * Makes `email` (already holding the `admin` role) a Platform Admin through
+ * an explicit `platform_admin_grants` row (OD-07). Platform scope is never
+ * inferred from a missing hospital assignment, so a fixture administrator
+ * that exercises platform-wide routes needs the grant a real one would hold.
+ * Idempotent.
+ */
+export async function grantPlatformAdmin(prisma: PrismaService, email: string): Promise<void> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+  const active = await prisma.platformAdminGrant.findFirst({
+    where: { userId: user.id, revokedAt: null },
+    select: { id: true },
+  });
+  if (active !== null) return;
+  await prisma.platformAdminGrant.create({
+    data: { userId: user.id, reason: 'Test fixture platform administrator' },
+  });
+}
+
 /**
  * Moves every rotation of `email`'s sessions past ADR-045's 30-second
  * grace window, so a retired token re-presented afterwards is a replay
@@ -355,4 +619,72 @@ export function tokenFromLink(text: string): string {
   const match = /[?&]token=([A-Za-z0-9_-]+)/.exec(text);
   if (match?.[1] === undefined) throw new Error(`No token in mail body:\n${text}`);
   return match[1];
+}
+
+/**
+ * The hospital stamp a clinical row written by `doctorId` about `patientId`
+ * carries (multi-hospital §2.7; audit F-06): the doctor's one active
+ * employment, its hospital, and the patient's record there — derived exactly
+ * as the application derives it. A fixture that writes clinical rows
+ * straight to the database spreads this into them; an unstamped row belongs
+ * to no hospital and is, correctly, invisible to every clinician.
+ */
+export async function clinicalStampFor(
+  prisma: PrismaService,
+  doctorId: string,
+  patientId: string,
+): Promise<HospitalStamp> {
+  const stamp = await hospitalStampFor(prisma, doctorId, patientId);
+  if (stamp === null) {
+    throw new Error('clinicalStampFor: the doctor has no clinical hospital holding this patient’s record');
+  }
+  return stamp;
+}
+
+/**
+ * `{ hospitalId, hospitalMedicalRecordId }` of a patient who holds exactly
+ * one Hospital Medical Record — the stamp a fixture row about that patient
+ * carries when it is written straight to the database (F-06).
+ */
+export async function soleRecordOf(
+  prisma: PrismaService,
+  patientId: string,
+): Promise<{ hospitalId: string; hospitalMedicalRecordId: string }> {
+  const records = await prisma.hospitalMedicalRecord.findMany({
+    where: { patientId },
+    select: { id: true, hospitalId: true },
+    take: 2,
+  });
+  const [record] = records;
+  if (record === undefined || records.length !== 1) {
+    throw new Error('soleRecordOf: the patient must hold exactly one Hospital Medical Record');
+  }
+  return { hospitalId: record.hospitalId, hospitalMedicalRecordId: record.id };
+}
+
+/**
+ * A job handler service, called the way `JobRunnerService` calls it: every
+ * method runs under `system` RLS scope. Suites that drive a job's unit of
+ * work directly (a sweep, a dispatcher drain, a delivery worker) wrap the
+ * service in this, so they exercise what the scheduler runs — under the
+ * runtime role a direct call outside any scope sees no row at all.
+ */
+export function asJob<T extends object>(service: T): T {
+  return new Proxy(service, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      // Awaited inside the scope: a Prisma query is lazy and would otherwise
+      // run when the caller awaits it, outside `system`.
+      return (...args: unknown[]) =>
+        runAsSystem(async () => await (value as (...a: unknown[]) => unknown).apply(target, args));
+    },
+  });
+}
+
+function sameDatabase(runtimeUrl: string | undefined, ownerUrl: string): boolean {
+  if (runtimeUrl === undefined || runtimeUrl === '') return false;
+  const a = new URL(runtimeUrl);
+  const b = new URL(ownerUrl);
+  return a.host === b.host && a.pathname === b.pathname;
 }

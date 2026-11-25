@@ -331,8 +331,27 @@ export class AdminInvitationService {
 
       await tx.user.update({
         where: { id: userId },
-        data: { status: UserStatus.ACTIVE, twoFactorEnabled: true },
+        data: {
+          status: UserStatus.ACTIVE,
+          twoFactorEnabled: true,
+          authzVersion: { increment: 1 },
+        },
       });
+
+      // OD-07: platform scope only from an explicit grant. The bootstrap
+      // invitation (no sender) is the one place it is granted without an
+      // actor — there is no administrator yet to grant it. An administrator
+      // invited by another holds no scope until a Platform Admin assigns
+      // one (a hospital, or platform), so it cannot act by default.
+      if (invitation.invitedBy === null && invitation.roleCode === 'admin') {
+        await tx.platformAdminGrant.create({
+          data: {
+            userId,
+            grantedBy: null,
+            reason: 'Bootstrap administrator (admin:bootstrap)',
+          },
+        });
+      }
 
       // Written inside the transaction, and so deliberately **not**
       // through the M8.6 recorder: the recorder holds its own client and
@@ -355,7 +374,11 @@ export class AdminInvitationService {
       actor: { userId, role: invitation.roleCode },
       entityType: 'admin_invitation',
       entityId: invitation.id,
-      metadata: { status: UserStatus.ACTIVE, twoFactor: true },
+      metadata: {
+        status: UserStatus.ACTIVE,
+        twoFactor: true,
+        platformScope: invitation.invitedBy === null && invitation.roleCode === 'admin',
+      },
     });
 
     return { nextStep: 'login', email: invitation.email };

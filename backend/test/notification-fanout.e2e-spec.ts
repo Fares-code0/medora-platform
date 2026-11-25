@@ -3,7 +3,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { NotificationDispatchService } from '../src/modules/notifications/services/notification-dispatch.service';
 import { OUTBOX, type OutboxPort } from '../src/shared/outbox';
 
-import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import {
+  type AuthHarness,
+  createAuthHarness,
+  dataOf,
+  testEmail,
+  asJob,
+} from './support/auth-app';
 import {
   acquireDeliveryWorkerLock,
   DELIVERY_WORKER_LOCK_TIMEOUT_MS,
@@ -117,7 +123,7 @@ afterAll(async () => {
 
 beforeAll(async () => {
   harness = await createAuthHarness('notify-fanout');
-  dispatch = harness.app.get(NotificationDispatchService);
+  dispatch = asJob(harness.app.get(NotificationDispatchService));
   outbox = harness.app.get<OutboxPort>(OUTBOX);
 
   doctorToken = await seedDoctor(harness, 'fanout-doctor');

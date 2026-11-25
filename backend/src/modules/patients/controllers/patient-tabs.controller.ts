@@ -14,7 +14,7 @@ import {
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import type { EmergencyContactView, PatientMedicationView } from '../dto/patient.dto';
 import type {
   HistoryEventView,
@@ -81,6 +81,7 @@ export class PatientTabsController {
   constructor(private readonly tabs: PatientTabsService) {}
 
   /** API §4.5 — the five-kind history timeline. */
+  @PhiRead('medical_history')
   @Get('history')
   history(
     @CurrentUser() user: AuthenticatedUser,
@@ -118,6 +119,7 @@ export class PatientTabsController {
   }
 
   /** API §4.6 — emergency contacts. At most one primary, kept so by the service. */
+  @PhiRead('emergency_contacts')
   @Get('emergency-contacts')
   contacts(
     @CurrentUser() user: AuthenticatedUser,
@@ -159,6 +161,7 @@ export class PatientTabsController {
   }
 
   /** API §4.5/§4.6 — clinical notes. */
+  @PhiRead('patient_notes')
   @Get('notes')
   notes(
     @CurrentUser() user: AuthenticatedUser,
@@ -201,6 +204,7 @@ export class PatientTabsController {
   }
 
   /** API §4.5/§4.6 — vital signs, blood pressure split in two. */
+  @PhiRead('vital_signs')
   @Get('vitals')
   vitals(
     @CurrentUser() user: AuthenticatedUser,
@@ -221,6 +225,7 @@ export class PatientTabsController {
   }
 
   /** API §4.5 — the full medication list, not the summary card's ten. */
+  @PhiRead('patient_medications')
   @Get('medications')
   medications(
     @CurrentUser() user: AuthenticatedUser,
@@ -236,6 +241,7 @@ export class PatientTabsController {
    * A list of documents is not a way to read them: the download is its
    * own route below, with its own scope check and the scan gate.
    */
+  @PhiRead('patient_documents')
   @Get('documents')
   documents(
     @CurrentUser() user: AuthenticatedUser,
@@ -266,6 +272,7 @@ export class PatientTabsController {
    * A JSON `{ url, expiresInSeconds }`, the shape `GET /files/{id}/download`
    * answers in.
    */
+  @PhiRead('patient_document', { auditedByHandler: true })
   @Get('documents/:documentId/download')
   downloadDocument(
     @CurrentUser() user: AuthenticatedUser,
@@ -276,6 +283,7 @@ export class PatientTabsController {
   }
 
   /** API §4.5 — studies, grouped by category as the contract asks. */
+  @PhiRead('patient_studies')
   @Get('studies')
   studies(
     @CurrentUser() user: AuthenticatedUser,
@@ -285,6 +293,7 @@ export class PatientTabsController {
   }
 
   /** API §4.5 — the patient's appointment history. */
+  @PhiRead('patient_appointments')
   @Get('appointments')
   appointments(
     @CurrentUser() user: AuthenticatedUser,

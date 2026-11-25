@@ -156,7 +156,10 @@ export class LabAttachmentService {
       );
     }
 
-    const record = await this.attachments.recordByPublicId(input.recordId);
+    const record = await this.attachments.recordByPublicId(
+      input.recordId,
+      await this.context.requireHospital(user),
+    );
 
     // A record on **another patient** is the same refusal as a record
     // that does not exist, and deliberately so: confirming that `MR-…`

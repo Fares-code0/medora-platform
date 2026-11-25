@@ -23,8 +23,11 @@
 import { Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../../../generated/prisma/client';
-import type { DoctorPracticeStatus, DoctorVerificationStatus } from '../../../generated/prisma/enums';
-import { PrismaService } from '../../../shared/database';
+import type {
+  DoctorPracticeStatus,
+  DoctorVerificationStatus,
+} from '../../../generated/prisma/enums';
+import { PrismaService, runAsSystem } from '../../../shared/database';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -122,9 +125,7 @@ export class AdminDoctorRepository {
         ? {}
         : { specialties: { some: { specialtyId: criteria.specialtyId } } }),
       ...(criteria.departmentId === undefined ? {} : { departmentId: criteria.departmentId }),
-      ...(criteria.verification === undefined
-        ? {}
-        : { verificationStatus: criteria.verification }),
+      ...(criteria.verification === undefined ? {} : { verificationStatus: criteria.verification }),
       ...(criteria.status === undefined ? {} : { practiceStatus: criteria.status }),
       ...(criteria.joinedFrom === undefined && criteria.joinedTo === undefined
         ? {}
@@ -153,7 +154,12 @@ export class AdminDoctorRepository {
   findById(doctorId: string): Promise<AdminDoctorDetailRow | null> {
     if (!UUID.test(doctorId)) return Promise.resolve(null);
 
-    return this.prisma.db.doctor.findUnique({ where: { id: doctorId }, select: DETAIL_SELECT });
+    // A soft-deleted doctor is not resolved: `findUnique` bypasses the
+    // soft-delete extension, so the filter is stated (ported from #63).
+    return this.prisma.db.doctor.findFirst({
+      where: { id: doctorId, deletedAt: null },
+      select: DETAIL_SELECT,
+    });
   }
 
   /**
@@ -170,7 +176,10 @@ export class AdminDoctorRepository {
 
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    const [patients, appointments] = await Promise.all([
+    // Counts about a doctor, not rows about a patient: read under `system`
+    // scope (a reviewed call site, F-15), because Row-Level Security gives a
+    // Platform Admin no clinical row to count — only the numbers leave here.
+    const [patients, appointments] = await runAsSystem(async () => await Promise.all([
       this.prisma.db.patient.groupBy({
         by: ['assignedDoctorId'],
         where: { assignedDoctorId: { in: [...doctorIds] } },
@@ -181,7 +190,7 @@ export class AdminDoctorRepository {
         where: { doctorId: { in: [...doctorIds] }, startsAt: { gte: since } },
         _count: { _all: true },
       }),
-    ]);
+    ]));
 
     const stats: Record<string, { patientsCount: number; appointments30d: number }> = {};
     for (const id of doctorIds) stats[id] = { patientsCount: 0, appointments30d: 0 };
@@ -209,13 +218,18 @@ export class AdminDoctorRepository {
    * that has nothing to do with the decision being taken.
    */
   upcomingAppointmentCount(doctorId: string): Promise<number> {
-    return this.prisma.db.appointment.count({
-      where: {
-        doctorId,
-        startsAt: { gte: new Date() },
-        status: { in: [...LIVE_APPOINTMENT_STATUSES] },
-      },
-    });
+    // A count, under `system` scope for the same reason as `statsFor`.
+    // Awaited inside the scope: a Prisma query is lazy and runs when awaited,
+    // so returning it unawaited would run it under the caller's context.
+    return runAsSystem(async () =>
+      await this.prisma.db.appointment.count({
+        where: {
+          doctorId,
+          startsAt: { gte: new Date() },
+          status: { in: [...LIVE_APPOINTMENT_STATUSES] },
+        },
+      }),
+    );
   }
 
   async setVerificationStatus(input: {
@@ -223,19 +237,35 @@ export class AdminDoctorRepository {
     readonly status: DoctorVerificationStatus;
     readonly actorId: string;
     readonly verifiedAt: Date | null;
-  }): Promise<{ verificationStatus: DoctorVerificationStatus; verifiedAt: Date | null }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
-      data: {
-        verificationStatus: input.status,
-        verifiedAt: input.verifiedAt,
-        // `verified_by` records who took the decision, whichever way it
-        // went — a rejection is as much a decision as an approval.
-        ...(UUID.test(input.actorId)
-          ? { verifiedBy: input.actorId, updatedBy: input.actorId }
-          : {}),
-      },
-      select: { verificationStatus: true, verifiedAt: true },
+  }): Promise<{ verificationStatus: DoctorVerificationStatus; verifiedAt: Date | null } | null> {
+    // One transaction with the `authz_version` bump: a doctor's lifecycle
+    // state decides clinical context (§2.7), so the account's cached
+    // authorization is stale from this write on.
+    return this.prisma.$transaction(async (tx) => {
+      // A soft-deleted doctor is not changed: `null`, answered as 404.
+      const live = await tx.doctor.findFirst({
+        where: { id: input.doctorId, deletedAt: null },
+        select: { id: true },
+      });
+      if (live === null) return null;
+      const row = await tx.doctor.update({
+        where: { id: input.doctorId },
+        data: {
+          verificationStatus: input.status,
+          verifiedAt: input.verifiedAt,
+          // `verified_by` records who took the decision, whichever way it
+          // went — a rejection is as much a decision as an approval.
+          ...(UUID.test(input.actorId)
+            ? { verifiedBy: input.actorId, updatedBy: input.actorId }
+            : {}),
+        },
+        select: { verificationStatus: true, verifiedAt: true, userId: true },
+      });
+      await tx.user.update({
+        where: { id: row.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
+      return { verificationStatus: row.verificationStatus, verifiedAt: row.verifiedAt };
     });
   }
 
@@ -243,14 +273,28 @@ export class AdminDoctorRepository {
     readonly doctorId: string;
     readonly status: DoctorPracticeStatus;
     readonly actorId: string;
-  }): Promise<{ practiceStatus: DoctorPracticeStatus }> {
-    return this.prisma.db.doctor.update({
-      where: { id: input.doctorId },
-      data: {
-        practiceStatus: input.status,
-        ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
-      },
-      select: { practiceStatus: true },
+  }): Promise<{ practiceStatus: DoctorPracticeStatus } | null> {
+    return this.prisma.$transaction(async (tx) => {
+      // A soft-deleted doctor is not changed: `null`, answered as 404.
+      const live = await tx.doctor.findFirst({
+        where: { id: input.doctorId, deletedAt: null },
+        select: { id: true },
+      });
+      if (live === null) return null;
+      const row = await tx.doctor.update({
+        where: { id: input.doctorId },
+        data: {
+          practiceStatus: input.status,
+          ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
+        },
+        select: { practiceStatus: true, userId: true },
+      });
+      // Suspension and reactivation change what the doctor may reach (§2.7).
+      await tx.user.update({
+        where: { id: row.userId },
+        data: { authzVersion: { increment: 1 } },
+      });
+      return { practiceStatus: row.practiceStatus };
     });
   }
 
@@ -262,7 +306,7 @@ export class AdminDoctorRepository {
     if (!UUID.test(doctorId) || !UUID.test(documentId)) return Promise.resolve(null);
 
     return this.prisma.db.doctorVerificationDocument.findFirst({
-      where: { id: documentId, doctorId },
+      where: { id: documentId, doctorId, deletedAt: null, doctor: { deletedAt: null } },
       select: { id: true, kind: true, decision: true },
     });
   }
@@ -275,15 +319,14 @@ export class AdminDoctorRepository {
     readonly checks?:
       | { readonly authentic: boolean; readonly current: boolean; readonly identityMatch: boolean }
       | undefined;
-  }): Promise<void> {
-    await this.prisma.db.doctorVerificationDocument.update({
-      where: { id: input.documentId },
+  }): Promise<boolean> {
+    // Only a live document of a live doctor: `false` is answered as 404.
+    const { count } = await this.prisma.db.doctorVerificationDocument.updateMany({
+      where: { id: input.documentId, deletedAt: null, doctor: { deletedAt: null } },
       data: {
         decision: input.decision,
         decidedAt: new Date(),
-        ...(UUID.test(input.actorId)
-          ? { decidedBy: input.actorId, updatedBy: input.actorId }
-          : {}),
+        ...(UUID.test(input.actorId) ? { decidedBy: input.actorId, updatedBy: input.actorId } : {}),
         // Cleared on approval so a document re-approved after a
         // rejection does not keep the old reason beside a green tick.
         rejectReason: input.rejectReason ?? null,
@@ -296,14 +339,15 @@ export class AdminDoctorRepository {
             }),
       },
     });
+    return count > 0;
   }
 
-  /** The `users.id` behind a doctor — the notification recipient. */
+  /** The `users.id` behind a live doctor — the notification recipient. */
   async userIdFor(doctorId: string): Promise<string | null> {
     if (!UUID.test(doctorId)) return null;
 
-    const doctor = await this.prisma.db.doctor.findUnique({
-      where: { id: doctorId },
+    const doctor = await this.prisma.db.doctor.findFirst({
+      where: { id: doctorId, deletedAt: null },
       select: { userId: true },
     });
 

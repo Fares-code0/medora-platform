@@ -47,6 +47,8 @@ import {
   TransactionalAuditWriter,
   type AuditDispatcher,
 } from '../../../shared/audit';
+import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { ReauthenticationPort } from '../../../shared/authz';
 import { PrismaService } from '../../../shared/database';
 import { maskMrn } from '../../../shared/phi';
 import type {
@@ -86,6 +88,7 @@ export class OversightService {
     private readonly config: ConfigService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     private readonly disclosureAudit: TransactionalAuditWriter,
+    private readonly reauth: ReauthenticationPort,
   ) {}
 
   /** API §9.11 — metadata only, patient masked. */
@@ -117,10 +120,14 @@ export class OversightService {
   }
 
   /** API §9.11 — request access. Self-serve or pending, by policy. */
-  async requestAccess(adminId: string, conversationId: string, body: AccessRequestBody) {
+  async requestAccess(user: AuthenticatedUser, conversationId: string, body: AccessRequestBody) {
+    const adminId = user.id;
     if ((await this.oversight.conversationExists(conversationId)) === 0) {
       throw AppException.notFound('Conversation not found');
     }
+    // F-12: re-authentication before anything is created, with the shared
+    // lockout budget (401 / 429), as for Exceptional Access.
+    await this.reauth.verify(user, body.password);
 
     const ttlMinutes = this.config.env.COMMUNICATION_GRANT_TTL_MINUTES;
 
@@ -134,7 +141,11 @@ export class OversightService {
       });
     }
 
-    const requiresApproval = this.config.env.COMMUNICATION_REQUIRE_SECOND_ADMIN_APPROVAL;
+    // F-12: message content is PHI, held to the Exceptional Access model —
+    // an independent approval, always. The self-serve mode ADR-006 allowed
+    // (COMMUNICATION_REQUIRE_SECOND_ADMIN_APPROVAL=false) no longer issues
+    // a live grant at request time.
+    const requiresApproval = true;
     const now = new Date();
     const accessRef = `CAR-${now.getTime().toString(36).toUpperCase()}-${Math.random()
       .toString(36)
@@ -236,6 +247,27 @@ export class OversightService {
    * because the audit write was never part of it. A failed insert now
    * aborts the transaction and the caller gets a 503 `audit_unavailable`.
    */
+  /**
+   * F-12 — ends a pending or live grant at once: the requester withdraws it,
+   * or another administrator terminates it. The next content read is 403.
+   */
+  async revoke(adminId: string, requestId: string) {
+    const existing = await this.oversight.requestById(requestId);
+    if (existing === null) throw AppException.notFound('Access request not found');
+    if ((await this.oversight.terminate(requestId)) === 0) {
+      throw AppException.conflict('This access request is no longer pending or active');
+    }
+    await this.audit.record({
+      action: 'communication_access.revoke',
+      actor: { userId: adminId, role: 'administrator' },
+      entityType: 'conversation',
+      entityId: existing.conversationId,
+      metadata: { accessRef: existing.accessRef, requestId, byRequester: existing.requestedBy === adminId },
+    });
+    const updated = await this.oversight.requestById(requestId);
+    return toGrantView(updated ?? existing);
+  }
+
   async viewContent(adminId: string, conversationId: string, now: Date = new Date()) {
     const grant = await this.oversight.activeGrant(conversationId, adminId, now);
 
@@ -254,6 +286,8 @@ export class OversightService {
         actor: { userId: adminId, role: 'administrator' },
         entityType: 'conversation',
         entityId: conversationId,
+        // Attributed to the hospital the conversation belongs to (F-12).
+        hospitalId: await this.oversight.hospitalOf(tx, conversationId),
         // The ref is what the watermark shows, so a screenshot traces
         // back to the request that allowed it (DB §S4's own comment).
         metadata: { accessRef: grant.accessRef, messages: rows.length },

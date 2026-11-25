@@ -137,12 +137,34 @@ export interface DocumentDownloadRow {
   };
 }
 
+/**
+ * The chart a request reaches (DR-05 at resource level; audit F-01, F-06):
+ * the patient, the doctor's clinical hospital, and the patient's Hospital
+ * Medical Record there (`PatientScopeService.reachAt`). Every hospital-owned
+ * row this repository reads is filtered to that hospital; every one it
+ * creates is stamped with it. A row another hospital recorded — or an
+ * unstamped legacy row — is not part of this chart, as Row-Level Security
+ * also has it.
+ */
+export interface ChartScope {
+  readonly patientId: string;
+  readonly hospitalId: string;
+  readonly hospitalMedicalRecordId: string;
+}
+
+const owned = (scope: ChartScope) => ({ patientId: scope.patientId, hospitalId: scope.hospitalId });
+const stamped = (scope: ChartScope) => ({
+  patientId: scope.patientId,
+  hospitalId: scope.hospitalId,
+  hospitalMedicalRecordId: scope.hospitalMedicalRecordId,
+});
+
 @Injectable()
 export class PatientTabsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async history(patientId: string, page: number, pageSize: number): Promise<Page<HistoryRow>> {
-    const where = { patientId };
+  async history(scope: ChartScope, page: number, pageSize: number): Promise<Page<HistoryRow>> {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patientMedicalHistory.findMany({
@@ -159,7 +181,7 @@ export class PatientTabsRepository {
   }
 
   createHistory(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly actorId: string;
     readonly kind: HistoryEventKind;
     readonly title: string;
@@ -169,7 +191,7 @@ export class PatientTabsRepository {
   }): Promise<HistoryRow> {
     return this.prisma.db.patientMedicalHistory.create({
       data: {
-        patientId: input.patientId,
+        ...stamped(input.scope),
         kind: input.kind,
         title: input.title,
         occurredOn: input.occurredOn,
@@ -186,7 +208,7 @@ export class PatientTabsRepository {
   }
 
   async removeHistory(
-    patientId: string,
+    scope: ChartScope,
     eventId: string,
     actorId: string,
     reason: string,
@@ -194,7 +216,7 @@ export class PatientTabsRepository {
     if (!UUID.test(eventId)) return 0;
 
     const result = await this.prisma.db.patientMedicalHistory.updateMany({
-      where: { id: eventId, patientId },
+      where: { id: eventId, ...owned(scope) },
       data: {
         deletedAt: new Date(),
         removalReason: reason,
@@ -315,8 +337,8 @@ export class PatientTabsRepository {
     return result.count;
   }
 
-  async notes(patientId: string, page: number, pageSize: number): Promise<Page<NoteRow>> {
-    const where = { patientId };
+  async notes(scope: ChartScope, page: number, pageSize: number): Promise<Page<NoteRow>> {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patientNote.findMany({
@@ -333,7 +355,7 @@ export class PatientTabsRepository {
   }
 
   createNote(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly authorId: string;
     readonly title: string;
     readonly body: string;
@@ -341,7 +363,7 @@ export class PatientTabsRepository {
   }): Promise<NoteRow> {
     return this.prisma.db.patientNote.create({
       data: {
-        patientId: input.patientId,
+        ...stamped(input.scope),
         // NOT NULL with RESTRICT on the author: an unattributable
         // clinical note is not a note.
         authorId: input.authorId,
@@ -357,13 +379,13 @@ export class PatientTabsRepository {
 
   /** Author and state, for explaining why an edit or a signature moved no row. */
   noteState(
-    patientId: string,
+    scope: ChartScope,
     noteId: string,
   ): Promise<{ authorId: string; signed: boolean } | null> {
     if (!UUID.test(noteId)) return Promise.resolve(null);
 
     return this.prisma.db.patientNote.findFirst({
-      where: { id: noteId, patientId },
+      where: { id: noteId, ...owned(scope) },
       select: { authorId: true, signed: true },
     });
   }
@@ -376,7 +398,7 @@ export class PatientTabsRepository {
    * belongs in the same statement as the write it authorizes.
    */
   async updateUnsignedNote(
-    patientId: string,
+    scope: ChartScope,
     noteId: string,
     actorId: string,
     data: { readonly title?: string | undefined; readonly body?: string | undefined },
@@ -384,7 +406,7 @@ export class PatientTabsRepository {
     if (!UUID.test(noteId)) return null;
 
     const moved = await this.prisma.db.patientNote.updateMany({
-      where: { id: noteId, patientId, authorId: actorId, signed: false },
+      where: { id: noteId, ...owned(scope), authorId: actorId, signed: false },
       data: {
         ...(data.title === undefined ? {} : { title: data.title }),
         ...(data.body === undefined ? {} : { body: data.body }),
@@ -406,11 +428,11 @@ export class PatientTabsRepository {
    * and cannot overwrite the first one's timestamp. `authorId` in it is
    * BR-DEC-001 — a signature is the author's attestation.
    */
-  async signNote(patientId: string, noteId: string, actorId: string): Promise<NoteRow | null> {
+  async signNote(scope: ChartScope, noteId: string, actorId: string): Promise<NoteRow | null> {
     if (!UUID.test(noteId)) return null;
 
     const moved = await this.prisma.db.patientNote.updateMany({
-      where: { id: noteId, patientId, authorId: actorId, signed: false },
+      where: { id: noteId, ...owned(scope), authorId: actorId, signed: false },
       data: {
         signed: true,
         signedAt: new Date(),
@@ -426,8 +448,8 @@ export class PatientTabsRepository {
     });
   }
 
-  async vitals(patientId: string, page: number, pageSize: number): Promise<Page<VitalsRow>> {
-    const where = { patientId };
+  async vitals(scope: ChartScope, page: number, pageSize: number): Promise<Page<VitalsRow>> {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patientVitalSign.findMany({
@@ -444,7 +466,7 @@ export class PatientTabsRepository {
   }
 
   createVitals(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly actorId: string;
     readonly recordedAt?: Date | undefined;
     readonly systolic: number;
@@ -458,7 +480,7 @@ export class PatientTabsRepository {
   }): Promise<VitalsRow> {
     return this.prisma.db.patientVitalSign.create({
       data: {
-        patientId: input.patientId,
+        ...stamped(input.scope),
         ...(input.recordedAt === undefined ? {} : { recordedAt: input.recordedAt }),
         bloodPressureSystolic: input.systolic,
         bloodPressureDiastolic: input.diastolic,
@@ -479,8 +501,8 @@ export class PatientTabsRepository {
     });
   }
 
-  async medications(patientId: string, page: number, pageSize: number) {
-    const where = { patientId };
+  async medications(scope: ChartScope, page: number, pageSize: number) {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patientMedication.findMany({
@@ -509,8 +531,8 @@ export class PatientTabsRepository {
     return { rows, totalItems };
   }
 
-  async documents(patientId: string, page: number, pageSize: number): Promise<Page<DocumentRow>> {
-    const where = { patientId };
+  async documents(scope: ChartScope, page: number, pageSize: number): Promise<Page<DocumentRow>> {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.patientDocument.findMany({
@@ -545,7 +567,7 @@ export class PatientTabsRepository {
    * extension does not apply, so `deletedAt` is spelled out.
    */
   linkDocument(input: {
-    readonly patientId: string;
+    readonly scope: ChartScope;
     readonly fileId: string;
     readonly uploaderId: string;
     readonly category: DocumentCategory;
@@ -567,9 +589,18 @@ export class PatientTabsRepository {
           // Emptied by M25.5's sweep once the object is collected.
           storageKey: { not: '' },
         },
-        select: { originalName: true, sizeBytes: true },
+        select: { originalName: true, sizeBytes: true, hospitalId: true },
       });
       if (file === null) throw new DocumentUploadUnavailable();
+      // The file joins the chart's hospital (F-06, F-14): an upload not yet
+      // filed anywhere is adopted; one owned by another hospital is not
+      // linkable here, the same refusal as any other unavailable upload.
+      if (file.hospitalId !== null && file.hospitalId !== input.scope.hospitalId) {
+        throw new DocumentUploadUnavailable();
+      }
+      if (file.hospitalId === null) {
+        await tx.file.update({ where: { id: input.fileId }, data: { hospitalId: input.scope.hospitalId } });
+      }
 
       const linked = await tx.patientDocument.findFirst({
         where: { fileId: input.fileId, deletedAt: null },
@@ -579,7 +610,7 @@ export class PatientTabsRepository {
 
       return tx.patientDocument.create({
         data: {
-          patientId: input.patientId,
+          ...stamped(input.scope),
           name: file.originalName.slice(0, 200),
           category: input.category,
           // `toView` on `/files` rounds the same way, so the two surfaces
@@ -599,20 +630,20 @@ export class PatientTabsRepository {
    * signs. Keyed by the internal patient id, so a document id from
    * another chart is simply absent.
    */
-  documentForDownload(patientId: string, documentId: string): Promise<DocumentDownloadRow | null> {
+  documentForDownload(scope: ChartScope, documentId: string): Promise<DocumentDownloadRow | null> {
     if (!UUID.test(documentId)) return Promise.resolve(null);
 
     return this.prisma.db.patientDocument.findFirst({
-      where: { id: documentId, patientId, file: { deletedAt: null } },
+      where: { id: documentId, ...owned(scope), file: { deletedAt: null } },
       select: {
         file: { select: { id: true, storageKey: true, originalName: true, scanResult: true } },
       },
     });
   }
 
-  studies(patientId: string): Promise<readonly StudyRow[]> {
+  studies(scope: ChartScope): Promise<readonly StudyRow[]> {
     return this.prisma.db.patientStudy.findMany({
-      where: { patientId },
+      where: owned(scope),
       select: STUDY_SELECT,
       orderBy: [{ categoryLabel: 'asc' }, { performedOn: 'desc' }],
     });
@@ -628,8 +659,8 @@ export class PatientTabsRepository {
    * than reused from `modules/appointments`, so a column added there
    * cannot appear on a patient's chart by default.
    */
-  async appointments(patientId: string, page: number, pageSize: number) {
-    const where = { patientId };
+  async appointments(scope: ChartScope, page: number, pageSize: number) {
+    const where = owned(scope);
 
     const [rows, totalItems] = await Promise.all([
       this.prisma.db.appointment.findMany({

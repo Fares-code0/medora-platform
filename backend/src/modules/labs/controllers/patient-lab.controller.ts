@@ -2,7 +2,7 @@ import { Controller, Get, Param } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import type { PatientLabStudiesView } from '../dto/patient-lab.dto';
 import { PatientLabService } from '../services/patient-lab.service';
 
@@ -34,6 +34,7 @@ export class PatientLabController {
   constructor(private readonly studies: PatientLabService) {}
 
   /** API §4.5 — the tab, grouped by category. */
+  @PhiRead('lab_results')
   @Get(':patientId/labs')
   labs(
     @CurrentUser() user: AuthenticatedUser,

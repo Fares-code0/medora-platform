@@ -33,7 +33,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AppException } from '../../../common/errors/app.exception';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
 import {
   assertScanClean,
@@ -77,6 +77,7 @@ import { PatientRepository } from '../repositories/patient.repository';
 import {
   DocumentUploadAlreadyLinked,
   DocumentUploadUnavailable,
+  type ChartScope,
   PatientTabsRepository,
   type ContactRow,
   type DocumentRow,
@@ -108,6 +109,8 @@ export interface PatientAppointmentView {
 @Injectable()
 export class PatientTabsService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly patients: PatientRepository,
     private readonly tabs: PatientTabsRepository,
     private readonly scope: PatientScopeService,
@@ -121,8 +124,8 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<HistoryEventView>> {
-    const patientId = await this.requireReachable(user, publicId, 'history');
-    const { rows, totalItems } = await this.tabs.history(patientId, query.page, query.pageSize);
+    const chart = await this.requireReachable(user, publicId, 'history');
+    const { rows, totalItems } = await this.tabs.history(chart, query.page, query.pageSize);
 
     return paginate(rows.map(toHistoryView), query, totalItems);
   }
@@ -132,10 +135,10 @@ export class PatientTabsService {
     publicId: string,
     input: CreateHistoryInput,
   ): Promise<HistoryEventView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
     const created = await this.tabs.createHistory({
-      patientId,
+      scope: chart,
       actorId: user.id,
       kind: HISTORY_KIND_FROM_WIRE[input.kind] ?? 'DIAGNOSIS',
       title: input.title,
@@ -155,9 +158,9 @@ export class PatientTabsService {
     eventId: string,
     input: RemoveHistoryInput,
   ): Promise<void> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const removed = await this.tabs.removeHistory(patientId, eventId, user.id, input.reason);
+    const removed = await this.tabs.removeHistory(chart, eventId, user.id, input.reason);
     if (removed === 0) throw AppException.notFound('History event not found');
 
     // That a reason was given, never its text: an audit row names what
@@ -175,8 +178,8 @@ export class PatientTabsService {
     user: AuthenticatedUser,
     publicId: string,
   ): Promise<readonly EmergencyContactView[]> {
-    const patientId = await this.requireReachable(user, publicId, 'contacts');
-    return (await this.tabs.contacts(patientId)).map(toContactView);
+    const chart = await this.requireReachable(user, publicId, 'contacts');
+    return (await this.tabs.contacts(chart.patientId)).map(toContactView);
   }
 
   async addContact(
@@ -184,10 +187,10 @@ export class PatientTabsService {
     publicId: string,
     input: CreateEmergencyContactInput,
   ): Promise<EmergencyContactView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
     const created = await this.tabs.createContact({
-      patientId,
+      patientId: chart.patientId,
       actorId: user.id,
       name: input.name,
       relationship: input.relationship,
@@ -206,9 +209,9 @@ export class PatientTabsService {
     contactId: string,
     input: UpdateEmergencyContactInput,
   ): Promise<EmergencyContactView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const updated = await this.tabs.updateContact(patientId, contactId, user.id, input);
+    const updated = await this.tabs.updateContact(chart.patientId, contactId, user.id, input);
     if (updated === null) throw AppException.notFound('Contact not found');
 
     await this.record(user, publicId, 'patient.contact_update', {
@@ -225,9 +228,9 @@ export class PatientTabsService {
     contactId: string,
     input: RemoveContactInput,
   ): Promise<void> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const removed = await this.tabs.removeContact(patientId, contactId, user.id, input.reason);
+    const removed = await this.tabs.removeContact(chart.patientId, contactId, user.id, input.reason);
     if (removed === 0) throw AppException.notFound('Contact not found');
 
     await this.record(user, publicId, 'patient.contact_remove', {
@@ -243,8 +246,8 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<PatientNoteView>> {
-    const patientId = await this.requireReachable(user, publicId, 'notes');
-    const { rows, totalItems } = await this.tabs.notes(patientId, query.page, query.pageSize);
+    const chart = await this.requireReachable(user, publicId, 'notes');
+    const { rows, totalItems } = await this.tabs.notes(chart, query.page, query.pageSize);
 
     return paginate(rows.map(toNoteView), query, totalItems);
   }
@@ -254,10 +257,10 @@ export class PatientTabsService {
     publicId: string,
     input: CreateNoteInput,
   ): Promise<PatientNoteView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
     const created = await this.tabs.createNote({
-      patientId,
+      scope: chart,
       authorId: user.id,
       title: input.title,
       body: input.body,
@@ -290,15 +293,15 @@ export class PatientTabsService {
     noteId: string,
     input: UpdateNoteInput,
   ): Promise<PatientNoteView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const updated = await this.tabs.updateUnsignedNote(patientId, noteId, user.id, input);
+    const updated = await this.tabs.updateUnsignedNote(chart, noteId, user.id, input);
     if (updated !== null) {
       await this.record(user, publicId, 'patient.note_update', { noteId });
       return toNoteView(updated);
     }
 
-    const existing = await this.tabs.noteState(patientId, noteId);
+    const existing = await this.tabs.noteState(chart, noteId);
     if (existing === null) throw AppException.notFound('Note not found');
     if (existing.authorId !== user.id) throw notNoteAuthor('edit');
 
@@ -320,15 +323,15 @@ export class PatientTabsService {
     publicId: string,
     noteId: string,
   ): Promise<PatientNoteView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const signed = await this.tabs.signNote(patientId, noteId, user.id);
+    const signed = await this.tabs.signNote(chart, noteId, user.id);
     if (signed !== null) {
       await this.record(user, publicId, 'patient.note_sign', { noteId });
       return toNoteView(signed);
     }
 
-    const existing = await this.tabs.noteState(patientId, noteId);
+    const existing = await this.tabs.noteState(chart, noteId);
     if (existing === null) throw AppException.notFound('Note not found');
     if (existing.authorId !== user.id) throw notNoteAuthor('sign');
 
@@ -344,8 +347,8 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<VitalSignView>> {
-    const patientId = await this.requireReachable(user, publicId, 'vitals');
-    const { rows, totalItems } = await this.tabs.vitals(patientId, query.page, query.pageSize);
+    const chart = await this.requireReachable(user, publicId, 'vitals');
+    const { rows, totalItems } = await this.tabs.vitals(chart, query.page, query.pageSize);
 
     return paginate(rows.map(toVitalsView), query, totalItems);
   }
@@ -355,10 +358,10 @@ export class PatientTabsService {
     publicId: string,
     input: CreateVitalsInput,
   ): Promise<VitalSignView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
     const created = await this.tabs.createVitals({
-      patientId,
+      scope: chart,
       actorId: user.id,
       recordedAt: input.recordedAt === undefined ? undefined : new Date(input.recordedAt),
       systolic: input.systolic,
@@ -385,9 +388,9 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<PatientMedicationView>> {
-    const patientId = await this.requireReachable(user, publicId, 'medications');
+    const chart = await this.requireReachable(user, publicId, 'medications');
     const { rows, totalItems } = await this.tabs.medications(
-      patientId,
+      chart,
       query.page,
       query.pageSize,
     );
@@ -420,8 +423,8 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<PatientDocumentView>> {
-    const patientId = await this.requireReachable(user, publicId, 'documents');
-    const { rows, totalItems } = await this.tabs.documents(patientId, query.page, query.pageSize);
+    const chart = await this.requireReachable(user, publicId, 'documents');
+    const { rows, totalItems } = await this.tabs.documents(chart, query.page, query.pageSize);
 
     return paginate(rows.map(toDocumentView), query, totalItems);
   }
@@ -439,12 +442,12 @@ export class PatientTabsService {
     publicId: string,
     input: LinkDocumentInput,
   ): Promise<PatientDocumentView> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
     let created: DocumentRow;
     try {
       created = await this.tabs.linkDocument({
-        patientId,
+        scope: chart,
         fileId: input.fileId,
         uploaderId: user.id,
         category: DOCUMENT_CATEGORY_FROM_WIRE[input.category] ?? 'REPORT',
@@ -495,9 +498,9 @@ export class PatientTabsService {
     publicId: string,
     documentId: string,
   ): Promise<{ url: string; expiresInSeconds: number }> {
-    const patientId = await this.requireReachable(user, publicId);
+    const chart = await this.requireReachable(user, publicId);
 
-    const document = await this.tabs.documentForDownload(patientId, documentId);
+    const document = await this.tabs.documentForDownload(chart, documentId);
     if (document === null) throw AppException.notFound('Document not found');
 
     assertScanClean(document.file.scanResult, 'file');
@@ -508,7 +511,7 @@ export class PatientTabsService {
       { fileName: document.file.originalName, disposition: 'attachment' },
     );
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'file.download',
       actor: { userId: user.id, role: user.role },
       entityType: 'file',
@@ -521,8 +524,8 @@ export class PatientTabsService {
 
   /** API §4.5 — studies, "grouped by category". */
   async studies(user: AuthenticatedUser, publicId: string): Promise<readonly StudyGroupView[]> {
-    const patientId = await this.requireReachable(user, publicId, 'studies');
-    const rows = await this.tabs.studies(patientId);
+    const chart = await this.requireReachable(user, publicId, 'studies');
+    const rows = await this.tabs.studies(chart);
 
     return [...PatientTabsRepository.groupStudies(rows)].map(([category, studies]) => ({
       category,
@@ -536,9 +539,9 @@ export class PatientTabsService {
     publicId: string,
     query: TabQuery,
   ): Promise<PaginatedTab<PatientAppointmentView>> {
-    const patientId = await this.requireReachable(user, publicId, 'appointments');
+    const chart = await this.requireReachable(user, publicId, 'appointments');
     const { rows, totalItems } = await this.tabs.appointments(
-      patientId,
+      chart,
       query.page,
       query.pageSize,
     );
@@ -574,15 +577,21 @@ export class PatientTabsService {
     user: AuthenticatedUser,
     publicId: string,
     tab?: string,
-  ): Promise<string> {
+  ): Promise<ChartScope> {
     const row = await this.patients.findByPublicId(publicId);
     if (row === null) throw AppException.notFound('Patient not found');
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    // DR-05 at resource level (F-01): where the reach holds, so every row
+    // below is read from — and written to — the doctor's own hospital.
+    const reach = await this.scope.reachAt(principalOf(user), publicId);
 
     if (tab !== undefined) await this.record(user, publicId, 'patient.tab_view', { tab });
 
-    return row.id;
+    return {
+      patientId: row.id,
+      hospitalId: reach.hospitalId,
+      hospitalMedicalRecordId: reach.hospitalMedicalRecordId,
+    };
   }
 
   private async record(

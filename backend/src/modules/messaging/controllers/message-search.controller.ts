@@ -3,7 +3,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, PhiRead } from '../../../shared/authz';
 import { messageSearchSchema, type MessageSearchQuery } from '../dto/messaging.schema';
 import { MessageService, type PaginatedSearch } from '../services/message.service';
 
@@ -25,6 +25,8 @@ import { MessageService, type PaginatedSearch } from '../services/message.servic
 @Controller('messages')
 export class MessageSearchController {
   constructor(private readonly messages: MessageService) {}
+
+  @PhiRead('message_search')
 
   @Get('search')
   search(

@@ -31,7 +31,12 @@ import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { PatientScopeService, PatientSelfScopeService, principalOf } from '../../../shared/authz';
+import {
+  PatientScopeService,
+  PatientSelfScopeService,
+  PermissionResolver,
+  principalOf,
+} from '../../../shared/authz';
 import { FileRepository, type FileRow } from '../repositories/file.repository';
 
 /**
@@ -51,6 +56,7 @@ export class FileAccessService {
     private readonly files: FileRepository,
     private readonly patientScope: PatientScopeService,
     private readonly selfScope: PatientSelfScopeService,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   /** The file, if this caller may read it. 404 in every other case. */
@@ -77,31 +83,44 @@ export class FileAccessService {
     const file = await this.files.find(fileId);
 
     if (file === null || file.uploadedBy !== user.id) throw notFound();
+    // F-09: outside clinical standing, only its own verification documents.
+    if (file.kind !== 'verification_document' && !(await this.inStanding(user))) throw notFound();
 
     return file;
   }
 
   private async canRead(user: AuthenticatedUser, file: FileRow): Promise<boolean> {
+    // F-09: outside clinical standing, an account reads only its own
+    // verification documents and the public kinds — not even a clinical
+    // file it uploaded while it still had standing.
+    if (!(await this.inStanding(user))) {
+      return PUBLICLY_READABLE.has(file.kind) || (file.kind === 'verification_document' && file.uploadedBy === user.id);
+    }
+
     // The uploader, always. Checked first because it needs no query.
     if (file.uploadedBy === user.id) return true;
     if (PUBLICLY_READABLE.has(file.kind)) return true;
 
     switch (file.kind) {
       case 'patient_document':
-        return this.reachesPatient(user, await this.files.patientForDocument(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForDocument(file.id));
       case 'record_attachment':
-        return this.reachesPatient(user, await this.files.patientForRecordAttachment(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForRecordAttachment(file.id));
       case 'lab_attachment':
-        return this.reachesPatient(user, await this.files.patientForLabAttachment(file.id));
+        return this.reachesPatient(user, file, await this.files.patientForLabAttachment(file.id));
       case 'message_attachment':
         return (await this.files.participantsForMessageAttachment(file.id)).includes(user.id);
       case 'verification_document':
         // The doctor it describes, or an administrator who may act on
         // the verification decision (API §3.6). Not every admin — the
         // capability is the rule, as it is on the decision route.
+        //
+        // Decided by the live permission set, never the token's claim: a
+        // revoked `doctors.verify` must stop working on the next request,
+        // not when the access token expires (audit A-3 / §2.8).
         return (
           (await this.files.userForVerificationDocument(file.id)) === user.id ||
-          user.permissions.includes('doctors.verify')
+          (await this.permissions.can(principalOf(user), 'doctors.verify'))
         );
       default:
         // `backup_artifact`, and anything a later migration adds to the
@@ -111,16 +130,30 @@ export class FileAccessService {
     }
   }
 
-  /** Care relationship, or the patient reading their own file. */
+  /** Whether the account holds clinical standing (always, for roles that are not standing-gated). */
+  async inStanding(user: AuthenticatedUser): Promise<boolean> {
+    return (await this.permissions.standingFor(user.id, user.role)) === 'clinical';
+  }
+
+  /**
+   * DR-05 at resource level (F-01, F-14): a clinician reads a patient's file
+   * only when it belongs to the hospital where they reach the patient — a
+   * file another hospital holds, or one no hospital has adopted, is not
+   * theirs. Or the patient reading their own file.
+   */
   private async reachesPatient(
     user: AuthenticatedUser,
+    file: FileRow,
     patientId: string | null,
   ): Promise<boolean> {
     if (patientId === null) return false;
 
     const principal = principalOf(user);
 
-    if (await this.patientScope.canReach(principal, patientId)) return true;
+    if (principal.roleCode === 'doctor') {
+      const reach = await this.patientScope.reachAt(principal, patientId).catch(() => null);
+      if (reach !== null) return file.hospitalId !== null && file.hospitalId === reach.hospitalId;
+    }
 
     return (await this.selfScope.patientIdFor(principal)) === patientId;
   }

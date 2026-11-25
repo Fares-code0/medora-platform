@@ -16,7 +16,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { sendCsv } from '../../../common/http/csv-export';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead } from '../../../shared/authz';
 import { Idempotent } from '../../../shared/idempotency';
 import type { PrescriptionDetailView, PrescriptionSummaryView } from '../dto/prescription.dto';
 import type { SafetyCheckView } from '../dto/safety.dto';
@@ -89,6 +89,7 @@ export class PrescriptionController {
   }
 
   /** API §7.3 — the prescriber's own list. */
+  @PhiRead('prescription_list')
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -104,6 +105,7 @@ export class PrescriptionController {
    * order reads `summary` as a prescription reference and answers 404 for
    * a route that exists.
    */
+  @NotPhi('counts by status')
   @Get('summary')
   summary(@CurrentUser() user: AuthenticatedUser): Promise<PrescriptionSummaryView> {
     return this.prescriptions.summary(user);
@@ -113,6 +115,7 @@ export class PrescriptionController {
    * API §7.10 — the prescriber's filtered list as CSV. Declared before
    * `:prescriptionId`, like `summary`. A file, not an envelope.
    */
+  @PhiRead('prescription_export', { auditedByHandler: true })
   @Get('export')
   async export(
     @CurrentUser() user: AuthenticatedUser,
@@ -123,6 +126,7 @@ export class PrescriptionController {
   }
 
   /** API §7.4 — the full document. */
+  @PhiRead('prescription')
   @Get(':prescriptionId')
   detail(
     @CurrentUser() user: AuthenticatedUser,

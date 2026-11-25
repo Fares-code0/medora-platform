@@ -13,7 +13,11 @@
  * start, so an insert cannot move it.
  */
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+
+import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
+import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AdminScopeService } from '../../../shared/authz';
 
 import { AppException } from '../../../common/errors/app.exception';
 import {
@@ -24,16 +28,48 @@ import {
   type AuditEventRow,
 } from '../repositories/audit.repository';
 import type { AuditQuery } from '../dto/audit.schema';
+import type { ScopedAuditQuery } from '../repositories/audit.repository';
 
 /** How many correlated events §14.2 hands back with a detail. */
 const CORRELATED_LIMIT = 50;
 
 @Injectable()
 export class AuditQueryService {
-  constructor(private readonly audit: AuditRepository) {}
+  constructor(
+    private readonly audit: AuditRepository,
+    private readonly scopes: AdminScopeService,
+    @Inject(AUDIT_DISPATCHER) private readonly dispatcher: AuditDispatcher,
+  ) {}
+
+  /**
+   * The ledger is scoped like every administrative surface (§2.13): a
+   * Platform Admin reads all of it, a Hospital Admin only its hospital's
+   * events. Every read is itself audited, at the hospital it was scoped to.
+   */
+  private async scopeFor(actor: AuthenticatedUser): Promise<string | undefined> {
+    return (await this.scopes.hospitalFilterFor(actor)) ?? undefined;
+  }
+
+  private async recordRead(
+    actor: AuthenticatedUser,
+    entityId: string,
+    hospitalId: string | undefined,
+    metadata: Record<string, string | number | boolean>,
+  ): Promise<void> {
+    await this.dispatcher.record({
+      action: 'audit_ledger.read',
+      actor: { userId: actor.id, role: actor.role, sessionId: actor.sessionId },
+      entityType: 'audit_ledger',
+      entityId,
+      hospitalId: hospitalId ?? null,
+      metadata,
+    });
+  }
 
   /** §14.1 — a filtered, keyset-paginated page, with its pivot. */
-  async list(query: AuditQuery, retentionDays: number) {
+  async list(actor: AuthenticatedUser, unscoped: AuditQuery, retentionDays: number) {
+    const scopeHospitalId = await this.scopeFor(actor);
+    const query: ScopedAuditQuery = { ...unscoped, ...(scopeHospitalId === undefined ? {} : { scopeHospitalId }) };
     if (query.from !== undefined && query.to !== undefined) {
       if (Date.parse(query.from) > Date.parse(query.to)) {
         throw AppException.validation(
@@ -54,6 +90,10 @@ export class AuditQueryService {
       this.audit.page(query),
       withPivot ? this.audit.pivot(query) : Promise.resolve(undefined),
     ]);
+    await this.recordRead(actor, 'list', scopeHospitalId, {
+      results: rows.length,
+      scope: scopeHospitalId === undefined ? 'platform' : 'hospital',
+    });
     const last = rows.at(-1);
 
     return {
@@ -75,12 +115,23 @@ export class AuditQueryService {
   }
 
   /** §14.2 — one event, its payload, and what happened around it. */
-  async detail(id: string) {
-    const event = await this.audit.findById(id);
+  async detail(actor: AuthenticatedUser, id: string) {
+    const scopeHospitalId = await this.scopeFor(actor);
+    const found = await this.audit.findById(id);
+    // Another hospital's event is answered as unknown to a Hospital Admin.
+    const event =
+      found !== null && scopeHospitalId !== undefined && found.hospitalId !== scopeHospitalId
+        ? null
+        : found;
 
     if (event === null) throw AppException.notFound('Audit event not found');
 
-    const correlated = await this.audit.correlated(event, CORRELATED_LIMIT);
+    const correlated = (await this.audit.correlated(event, CORRELATED_LIMIT)).filter(
+      (row) => scopeHospitalId === undefined || row.hospitalId === scopeHospitalId,
+    );
+    await this.recordRead(actor, event.id, scopeHospitalId, {
+      scope: scopeHospitalId === undefined ? 'platform' : 'hospital',
+    });
 
     return {
       ...toView(event),
@@ -107,6 +158,9 @@ export function toView(row: AuditEventRow | AuditEventDetailRow) {
     severity: row.severity.toLowerCase(),
     summary: row.summary,
     target: row.target,
+    // The hospital the event belongs to (§2.13; audit F-17) — null for a
+    // platform-wide event. The scope filter keys on it, so the reader sees it.
+    hospitalId: row.hospitalId,
     ipAddress: row.ipAddress,
     device: row.device,
     sessionId: row.sessionId,

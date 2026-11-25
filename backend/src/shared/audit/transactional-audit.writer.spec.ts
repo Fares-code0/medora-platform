@@ -32,9 +32,9 @@ const EVENT: AuditEvent = {
   metadata: { category: 'clinical-review' },
 };
 
-/** A transaction client whose `auditEvent.create` is the given function. */
-function txWith(create: (args: unknown) => Promise<unknown>): Prisma.TransactionClient {
-  return { auditEvent: { create } } as unknown as Prisma.TransactionClient;
+/** A transaction client whose `auditEvent.createMany` is the given function. */
+function txWith(createMany: (args: unknown) => Promise<unknown>): Prisma.TransactionClient {
+  return { auditEvent: { createMany } } as unknown as Prisma.TransactionClient;
 }
 
 describe('TransactionalAuditWriter', () => {
@@ -49,7 +49,9 @@ describe('TransactionalAuditWriter', () => {
 
     // Through `auditRowOf`, so the same event files identically through
     // either writer and an investigator's filter reads one ledger.
-    expect(calls).toEqual([{ data: auditRowOf(EVENT) }]);
+    // Inserted without RETURNING (`createMany`), so Row-Level Security's
+    // SELECT policy is never asked about the new row (F-04).
+    expect(calls).toEqual([{ data: [auditRowOf(EVENT)] }]);
   });
 
   it('fails closed with a 503 that does not repeat the provider', async () => {

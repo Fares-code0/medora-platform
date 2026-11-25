@@ -3,7 +3,7 @@ import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Can } from '../../../shared/authz';
+import { Can, NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
   accessRequestSchema,
   flagQuerySchema,
@@ -38,28 +38,56 @@ export class OversightController {
   constructor(private readonly oversight: OversightService) {}
 
   @Can('communications.viewMetadata')
+  @NotPhi('conversation metadata only; identities masked, no message text')
   @Get('conversations')
   list(@Query(zodQuery(oversightQuerySchema)) query: OversightQuery) {
     return this.oversight.listConversations(query);
   }
 
-  @Can('communications.viewContent')
+  // Multi-hospital §2.1: an administrator holds no standing PHI capability,
+  // so message content is reached only through this route's own controlled
+  // access (ADR-006 / M20.7): a justified request, approval by a different
+  // administrator, a limited lifetime and an audit row on every read. The
+  // grant, checked by OversightService, is the authorization; the role rule
+  // (with the guard's administrative tiering) only says who may ask.
+  @Roles('admin')
   @Post('conversations/:conversationId/access-request')
   requestAccess(
     @CurrentUser() user: AuthenticatedUser,
     @Param('conversationId') conversationId: string,
     @Body(zodBody(accessRequestSchema)) body: AccessRequestBody,
   ) {
-    return this.oversight.requestAccess(user.id, conversationId, body);
+    return this.oversight.requestAccess(user, conversationId, body);
   }
 
-  @Can('communications.viewContent')
+  // Multi-hospital §2.1: an administrator holds no standing PHI capability,
+  // so message content is reached only through this route's own controlled
+  // access (ADR-006 / M20.7): a justified request, approval by a different
+  // administrator, a limited lifetime and an audit row on every read. The
+  // grant, checked by OversightService, is the authorization; the role rule
+  // (with the guard's administrative tiering) only says who may ask.
+  @Roles('admin')
   @Post('conversations/access-requests/:requestId/approve')
   approve(@CurrentUser() user: AuthenticatedUser, @Param('requestId') requestId: string) {
     return this.oversight.approve(user.id, requestId);
   }
 
-  @Can('communications.viewContent')
+  // Multi-hospital §2.1: an administrator holds no standing PHI capability,
+  // so message content is reached only through this route's own controlled
+  // access (ADR-006 / M20.7): a justified request, approval by a different
+  // administrator, a limited lifetime and an audit row on every read. The
+  // grant, checked by OversightService, is the authorization; the role rule
+  // (with the guard's administrative tiering) only says who may ask.
+  // F-12: a grant ends at once when its requester withdraws it or another
+  // administrator terminates it.
+  @Roles('admin')
+  @Post('conversations/access-requests/:requestId/revoke')
+  revoke(@CurrentUser() user: AuthenticatedUser, @Param('requestId') requestId: string) {
+    return this.oversight.revoke(user.id, requestId);
+  }
+
+  @Roles('admin')
+  @PhiRead('conversation_content', { auditedByHandler: true })
   @Get('conversations/:conversationId/content')
   content(
     @CurrentUser() user: AuthenticatedUser,
@@ -69,6 +97,7 @@ export class OversightController {
   }
 
   @Can('communications.resolveFlags')
+  @PhiRead('message_flags')
   @Get('message-flags')
   flags(@Query(zodQuery(flagQuerySchema)) query: FlagQuery) {
     return this.oversight.listFlags(query);

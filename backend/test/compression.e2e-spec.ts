@@ -12,6 +12,7 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -75,6 +76,8 @@ beforeAll(async () => {
   const email = testEmail('gzip');
   await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing (F-09): outside it, this route is refused.
+  await makeClinicalDoctor(harness.prisma, email);
   token = dataOf<{ accessToken: string }>(
     await request(harness.server)
       .post('/api/v1/auth/login')

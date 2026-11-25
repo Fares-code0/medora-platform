@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { type AuthHarness, createAuthHarness, dataOf, testEmail } from './support/auth-app';
+import { type AuthHarness, clinicalStampFor, createAuthHarness, dataOf, testEmail } from './support/auth-app';
 import {
   destroyLabFixtures,
   get,
@@ -14,31 +14,34 @@ import {
 /**
  * The lab worklist's care scope, checked against an oracle (RM M32.3).
  *
- * API §8.2 scopes the list to "own orders / care-scoped": an order this
+ * API §8.2 scopes the worklist to "own orders / care-scoped": an order this
  * doctor placed, **or** an order for a patient this doctor has a live
- * assignment to. This spec builds every shape that disjunction has, then
- * compares what the API returns, all pages and every filter path, with
- * what an independent SQL statement says each doctor may see. The oracle
- * is written by hand against the tables, not through Prisma's relation
- * filters, so the two cannot share a mistake.
+ * assignment to. DR-05 at resource level (audit F-01) puts both inside the
+ * doctor's one clinical hospital, and separates the list from access: any
+ * order of that hospital opens by id, with no assignment, while nothing of
+ * another hospital opens at all. This spec builds every shape that matters,
+ * then compares what the API returns, all pages and every filter path, with
+ * what an independent SQL statement says each doctor's list holds. The
+ * oracle is written by hand against the tables, not through Prisma's
+ * relation filters, so the two cannot share a mistake.
  *
- * It exists because M32.3 rewrites the scope's SQL for speed, and a scope
+ * It exists because M32.3 rewrote the scope's SQL for speed, and a scope
  * query that drops a row hides a critical result while one that adds a row
  * leaks a chart. It caught the second before the rewrite was attempted:
  * `q` replaced the scope entirely, so any search returned every order on
  * the platform.
  *
- * The fixture, with A, B, C three doctors and P1–P5 five patients:
+ * The fixture, with A and B at hospital X, C at hospital Y, P1–P6 six
+ * patients:
  *
- * | Patient | Live care | Orders |
- * |---|---|---|
- * | P1 | A (primary) | 2 by A |
- * | P2 | B (primary) | 2 by B |
- * | P3 | A (primary); B consulting, **revoked** | 1 by A, 1 by B (placed before the revocation) |
- * | P4 | A (primary); B consulting, live | 1 by A, 1 by B |
- * | P5 | B (primary) | 1 by B, **soft-deleted** |
- *
- * C has no patients and no orders.
+ * | Patient | Record at | Live care | Orders |
+ * |---|---|---|---|
+ * | P1 | X | A (primary) | 2 by A |
+ * | P2 | X | B (primary) | 2 by B |
+ * | P3 | X | A (primary); B consulting, **revoked** | 1 by B (placed before the revocation), 1 by A |
+ * | P4 | X | A (primary); B consulting, live | 1 by A, 1 by B |
+ * | P5 | X | B (primary) | 1 by B, **soft-deleted** |
+ * | P6 | Y | C (primary) | 1 by C |
  */
 let harness: AuthHarness;
 
@@ -72,9 +75,13 @@ async function patientUuid(publicId: string): Promise<string> {
 
 /** A consulting assignment, live or already revoked. */
 async function consult(patientPublicId: string, doctor: Doctor, revoked: boolean): Promise<string> {
+  const patientId = await patientUuid(patientPublicId);
   const row = await harness.prisma.patientDoctorAssignment.create({
     data: {
-      patientId: await patientUuid(patientPublicId),
+      // An assignment is made at a hospital, under the doctor's employment
+      // there (F-01), exactly as the application makes one.
+      ...(await clinicalStampFor(harness.prisma, doctorIds[doctor], patientId)),
+      patientId,
       doctorId: doctorIds[doctor],
       role: 'consulting',
       ...(revoked ? { revokedAt: new Date() } : {}),
@@ -102,12 +109,21 @@ async function visibleTo(doctor: Doctor): Promise<string[]> {
     FROM lab_orders lo
     WHERE lo.deleted_at IS NULL
       AND lo.patient_id = ANY(${patientIds}::uuid[])
+      AND lo.hospital_id = (
+        SELECT e.hospital_id FROM doctor_employments e
+        WHERE e.doctor_id = ${doctorIds[doctor]}::uuid AND e.ended_at IS NULL
+      )
+      AND EXISTS (
+        SELECT 1 FROM hospital_medical_records h
+        WHERE h.patient_id = lo.patient_id AND h.hospital_id = lo.hospital_id
+      )
       AND (
         lo.ordered_by = ${doctorIds[doctor]}::uuid
         OR EXISTS (
           SELECT 1 FROM patient_doctor_assignments a
           WHERE a.patient_id = lo.patient_id
             AND a.doctor_id = ${doctorIds[doctor]}::uuid
+            AND a.hospital_id = lo.hospital_id
             AND a.revoked_at IS NULL
         )
       )
@@ -149,7 +165,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('lab-scope-m32');
 
   for (const doctor of ['A', 'B', 'C'] as const) {
-    tokens[doctor] = await seedDoctor(harness, `scope-${doctor.toLowerCase()}`);
+    // A and B practise at hospital X (`a`), C at hospital Y (`b`).
+    tokens[doctor] = await seedDoctor(harness, `scope-${doctor.toLowerCase()}`, doctor === 'C' ? 'b' : 'a');
     doctorIds[doctor] = await doctorIdFor(`scope-${doctor.toLowerCase()}`);
   }
 
@@ -159,7 +176,8 @@ beforeAll(async () => {
   const p3 = (await seedPatient(harness, tokens.A, { fullName: 'Scope Three' })).id;
   const p4 = (await seedPatient(harness, tokens.A, { fullName: 'Scope Four' })).id;
   const p5 = (await seedPatient(harness, tokens.B, { fullName: 'Scope Five' })).id;
-  charts.push(p1, p2, p3, p4, p5);
+  const p6 = (await seedPatient(harness, tokens.C, { fullName: 'Scope Six' })).id;
+  charts.push(p1, p2, p3, p4, p5, p6);
   for (const publicId of charts) patientIds.push(await patientUuid(publicId));
 
   await order('A', p1);
@@ -180,6 +198,8 @@ beforeAll(async () => {
   await consult(p4, 'B', false);
   await order('A', p4);
   await order('B', p4);
+
+  await order('C', p6);
 
   // An order on P5 that is then soft-deleted.
   const deleted = await order('B', p5);
@@ -213,7 +233,7 @@ afterAll(async () => {
 
 describe('the fixture is the shape it claims', () => {
   it('gives each doctor the set the scope rule implies', async () => {
-    const [p1, p2, p3, p4] = charts as [string, string, string, string, string];
+    const [p1, p2, p3, p4, , p6] = charts as [string, string, string, string, string, string];
     const on = (publicId: string) => ordersOn[publicId] ?? [];
 
     // A: P1, P3, P4 by care — including B's orders on P3 and P4.
@@ -222,7 +242,8 @@ describe('the fixture is the shape it claims', () => {
     // consult was revoked. Not A's order on P3, and not the deleted one.
     const bOwnOnP3 = on(p3)[0] as string;
     expect(new Set(await visibleTo('B'))).toEqual(new Set([...on(p2), bOwnOnP3, ...on(p4)]));
-    expect(await visibleTo('C')).toEqual([]);
+    // C: its own, at Y.
+    expect(await visibleTo('C')).toEqual(on(p6));
   });
 });
 
@@ -271,9 +292,11 @@ describe('search stays inside the scope', () => {
   });
 
   it('searching for a patient outside the scope finds nothing', async () => {
-    // P2 is B's; A has no relationship with it.
-    const { ids } = await walk('A', '&q=Scope Two', 100);
-    expect(ids).toEqual([]);
+    // P2 is B's; A has no care relationship with it, so it is not on A's list.
+    expect((await walk('A', '&q=Scope Two', 100)).ids).toEqual([]);
+    // P6 is at hospital Y; A practises at X. P1 is at X; C practises at Y.
+    expect((await walk('A', '&q=Scope Six', 100)).ids).toEqual([]);
+    expect((await walk('C', '&q=Scope One', 100)).ids).toEqual([]);
 
     // P3 is A's; B's consult on it was revoked, so only B's own order shows.
     const p3Orders = ordersOn[charts[2] as string] ?? [];
@@ -293,13 +316,21 @@ describe('search stays inside the scope', () => {
 });
 
 describe('the other reads share the scope', () => {
-  it('opens an order inside the scope and 404s one outside it', async () => {
-    const aSees = new Set(await visibleTo('A'));
-    const everything = Object.values(ordersOn).flat();
+  it('opens any live order of the doctor’s hospital by id, and 404s another hospital’s', async () => {
+    // Access is DR-05, not the worklist: A opens B's orders on P2 too.
+    const atY = new Set(ordersOn[charts[5] as string] ?? []);
+    const deleted = new Set(
+      (
+        await harness.prisma.labOrder.findMany({
+          where: { patientId: { in: patientIds }, deletedAt: { not: null } },
+          select: { publicId: true },
+        })
+      ).map((row) => row.publicId),
+    );
 
-    for (const id of everything) {
+    for (const id of Object.values(ordersOn).flat()) {
       const status = (await get(harness, tokens.A, `/${id}`)).status;
-      expect(status).toBe(aSees.has(id) ? 200 : 404);
+      expect(status, id).toBe(atY.has(id) || deleted.has(id) ? 404 : 200);
     }
   });
 

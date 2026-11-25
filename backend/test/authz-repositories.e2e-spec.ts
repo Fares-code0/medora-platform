@@ -25,6 +25,12 @@ import {
   type RoleRepository,
 } from '../src/shared/authz';
 import { PrismaService } from '../src/shared/database';
+import { createTestDoctor, destroyTestDoctor, type DoctorRecord } from './support/doctor-fixture';
+import {
+  createPatientRecords,
+  destroyPatientRecords,
+  type PatientRecord,
+} from './support/patient-fixture';
 
 describe('the authorization repositories', () => {
   let app: INestApplication;
@@ -107,94 +113,102 @@ describe('the authorization repositories', () => {
     });
   });
 
-  describe('PrismaPatientAssignmentRepository', () => {
-    it('finds a live assignment through both joins', async () => {
-      // The seed gives each canonical patient a live assignment; this
-      // asserts the doctor's *user* id reaches it, which is the join the
-      // port hides.
-      const assignment = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
-        select: {
-          doctor: { select: { userId: true } },
-          patient: { select: { id: true, publicId: true } },
-        },
-      });
+  describe('PrismaPatientAssignmentRepository — DR-05', () => {
+    const TAG = 'dr05r';
+    let doctor: DoctorRecord;
+    let patients: PatientRecord[];
+    let hospitalA: string;
+    let hospitalB: string;
 
-      expect(
-        await assignments.isAssigned(assignment.doctor.userId, assignment.patient.publicId),
-      ).toBe(true);
+    beforeAll(async () => {
+      doctor = await createTestDoctor(prisma, TAG);
+      patients = await createPatientRecords(prisma, TAG, 3);
+      const make = async (name: string) =>
+        (
+          await prisma.hospital.create({
+            data: { publicId: `hsp_${TAG}_${name}_${Date.now()}`, name: `DR05 ${name} ${Date.now()}` },
+            select: { id: true },
+          })
+        ).id;
+      hospitalA = await make('a');
+      hospitalB = await make('b');
+      await prisma.doctor.update({
+        where: { id: doctor.id },
+        data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
+      });
+      await prisma.doctorEmployment.create({ data: { doctorId: doctor.id, hospitalId: hospitalA } });
+      const [atA, atB] = patients;
+      if (atA === undefined || atB === undefined) throw new Error('fixture');
+      await prisma.hospitalMedicalRecord.create({ data: { patientId: atA.id, hospitalId: hospitalA } });
+      await prisma.hospitalMedicalRecord.create({ data: { patientId: atB.id, hospitalId: hospitalB } });
     });
 
-    it('accepts the raw uuid as well as the public handle', async () => {
-      const assignment = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
-        select: {
-          doctor: { select: { userId: true } },
-          patient: { select: { id: true } },
-        },
-      });
-
-      expect(await assignments.isAssigned(assignment.doctor.userId, assignment.patient.id)).toBe(
-        true,
-      );
+    afterAll(async () => {
+      await prisma.patientDoctorAssignment.deleteMany({ where: { doctorId: doctor.id } });
+      await destroyPatientRecords(prisma, TAG);
+      await destroyTestDoctor(prisma, TAG);
+      await prisma.hospital.deleteMany({ where: { id: { in: [hospitalA, hospitalB] } } });
     });
 
-    it("refuses another doctor's patient", async () => {
-      // PT-1005 is deliberately assigned elsewhere in the seed so this
-      // case is testable at all (M5.10's verify note says so).
-      const [first, second] = await prisma.db.patientDoctorAssignment.findMany({
-        where: { revokedAt: null },
-        distinct: ['doctorId'],
-        take: 2,
-        select: {
-          doctor: { select: { userId: true } },
-          patient: { select: { publicId: true } },
-        },
-      });
+    const at = (index: number): PatientRecord => {
+      const patient = patients[index];
+      if (patient === undefined) throw new Error('fixture');
+      return patient;
+    };
 
-      expect(second, 'the seed needs two doctors with distinct patients').toBeDefined();
-      if (first === undefined || second === undefined) return;
-
-      expect(await assignments.isAssigned(first.doctor.userId, second.patient.publicId)).toBe(
-        false,
-      );
+    it('reaches a patient with a record at the doctor’s hospital, with no assignment', async () => {
+      expect(await assignments.reachesPatient(doctor.userId, at(0).publicId)).toBe(true);
+      expect(await assignments.reachesPatient(doctor.userId, at(0).id)).toBe(true);
     });
 
-    it('does not count a revoked assignment', async () => {
-      // Revocation is what ends a care relationship; a revoked row that
-      // still granted access would make removing a doctor meaningless.
-      const live = await prisma.db.patientDoctorAssignment.findFirstOrThrow({
-        where: { revokedAt: null },
-        select: {
-          id: true,
-          doctor: { select: { userId: true } },
-          patient: { select: { publicId: true } },
-        },
+    it('refuses a patient whose only record is at another hospital — even when assigned', async () => {
+      await prisma.patientDoctorAssignment.create({
+        data: { patientId: at(1).id, doctorId: doctor.id, role: 'primary' },
       });
+      expect(await assignments.reachesPatient(doctor.userId, at(1).publicId)).toBe(false);
+    });
 
+    it('refuses a patient with no Hospital Medical Record anywhere', async () => {
+      expect(await assignments.reachesPatient(doctor.userId, at(2).publicId)).toBe(false);
+    });
+
+    it.each([
+      ['unverified', { verificationStatus: 'PENDING' }],
+      ['suspended', { practiceStatus: 'SUSPENDED' }],
+    ] as const)('refuses a %s doctor', async (_label, data) => {
       try {
-        await prisma.db.patientDoctorAssignment.update({
-          where: { id: live.id },
-          data: { revokedAt: new Date() },
-        });
-
-        expect(await assignments.isAssigned(live.doctor.userId, live.patient.publicId)).toBe(false);
+        await prisma.doctor.update({ where: { id: doctor.id }, data });
+        expect(await assignments.reachesPatient(doctor.userId, at(0).publicId)).toBe(false);
       } finally {
-        await prisma.db.patientDoctorAssignment.update({
-          where: { id: live.id },
-          data: { revokedAt: null },
+        await prisma.doctor.update({
+          where: { id: doctor.id },
+          data: { verificationStatus: 'VERIFIED', practiceStatus: 'ACTIVE' },
         });
+      }
+    });
+
+    it('refuses once the employment has ended, and when the hospital is inactive', async () => {
+      const employment = await prisma.doctorEmployment.findFirstOrThrow({
+        where: { doctorId: doctor.id, endedAt: null },
+      });
+      try {
+        await prisma.doctorEmployment.update({ where: { id: employment.id }, data: { endedAt: new Date() } });
+        expect(await assignments.reachesPatient(doctor.userId, at(0).publicId)).toBe(false);
+      } finally {
+        await prisma.doctorEmployment.update({ where: { id: employment.id }, data: { endedAt: null } });
+      }
+      try {
+        await prisma.hospital.update({ where: { id: hospitalA }, data: { status: 'SUSPENDED' } });
+        expect(await assignments.reachesPatient(doctor.userId, at(0).publicId)).toBe(false);
+      } finally {
+        await prisma.hospital.update({ where: { id: hospitalA }, data: { status: 'ACTIVE' } });
       }
     });
 
     it('answers no rather than throwing for ids that match nothing', async () => {
       const nobody = '00000000-0000-4000-8000-000000000099';
-
-      // A non-uuid patient handle must not reach a uuid column: Postgres
-      // answers a malformed literal with a type error, which would turn
-      // "not assigned" into a 500.
-      expect(await assignments.isAssigned(nobody, 'PT-DOES-NOT-EXIST')).toBe(false);
-      expect(await assignments.isAssigned(nobody, nobody)).toBe(false);
+      expect(await assignments.reachesPatient(nobody, 'PT-DOES-NOT-EXIST')).toBe(false);
+      expect(await assignments.reachesPatient(nobody, nobody)).toBe(false);
     });
   });
 });

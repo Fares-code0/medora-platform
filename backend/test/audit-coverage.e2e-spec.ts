@@ -11,9 +11,11 @@ import {
   createAuthHarness,
   dataOf,
   endGraceWindow,
+  makeClinicalDoctor,
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
 } from './support/auth-app';
 import { createPatientRecords, destroyPatientRecords } from './support/patient-fixture';
 
@@ -108,6 +110,8 @@ async function signUpDoctor(local: string): Promise<{ token: string; userId: str
   const email = testEmail(local);
   await request(harness.server).post(REGISTER).send(registrationBody({ email }));
   await markVerified(harness.prisma, email);
+  // Clinical standing at the fixture hospital (§2.6, DR-05).
+  await makeClinicalDoctor(harness.prisma, email);
 
   const token = dataOf<{ accessToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
@@ -141,6 +145,7 @@ async function signUpAdmin(local: string): Promise<{ token: string; userId: stri
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const otpToken = dataOf<{ otpToken: string }>(
     await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }),

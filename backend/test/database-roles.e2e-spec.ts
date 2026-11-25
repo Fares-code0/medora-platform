@@ -14,7 +14,14 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import { applyRoleStatement, withRoleProvisioningLock } from './support/role-provisioning-lock';
+
+import {
+  closeThenDrop,
+  createIsolatedDatabase,
+  type IsolatedDatabase,
+} from './support/isolated-database';
+import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
 if (new URL(rawDatabaseUrl).pathname !== '/medora_test' || process.env['APP_ENV'] !== 'test') {
@@ -49,8 +56,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  if (connected) await client.end();
-  await isolated?.drop();
+  // The drop is attempted even if closing the client throws (closeThenDrop).
+  await closeThenDrop(connected ? client : undefined, isolated);
 }, 30_000);
 
 const tag = (): string => randomUUID().replaceAll('-', '').slice(0, 10);
@@ -61,15 +68,21 @@ async function withRuntimeRole(
 ): Promise<void> {
   const owner = (await client.query<{ u: string }>('SELECT current_user AS u')).rows[0]!.u;
   const runtime = 'medora_app_test_' + tag();
-  await client.query('BEGIN');
-  try {
-    await client.query(
-      TEMPLATE.replaceAll('__RUNTIME_ROLE__', runtime).replaceAll('__OWNER_ROLE__', owner),
-    );
-    await work(runtime, owner);
-  } finally {
-    await client.query('ROLLBACK');
-  }
+  // The template's catalog changes stay uncommitted until the rollback, so the
+  // whole transaction holds the provisioning lock (see role-provisioning-lock).
+  await withRoleProvisioningLock(client, async () => {
+    await client.query('BEGIN');
+    try {
+      await applyRoleStatement(
+        client,
+        TEMPLATE.replaceAll('__RUNTIME_ROLE__', runtime).replaceAll('__OWNER_ROLE__', owner),
+        { inTransaction: true },
+      );
+      await work(runtime, owner);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
 }
 
 async function asRuntime(runtime: string): Promise<void> {
@@ -124,6 +137,12 @@ describe('runtime role (provision-runtime-role.sql)', () => {
     await withRuntimeRole(async (runtime) => {
       const h = await hospital();
       await asRuntime(runtime);
+      // RLS is enforced (migration 20261124130000): the runtime role writes
+      // only under transaction-local tenant context, as the application does.
+      await client.query(
+        "SELECT set_config('app.scope', 'hospital', true), set_config('app.hospital_id', $1, true)",
+        [h],
+      );
       const id = (await client.query<{ id: string }>(insertQueue, ['RT' + tag().slice(0, 6), h]))
         .rows[0]!.id;
       expect(
@@ -193,6 +212,7 @@ describe('runtime role (provision-runtime-role.sql)', () => {
         .rows[0]!.id;
       const qb = (await client.query<{ id: string }>(insertQueue, ['RB' + tag().slice(0, 6), b]))
         .rows[0]!.id;
+      await client.query(RESET_TO_PRE_ACTIVATION);
       await client.query(PROPOSAL);
       await client.query(`GRANT USAGE ON SCHEMA app_rls TO ${runtime}`);
       await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA app_rls TO ${runtime}`);
@@ -218,40 +238,30 @@ describe('runtime role (provision-runtime-role.sql)', () => {
     });
   });
 
-  it('cannot run the audit partition jobs as they are written today (finding: needs a decision)', async () => {
-    await withRuntimeRole(async (runtime, owner) => {
+  it('runs the audit partition jobs only through the owner-defined functions (F-05)', async () => {
+    await withRuntimeRole(async (runtime) => {
       await asRuntime(runtime);
-      // create_audit_events_partition is SECURITY INVOKER and runs CREATE TABLE.
-      await refused("SELECT public.create_audit_events_partition(DATE '2099-01-01')");
-      // audit.repository.ts drops expired partitions with DROP TABLE.
-      await refused('DROP TABLE IF EXISTS public.audit_events_2026_11');
+      // Creation through the SECURITY DEFINER function: the partition is
+      // made, owned by the owner and secured (RLS on, no grantee).
+      await client.query("SELECT public.create_audit_events_partition(DATE '2099-01-01')");
+      await client.query('RESET ROLE');
+      const made = (
+        await client.query<{ rls: boolean; acl: string | null }>(
+          "SELECT relrowsecurity AS rls, relacl::text AS acl FROM pg_class WHERE oid = 'public.audit_events_2099_01'::regclass",
+        )
+      ).rows[0];
+      expect(made?.rls).toBe(true);
+      expect(made?.acl ?? '').not.toContain(runtime);
 
-      // One possible remedy, demonstrated (not adopted): an owner-defined
-      // SECURITY DEFINER wrapper. create_audit_events_partition uses
-      // UNQUALIFIED names, so the wrapper must pin `public` first (pg_temp
-      // last; the runtime role cannot create in public) — with
-      // `pg_catalog, public` it tries to create the partition in pg_catalog.
-      // Adopting this for real should first schema-qualify the function.
-      await client.query('RESET ROLE');
-      await client.query(
-        'CREATE FUNCTION public.role_test_create_partition(month_start date) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $$ SELECT public.create_audit_events_partition(month_start) $$',
-      );
-      await client.query(
-        `ALTER FUNCTION public.role_test_create_partition(date) OWNER TO ${owner}`,
-      );
-      await client.query(
-        `GRANT EXECUTE ON FUNCTION public.role_test_create_partition(date) TO ${runtime}`,
-      );
       await asRuntime(runtime);
-      await client.query("SELECT public.role_test_create_partition(DATE '2099-01-01')");
-      await client.query('RESET ROLE');
-      expect(
-        (
-          await client.query(
-            "SELECT to_regclass('public.audit_events_2099_01') IS NOT NULL AS made",
-          )
-        ).rows[0],
-      ).toEqual({ made: true });
+      // No DDL right of its own: neither CREATE nor DROP directly.
+      await refused(
+        "CREATE TABLE public.audit_events_2099_02 PARTITION OF public.audit_events FOR VALUES FROM ('2099-02-01') TO ('2099-03-01')",
+      );
+      await refused('DROP TABLE IF EXISTS public.audit_events_2099_01');
+      // Audit retention is not the runtime role's at all (H1): the drop
+      // function is not executable by it, whatever month is named.
+      await refused("SELECT public.drop_audit_events_partition('audit_events_2099_01')", [], '42501');
     });
   });
 

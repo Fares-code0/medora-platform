@@ -12,6 +12,8 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
 } from './support/auth-app';
 
 /**
@@ -137,6 +139,7 @@ async function adminToken(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -543,16 +546,36 @@ describe('PUT /roles/matrix (§15.3)', () => {
 });
 
 describe('POST /roles (§15.4)', () => {
-  it('creates a custom role carrying the template bundle', async () => {
+  let hospitalId: string;
+
+  beforeAll(async () => {
+    hospitalId = (
+      await harness.prisma.hospital.create({
+        data: { publicId: `hsp_roles_${Date.now().toString(36)}`, name: `Roles ${Date.now()}` },
+        select: { id: true },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await harness.prisma.role.deleteMany({ where: { hospitalId } });
+    await harness.prisma.hospital.delete({ where: { id: hospitalId } });
+  });
+
+  it('creates a hospital-scoped custom role carrying the template bundle', async () => {
     const token = await adminToken('creator');
     const code = `charge-nurse-${Date.now().toString(36)}`;
 
     const response = await request(harness.server)
       .post(ROLES)
       .set('Authorization', `Bearer ${token}`)
-      .send({ code, label: 'Charge Nurse', baseRole: 'reception' });
+      .send({ code, label: 'Charge Nurse', baseRole: 'reception', hospitalId });
 
     expect(response.status).toBe(201);
+    // Custom roles are hospital-scoped (multi-hospital §2.8).
+    await expect(
+      harness.prisma.role.findUniqueOrThrow({ where: { code }, select: { hospitalId: true } }),
+    ).resolves.toEqual({ hospitalId });
 
     const role = dataOf<RoleView>(response);
     expect(role.code).toBe(code);
@@ -578,7 +601,7 @@ describe('POST /roles (§15.4)', () => {
     const response = await request(harness.server)
       .post(ROLES)
       .set('Authorization', `Bearer ${token}`)
-      .send({ code: 'doctor', label: 'Another Doctor', baseRole: 'doctor' });
+      .send({ code: 'doctor', label: 'Another Doctor', baseRole: 'doctor', hospitalId });
 
     expect(response.status).toBe(409);
   });
@@ -589,10 +612,34 @@ describe('POST /roles (§15.4)', () => {
     const response = await request(harness.server)
       .post(ROLES)
       .set('Authorization', `Bearer ${token}`)
-      .send({ code: 'ghost-role', label: 'Ghost', baseRole: 'wizard' });
+      .send({ code: 'ghost-role', label: 'Ghost', baseRole: 'wizard', hospitalId });
 
     expect(response.status).toBe(422);
     expect(errorBody(response).fieldErrors?.['baseRole']).toBeDefined();
+  });
+
+  it('refuses a custom role derived from admin (no role may carry Platform Admin power)', async () => {
+    const token = await adminToken('fromadmin');
+
+    const response = await request(harness.server)
+      .post(ROLES)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'deputy-admin', label: 'Deputy', baseRole: 'admin', hospitalId });
+
+    expect(response.status).toBe(422);
+    expect(errorBody(response).fieldErrors?.['baseRole']).toBeDefined();
+  });
+
+  it('requires a Platform Admin to name the hospital', async () => {
+    const token = await adminToken('nohospital');
+
+    const response = await request(harness.server)
+      .post(ROLES)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'floating-role', label: 'Floating', baseRole: 'reception' });
+
+    expect(response.status).toBe(422);
+    expect(errorBody(response).fieldErrors?.['hospitalId']).toBeDefined();
   });
 });
 
@@ -600,6 +647,8 @@ describe('/users/{id}/permissions (§15.5)', () => {
   it('reads the bundle, the overrides and the effective set', async () => {
     const token = await adminToken('overrider');
     const subject = await seedAccount('overridden');
+    // A doctor in clinical standing: the bundle is what is being overridden.
+    await makeClinicalDoctor(harness.prisma, subject);
     const publicId = (
       await harness.prisma.user.findUniqueOrThrow({
         where: { email: subject },
@@ -622,12 +671,18 @@ describe('/users/{id}/permissions (§15.5)', () => {
     const updated = await request(harness.server)
       .put(`/api/v1/users/${publicId}/permissions`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ granted: ['logs.view'], revoked: ['prescriptions.create'] });
+      .send({ granted: ['appointments.reassign', 'logs.view'], revoked: ['prescriptions.create'] });
 
     expect(updated.status).toBe(200);
 
     const view = dataOf<UserPermissionsView>(updated);
-    expect(view.effective).toContain('logs.view');
+    // Both grants are stored, and neither is effective: `logs.view` is
+    // platform administration and `appointments.reassign` administrative
+    // scheduling — both outside the doctor category's explicit ceiling
+    // (§2.4, §2.8; audit F-13).
+    expect(view.granted).toEqual(expect.arrayContaining(['appointments.reassign', 'logs.view']));
+    expect(view.effective).not.toContain('appointments.reassign');
+    expect(view.effective).not.toContain('logs.view');
     expect(view.effective).not.toContain('prescriptions.create');
     // The bundle itself is untouched — this is an override, not an edit.
     expect(view.fromRole).toContain('prescriptions.create');
@@ -639,7 +694,8 @@ describe('/users/{id}/permissions (§15.5)', () => {
       .set('Authorization', `Bearer ${refreshed}`);
 
     const permissions = dataOf<{ permissions: string[] }>(session).permissions;
-    expect(permissions).toContain('logs.view');
+    expect(permissions).not.toContain('appointments.reassign');
+    expect(permissions).not.toContain('logs.view');
     expect(permissions).not.toContain('prescriptions.create');
   });
 
@@ -679,6 +735,45 @@ describe('/users/{id}/permissions (§15.5)', () => {
       .set('Authorization', `Bearer ${refreshed}`);
 
     expect(denied.status).toBe(403);
+  });
+
+  it('applies a revocation on the subject’s next request, without ending their session (ADR-046)', async () => {
+    const token = await adminToken('nextrequest');
+    const subject = await seedAccount('nextrequestsubject');
+    await makeClinicalDoctor(harness.prisma, subject);
+    const subjectToken = await tokenFor(subject);
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email: subject },
+      select: { id: true, publicId: true },
+    });
+
+    // Warm the permission cache with the doctor's full set.
+    const warm = await request(harness.server)
+      .get('/api/v1/ai/conversations')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(warm.status).toBe(200);
+
+    const updated = await request(harness.server)
+      .put(`/api/v1/users/${user.publicId}/permissions`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ granted: [], revoked: ['ai.use'] });
+    expect(updated.status).toBe(200);
+
+    // Same token, next request: the capability is gone (the token's
+    // `permissions` claim still lists it — claims are never trusted).
+    const after = await request(harness.server)
+      .get('/api/v1/ai/conversations')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(after.status).toBe(403);
+
+    // An ordinary permission change does not revoke the session.
+    const session = await request(harness.server)
+      .get('/api/v1/auth/session')
+      .set('Authorization', `Bearer ${subjectToken}`);
+    expect(session.status).toBe(200);
+    await expect(
+      harness.prisma.session.count({ where: { userId: user.id, revokedAt: null } }),
+    ).resolves.toBeGreaterThan(0);
   });
 
   it('rejects a body that both grants and revokes a capability', async () => {

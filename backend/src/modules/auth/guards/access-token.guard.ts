@@ -93,13 +93,20 @@ export class AccessTokenGuard implements CanActivate {
     // token's role (F3, ADR-046): a role changed after the token was minted
     // is refused here, and the client's one refresh mints a token for the
     // current role. Logout keeps working for a demoted account.
-    const valid =
-      allowEnded === true
-        ? await this.sessions.belongsTo(user.sessionId, user.id)
-        : await this.sessions.isActive(user.sessionId, user.id, user.role);
-    if (!valid) throw AppException.unauthorized('unauthorized', 'Session expired');
+    if (allowEnded === true) {
+      const owned = await this.sessions.belongsTo(user.sessionId, user.id);
+      if (!owned) throw AppException.unauthorized('unauthorized', 'Session expired');
+      request[AUTHENTICATED_USER] = user;
+      return true;
+    }
 
-    request[AUTHENTICATED_USER] = user;
+    // Liveness, identity, account status and the role claim in one read; the
+    // answer carries the account's current `authz_version`, which keys the
+    // permission cache for this request (multi-hospital §2.8–§2.10).
+    const authzVersion = await this.sessions.liveAuthzVersion(user.sessionId, user.id, user.role);
+    if (authzVersion === null) throw AppException.unauthorized('unauthorized', 'Session expired');
+
+    request[AUTHENTICATED_USER] = { ...user, authzVersion };
     return true;
   }
 }

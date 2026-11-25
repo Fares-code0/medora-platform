@@ -80,4 +80,12 @@ export class PrismaHospitalContextRepository implements HospitalContextRepositor
     });
     return rows.map(({ hospitalId, hospital }) => ({ id: hospitalId, name: hospital.name }));
   }
+
+  async hasActivePlatformAdminGrant(userId: string): Promise<boolean> {
+    const grant = await this.prisma.db.platformAdminGrant.findFirst({
+      where: { userId, revokedAt: null, user: { is: { role: { is: { code: 'admin' } } } } },
+      select: { id: true },
+    });
+    return grant !== null;
+  }
 }

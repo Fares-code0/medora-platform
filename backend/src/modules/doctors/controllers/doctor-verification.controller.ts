@@ -3,7 +3,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/commo
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi, OutsideClinicalStanding } from '../../../shared/authz';
 import type { VerificationDocumentView } from '../dto/admin-doctor.dto';
 import {
   submitVerificationDocumentSchema,
@@ -25,11 +25,14 @@ import { DoctorVerificationService } from '../services/doctor-verification.servi
  * same rows on `GET /doctors/:id` (API §3.5) and decides on them (§3.6).
  */
 @Authenticated()
+// F-09: on the allowlist for an account outside clinical standing.
+@OutsideClinicalStanding()
 @Controller('me/verification-documents')
 export class DoctorVerificationController {
   constructor(private readonly verification: DoctorVerificationService) {}
 
   /** What this doctor has filed, newest first, each with its decision. */
+  @NotPhi('the doctor’s own verification documents')
   @Get()
   list(@CurrentUser() user: AuthenticatedUser): Promise<readonly VerificationDocumentView[]> {
     return this.verification.list(user);

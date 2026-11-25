@@ -1,8 +1,13 @@
 import { Module, type MiddlewareConsumer, type NestModule } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 
 import { ConfigService } from '../../config';
+import { AuditKernelModule } from '../audit';
 import { DatabaseModule } from '../database';
 
+import { AdminScopeService } from './admin-scope.service';
+import { PhiReadAuditInterceptor } from './phi-read-audit.interceptor';
+import { TenantContextResolver } from './tenant-context.resolver';
 import { AuthorizationGuard } from './authorization.guard';
 import { HOSPITAL_CONTEXT_REPOSITORY, HospitalContextService } from './hospital-context.service';
 import {
@@ -19,6 +24,7 @@ import { PrismaHospitalContextRepository } from './prisma-hospital-context.repos
 import { PrismaHospitalPatientScopeRepository } from './prisma-hospital-patient-scope.repository';
 import { RequestScopeMiddleware } from './request-scope';
 import { PrismaRoleRepository } from './prisma-role.repository';
+import { ReauthenticationPort } from './reauthentication.port';
 import { RedisPermissionCache } from './redis-permission-cache';
 import {
   PATIENT_ASSIGNMENT_REPOSITORY,
@@ -72,7 +78,7 @@ import {
   // `@Global`: both repositories inject `PrismaService`, and a kernel that
   // declares what it needs can be mounted on its own — which is what the
   // exit-gate suite does.
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, AuditKernelModule],
   providers: [
     { provide: ROLE_REPOSITORY, useClass: PrismaRoleRepository },
     // `useFactory`, not `useClass`: the cache's constructor takes a TTL
@@ -113,6 +119,11 @@ import {
     PatientScopeService,
     PatientSelfScopeService,
     AuthorizationGuard,
+    AdminScopeService,
+    TenantContextResolver,
+    ReauthenticationPort,
+    // §2.13: every successful PHI read is audited (fail closed).
+    { provide: APP_INTERCEPTOR, useClass: PhiReadAuditInterceptor },
   ],
   exports: [
     PermissionResolver,
@@ -124,6 +135,9 @@ import {
     PERMISSION_CACHE,
     PATIENT_ASSIGNMENT_REPOSITORY,
     PATIENT_SELF_REPOSITORY,
+    AdminScopeService,
+    TenantContextResolver,
+    ReauthenticationPort,
   ],
 })
 export class AuthzKernelModule implements NestModule {

@@ -28,6 +28,8 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { ClinicalEmployment } from '../../../shared/authz';
+
 import type { Gender, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/database';
 
@@ -69,7 +71,8 @@ function birthWindow(band: Demographics['ageBand'], now: Date): { gte?: Date; lt
 
 function patientWhere(demographics: Demographics, now: Date): Prisma.PatientWhereInput | undefined {
   const birth = birthWindow(demographics.ageBand, now);
-  const gender = demographics.gender === 'all' ? undefined : (demographics.gender.toUpperCase() as Gender);
+  const gender =
+    demographics.gender === 'all' ? undefined : (demographics.gender.toUpperCase() as Gender);
 
   if (birth === null && gender === undefined) return undefined;
 
@@ -89,21 +92,16 @@ export const TIME_BLOCKS = ['Early', 'Morning', 'Afternoon', 'Evening'] as const
 export class SnapshotRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The `doctors` row behind an account, or null for a non-clinician. */
-  async doctorIdForUser(userId: string): Promise<string | null> {
-    const doctor = await this.prisma.db.doctor.findFirst({
-      where: { userId },
-      select: { id: true },
-    });
-
-    return doctor?.id ?? null;
-  }
-
   /* ── Counts, for the KPI band and its deltas ─────────────────── */
 
-  appointmentCount(doctorId: string, window: Window, demographics: Demographics, now: Date): Promise<number> {
+  appointmentCount(
+    doctor: ClinicalEmployment,
+    window: Window,
+    demographics: Demographics,
+    now: Date,
+  ): Promise<number> {
     return this.prisma.db.appointment.count({
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
     });
   }
 
@@ -115,25 +113,31 @@ export class SnapshotRepository {
    * double the practice's size in a busy month.
    */
   async patientCount(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<number> {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['patientId'],
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
     });
 
     return grouped.length;
   }
 
-  labOrderCount(doctorId: string, window: Window, demographics: Demographics, now: Date): Promise<number> {
+  labOrderCount(
+    doctor: ClinicalEmployment,
+    window: Window,
+    demographics: Demographics,
+    now: Date,
+  ): Promise<number> {
     const patient = patientWhere(demographics, now);
 
     return this.prisma.db.labOrder.count({
       where: {
-        orderedBy: doctorId,
+        orderedBy: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         deletedAt: null,
         requestedAt: { gte: window.from, lt: window.to },
         ...(patient === undefined ? {} : { patient }),
@@ -142,7 +146,7 @@ export class SnapshotRepository {
   }
 
   prescriptionCount(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
@@ -151,7 +155,8 @@ export class SnapshotRepository {
 
     return this.prisma.db.prescription.count({
       where: {
-        prescribingDoctorId: doctorId,
+        prescribingDoctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         deletedAt: null,
         createdAt: { gte: window.from, lt: window.to },
         ...(patient === undefined ? {} : { patient }),
@@ -163,13 +168,13 @@ export class SnapshotRepository {
 
   /** Appointments per weekday, Monday first. */
   async appointmentsByWeekday(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<readonly number[]> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
       select: { startsAt: true },
     });
 
@@ -190,13 +195,13 @@ export class SnapshotRepository {
    * shape of the same answer.
    */
   async activityHeatmap(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<{ cells: number[][]; max: number }> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
       select: { startsAt: true },
     });
 
@@ -218,28 +223,31 @@ export class SnapshotRepository {
 
   /** A daily series across the window — the trend line. */
   async appointmentTrend(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<readonly LabelledCount[]> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
       select: { startsAt: true },
       orderBy: { startsAt: 'asc' },
     });
 
-    return bucketByDay(rows.map((row) => row.startsAt), window);
+    return bucketByDay(
+      rows.map((row) => row.startsAt),
+      window,
+    );
   }
 
   async patientTrend(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<readonly LabelledCount[]> {
     const rows = await this.prisma.db.appointment.findMany({
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
       select: { startsAt: true, patientId: true },
       orderBy: { startsAt: 'asc' },
     });
@@ -260,7 +268,7 @@ export class SnapshotRepository {
 
   /** Patients per department, from the appointments that name one. */
   async patientsByDepartment(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
@@ -268,7 +276,7 @@ export class SnapshotRepository {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['departmentId'],
       where: {
-        ...this.appointmentWhere(doctorId, window, demographics, now),
+        ...this.appointmentWhere(doctor, window, demographics, now),
         departmentId: { not: null },
       },
       _count: { _all: true },
@@ -285,7 +293,8 @@ export class SnapshotRepository {
 
     return grouped
       .map((row) => ({
-        label: row.departmentId === null ? 'Unassigned' : (nameById.get(row.departmentId) ?? 'Unknown'),
+        label:
+          row.departmentId === null ? 'Unassigned' : (nameById.get(row.departmentId) ?? 'Unknown'),
         value: row._count._all,
       }))
       .sort((a, b) => b.value - a.value);
@@ -293,7 +302,7 @@ export class SnapshotRepository {
 
   /** Lab orders by status — the donut. */
   async labStatusSplit(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
@@ -303,7 +312,8 @@ export class SnapshotRepository {
     const grouped = await this.prisma.db.labOrder.groupBy({
       by: ['status'],
       where: {
-        orderedBy: doctorId,
+        orderedBy: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         deletedAt: null,
         requestedAt: { gte: window.from, lt: window.to },
         ...(patient === undefined ? {} : { patient }),
@@ -311,26 +321,35 @@ export class SnapshotRepository {
       _count: { _all: true },
     });
 
-    return grouped.map((row) => ({ label: String(row.status).toLowerCase(), value: row._count._all }));
+    return grouped.map((row) => ({
+      label: String(row.status).toLowerCase(),
+      value: row._count._all,
+    }));
   }
 
   /** Critical, unreviewed results — the insight and the laboratory KPI. */
-  criticalPending(doctorId: string): Promise<number> {
+  criticalPending(doctor: ClinicalEmployment): Promise<number> {
     return this.prisma.db.labOrder.count({
-      where: { orderedBy: doctorId, deletedAt: null, hasCriticalResult: true, reviewedAt: null },
+      where: {
+        orderedBy: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
+        deletedAt: null,
+        hasCriticalResult: true,
+        reviewedAt: null,
+      },
     });
   }
 
   /** The patients' age distribution, bucketed into the four bands. */
   async ageDistribution(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
   ): Promise<readonly LabelledCount[]> {
     const grouped = await this.prisma.db.appointment.groupBy({
       by: ['patientId'],
-      where: this.appointmentWhere(doctorId, window, demographics, now),
+      where: this.appointmentWhere(doctor, window, demographics, now),
     });
 
     if (grouped.length === 0) {
@@ -359,10 +378,18 @@ export class SnapshotRepository {
   }
 
   /** Medical records by visit type — a varchar vocabulary, not the FK. */
-  async recordsByType(doctorId: string, window: Window): Promise<readonly LabelledCount[]> {
+  async recordsByType(
+    doctor: ClinicalEmployment,
+    window: Window,
+  ): Promise<readonly LabelledCount[]> {
     const grouped = await this.prisma.db.medicalRecord.groupBy({
       by: ['visitType'],
-      where: { doctorId, deletedAt: null, createdAt: { gte: window.from, lt: window.to } },
+      where: {
+        doctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
+        deletedAt: null,
+        createdAt: { gte: window.from, lt: window.to },
+      },
       _count: { _all: true },
     });
 
@@ -379,14 +406,15 @@ export class SnapshotRepository {
    * over the prescription rather than over items of it.
    */
   async prescriptionsByMedication(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     limit: number,
   ): Promise<readonly LabelledCount[]> {
     const grouped = await this.prisma.db.prescription.groupBy({
       by: ['medicationId'],
       where: {
-        prescribingDoctorId: doctorId,
+        prescribingDoctorId: doctor.doctorId,
+        hospitalId: doctor.hospitalId,
         deletedAt: null,
         createdAt: { gte: window.from, lt: window.to },
       },
@@ -440,7 +468,7 @@ export class SnapshotRepository {
   }
 
   private appointmentWhere(
-    doctorId: string,
+    doctor: ClinicalEmployment,
     window: Window,
     demographics: Demographics,
     now: Date,
@@ -448,7 +476,10 @@ export class SnapshotRepository {
     const patient = patientWhere(demographics, now);
 
     return {
-      doctorId,
+      // The doctor's own book at the active hospital (S4); rows with no
+      // hospital (#17) or another hospital's are not this practice's.
+      doctorId: doctor.doctorId,
+      hospitalId: doctor.hospitalId,
       deletedAt: null,
       startsAt: { gte: window.from, lt: window.to },
       ...(patient === undefined ? {} : { patient }),

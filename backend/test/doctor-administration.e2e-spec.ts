@@ -12,6 +12,8 @@ import {
   markVerified,
   registrationBody,
   testEmail,
+  grantPlatformAdmin,
+  patientRegistrationBody,
 } from './support/auth-app';
 
 /**
@@ -133,6 +135,7 @@ async function adminToken(local: string): Promise<string> {
 
   const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
   await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
+  await grantPlatformAdmin(harness.prisma, email);
 
   const login = await request(harness.server)
     .post(LOGIN)
@@ -620,10 +623,23 @@ describe('suspension (§3.7, M9.5)', () => {
       .send({ email, password: PASSWORD, rememberMe: false });
     expect(login.status).toBe(200);
 
-    // What changed is that patients no longer see them.
-    const patientView = await request(harness.server)
+    // Outside clinical standing they reach their own account only (F-09):
+    // the directory is refused to them.
+    const ownView = await request(harness.server)
       .get('/api/v1/patient/doctors?pageSize=100')
       .set('Authorization', `Bearer ${dataOf<SessionPayload>(login).accessToken}`);
+    expect(ownView.status).toBe(403);
+
+    // What changed for patients is that they no longer see them.
+    const patientEmail = testEmail('suspension-patient');
+    await request(harness.server).post(REGISTER).send(patientRegistrationBody({ email: patientEmail }));
+    await markVerified(harness.prisma, patientEmail);
+    const patientLogin = await request(harness.server)
+      .post(LOGIN)
+      .send({ email: patientEmail, password: PASSWORD, rememberMe: false });
+    const patientView = await request(harness.server)
+      .get('/api/v1/patient/doctors?pageSize=100')
+      .set('Authorization', `Bearer ${dataOf<SessionPayload>(patientLogin).accessToken}`);
     expect(
       dataOf<Page<{ id: string }>>(patientView).items.map((row) => row.id),
     ).not.toContain(doctorId);

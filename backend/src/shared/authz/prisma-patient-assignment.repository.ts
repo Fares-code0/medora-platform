@@ -32,28 +32,67 @@
 
 import { Injectable } from '@nestjs/common';
 
+import { DoctorVerificationStatus } from '../../generated/prisma/enums';
 import { PrismaService } from '../database';
-import type { PatientAssignmentRepository } from './authz.types';
+import { ACTIVE_HOSPITAL_FILTER, CLINICAL_PRACTICE_STATUSES } from './prisma-hospital-context.repository';
+import type { ClinicalEmployment, ClinicalReach, PatientAssignmentRepository } from './authz.types';
 
 @Injectable()
 export class PrismaPatientAssignmentRepository implements PatientAssignmentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async isAssigned(doctorUserId: string, patientId: string): Promise<boolean> {
-    const assignment = await this.prisma.db.patientDoctorAssignment.findFirst({
+  async reachesPatient(doctorUserId: string, patientId: string): Promise<boolean> {
+    return (await this.clinicalReach(doctorUserId, patientId)) !== null;
+  }
+
+  /**
+   * The doctor's one clinical hospital: an active employment at an ACTIVE
+   * hospital, the doctor verified, in ACTIVE or VACATION practice and not
+   * deleted. Two such employments are ambiguous and answer `null`, the same
+   * rule `HospitalContextService` applies, so the hospital a read is scoped
+   * to and the hospital a write is stamped with can never differ.
+   */
+  async clinicalHospital(doctorUserId: string): Promise<string | null> {
+    return (await this.clinicalEmployment(doctorUserId))?.hospitalId ?? null;
+  }
+
+  /** The one employment behind `clinicalHospital`; the same rule, one query. */
+  async clinicalEmployment(doctorUserId: string): Promise<ClinicalEmployment | null> {
+    const rows = await this.prisma.db.doctorEmployment.findMany({
       where: {
-        revokedAt: null,
-        doctor: { userId: doctorUserId },
-        // Accepts either the public `PT-…` handle or the raw uuid, so a
-        // caller that already resolved the patient does not pay for a
-        // second lookup. Both columns are unique, so the disjunction
-        // cannot match two different patients.
+        endedAt: null,
+        hospital: { is: ACTIVE_HOSPITAL_FILTER },
+        doctor: {
+          is: {
+            userId: doctorUserId,
+            deletedAt: null,
+            verificationStatus: DoctorVerificationStatus.VERIFIED,
+            practiceStatus: { in: [...CLINICAL_PRACTICE_STATUSES] },
+          },
+        },
+      },
+      select: { id: true, hospitalId: true, doctorId: true },
+      take: 2,
+    });
+    const row = rows.length === 1 ? rows[0] : undefined;
+    return row === undefined
+      ? null
+      : { doctorId: row.doctorId, doctorEmploymentId: row.id, hospitalId: row.hospitalId };
+  }
+
+  async clinicalReach(doctorUserId: string, patientId: string): Promise<ClinicalReach | null> {
+    const hospitalId = await this.clinicalHospital(doctorUserId);
+    if (hospitalId === null) return null;
+    const record = await this.prisma.db.hospitalMedicalRecord.findFirst({
+      where: {
+        hospitalId,
         patient: { OR: [{ publicId: patientId }, ...uuidClause(patientId)] },
       },
-      select: { id: true },
+      select: { id: true, patientId: true },
     });
-
-    return assignment !== null;
+    return record === null
+      ? null
+      : { hospitalId, hospitalMedicalRecordId: record.id, patientId: record.patientId };
   }
 }
 

@@ -48,7 +48,6 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import {
-  applyLocks,
   diffMatrix,
   isPermission,
   lockViolations,
@@ -58,6 +57,7 @@ import {
   PERMISSION_GROUPS,
   PERMISSIONS,
   PLATFORM_ROLES,
+  AdminScopeService,
   PermissionResolver,
   isPlatformRole,
   type MatrixChange,
@@ -94,11 +94,15 @@ export class RolesService {
     private readonly permissions: PermissionResolver,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
+    private readonly scopes: AdminScopeService,
   ) {}
 
   /** API §15.1 — roles with member counts. */
-  async list(): Promise<readonly RoleView[]> {
-    const rows = await this.roles.roles();
+  async list(actor: AuthenticatedUser): Promise<readonly RoleView[]> {
+    // F-17: a Hospital Admin lists its own hospital's roles and headcounts.
+    const scope = await this.scopes.scopeOf(actor);
+    if (scope.kind === 'none') throw AppException.forbidden();
+    const rows = await this.roles.roles(scope.kind === 'hospital' ? scope.hospitalId : undefined);
 
     return rows.map((row) => ({
       id: row.id,
@@ -269,6 +273,36 @@ export class RolesService {
     if (base === null) {
       throw AppException.validation({ baseRole: ['Unknown base role'] }, 'Unknown base role');
     }
+    // §2.8: no role can carry Platform Admin privileges. A role derived from
+    // `admin` would hold nothing under the server policy; refusing it here
+    // keeps the catalogue honest about that.
+    if (base.code === 'admin' || base.code === 'patient') {
+      throw AppException.validation(
+        { baseRole: ['A custom role must derive from a staff or clinical role'] },
+        'Invalid base role',
+      );
+    }
+
+    // Custom roles are hospital-scoped (§2.8). A Hospital Admin's role is its
+    // own hospital's; naming another is refused. A Platform Admin names one.
+    const scope = await this.scopes.scopeOf(actor);
+    let hospitalId: string;
+    if (scope.kind === 'hospital') {
+      if (input.hospitalId !== undefined && input.hospitalId !== scope.hospitalId) {
+        throw AppException.forbidden();
+      }
+      hospitalId = scope.hospitalId;
+    } else if (scope.kind === 'platform') {
+      if (input.hospitalId === undefined) {
+        throw AppException.validation({ hospitalId: ['Choose the hospital this role belongs to'] });
+      }
+      if (!(await this.roles.hospitalIsActive(input.hospitalId))) {
+        throw AppException.validation({ hospitalId: ['Unknown hospital'] });
+      }
+      hospitalId = input.hospitalId;
+    } else {
+      throw AppException.forbidden();
+    }
 
     let created;
     try {
@@ -276,6 +310,7 @@ export class RolesService {
         code: input.code,
         label: input.label,
         baseRoleId: base.id,
+        hospitalId,
         actorId: actor.id,
       });
     } catch (error) {
@@ -293,7 +328,8 @@ export class RolesService {
       actor: { userId: actor.id, role: actor.role },
       entityType: 'role',
       entityId: created.id,
-      metadata: { code: created.code, baseRole: base.code },
+      hospitalId,
+      metadata: { code: created.code, baseRole: base.code, hospitalId },
     });
 
     return {
@@ -327,7 +363,7 @@ export class RolesService {
       fromRole: [...fromRole],
       granted: row.granted,
       revoked: row.revoked,
-      effective: [...effectiveSet(fromRole, row.role, row.granted, row.revoked)],
+      effective: await this.effectiveFor(row.userId, row.role),
     };
   }
 
@@ -390,8 +426,18 @@ export class RolesService {
       fromRole: [...fromRole],
       granted: input.granted,
       revoked: input.revoked,
-      effective: [...effectiveSet(fromRole, row.role, input.granted, input.revoked)],
+      effective: await this.effectiveFor(row.userId, row.role),
     };
+  }
+
+  /**
+   * The effective set exactly as the guard will see it: the resolver's own
+   * answer (matrix, custom-role bundle, overrides, locks and the server
+   * policy's category ceilings), computed from the database rather than a
+   * second copy of the algebra that could drift from it.
+   */
+  private async effectiveFor(userId: string, roleCode: string): Promise<Permission[]> {
+    return [...(await this.permissions.effectivePermissions({ userId, roleCode })).permissions];
   }
 
   /**
@@ -423,31 +469,6 @@ export class RolesService {
       detail: JSON.stringify(conflict),
     });
   }
-}
-
-/**
- * `bundle ∪ granted − revoked`, locks re-applied.
- *
- * The same three steps, in the same order, as
- * `PermissionService.resolve`. Deliberately duplicated rather than
- * imported: that method lives in the auth module and M2.2's zone 1
- * forbids reaching it from here. The duplication is two lines of set
- * algebra over the kernel's own `applyLocks`, and
- * `roles.service.spec.ts` asserts this agrees with the resolver's
- * answer for the seeded roles, so the two cannot drift unnoticed.
- */
-function effectiveSet(
-  fromRole: readonly Permission[],
-  roleCode: string,
-  granted: readonly string[],
-  revoked: readonly string[],
-): readonly Permission[] {
-  const codes = new Set<Permission>(fromRole);
-
-  for (const code of granted) if (isPermission(code)) codes.add(code);
-  for (const code of revoked) if (isPermission(code)) codes.delete(code);
-
-  return applyLocks(roleCode, codes);
 }
 
 /**

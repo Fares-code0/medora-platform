@@ -47,6 +47,7 @@ import {
   AUTHENTICATED_METADATA,
   AuthorizationGuard,
   AuthzKernelModule,
+  ADMIN_DENIED_PHI,
   CAN_METADATA,
   Can,
   IS_PUBLIC_KEY,
@@ -61,6 +62,17 @@ import {
   type PlatformRole,
 } from '../src/shared/authz';
 import { AUTHENTICATED_USER } from '../src/common/auth/authenticated-user';
+
+import {
+  type AuthHarness,
+  createAuthHarness,
+  grantPlatformAdmin,
+  makeClinicalDoctor,
+  makeClinicalStaff,
+  markVerified,
+  registrationBody,
+  testEmail,
+} from './support/auth-app';
 
 /* ── Fixture routes, one per decorator shape ──────────────────── */
 
@@ -130,23 +142,62 @@ class TestPrincipalMiddleware implements NestMiddleware {
 }
 
 /**
- * A stable uuid per role.
+ * One real account per role, in the standing its role needs.
  *
- * It must be a real uuid, not `u-admin`: `user_permissions.user_id` is a
- * `uuid` column, and Postgres answers a malformed literal with a type
- * error rather than an empty result — so a readable fake id turned every
- * capability check into a 500. The resolver was right to surface it
- * (it fails closed when overrides cannot be read); the ids were wrong.
- *
- * These users do not exist, which is the point: a user with no
- * `user_permissions` rows is the ordinary case, and the role bundle
- * alone should decide.
+ * These were fixed fake uuids while the role bundle alone decided. Under
+ * organizational standing (multi-hospital §2.4–§2.6, DR-05) a doctor or
+ * staff member without an active employment or affiliation at an ACTIVE
+ * hospital holds nothing, and an administrator without an explicit grant
+ * has no scope (OD-07) — so each role is now a registered account put in
+ * that standing. None has a `user_permissions` row, which is still the
+ * point: the role bundle (under the server policy) alone decides.
  */
-function userIdFor(role: string): string {
-  const index = Math.max(0, PLATFORM_ROLES.indexOf(role as PlatformRole)) + 1;
+const userIds = new Map<string, string>();
 
-  return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+function userIdFor(role: string): string {
+  const id = userIds.get(role);
+  if (id === undefined) throw new Error(`no fixture account for role ${role}`);
+  return id;
 }
+
+let harness: AuthHarness;
+
+/** `staff_members` outlive their user (SET NULL) and hold the unique email. */
+async function removeStaffProfiles(): Promise<void> {
+  const staff = { email: { endsWith: `@${harness.domain}` } };
+  await harness.prisma.hospitalStaffAffiliation.deleteMany({ where: { staff: { is: staff } } });
+  await harness.prisma.staffMember.deleteMany({ where: staff });
+}
+
+beforeAll(async () => {
+  harness = await createAuthHarness('authz-matrix');
+  await removeStaffProfiles();
+  for (const role of PLATFORM_ROLES) {
+    const email = testEmail(`matrix-${role}`);
+    await request(harness.server).post('/api/v1/auth/register').send(registrationBody({ email }));
+    await markVerified(harness.prisma, email);
+    if (role === 'doctor') {
+      await makeClinicalDoctor(harness.prisma, email);
+    } else {
+      const code = await harness.prisma.role.findUniqueOrThrow({ where: { code: role } });
+      await harness.prisma.user.update({ where: { email }, data: { roleId: code.id } });
+      if (role === 'admin') await grantPlatformAdmin(harness.prisma, email);
+      else await makeClinicalStaff(harness.prisma, email);
+    }
+    const user = await harness.prisma.user.findUniqueOrThrow({
+      where: { email },
+      select: { id: true },
+    });
+    userIds.set(role, user.id);
+  }
+}, 60_000);
+
+afterAll(async () => {
+  if (harness === undefined) return;
+  await removeStaffProfiles();
+  await harness.reset();
+  await harness.close();
+});
 
 /**
  * `AuthzKernelModule` brings its own `DatabaseModule`, so this suite
@@ -374,7 +425,14 @@ describe('authorization matrix — role × permission (RM M7.1)', () => {
   for (const role of PLATFORM_ROLES) {
     describe(role, () => {
       for (const permission of PERMISSIONS) {
-        const expected = SEEDED_MATRIX[role].includes(permission);
+        // The seeded matrix, as the server policy overlay leaves it: an
+        // administrator never holds clinical content or clear identity as a
+        // standing capability (multi-hospital §2.1; PHI only through
+        // Exceptional Access). Written as the named list, not derived from
+        // `applyServerPolicy`, so a wrong overlay still fails here.
+        const expected =
+          SEEDED_MATRIX[role].includes(permission) &&
+          !(role === 'admin' && ADMIN_DENIED_PHI.includes(permission));
 
         it(`${expected ? 'holds' : 'does not hold'} ${permission}`, async () => {
           expect(await resolver.can({ userId: userIdFor(role), roleCode: role }, permission)).toBe(

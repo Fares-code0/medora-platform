@@ -51,7 +51,8 @@ beforeAll(async () => {
   harness = await createAuthHarness('lab-pipeline');
 
   doctorToken = await seedDoctor(harness, 'pipeline-doctor');
-  strangerToken = await seedDoctor(harness, 'pipeline-stranger');
+  // DR-05: a colleague at the same hospital reaches the chart; isolation is across hospitals.
+  strangerToken = await seedDoctor(harness, 'pipeline-stranger', 'b');
 
   const patient = await seedPatient(harness, doctorToken);
   patientId = patient.id;

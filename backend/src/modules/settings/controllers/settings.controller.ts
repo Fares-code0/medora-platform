@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody } from '../../../common/validation/zod-validation.pipe';
 import { AppException } from '../../../common/errors/app.exception';
-import { Authenticated } from '../../../shared/authz';
+import { Authenticated, NotPhi } from '../../../shared/authz';
 import {
   INTEGRATION_IDS,
   slicePatchSchema,
@@ -34,6 +34,8 @@ import { SettingsService } from '../services/settings.service';
 @Controller('me')
 export class SettingsController {
   constructor(private readonly settings: SettingsService) {}
+
+  @NotPhi('the caller’s own settings')
 
   @Get('settings')
   read(@CurrentUser() user: AuthenticatedUser) {

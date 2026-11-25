@@ -49,15 +49,17 @@ import {
   type CsvColumn,
   type CsvFile,
 } from '../../../common/http/csv-export';
+import type { Prisma } from '../../../generated/prisma/client';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import {
   AUDIT_DISPATCHER,
   TransactionalAuditWriter,
   type AuditDispatcher,
+  MandatoryAuditWriter,
 } from '../../../shared/audit';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
-import { isUniqueViolation } from '../../../shared/database';
+import { PatientScopeService, principalOf, TenantContextResolver } from '../../../shared/authz';
+import { isUniqueViolation, runAsSystem } from '../../../shared/database';
 import { maskPatientIdentity, type MaskedIdentity } from '../../../shared/phi';
 import { bloodTypeToWire, genderToWire } from '../dto/clinical-enums';
 import {
@@ -97,6 +99,7 @@ import {
   type PatientListCriteria,
   type PatientRow,
 } from '../repositories/patient.repository';
+import type { ChartScope } from '../repositories/patient-tabs.repository';
 
 export interface PaginatedPatients<T> {
   readonly items: readonly T[];
@@ -109,11 +112,14 @@ export interface PaginatedPatients<T> {
 @Injectable()
 export class PatientService {
   constructor(
+    /** Mandatory audit of disclosures: a failed write refuses the read (F-02). */
+    private readonly disclosures: MandatoryAuditWriter,
     private readonly patients: PatientRepository,
     private readonly scope: PatientScopeService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
     private readonly disclosureAudit: TransactionalAuditWriter,
+    private readonly tenants: TenantContextResolver,
   ) {}
 
   /**
@@ -130,13 +136,16 @@ export class PatientService {
     user: AuthenticatedUser,
     query: PatientListQuery,
   ): Promise<PaginatedPatients<PatientView | MaskedIdentity>> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const care = await this.careOf(user);
+    const clear = care !== null;
+    const directory = care === null ? await this.directoryOf(user) : undefined;
 
-    const { rows, totalItems } = await this.patients.list(
-      doctorId,
+    const { rows: found, totalItems } = await this.patients.list(
+      care,
       criteriaFor(query, query.page, query.pageSize),
+      directory,
     );
+    const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
     // The masked branch needs no appointment lookup — a masked row does
     // not carry `nextAppointment`, and a query for a field nobody will
@@ -175,13 +184,16 @@ export class PatientService {
    * why it is a `warning` in the taxonomy rather than an ordinary read.
    */
   async export(user: AuthenticatedUser, query: PatientExportQuery): Promise<CsvFile> {
-    const doctorId = user.role === 'doctor' ? await this.patients.doctorIdForUser(user.id) : null;
-    const clear = doctorId !== null;
+    const care = await this.careOf(user);
+    const clear = care !== null;
+    const directory = care === null ? await this.directoryOf(user) : undefined;
 
-    const { rows, totalItems } = await this.patients.list(
-      doctorId,
+    const { rows: found, totalItems } = await this.patients.list(
+      care,
       criteriaFor(query, 1, EXPORT_ROW_LIMIT),
+      directory,
     );
+    const rows = care === null ? found : found.map((row) => atHospital(row, care.hospitalId));
 
     if (totalItems > EXPORT_ROW_LIMIT) throw exportTooLarge(totalItems);
 
@@ -198,7 +210,7 @@ export class PatientService {
       body = toCsv(MASKED_EXPORT_COLUMNS, rows.map(toMasked));
     }
 
-    await this.audit.record({
+    await this.disclosures.record({
       action: 'patient.export',
       actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
       entityType: 'patient',
@@ -226,16 +238,20 @@ export class PatientService {
     if (row === null) throw notFound();
 
     if (user.role !== 'doctor') {
+      // The masked directory's reach (F-08, OD-07): a patient holding a
+      // record at the caller's hospital — the same 404 otherwise.
+      const hospitalId = await this.directoryOf(user);
+      if (hospitalId === null || !(await this.patients.hasRecordAt(row.id, hospitalId))) throw notFound();
       await this.recordPhiRead(user, row, 'patient.view_masked');
       return toMasked(row);
     }
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    const reach = await this.scope.reachAt(principalOf(user), publicId);
     await this.recordPhiRead(user, row, 'patient.view');
 
     const next = await this.patients.nextAppointments([row.id]);
 
-    return toView(row, next[row.id] ?? null, new Date());
+    return toView(atHospital(row, reach.hospitalId), next[row.id] ?? null, new Date());
   }
 
   /**
@@ -309,7 +325,7 @@ export class PatientService {
     const row = await this.requireReachable(user, publicId);
 
     const [bundle, next] = await Promise.all([
-      this.patients.bundleFor(row.id),
+      this.patients.bundleFor(row.chart),
       this.patients.nextAppointments([row.id]),
     ]);
 
@@ -365,13 +381,15 @@ export class PatientService {
    * last-4 protect nothing.
    */
   async create(user: AuthenticatedUser, input: CreatePatientInput): Promise<PatientView> {
-    const doctorId = await this.patients.doctorIdForUser(user.id);
-    // A patient must be registered *by* a practitioner, because
-    // registration creates the care relationship that makes the chart
-    // reachable. An account with no `doctors` row has nobody to assign.
-    if (doctorId === null) {
+    const employment = await this.patients.clinicalEmploymentForUser(user.id);
+    // A patient must be registered *by* a practitioner employed at a
+    // hospital, because registration opens the Hospital Medical Record
+    // that makes the chart reachable there (DR-05). An account with no
+    // `doctors` row, or no active employment, has nowhere to record it.
+    if (employment === null) {
       throw AppException.forbidden('Only a practitioner can register a patient');
     }
+    const { doctorId } = employment;
 
     const { ids, unknown } = await this.patients.conditionIdsByName(input.chronicConditions);
     if (unknown.length > 0) {
@@ -387,28 +405,40 @@ export class PatientService {
     const sequence = await this.patients.nextIdentitySequence();
     const publicId = `PT-${String(sequence)}`;
 
-    const row = await this.createWithUniqueMrn({
-      publicId,
-      input,
-      doctorId,
-      actorId: user.id,
-      conditionIds: ids,
-    });
-
-    await this.audit.record({
-      action: 'patient.create',
-      actor: { userId: user.id, role: user.role },
-      entityType: 'patient',
-      entityId: row.publicId,
-      // Counts and flags, never the name, the MRN or the birth date —
-      // `AuditMetadata` forbids clinical values and these are the
-      // identifiers the whole masking apparatus exists to protect.
-      metadata: {
-        allergies: input.allergies.length,
-        chronicConditions: ids.length,
-        hasEmail: input.email !== undefined,
+    const row = await this.createWithUniqueMrn(
+      {
+        publicId,
+        input,
+        doctorId,
+        hospitalId: employment.hospitalId,
+        doctorEmploymentId: employment.employmentId,
+        actorId: user.id,
+        conditionIds: ids,
       },
-    });
+      // L1: the registration is the moment the patient comes to belong to
+      // this hospital (its Hospital Medical Record and care assignment). The
+      // audit row is that ownership's evidence, so it is written in the same
+      // transaction, through the throwing writer: no chart without its row,
+      // no row without its chart.
+      (tx) =>
+        this.disclosures.recordIn(tx, {
+          action: 'patient.create',
+          actor: { userId: user.id, role: user.role },
+          entityType: 'patient',
+          entityId: publicId,
+          hospitalId: employment.hospitalId,
+          // Counts and flags, never the name, the MRN or the birth date —
+          // `AuditMetadata` forbids clinical values and these are the
+          // identifiers the whole masking apparatus exists to protect.
+          metadata: {
+            allergies: input.allergies.length,
+            chronicConditions: ids.length,
+            hasEmail: input.email !== undefined,
+            medicalRecordOpened: true,
+            careAssignment: 'primary',
+          },
+        }),
+    );
 
     await this.activity.record({
       userId: user.id,
@@ -496,7 +526,7 @@ export class PatientService {
     let created: AllergyRow;
     try {
       created = await this.patients.createAllergy({
-        patientId: row.id,
+        scope: row.chart,
         actorId: user.id,
         allergen: input.allergen,
         severity: ALLERGY_SEVERITY_FROM_WIRE[input.severity] ?? 'MILD',
@@ -539,7 +569,7 @@ export class PatientService {
   ): Promise<PatientAllergyView> {
     const row = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAllergy(row.id, allergyId, user.id, {
+    const updated = await this.patients.updateAllergy(row.chart, allergyId, user.id, {
       allergen: input.allergen,
       severity:
         input.severity === undefined ? undefined : ALLERGY_SEVERITY_FROM_WIRE[input.severity],
@@ -567,7 +597,7 @@ export class PatientService {
   ): Promise<void> {
     const row = await this.requireReachable(user, publicId);
 
-    const removed = await this.patients.removeAllergy(row.id, allergyId, user.id);
+    const removed = await this.patients.removeAllergy(row.chart, allergyId, user.id);
     if (removed === 0) throw AppException.notFound('Allergy not found');
 
     // Removing an allergy narrows what the prescription safety screen
@@ -589,7 +619,7 @@ export class PatientService {
     activeOnly: boolean,
   ): Promise<readonly PatientAlertView[]> {
     const row = await this.requireReachable(user, publicId);
-    return (await this.patients.alerts(row.id, activeOnly)).map(toAlertView);
+    return (await this.patients.alerts(row.chart, activeOnly)).map(toAlertView);
   }
 
   async addAlert(
@@ -600,7 +630,7 @@ export class PatientService {
     const row = await this.requireReachable(user, publicId);
 
     const created = await this.patients.createAlert({
-      patientId: row.id,
+      scope: row.chart,
       actorId: user.id,
       severity: ALERT_SEVERITY_FROM_WIRE[input.severity] ?? 'WARNING',
       message: input.message,
@@ -625,7 +655,7 @@ export class PatientService {
   ): Promise<PatientAlertView> {
     const row = await this.requireReachable(user, publicId);
 
-    const updated = await this.patients.updateAlert(row.id, alertId, user.id, {
+    const updated = await this.patients.updateAlert(row.chart, alertId, user.id, {
       severity:
         input.severity === undefined ? undefined : ALERT_SEVERITY_FROM_WIRE[input.severity],
       message: input.message,
@@ -647,6 +677,37 @@ export class PatientService {
   }
 
   /**
+   * The masked directory's reach (F-08), from the caller's own staffing: a
+   * Hospital Admin's or a staff member's is the patients holding a record at
+   * their hospital; anyone else — a Platform Admin (OD-07), an administrator
+   * without a scope, a doctor without standing — gets none at all (`null`).
+   */
+  private async directoryOf(user: AuthenticatedUser): Promise<string | null> {
+    const tenant = await runAsSystem(() => this.tenants.resolve(user));
+    // A Platform Admin holds no clinical access (OD-07, §2.1): no patient
+    // directory, masked or not — as Row-Level Security has it too.
+    if (tenant?.scope === 'hospital' && tenant.hospitalId !== undefined) return tenant.hospitalId;
+    return null;
+  }
+
+  /**
+   * A doctor's list scope: their doctor row and their one clinical hospital
+   * (F-01). A doctor without unambiguous clinical standing has no clear
+   * list — they get the masked directory every other role gets, never an
+   * unscoped one.
+   */
+  private async careOf(
+    user: AuthenticatedUser,
+  ): Promise<{ readonly doctorId: string; readonly hospitalId: string } | null> {
+    if (user.role !== 'doctor') return null;
+    const [doctorId, hospitalId] = await Promise.all([
+      this.patients.doctorIdForUser(user.id),
+      this.scope.clinicalHospitalOf(principalOf(user)),
+    ]);
+    return doctorId === null || hospitalId === null ? null : { doctorId, hospitalId };
+  }
+
+  /**
    * The chart, or a 404 that does not say which kind of 404 it is.
    *
    * Every clinical read and write on this surface starts here, which is
@@ -656,13 +717,20 @@ export class PatientService {
   private async requireReachable(
     user: AuthenticatedUser,
     publicId: string,
-  ): Promise<PatientRow> {
+  ): Promise<PatientRow & { readonly chart: ChartScope }> {
     const row = await this.patients.findByPublicId(publicId);
     if (row === null) throw notFound();
 
-    await this.scope.assertCanReach(principalOf(user), publicId);
+    // DR-05 at resource level (F-01): the chart is the patient's record at
+    // the doctor's hospital — its rows only, and its stamp on every write.
+    const reach = await this.scope.reachAt(principalOf(user), publicId);
+    const chart: ChartScope = {
+      patientId: row.id,
+      hospitalId: reach.hospitalId,
+      hospitalMedicalRecordId: reach.hospitalMedicalRecordId,
+    };
 
-    return row;
+    return { ...atHospital(row, reach.hospitalId), chart };
   }
 
   /**
@@ -678,7 +746,7 @@ export class PatientService {
     row: PatientRow,
     action: string,
   ): Promise<void> {
-    await this.audit.record({
+    await this.disclosures.record({
       action,
       actor: { userId: user.id, role: user.role },
       entityType: 'patient',
@@ -696,13 +764,18 @@ export class PatientService {
    * collisions is negligible, and looping forever on a genuinely
    * exhausted space would hang the request instead of reporting it.
    */
-  private async createWithUniqueMrn(input: {
-    readonly publicId: string;
-    readonly input: CreatePatientInput;
-    readonly doctorId: string;
-    readonly actorId: string;
-    readonly conditionIds: readonly string[];
-  }): Promise<PatientRow> {
+  private async createWithUniqueMrn(
+    input: {
+      readonly publicId: string;
+      readonly input: CreatePatientInput;
+      readonly doctorId: string;
+      readonly hospitalId: string;
+      readonly doctorEmploymentId: string;
+      readonly actorId: string;
+      readonly conditionIds: readonly string[];
+    },
+    onCreated: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<PatientRow> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return await this.patients.create({
@@ -717,6 +790,8 @@ export class PatientService {
           address: input.input.address,
           medicalNotes: input.input.medicalNotes,
           doctorId: input.doctorId,
+          hospitalId: input.hospitalId,
+          doctorEmploymentId: input.doctorEmploymentId,
           actorId: input.actorId,
           allergies: input.input.allergies.map((allergy) => ({
             allergen: allergy.allergen,
@@ -725,7 +800,7 @@ export class PatientService {
             notes: allergy.notes,
           })),
           conditionIds: input.conditionIds,
-        });
+        }, onCreated);
       } catch (error) {
         if (!isUniqueViolation(error) || attempt === 2) throw error;
       }
@@ -915,3 +990,8 @@ const BLOOD_TYPE_FROM_WIRE: Readonly<Record<string, PatientRow['bloodType']>> = 
   'O+': 'O_POSITIVE',
   'O-': 'O_NEGATIVE',
 };
+
+/** The chart as one hospital sees it: its own allergy rows only (F-01). */
+function atHospital<T extends PatientRow>(row: T, hospitalId: string): T {
+  return { ...row, allergies: row.allergies.filter((allergy) => allergy.hospitalId === hospitalId) };
+}

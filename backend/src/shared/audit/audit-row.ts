@@ -58,6 +58,12 @@ export function auditRowOf(event: AuditEvent): Prisma.AuditEventCreateInput {
     // `unknown`, a comma-separated chain, or a port.
     ...(ipAddress === null ? {} : { ipAddress }),
     ...(event.actor.sessionId === undefined ? {} : { sessionId: event.actor.sessionId }),
+    // Hospital attribution (multi-hospital §2.13): the tenant the event
+    // belongs to, so a Hospital Admin's ledger view is a filter, not a
+    // reconstruction. Absent for platform-wide events.
+    ...(event.hospitalId === undefined || event.hospitalId === null
+      ? {}
+      : { hospitalId: event.hospitalId }),
     payload: {
       // The correlation id has no column of its own and belongs
       // with the event: it is what ties this row to the request's

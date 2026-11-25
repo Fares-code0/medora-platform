@@ -3,7 +3,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated, principalOf } from '../../../shared/authz';
+import { Authenticated, NotPhi, principalOf } from '../../../shared/authz';
 import type { PatientAppointmentDetail } from '../dto/patient-appointment.dto';
 import {
   patientAppointmentQuerySchema,
@@ -45,6 +45,8 @@ import {
 export class PatientAppointmentController {
   constructor(private readonly appointments: PatientAppointmentService) {}
 
+  @NotPhi('the patient’s own appointments (self access)')
+
   @Get()
   list(
     @CurrentUser() user: AuthenticatedUser,
@@ -52,6 +54,8 @@ export class PatientAppointmentController {
   ): Promise<PaginatedAppointments> {
     return this.appointments.listOwn(principalOf(user), query);
   }
+
+  @NotPhi('the patient’s own appointment (self access)')
 
   @Get(':appointmentId')
   byId(
