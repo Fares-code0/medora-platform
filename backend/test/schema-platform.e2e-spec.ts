@@ -504,12 +504,28 @@ describe('platform, audit and triggers (RM M5.10)', () => {
      * planner takes the status index (reproduced; a fresh ANALYZE does not
      * cure it, because an empty sample keeps the old statistics).
      *
-     * So the sort is taken off the table along with the sequential scan,
-     * and the assertion is the stronger one: the calendar index is used
-     * and nothing is sorted. Drop the index, or break its column order,
-     * and the plan falls back to a sort and fails here.
+     * So the test asserts two separate things:
+     *
+     * - **The catalog**: `pg_indexes` must show the index defined as
+     *   `btree (doctor_id, starts_at)`, in that column order. This needs
+     *   no planner settings. It fails if the index is dropped or redefined,
+     *   including with the columns reversed.
+     * - **The plan**: with sorting taken off the table along with the
+     *   sequential scan, the calendar query must use this index and sort
+     *   nothing. This shows the index is usable by the real query. It fails
+     *   if the index is missing or unusable: the plan then falls back to a
+     *   sort. It does **not** catch reversed columns on its own, because
+     *   `(starts_at, doctor_id)` also serves this query without a sort.
+     *   The catalog assertion covers that.
      */
     it('uses the doctor calendar index for the appointment list', async () => {
+      const definition = await prisma.$queryRawUnsafe<{ indexdef: string }[]>(`
+        SELECT indexdef FROM pg_indexes
+        WHERE tablename = 'appointments' AND indexname = 'appointments_doctor_id_starts_at_idx'
+      `);
+
+      expect(definition[0]?.indexdef).toContain('USING btree (doctor_id, starts_at)');
+
       const plan = await planFor(
         `
         SELECT * FROM appointments
