@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
+import { captureLive, type LiveCapture } from '@/api/live-cache';
 import {
   AsyncBoundary,
   Badge,
@@ -94,17 +95,31 @@ export function PrivacyScreen() {
    * the server's answer; whether a clinic accepts a request to close an
    * account is the clinic's decision. The state comes back from the
    * server and is written as it was returned.
+   *
+   * Written — and announced — only while the session that sent the
+   * request is still the current one (`live-cache.ts`). A sign-out during
+   * the request clears the cache; writing by key afterwards would
+   * re-create this account's privacy state for whoever signs in next, and
+   * the toast would land in their session.
    */
   const write = (
     mutationFn: () => Promise<PrivacyState>,
     successKey: 'privacy.export.requested' | 'privacy.close.requested',
   ) => ({
     mutationFn,
-    onSuccess: (next: PrivacyState) => {
+    onMutate: (): LiveCapture => captureLive(queryClient, privacyKey),
+    onSuccess: (next: PrivacyState, _variables: void, live: LiveCapture | undefined) => {
+      if (live?.isCurrent() !== true) return;
       queryClient.setQueryData(privacyKey, next);
       toast.show(t(successKey), 'success');
     },
-    onError: () => toast.show(t('privacy.failed'), 'error'),
+    // The same rule for a failure: after a sign-out "could not be sent"
+    // would land on the sign-in screen or in the next account's session.
+    // No capture means `onMutate` never ran, so the failure is this one's.
+    onError: (_error: unknown, _variables: void, live: LiveCapture | undefined) => {
+      if (live !== undefined && !live.isCurrent()) return;
+      toast.show(t('privacy.failed'), 'error');
+    },
   });
 
   const exportRequest = useMutation(

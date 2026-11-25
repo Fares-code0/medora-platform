@@ -199,6 +199,16 @@ describe('a rollback that outlives its session', () => {
         // for the mutation to settle, and it settles only when failed.
         return { settled };
       },
+      /** For a key that holds nothing: wait for `onMutate` to have finished. */
+      startUncached: async () => {
+        const settled = observer.mutate('a').catch(() => undefined);
+        for (let i = 0; i < 50; i += 1) {
+          if (observer.getCurrentResult().context !== undefined) break;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        expect(observer.getCurrentResult().context).toBeDefined();
+        return { settled };
+      },
       fail: (inflight: { readonly settled: Promise<unknown> }) => {
         fail(new Error('offline'));
         return inflight.settled;
@@ -239,5 +249,59 @@ describe('a rollback that outlives its session', () => {
     await t.fail(inflight);
 
     expect(t.queryClient.getQueryData(KEY)).toEqual(NEXT_ACCOUNT);
+  });
+
+  /**
+   * The message is the call site's, and it describes a screen. After a
+   * sign-out that screen is gone, and the toast provider is not
+   * session-scoped: the "couldn't save" would land on the sign-in screen or
+   * in the next account's session.
+   */
+  it('does not tell the call site after the sign-out cleared the cache', async () => {
+    const onRollback = jest.fn();
+    const t = inFlight(onRollback);
+    t.queryClient.setQueryData(KEY, UNREAD);
+    const inflight = await t.start();
+
+    t.queryClient.clear();
+    await t.fail(inflight);
+
+    expect(onRollback).not.toHaveBeenCalled();
+  });
+
+  it('does not tell the call site when the next account has re-created the key', async () => {
+    const onRollback = jest.fn();
+    const t = inFlight(onRollback);
+    t.queryClient.setQueryData(KEY, UNREAD);
+    const inflight = await t.start();
+
+    t.queryClient.clear();
+    t.queryClient.setQueryData(KEY, NEXT_ACCOUNT);
+    await t.fail(inflight);
+
+    expect(onRollback).not.toHaveBeenCalled();
+    expect(t.queryClient.getQueryData(KEY)).toEqual(NEXT_ACCOUNT);
+  });
+
+  // Nothing cached is not the same as signed out: a failure in the session
+  // that sent the request is still that session's to report.
+  it('still tells the call site when nothing was cached and the session is intact', async () => {
+    const onRollback = jest.fn();
+    const t = inFlight(onRollback);
+
+    await t.fail(await t.startUncached());
+
+    expect(onRollback).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not tell the call site when nothing was cached and the session has ended', async () => {
+    const onRollback = jest.fn();
+    const t = inFlight(onRollback);
+    const inflight = await t.startUncached();
+
+    t.queryClient.clear();
+    await t.fail(inflight);
+
+    expect(onRollback).not.toHaveBeenCalled();
   });
 });

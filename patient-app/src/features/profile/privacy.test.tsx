@@ -3,6 +3,7 @@ import { act, fireEvent, waitFor } from '@testing-library/react-native';
 import { EndpointNotImplementedError } from '@/api/seam';
 import { renderWithProviders } from '@/test/render';
 
+import { profileKeys } from './keys';
 import type { PrivacyState } from './model/types';
 import { PrivacyScreen } from './screens/PrivacyScreen';
 import { profileService } from './service';
@@ -174,5 +175,122 @@ describe('when the requests cannot be read', () => {
     expect(
       await view.findByText('That request could not be sent. Try again in a moment.'),
     ).toBeTruthy();
+  });
+});
+
+/**
+ * A request that is still on the wire when the session ends.
+ *
+ * Signing out clears the query cache, but it cannot stop the request, and
+ * TanStack still runs `onSuccess` when it lands. Writing by key then would
+ * re-create this account's privacy state for whoever signs in next, and the
+ * success toast — the toast provider outlives the session — would land in
+ * their session.
+ */
+describe('a request that outlives its session', () => {
+  function deferredExport() {
+    let resolve: (state: PrivacyState) => void = () => undefined;
+    const spy = jest.spyOn(profileService, 'requestDataExport').mockImplementation(
+      () =>
+        new Promise<PrivacyState>((done) => {
+          resolve = done;
+        }),
+    );
+    installed.push(spy);
+    return { spy, resolve: (state: PrivacyState) => resolve(state) };
+  }
+
+  it('writes and announces the result while the session is intact', async () => {
+    stub();
+    const request = deferredExport();
+    const view = renderWithProviders(<PrivacyScreen />);
+
+    const button = await view.findByTestId('privacy-export-request');
+    await act(async () => {
+      fireEvent.press(button);
+    });
+    expect(request.spy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      request.resolve(EXPORT_PENDING);
+    });
+
+    expect(
+      await view.findByText('Your clinic has your request. You will hear when the file is ready.'),
+    ).toBeTruthy();
+    expect(view.queryClient.getQueryData(profileKeys.privacy())).toEqual(EXPORT_PENDING);
+  });
+
+  it('writes nothing and announces nothing once a sign-out has cleared the cache', async () => {
+    stub();
+    const request = deferredExport();
+    const view = renderWithProviders(<PrivacyScreen />);
+
+    const button = await view.findByTestId('privacy-export-request');
+    await act(async () => {
+      fireEvent.press(button);
+    });
+    expect(request.spy).toHaveBeenCalledTimes(1);
+
+    const setQueryData = jest.spyOn(view.queryClient, 'setQueryData');
+    await act(async () => {
+      view.queryClient.clear();
+    });
+    await act(async () => {
+      request.resolve(EXPORT_PENDING);
+    });
+
+    expect(setQueryData).not.toHaveBeenCalledWith(profileKeys.privacy(), EXPORT_PENDING);
+    expect(view.queryClient.getQueryData(profileKeys.privacy())).not.toEqual(EXPORT_PENDING);
+    expect(
+      view.queryByText('Your clinic has your request. You will hear when the file is ready.'),
+    ).toBeNull();
+  });
+
+  function failingExport() {
+    let reject: (error: Error) => void = () => undefined;
+    const spy = jest.spyOn(profileService, 'requestDataExport').mockImplementation(
+      () =>
+        new Promise<PrivacyState>((_done, fail) => {
+          reject = fail;
+        }),
+    );
+    installed.push(spy);
+    return { spy, reject: (error: Error) => reject(error) };
+  }
+
+  it('announces a failure while the session is intact', async () => {
+    stub();
+    const request = failingExport();
+    const view = renderWithProviders(<PrivacyScreen />);
+
+    await act(async () => {
+      fireEvent.press(await view.findByTestId('privacy-export-request'));
+    });
+    await act(async () => {
+      request.reject(new Error('network'));
+    });
+
+    expect(
+      await view.findByText('That request could not be sent. Try again in a moment.'),
+    ).toBeTruthy();
+  });
+
+  it('announces no failure once a sign-out has cleared the cache', async () => {
+    stub();
+    const request = failingExport();
+    const view = renderWithProviders(<PrivacyScreen />);
+
+    await act(async () => {
+      fireEvent.press(await view.findByTestId('privacy-export-request'));
+    });
+    await act(async () => {
+      view.queryClient.clear();
+    });
+    await act(async () => {
+      request.reject(new Error('network'));
+    });
+
+    expect(view.queryByText('That request could not be sent. Try again in a moment.')).toBeNull();
   });
 });
