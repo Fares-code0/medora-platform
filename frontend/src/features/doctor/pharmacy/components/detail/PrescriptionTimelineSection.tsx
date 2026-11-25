@@ -28,7 +28,7 @@ export function PrescriptionTimelineSection({ prescription }: { prescription: Pr
               <li key={event.id} className="relative">
                 <span
                   aria-hidden="true"
-                  className="absolute -left-[37px] flex h-6 w-6 items-center justify-center rounded-pill border border-border bg-surface text-text-secondary"
+                  className="absolute -start-[37px] flex h-6 w-6 items-center justify-center rounded-pill border border-border bg-surface text-text-secondary"
                 >
                   <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
                 </span>

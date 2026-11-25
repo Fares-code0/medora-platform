@@ -78,6 +78,18 @@ interface AuthContextValue {
    * the next sign-in and by an explicit logout.
    */
   readonly sessionEnded: boolean;
+  /**
+   * The account whose session last ended in this tab, by any path — kept
+   * across the session end so a `returnTo` captured for that account is not
+   * honoured for a different one (A-W1, `resolveDestination`). Null until a
+   * session ends here: a fresh load knows no previous account.
+   */
+  readonly previousUserId: string | null;
+  /**
+   * The last session in this tab ended because its user signed out, so the
+   * sign-in page is reached with no `returnTo` (A-W1, `RequireAuth`).
+   */
+  readonly signedOut: boolean;
   readonly login: (
     email: string,
     password: string,
@@ -101,10 +113,18 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const;
 
+/** Order-insensitive: the server owes no particular order of permissions. */
+function samePermissionSet(a: readonly Permission[], b: readonly Permission[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((permission) => right.has(permission));
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('booting');
   const [user, setUser] = useState<SessionUser | null>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [previousUserId, setPreviousUserId] = useState<string | null>(null);
   const pendingRef = useRef<PendingSignIn | null>(null);
   /** Remember Me for the live session, so a refresh can re-persist it. */
   const rememberRef = useRef(false);
@@ -113,8 +133,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * registered once and so cannot read `user` from its closure.
    */
   const userIdRef = useRef<string | null>(null);
+  /** The whole user, for the same handler's role/permission comparison. */
+  const userRef = useRef<SessionUser | null>(null);
   useEffect(() => {
     userIdRef.current = user?.id ?? null;
+    userRef.current = user;
   }, [user]);
   /**
    * The query cache is PHI held in memory, so it ends with the session that
@@ -157,6 +180,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const endSession = useCallback(() => {
+    const endingUserId = userIdRef.current;
+    if (endingUserId !== null) setPreviousUserId(endingUserId);
     authService.clear();
     queryClient.clear();
     // The assistant's conversations are PHI held in memory too (S1).
@@ -231,6 +256,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         endSession();
         return null;
       }
+      const current = userRef.current;
+      if (
+        current !== null &&
+        (session.user.role !== current.role ||
+          !samePermissionSet(session.user.permissions, current.permissions))
+      ) {
+        // The same account, with a different role or capabilities — an
+        // administrator changed them mid-session, which reaches this tab here
+        // because the server refuses a token whose role claim is stale
+        // (ADR-046). What was cached was fetched under the old grant, so it
+        // goes, as on a sign-in; the session itself is still valid, so it is
+        // adopted rather than ended. The guards re-read the new user.
+        queryClient.clear();
+        clearAiSessionData();
+        clearSessionMemory();
+      }
       authService.persist(session, rememberRef.current);
       setUser(session.user);
       return session.accessToken;
@@ -238,7 +279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       apiClient.setUnauthorizedHandler(null);
     };
-  }, [endSession]);
+  }, [endSession, queryClient]);
 
   // ── Auth operations ─────────────────────────────────────────────────────
   const login = useCallback(
@@ -390,6 +431,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       sessionEnded,
+      previousUserId,
+      // `logout` clears `sessionEnded`; every other end of a session sets it.
+      signedOut: previousUserId !== null && !sessionEnded,
       login,
       logout,
       lock,
@@ -407,6 +451,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       user,
       sessionEnded,
+      previousUserId,
       login,
       logout,
       lock,

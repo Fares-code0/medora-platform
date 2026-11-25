@@ -16,14 +16,27 @@ import { RequireAuth, RequireGuest, RequirePermission, RequireRole } from './gua
 
 type AuthStatus = 'booting' | 'locked' | 'unauthenticated' | 'authenticated';
 
-const authState: { status: AuthStatus; user: SessionUser | null; permissions: Permission[] } = {
+const authState: {
+  status: AuthStatus;
+  user: SessionUser | null;
+  permissions: Permission[];
+  previousUserId: string | null;
+  signedOut: boolean;
+} = {
   status: 'unauthenticated',
   user: null,
   permissions: [],
+  previousUserId: null,
+  signedOut: false,
 };
 
 vi.mock('@/app/providers', () => ({
-  useAuth: () => ({ status: authState.status, user: authState.user }),
+  useAuth: () => ({
+    status: authState.status,
+    user: authState.user,
+    previousUserId: authState.previousUserId,
+    signedOut: authState.signedOut,
+  }),
   useCan: () => (permission: Permission) => authState.permissions.includes(permission),
 }));
 
@@ -70,6 +83,7 @@ function renderGuard(guard: React.ReactElement, initialPath = '/doctor/labs') {
         <Route path="/login" element={<LoginPad />} />
         <Route path="/lock-screen" element={<h1>Locked</h1>} />
         <Route path="/doctor/overview" element={<h1>Doctor overview</h1>} />
+        <Route path="/doctor/patients/:id" element={<h1>Patient record</h1>} />
         <Route path="/admin" element={<h1>Admin area</h1>} />
       </Routes>
     </MemoryRouter>,
@@ -80,6 +94,8 @@ beforeEach(() => {
   authState.status = 'unauthenticated';
   authState.user = null;
   authState.permissions = [];
+  authState.previousUserId = null;
+  authState.signedOut = false;
 });
 
 describe('RequireAuth', () => {
@@ -107,6 +123,17 @@ describe('RequireAuth', () => {
     expect(screen.getByTestId('login-search')).toHaveTextContent(
       `returnTo=${encodeURIComponent('/doctor/labs?critical=true')}`,
     );
+  });
+
+  // A-W1: the address belongs to the user who signed out, not the next one.
+  it('sends a user who signed out to login with no returnTo', () => {
+    authState.previousUserId = 'u1';
+    authState.signedOut = true;
+
+    renderGuard(<RequireAuth />, '/doctor/labs?critical=true');
+
+    expect(screen.getByRole('heading', { name: 'Login' })).toBeInTheDocument();
+    expect(screen.getByTestId('login-search')).toBeEmptyDOMElement();
   });
 
   it('renders the protected route once authenticated', () => {
@@ -154,6 +181,26 @@ describe('RequireGuest', () => {
     signedInAs('doctor');
 
     renderGuard(<RequireGuest />, '/public');
+
+    expect(screen.getByRole('heading', { name: 'Doctor overview' })).toBeInTheDocument();
+  });
+
+  it('honours returnTo for the account it was captured for', () => {
+    signedInAs('doctor');
+    authState.previousUserId = 'u1';
+
+    renderGuard(<RequireGuest />, `/public?returnTo=${encodeURIComponent('/doctor/patients/p1')}`);
+
+    expect(screen.getByRole('heading', { name: 'Patient record' })).toBeInTheDocument();
+  });
+
+  // A-W1: the SAME rule LoginPage applies — another account's path is not
+  // this one's, whatever their shared role.
+  it('ignores a returnTo captured for a different account', () => {
+    signedInAs('doctor');
+    authState.previousUserId = 'someone-else';
+
+    renderGuard(<RequireGuest />, `/public?returnTo=${encodeURIComponent('/doctor/patients/p1')}`);
 
     expect(screen.getByRole('heading', { name: 'Doctor overview' })).toBeInTheDocument();
   });

@@ -120,4 +120,17 @@ describe('resolveDestination', () => {
     expect(resolveDestination('/pharmacy/patients', DOCTOR)).toBe('/');
     expect(resolveDestination('/doctor/pharmacy', DOCTOR)).toBe('/doctor/pharmacy');
   });
+
+  // A-W1: a returnTo belongs to the account it was captured for.
+  it('refuses a returnTo captured for a different account', () => {
+    const PATIENT = '/doctor/patients/PT-1001';
+    expect(resolveDestination(PATIENT, DOCTOR, { userId: 'u-b', previousUserId: 'u-a' })).toBe('/');
+    expect(resolveDestination(PATIENT, DOCTOR, { userId: 'u-a', previousUserId: 'u-a' })).toBe(
+      PATIENT,
+    );
+    // No previous account known — a fresh load: the role rule alone applies.
+    expect(resolveDestination(PATIENT, DOCTOR, { userId: 'u-b', previousUserId: null })).toBe(
+      PATIENT,
+    );
+  });
 });

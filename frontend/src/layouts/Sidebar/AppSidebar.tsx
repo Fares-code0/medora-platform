@@ -23,7 +23,7 @@ import { useShellBadges } from '../badge-context';
 import { type NavigationConfig } from '../navigation';
 import { ThemeSwitch } from '../ThemeSwitch';
 
-import { ActiveHospital } from './ActiveHospital';
+import { ActiveHospital, ActiveHospitalMark } from './ActiveHospital';
 
 /**
  * AppSidebar — FRONTEND_ARCHITECTURE.md §4 (layouts/Sidebar).
@@ -176,13 +176,18 @@ export function AppSidebar({
                 collapsed && 'px-0',
               )}
             >
-              <Avatar
-                name={displayName}
-                src={isDoctor ? (profile.photo ?? undefined) : undefined}
-                size="sm"
-                roleRing={user.role === 'doctor' || user.role === 'admin' ? user.role : 'staff'}
-                decorative
-              />
+              {/* The collapsed rail has no room for the card's text, so the
+                  active hospital rides on the avatar as a small mark. */}
+              <span className="relative inline-flex shrink-0">
+                <Avatar
+                  name={displayName}
+                  src={isDoctor ? (profile.photo ?? undefined) : undefined}
+                  size="sm"
+                  roleRing={user.role === 'doctor' || user.role === 'admin' ? user.role : 'staff'}
+                  decorative
+                />
+                {collapsed ? <ActiveHospitalMark /> : null}
+              </span>
               {!collapsed ? (
                 <div className="min-w-0">
                   <p className="truncate text-body-sm font-medium text-text-primary">

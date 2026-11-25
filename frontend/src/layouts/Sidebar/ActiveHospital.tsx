@@ -29,3 +29,35 @@ export function ActiveHospital() {
     </p>
   );
 }
+
+/**
+ * The active hospital on the collapsed rail — WEB-1 (DR-02).
+ *
+ * The rail has no room for the account card's text, so the hospital is a
+ * small building mark pinned to the avatar's top inline-end corner. It is
+ * absolutely positioned and so takes no space: the rail does not move when
+ * it appears. Assistive technology reads the same label and name as the
+ * expanded line. It carries no native `title`: the collapsed rail shows no
+ * hover labels anywhere (`AppSidebar.test.tsx`, "no hover labels"), so a
+ * sighted user reads the name by expanding the sidebar. It is not a
+ * control — no role, no tabindex, no handler — and renders nothing when
+ * there is no hospital.
+ */
+export function ActiveHospitalMark() {
+  const t = useT();
+  const hospital = useActiveHospital();
+  if (hospital === null) return null;
+
+  return (
+    <span
+      data-active-hospital-mark=""
+      className="absolute -end-1 -top-1 flex size-4 items-center justify-center rounded-pill border border-border bg-surface text-text-secondary"
+    >
+      <Building2 className="size-2.5 shrink-0" aria-hidden="true" />
+      <span className="sr-only">
+        {t('shell.activeHospital')}
+        {hospital.name}
+      </span>
+    </span>
+  );
+}

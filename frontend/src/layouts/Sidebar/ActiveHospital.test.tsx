@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { readActiveHospital } from '@/api/endpoints/session';
 import type * as Env from '@/configs/env';
 import { envelope, json, stubApi } from '@/test/api-stub';
 
-import { ActiveHospital } from './ActiveHospital';
+import { ActiveHospital, ActiveHospitalMark } from './ActiveHospital';
 import { activeHospitalKeys } from './useActiveHospital';
 
 /**
@@ -208,6 +208,144 @@ describe('ActiveHospital (WEB-1)', () => {
     await settled(client, DOCTOR_B.id);
     expect(second.container).toBeEmptyDOMElement();
     expect(api.requests).toHaveLength(2);
+  });
+});
+
+/**
+ * A-W3 — a failed background refetch must not blank a name that was right a
+ * moment ago. TanStack Query v5 moves such a query to `error` but keeps its
+ * `data`; the hook shows that data for the same user's key, and only that.
+ */
+describe('ActiveHospital across refetches (A-W3)', () => {
+  async function refetch(client: QueryClient, userId: string) {
+    await act(async () => {
+      await client.refetchQueries({ queryKey: activeHospitalKeys.forUser(userId) });
+      // TanStack batches observer notifications onto a timer; let them land.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+  }
+
+  it('keeps the last good name when a background refetch fails', async () => {
+    auth.user = DOCTOR_A;
+    let calls = 0;
+    const api = stubApi({
+      'GET /auth/session': () => {
+        calls += 1;
+        return calls === 1
+          ? sessionBody({ id: 'h-1', name: 'Al Noor Hospital' })
+          : json({ code: 'internal' }, 500);
+      },
+    });
+    const { client } = renderIndicator();
+    await screen.findByText('Al Noor Hospital');
+
+    await refetch(client, DOCTOR_A.id);
+    expect(api.requests).toHaveLength(2);
+    expect(client.getQueryState(activeHospitalKeys.forUser(DOCTOR_A.id))?.status).toBe('error');
+    expect(screen.getByText('Al Noor Hospital')).toBeInTheDocument();
+  });
+
+  it('shows nothing when the first load fails', async () => {
+    auth.user = DOCTOR_A;
+    stubApi({ 'GET /auth/session': () => json({ code: 'internal' }, 500) });
+    const { container, client } = renderIndicator();
+
+    await settled(client, DOCTOR_A.id);
+    expect(client.getQueryState(activeHospitalKeys.forUser(DOCTOR_A.id))?.status).toBe('error');
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('hides the name when a successful refetch answers no hospital', async () => {
+    auth.user = DOCTOR_A;
+    let calls = 0;
+    stubApi({
+      'GET /auth/session': () => {
+        calls += 1;
+        return sessionBody(calls === 1 ? { id: 'h-1', name: 'Al Noor Hospital' } : null);
+      },
+    });
+    const { container, client } = renderIndicator();
+    await screen.findByText('Al Noor Hospital');
+
+    await refetch(client, DOCTOR_A.id);
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(client.getQueryState(activeHospitalKeys.forUser(DOCTOR_A.id))?.status).toBe('success');
+  });
+
+  it('never carries one doctor’s name to another whose first load fails', async () => {
+    const client = newClient();
+    auth.user = DOCTOR_A;
+    stubApi({
+      'GET /auth/session': () =>
+        auth.user?.id === DOCTOR_A.id
+          ? sessionBody({ id: 'h-1', name: 'Al Noor Hospital' })
+          : json({ code: 'internal' }, 500),
+    });
+    const view = renderIndicator(client);
+    await screen.findByText('Al Noor Hospital');
+
+    // The same mounted indicator, now for another account: nothing of the
+    // first one's answer may show, while loading or after the failure.
+    auth.user = DOCTOR_B;
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <ActiveHospital />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByText(/Al Noor/)).not.toBeInTheDocument();
+    await settled(client, DOCTOR_B.id);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(view.container).toBeEmptyDOMElement();
+  });
+});
+
+/**
+ * A-W4 — the collapsed rail's mark: the name for assistive technology and
+ * on hover, never a control.
+ */
+describe('ActiveHospitalMark (A-W4)', () => {
+  function renderMark(client: QueryClient = newClient()) {
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ActiveHospitalMark />
+      </QueryClientProvider>,
+    );
+    return { ...view, client };
+  }
+
+  it('names the hospital for assistive technology, with no hover label', async () => {
+    auth.user = DOCTOR_A;
+    stubApi({ 'GET /auth/session': () => sessionBody({ id: 'h-1', name: 'مستشفى النور' }) });
+    const { container } = renderMark();
+
+    const label = await screen.findByText('Active hospital: مستشفى النور');
+    expect(label).toHaveClass('sr-only');
+    const mark = container.firstElementChild as HTMLElement;
+    expect(mark).not.toHaveAttribute('title');
+    expect(mark.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('is not a control — nothing interactive or focusable', async () => {
+    auth.user = DOCTOR_A;
+    stubApi({ 'GET /auth/session': () => sessionBody({ id: 'h-1', name: 'Al Noor Hospital' }) });
+    const { container } = renderMark();
+
+    await screen.findByText('Active hospital: Al Noor Hospital');
+    for (const role of ['button', 'link', 'combobox', 'listbox', 'menu', 'option']) {
+      expect(screen.queryAllByRole(role)).toHaveLength(0);
+    }
+    expect(container.querySelector('[tabindex], [role], input, select, a, button')).toBeNull();
+  });
+
+  it('renders nothing without a hospital', async () => {
+    auth.user = DOCTOR_A;
+    stubApi({ 'GET /auth/session': () => sessionBody(null) });
+    const { container, client } = renderMark();
+
+    await settled(client, DOCTOR_A.id);
+    expect(container).toBeEmptyDOMElement();
   });
 });
 

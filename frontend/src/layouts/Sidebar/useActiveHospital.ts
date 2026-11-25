@@ -14,6 +14,13 @@ import { useAuth } from '@/app/providers';
  *
  * A failure renders nothing and leaves the session alone; only the
  * `ApiClient`'s own 401 handling applies, as for every request.
+ *
+ * A failed background refetch keeps the last successful answer: TanStack
+ * Query puts the query in `error` but keeps its `data`, and a hospital name
+ * that was right a moment ago should not blink out over a transient error.
+ * The data is read from this user's own key only, so it is never another
+ * account's; a first load that fails has no data and shows nothing, and a
+ * successful refetch answering no hospital (`null`) hides it.
  */
 
 export const activeHospitalKeys = {
@@ -45,5 +52,5 @@ export function useActiveHospital(): ActiveHospital | null {
     staleTime: ACTIVE_HOSPITAL_STALE_MS,
   });
 
-  return enabled && query.isSuccess ? query.data : null;
+  return enabled && query.data !== undefined ? query.data : null;
 }

@@ -545,6 +545,147 @@ describe('AuthProvider — an account switched in another tab', () => {
 });
 
 /**
+ * A-W2 — the same account, refreshed with a different role or permissions.
+ *
+ * The server refuses an access token whose role claim no longer matches the
+ * database (ADR-046), so a role change made mid-session reaches this tab as
+ * a 401 → refresh that answers for the SAME account with a new grant. The
+ * cache was fetched under the old one: it goes, as on a sign-in, and the new
+ * user is adopted. An unchanged grant — in any order — keeps today's
+ * behaviour: nothing is cleared.
+ */
+describe('AuthProvider — the same account refreshed with a changed grant', () => {
+  const CACHED = ['doctor-labs', 'list'] as const;
+
+  async function signedInWithClientAndHandler() {
+    let handler: (() => Promise<string | null>) | null = null;
+    const register = apiClient.setUnauthorizedHandler.bind(apiClient);
+    vi.spyOn(apiClient, 'setUnauthorizedHandler').mockImplementation((next) => {
+      if (next) handler = next;
+      register(next);
+    });
+    const client = new QueryClient();
+    const view = renderHook(() => useAuth(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryClientProvider>
+      ),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    await settle(() => view.result.current.login(SEEDED_DOCTOR, PASSWORD));
+    if (handler === null) throw new Error('no unauthorized handler registered');
+    const user = view.result.current.user;
+    if (user === null) throw new Error('no signed-in user');
+    expect(user.permissions.length).toBeGreaterThan(1);
+    client.setQueryData(CACHED, [{ id: 'LAB-1', patient: { name: 'Synthetic Patient A' } }]);
+    return { ...view, client, user, refresh: handler as () => Promise<string | null> };
+  }
+
+  async function refreshedAs(
+    refresh: () => Promise<string | null>,
+    user: NonNullable<ReturnType<typeof useAuth>['user']>,
+  ) {
+    vi.spyOn(authService, 'restore').mockResolvedValue({
+      user,
+      accessToken: 'rotated-token',
+      expiresIn: 900,
+    });
+    return settle(() => refresh());
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('clears the cache and adopts the user when the role changed', async () => {
+    const { result, client, user, refresh } = await signedInWithClientAndHandler();
+
+    const token = await refreshedAs(refresh, { ...user, role: 'admin' });
+
+    expect(token).toBe('rotated-token');
+    expect(result.current.status).toBe('authenticated');
+    expect(result.current.user?.role).toBe('admin');
+    expect(client.getQueryData(CACHED)).toBeUndefined();
+  });
+
+  it('clears the cache when the permission set changed', async () => {
+    const { result, client, user, refresh } = await signedInWithClientAndHandler();
+
+    await refreshedAs(refresh, { ...user, permissions: user.permissions.slice(1) });
+
+    expect(result.current.user?.permissions).toEqual(user.permissions.slice(1));
+    expect(client.getQueryData(CACHED)).toBeUndefined();
+  });
+
+  it('keeps the cache when the same permissions arrive in another order', async () => {
+    const { client, user, refresh } = await signedInWithClientAndHandler();
+
+    await refreshedAs(refresh, { ...user, permissions: [...user.permissions].reverse() });
+
+    expect(client.getQueryData(CACHED)).toBeDefined();
+  });
+
+  it('keeps the cache when role and permissions are unchanged', async () => {
+    const { client, user, refresh } = await signedInWithClientAndHandler();
+
+    await refreshedAs(refresh, { ...user });
+
+    expect(client.getQueryData(CACHED)).toBeDefined();
+  });
+});
+
+/**
+ * A-W1 — what the guards need to know about how the last session ended:
+ * whose it was (a returnTo is that account's), and whether its user asked.
+ */
+describe('AuthProvider — how the last session ended (A-W1)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('knows no previous account on a fresh load', async () => {
+    const { result } = await signedOut();
+
+    expect(result.current.previousUserId).toBeNull();
+    expect(result.current.signedOut).toBe(false);
+  });
+
+  it('remembers the account and that it signed out, after a logout', async () => {
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const id = result.current.user?.id;
+
+    await settle(() => result.current.logout());
+
+    expect(result.current.previousUserId).toBe(id);
+    expect(result.current.signedOut).toBe(true);
+  });
+
+  it('remembers the account, but not as a sign-out, when a refresh is refused', async () => {
+    let handler: (() => Promise<string | null>) | null = null;
+    const register = apiClient.setUnauthorizedHandler.bind(apiClient);
+    vi.spyOn(apiClient, 'setUnauthorizedHandler').mockImplementation((next) => {
+      if (next) handler = next;
+      register(next);
+    });
+    const { result } = await signedOut();
+    await settle(() => result.current.login(SEEDED_DOCTOR, PASSWORD));
+    const id = result.current.user?.id;
+    if (handler === null) throw new Error('no unauthorized handler registered');
+    const refresh = handler as () => Promise<string | null>;
+    vi.spyOn(authService, 'restore').mockResolvedValue(null);
+
+    await settle(() => refresh());
+
+    expect(result.current.previousUserId).toBe(id);
+    expect(result.current.signedOut).toBe(false);
+  });
+});
+
+/**
  * S1 — the assistant's conversations are PHI. A patient-context chat carries
  * the directory patient's name (context, title, greeting), and it used to
  * persist under a global `medora.ai.*` key that no logout cleared, so the

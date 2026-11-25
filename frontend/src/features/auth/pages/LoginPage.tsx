@@ -35,7 +35,7 @@ const LOGIN_ERROR_MESSAGE: Partial<Record<AuthErrorCode, MessageKey>> = {
 
 export default function LoginPage() {
   const t = useT();
-  const { login, sessionEnded } = useAuth();
+  const { login, sessionEnded, previousUserId } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [formError, setFormError] = useState<string | null>(null);
@@ -61,7 +61,14 @@ export default function LoginPage() {
       const signedIn = await login(values.email, values.password, {
         rememberMe: values.rememberMe,
       });
-      navigate(resolveDestination(params.get('returnTo'), signedIn?.role), { replace: true });
+      // A returnTo is honoured only for the account it was captured for.
+      navigate(
+        resolveDestination(params.get('returnTo'), signedIn?.role, {
+          userId: signedIn?.id,
+          previousUserId,
+        }),
+        { replace: true },
+      );
     } catch (error) {
       // Before the coded refusals: it is an `AuthError` too, and its code
       // would otherwise read as a wrong password (DEC-013).
@@ -177,7 +184,13 @@ export default function LoginPage() {
       {import.meta.env.DEV ? (
         <DemoAccessPanel
           onSignedIn={(user) =>
-            navigate(resolveDestination(params.get('returnTo'), user.role), { replace: true })
+            navigate(
+              resolveDestination(params.get('returnTo'), user.role, {
+                userId: user.id,
+                previousUserId,
+              }),
+              { replace: true },
+            )
           }
         />
       ) : null}

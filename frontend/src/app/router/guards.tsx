@@ -18,7 +18,7 @@ import { ForbiddenPage } from '../error-boundary/ErrorPages';
 
 /** Layer 1 — authentication. Unauthenticated users go to login with returnTo. */
 export function RequireAuth() {
-  const { status } = useAuth();
+  const { status, signedOut } = useAuth();
   const location = useLocation();
   const t = useT();
 
@@ -38,6 +38,10 @@ export function RequireAuth() {
   }
 
   if (status === 'unauthenticated') {
+    // A sign-out the user asked for leaves nothing to come back to: the
+    // address they were on is theirs, and the next person at this tab must
+    // not be walked onto it — a patient's record, its id in the URL (A-W1).
+    if (signedOut) return <Navigate to={routes.login} replace />;
     const returnTo = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`${routes.login}?returnTo=${returnTo}`} replace />;
   }
@@ -63,14 +67,19 @@ export function RequireRole({ role }: { role: Role }) {
  * reaches the standalone lock screen, so only `authenticated` redirects here.
  */
 export function RequireGuest() {
-  const { status, user } = useAuth();
+  const { status, user, previousUserId } = useAuth();
   const [params] = useSearchParams();
 
   if (status === 'authenticated' && user) {
     // Honour returnTo with the SAME rule LoginPage uses. On a cold boot
     // straight onto /login the two race; when this guard ignored returnTo it
     // won and silently dropped every deep link that required signing in.
-    const destination = resolveDestination(params.get('returnTo'), user.role);
+    // The account check is part of that rule: this guard also renders the
+    // moment a sign-in completes on /login.
+    const destination = resolveDestination(params.get('returnTo'), user.role, {
+      userId: user.id,
+      previousUserId,
+    });
     const fallback = workspaceFor(user.role).home;
     return <Navigate to={destination === routes.root ? fallback : destination} replace />;
   }
