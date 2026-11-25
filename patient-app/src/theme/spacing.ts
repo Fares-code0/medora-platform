@@ -65,7 +65,8 @@ export const elevation = {
  * The accessibility floor for anything a finger touches (WCAG 2.5.5,
  * Apple HIG 44pt, Material 48dp). Every pressable in `components/`
  * enforces it via `minHeight`/`minWidth` or a `hitSlop`; S-01 is the
- * checklist row and `Button.test.tsx` is the assertion.
+ * checklist row and `components/components.test.tsx` ("clears the 44dp touch
+ * floor at every size") is the assertion.
  */
 export const MIN_TOUCH_TARGET = 44;
 

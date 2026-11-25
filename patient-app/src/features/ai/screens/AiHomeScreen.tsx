@@ -41,8 +41,9 @@ import { AiUnavailableNotice } from '../components/AiUnavailableNotice';
  * promise that something works.
  *
  * The clinician modes (`record`, `labs`, `pharmacy`) are deliberately
- * absent, which is the substance of K-01. `availability.test.ts` asserts
- * the absence rather than trusting this comment.
+ * absent, which is the substance of K-01. `ai-honesty.test.ts` ("offers none
+ * of the clinician modes") asserts the absence rather than trusting this
+ * comment.
  */
 type AiNavigation = NavigationProp<HomeStackParamList & RootStackParamList>;
 

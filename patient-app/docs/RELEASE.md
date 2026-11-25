@@ -78,10 +78,10 @@ the one mechanism that can stop it remotely.
 
 ## 3. Cutting the release
 
-1. Branch from `patient-app`, per `CLAUDE.md`'s task-branch rule.
+1. Branch from the latest `main`, per `CLAUDE.md`'s task-branch rule.
 2. Raise `expo.version`.
 3. Run the four gates in §1.
-4. Open a pull request into `patient-app`; merge after review.
+4. Open a pull request into `main`; merge after review.
 5. `patient-app` → `main` when the integration branch is ready.
 6. **⛔ BLOCKED (W-03):** `eas build --profile production --platform all`, then
    `eas submit`.

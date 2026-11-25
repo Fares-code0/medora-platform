@@ -40,7 +40,8 @@ export interface ListParams {
  * logs the patient out. `code` is what tells `invalid_credentials` from
  * `unauthorized`. `client.ts` therefore refreshes on `kind: 'auth'` ONLY
  * when the code is absent or is a token code — never on a credentials
- * failure. `errors.test.ts` is the assertion.
+ * failure. `client.test.ts` ("does NOT refresh on 401 invalid_credentials" and the
+ * `isTokenExpiryError` suite) is the assertion.
  *
  * Optional because a network failure has no envelope to carry one.
  */
