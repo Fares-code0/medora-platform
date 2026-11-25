@@ -147,6 +147,71 @@ describe('AppSidebar active hospital (WEB-1)', () => {
     renderAs('doctor', 'Amelia Chen', doctorNavigation, true);
     expect(screen.queryByText('Al Noor Hospital')).not.toBeInTheDocument();
   });
+
+  /*
+   * A-W4 — on the collapsed rail the hospital is a small mark on the
+   * avatar: the name for assistive technology (the rail has no hover labels,
+   * so no native `title`), absolutely positioned so the rail does not move,
+   * and never a control.
+   */
+  it('exposes the hospital on the collapsed rail as a non-interactive mark', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, true);
+    const rail = screen.getByRole('navigation', { name: 'Main' });
+
+    const label = within(rail).getByText('Active hospital: Al Noor Hospital');
+    expect(label).toHaveClass('sr-only');
+    const mark = label.parentElement as HTMLElement;
+    expect(mark).not.toHaveAttribute('title');
+    expect(mark).toHaveClass('absolute');
+    expect(mark).not.toHaveAttribute('tabindex');
+    expect(mark).not.toHaveAttribute('role');
+    expect(mark.querySelector('a, button, input, select, [tabindex], [role]')).toBeNull();
+    expect(mark.closest('a, button, [role="button"], [tabindex]')).toBeNull();
+    // It rides on the avatar, not in a row of its own.
+    expect(mark.parentElement).toHaveClass('relative');
+  });
+
+  it('adds no mark to the collapsed rail when there is no active hospital', () => {
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, true);
+    const rail = screen.getByRole('navigation', { name: 'Main' });
+    expect(within(rail).queryByText(/Active hospital/)).not.toBeInTheDocument();
+    expect(rail.querySelector('[data-active-hospital-mark]')).toBeNull();
+    expect(rail.querySelectorAll('[title]')).toHaveLength(0);
+  });
+
+  it('keeps the expanded card as it was — the line, and no rail mark', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    renderAs('doctor', 'Amelia Chen', doctorNavigation);
+    const hospital = screen.getByText('Al Noor Hospital');
+    expect(hospital).toHaveAttribute('dir', 'auto');
+    expect(hospital.parentElement?.tagName).toBe('P');
+    expect(document.querySelector('[data-active-hospital-mark]')).toBeNull();
+    expect(document.querySelector('[title="Al Noor Hospital"]')).toBeNull();
+  });
+
+  it('shows the hospital in the mobile drawer, which renders the expanded card', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    auth.user = { id: 'doctor-1', name: 'Amelia Chen', role: 'doctor' };
+    const proto = window.HTMLDialogElement.prototype as unknown as Record<string, unknown>;
+    proto['showModal'] = function showModal(this: HTMLDialogElement) {
+      this.open = true;
+    };
+    proto['close'] = function close(this: HTMLDialogElement) {
+      this.open = false;
+    };
+    render(
+      <ThemeProvider>
+        <MemoryRouter initialEntries={['/doctor/overview']}>
+          <MobileNavDrawer open onClose={() => undefined} config={doctorNavigation} />
+        </MemoryRouter>
+      </ThemeProvider>,
+    );
+    const drawer = screen.getByRole('dialog', { hidden: true });
+    const hospital = within(drawer).getByText('Al Noor Hospital');
+    expect(hospital.parentElement).toHaveTextContent('Active hospital: Al Noor Hospital');
+    expect(drawer.querySelector('[data-active-hospital-mark]')).toBeNull();
+  });
 });
 
 describe('AppSidebar theme switch', () => {
@@ -826,6 +891,15 @@ describe('AppSidebar collapsed rail — no hover labels', () => {
   it('carries no native title tooltip anywhere on the rail', () => {
     renderAs('doctor', 'Amelia Chen', doctorNavigation, true, '/doctor/overview');
     const rail = screen.getByRole('navigation', { name: 'Main' });
+    expect(rail.querySelectorAll('[title]')).toHaveLength(0);
+    expect(rail.querySelectorAll('svg title')).toHaveLength(0);
+  });
+
+  it('carries no native title tooltip on the rail when an active hospital is shown', () => {
+    activeHospital.value = { id: 'h-1', name: 'Al Noor Hospital' };
+    renderAs('doctor', 'Amelia Chen', doctorNavigation, true, '/doctor/overview');
+    const rail = screen.getByRole('navigation', { name: 'Main' });
+    expect(rail.querySelector('[data-active-hospital-mark]')).not.toBeNull();
     expect(rail.querySelectorAll('[title]')).toHaveLength(0);
     expect(rail.querySelectorAll('svg title')).toHaveLength(0);
   });
