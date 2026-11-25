@@ -74,6 +74,9 @@ function repositoryFor(options: {
     countActiveWithRole: vi.fn().mockResolvedValue(options.activeWithRole ?? 3),
     update,
     revokeSessions,
+    // Counted before a role change: the database trigger revokes them inside
+    // the update (G4, migration 20261125103000).
+    liveSessionCount: vi.fn().mockResolvedValue(0),
     list: vi.fn(),
     findByPublicId: vi.fn(),
   } as unknown as PlatformUserRepository;
