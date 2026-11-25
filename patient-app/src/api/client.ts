@@ -139,6 +139,21 @@ export class ApiClient {
   private refreshInFlight: Promise<string | null> | null = null;
   /** The refresh whose refusal was already reported as a session loss. */
   private sessionLostReportedFor: Promise<string | null> | null = null;
+  /**
+   * Which session a request was sent under (A-P3). Captured when a request
+   * is sent and compared when its 401 arrives: a request whose session has
+   * since ended must not refresh the session that replaced it, nor be
+   * replayed carrying that session's token.
+   *
+   * It moves on at a session BOUNDARY, which `setAccessToken` sees as the
+   * token going to or coming from null: every teardown clears the token
+   * (`endSessionNow`), every sign-in or restore installs one from nothing,
+   * and a different account adopted by a refresh is cleared first. A
+   * same-session rotation (token to token) does not move it, so a 401
+   * that lands after its own session's refresh still refreshes and replays
+   * as it always did.
+   */
+  private sessionGeneration = 0;
 
   constructor(private readonly baseUrl: string) {}
 
@@ -148,6 +163,7 @@ export class ApiClient {
    * preference store, never in a log (checklist T-02).
    */
   setAccessToken(token: string | null): void {
+    if (token === null || this.accessToken === null) this.sessionGeneration += 1;
     this.accessToken = token;
   }
 
@@ -266,6 +282,9 @@ export class ApiClient {
     const onCallerAbort = () => controller.abort();
     options.signal?.addEventListener('abort', onCallerAbort);
 
+    // In the same synchronous step as the headers below, so it names the
+    // session whose token the request carries.
+    const sentGeneration = this.sessionGeneration;
     let response: Response;
     try {
       response = await fetch(url, {
@@ -304,11 +323,19 @@ export class ApiClient {
         isTokenExpiryError(error);
 
       if (refreshable) {
+        // Sent under a session that has since ended (A-P3): its 401 says
+        // nothing about the current one. No refresh, no replay with the
+        // current session's token, no session loss — this request alone
+        // stops, quietly.
+        if (sentGeneration !== this.sessionGeneration) throw normalizeCancellationError();
         // A refresh that could not reach the server rejects here with its
         // transport error, which propagates to the caller and skips the
         // session-loss notification below (see `RefreshHandler`).
         const refresh = this.refreshOnce();
         const token = await refresh;
+        // The session changed while the refresh ran (a sign-out, or a
+        // refresh that came back as a different account): the same rule.
+        if (sentGeneration !== this.sessionGeneration) throw normalizeCancellationError();
         if (token !== null) {
           return this.request<T>(method, path, options, true);
         }
