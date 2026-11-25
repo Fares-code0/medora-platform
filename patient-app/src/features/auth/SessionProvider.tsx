@@ -18,6 +18,7 @@ import { clearPhiCache } from '@/api/query-client';
 import { clearRecentDoctors } from '@/features/doctors/recent';
 import { isApiError } from '@/types/api';
 import { logger } from '@/utils/logger';
+import { clearBreadcrumbs } from '@/utils/monitoring';
 
 import {
   isBiometricUnlockEnabled as defaultIsBiometricUnlockEnabled,
@@ -205,6 +206,12 @@ export function SessionProvider({
    * re-rendered, cannot write a guard over the tombstone.
    */
   const sessionLive = useRef(true);
+  /**
+   * The account the installed access token belongs to, or null when none
+   * is installed. Read by `activateNow` to tell a token renewal from a
+   * refresh that came back as somebody else (A-P4).
+   */
+  const activeSubject = useRef<string | null>(null);
 
   /**
    * Keychain and session-state changes happen one at a time, in order.
@@ -229,6 +236,7 @@ export function SessionProvider({
     async (reason?: SessionEndReason) => {
       epoch.current += 1;
       sessionLive.current = false;
+      activeSubject.current = null;
       apiClient.setAccessToken(null);
       try {
         await tokenStorage.clear();
@@ -252,6 +260,9 @@ export function SessionProvider({
           ? { status: 'unauthenticated' }
           : { status: 'unauthenticated', reason },
       );
+      // Last, after every line this teardown logs: the next account's
+      // crash reports carry none of this session's trail (A-P5).
+      clearBreadcrumbs();
     },
     [queryClient, setLocked, tokenStorage],
   );
@@ -348,6 +359,24 @@ export function SessionProvider({
   const activateNow = useCallback(
     (result: SignInResult, expectedEpoch: number | null): 'active' | 'stale' => {
       if (expectedEpoch !== null && expectedEpoch !== epoch.current) return 'stale';
+      const subject = result.identity.subjectId;
+      if (activeSubject.current !== null && activeSubject.current !== subject) {
+        // A-P4: the session came back as a different account. Everything
+        // the sign-out sweep removes goes before the new identity exists.
+        // The keychain is NOT cleared — this is not a refusal; the rotated
+        // token was already stored by `persistNow` and is the new account's.
+        // Clearing the access token first moves the transport's session
+        // generation on, so no request sent under the previous account is
+        // replayed with this one's token (A-P3). The held deep link goes
+        // when the identity below reaches the link coordinator, which drops
+        // a link bound to another subject (`link-resume.ts`).
+        apiClient.setAccessToken(null);
+        clearPhiCache(queryClient);
+        clearRecentDoctors();
+        clearBreadcrumbs();
+        logger.warn('A refresh returned a different account; cleared the previous account data');
+      }
+      activeSubject.current = subject;
       apiClient.setAccessToken(result.tokens.accessToken);
       setPendingOtpToken(null);
       // No `setLocked(false)` here: a mid-session refresh lands through this
@@ -356,7 +385,7 @@ export function SessionProvider({
       setState({ status: 'authenticated', identity: result.identity });
       return 'active';
     },
-    [],
+    [queryClient],
   );
 
   /**

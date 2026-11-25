@@ -887,3 +887,109 @@ describe('isApiError', () => {
     expect(isApiError(null)).toBe(false);
   });
 });
+
+describe('a 401 from a session that has since ended (A-P3)', () => {
+  /** A fetch whose answers the test hands out one at a time, in order. */
+  function deferredFetch() {
+    const pending: ((response: Response) => void)[] = [];
+    const calls: FetchCall[] = [];
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      return new Promise<Response>((resolve) => {
+        pending.push(resolve);
+      });
+    });
+    const answer = async (index: number, response: Response) => {
+      pending[index]?.(response);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    return { calls, answer };
+  }
+
+  it("neither refreshes B's session nor replays A's request with B's token", async () => {
+    const { calls, answer } = deferredFetch();
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => Promise.resolve('token-b-rotated'));
+    const onLost = jest.fn();
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    client.setAccessToken('token-a');
+    const fromA = client.get('me/appointments');
+    const outcome = fromA.then(
+      () => 'resolved',
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A signs out, B signs in; A's request is still on the wire.
+    client.setAccessToken(null);
+    client.setAccessToken('token-b');
+
+    await answer(0, json(401, GUARD_401));
+
+    expect(await outcome).toMatchObject({ kind: 'cancelled' });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(client.hasAccessToken()).toBe(true);
+  });
+
+  it('does not replay when the session changes while the refresh is running', async () => {
+    const { calls, answer } = deferredFetch();
+    const client = new ApiClient(BASE);
+    const onLost = jest.fn();
+    let finishRefresh: (token: string | null) => void = () => undefined;
+    const refresh = jest.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          finishRefresh = resolve;
+        }),
+    );
+    client.setRefreshHandler(refresh);
+    client.setSessionLostHandler(onLost);
+
+    client.setAccessToken('token-a');
+    const outcome = client.get('me/appointments').then(
+      () => 'resolved',
+      (error: unknown) => error,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await answer(0, json(401, GUARD_401));
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // The refresh came back as another account, which is installed fresh.
+    client.setAccessToken(null);
+    client.setAccessToken('token-b');
+    finishRefresh('token-b');
+
+    expect(await outcome).toMatchObject({ kind: 'cancelled' });
+    expect(onLost).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('still refreshes once and replays a same-session 401 after a token rotation', async () => {
+    const { calls, answer } = deferredFetch();
+    const client = new ApiClient(BASE);
+    const refresh = jest.fn(() => {
+      // The real handler installs the rotated token: same session.
+      client.setAccessToken('token-a-2');
+      return Promise.resolve('token-a-2');
+    });
+    client.setRefreshHandler(refresh);
+
+    client.setAccessToken('token-a');
+    const request = client.get('me/appointments');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Another request's refresh already rotated the token before this 401.
+    client.setAccessToken('token-a-1');
+    await answer(0, json(401, GUARD_401));
+    await answer(1, json(200, { data: { ok: true } }));
+
+    await expect(request).resolves.toEqual({ data: { ok: true } });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(2);
+    expect((calls[1]?.init.headers as Record<string, string>).Authorization).toBe(
+      'Bearer token-a-2',
+    );
+  });
+});

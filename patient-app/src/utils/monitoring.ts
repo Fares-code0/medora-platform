@@ -122,10 +122,20 @@ export function registerCrashSink(sink: CrashSink): () => void {
   };
 }
 
+/**
+ * Drops the breadcrumb trail and nothing else: sinks, the log sink and the
+ * global handler stay installed. Called when a session ends or changes
+ * account (A-P5), so a crash under the next account carries none of the
+ * last one's trail.
+ */
+export function clearBreadcrumbs(): void {
+  breadcrumbs = [];
+}
+
 /** Test seam, and the uninstall half of `installCrashReporting`. */
 export function resetMonitoring(): void {
   sinks.clear();
-  breadcrumbs = [];
+  clearBreadcrumbs();
   detachLogSink?.();
   detachLogSink = null;
 }

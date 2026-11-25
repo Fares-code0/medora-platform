@@ -19,7 +19,7 @@ import type { AppointmentDetail } from '../model/types';
  * `appointment.availableActions` contains its name. There is no
  * `switch (status)` in this file, no cancellation window, no "more than
  * 24 hours away" check. The server owns all of it (audit §6), and
- * `appointments.test.ts` asserts that an appointment with an empty
+ * `appointments.test.tsx` asserts that an appointment with an empty
  * `availableActions` renders no action whatever its status.
  *
  * ── Losing the race ──────────────────────────────────────────────────

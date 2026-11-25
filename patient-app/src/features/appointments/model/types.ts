@@ -18,7 +18,7 @@ import type { AppointmentPriority, AppointmentStatus } from '@/types/vocabularie
  * than the client deriving actions from `status`. It is also why there is
  * no transition table anywhere in this tree — `vocabularies.ts` has the
  * eight statuses and deliberately not the arrows between them.
- * `appointments.test.ts` asserts no action is derived from `status`.
+ * `appointments.test.tsx` asserts no action is derived from `status`.
  */
 
 /** What the server says this patient may do to this appointment, now. */

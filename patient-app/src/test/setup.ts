@@ -11,7 +11,7 @@ import { onlineManager } from '@tanstack/react-query';
 import { AccessibilityInfo } from 'react-native';
 
 // The keychain. `secure-store.ts` is the only module that imports this,
-// and `storage.test.ts` asserts on what reaches it.
+// and `storage/platform-storage.test.ts` asserts on what reaches it.
 jest.mock('expo-secure-store', () => {
   const store = new Map<string, string>();
   return {

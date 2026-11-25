@@ -23,9 +23,9 @@ import {
  *   lost phone.
  *
  * `tokenStorage` is constructed around an injectable `SecureStore` so a
- * test can prove the rule without a device — `storage.test.ts` asserts
- * that after `clear()` the store holds no keys at all, and that the
- * access token never reaches it.
+ * test can prove the rule without a device — `test/security.test.ts`
+ * ("token storage") asserts that the storage API has no way to accept an
+ * access token and that nothing reads back after `clear()`.
  */
 
 const REFRESH_TOKEN_KEY = 'medora.refresh-token';

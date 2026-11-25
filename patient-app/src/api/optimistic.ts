@@ -1,5 +1,7 @@
 import type { QueryClient, QueryKey, UseMutationOptions } from '@tanstack/react-query';
 
+import { captureLive } from './live-cache';
+
 /**
  * The optimistic-update pattern — checklist R-07.
  *
@@ -48,7 +50,11 @@ import type { QueryClient, QueryKey, UseMutationOptions } from '@tanstack/react-
 
 /** What `onMutate` hands to `onError`: everything needed to undo. */
 export interface OptimisticContext {
-  readonly restore: () => void;
+  /**
+   * Puts the snapshot back into the queries that are still live, and
+   * reports whether the session that took it is still the current one.
+   */
+  readonly restore: () => boolean;
 }
 
 export interface OptimisticUpdateOptions<TVariables, TQueryData, TError> {
@@ -96,10 +102,13 @@ export function optimisticUpdate<TVariables, TQueryData, TData = unknown, TError
       // Step 2. Snapshot every matching query, then rewrite it. The
       // snapshot holds the Query instances themselves, not only their keys:
       // see the restore below.
-      const snapshot = queryClient
-        .getQueryCache()
-        .findAll({ queryKey })
-        .map((query) => ({ query, data: query.state.data as TQueryData | undefined }));
+      const live = captureLive(queryClient, queryKey);
+      const snapshot = new Map(
+        queryClient
+          .getQueryCache()
+          .findAll({ queryKey })
+          .map((query) => [query, query.state.data as TQueryData | undefined] as const),
+      );
       queryClient.setQueriesData<TQueryData>({ queryKey }, (current) =>
         current === undefined ? current : apply(current, variables),
       );
@@ -111,22 +120,25 @@ export function optimisticUpdate<TVariables, TQueryData, TData = unknown, TError
           // TanStack runs `onError` after `clear()`: writing by key would
           // re-create the previous account's data, or overwrite the next
           // account's query that has since taken the same key.
-          const cache = queryClient.getQueryCache();
-          for (const { query, data } of snapshot) {
-            if (cache.get(query.queryHash) === query) {
-              queryClient.setQueryData(query.queryKey, data);
-            }
+          for (const query of live.liveQueries()) {
+            if (snapshot.has(query)) queryClient.setQueryData(query.queryKey, snapshot.get(query));
           }
+          return live.isCurrent();
         },
       };
     },
 
     // Step 3a. Undo, immediately and locally — then let the call site
     // say so, in that order, so the message never describes a screen
-    // that has not been put back yet.
+    // that has not been put back yet. Only while the session that sent
+    // the request is still the current one: after a sign-out there is
+    // nothing of it on screen to describe, and the toast provider is not
+    // session-scoped, so the message would land on the sign-in screen or
+    // in the next account's session (`live-cache.ts`).
     onError(error, variables, context) {
-      context?.restore();
-      onRollback?.(error, variables);
+      // No context: `onMutate` never completed, so nothing was changed and
+      // the failure is this session's own.
+      if (context === undefined || context.restore()) onRollback?.(error, variables);
     },
 
     // Step 3b. On either outcome the server is now the authority again.

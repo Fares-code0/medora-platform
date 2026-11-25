@@ -28,8 +28,8 @@ export type KeyFactory = ReturnType<typeof createKeyFactory>;
  * session loss and on background timeout (checklist J-10, T-03, T-08).
  *
  * A new PHI-bearing feature adds its domain here. Forgetting to is the
- * kind of omission a review misses, so `query-client.test.ts` asserts the
- * sweep removes every listed prefix.
+ * kind of omission a review misses, so `test/security.test.ts` ("PHI cache
+ * clearing") asserts the sweep removes every listed prefix.
  */
 export const PHI_QUERY_DOMAINS: readonly string[] = [
   'appointments',
