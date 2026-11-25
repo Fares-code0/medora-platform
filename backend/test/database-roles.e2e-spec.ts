@@ -16,7 +16,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { applyRoleStatement, withRoleProvisioningLock } from './support/role-provisioning-lock';
 
-import { createIsolatedDatabase, type IsolatedDatabase } from './support/isolated-database';
+import {
+  closeThenDrop,
+  createIsolatedDatabase,
+  type IsolatedDatabase,
+} from './support/isolated-database';
 import { RESET_TO_PRE_ACTIVATION } from './support/pre-activation';
 
 const rawDatabaseUrl = process.env['DATABASE_URL'] ?? '';
@@ -52,8 +56,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  if (connected) await client.end();
-  await isolated?.drop();
+  // The drop is attempted even if closing the client throws (closeThenDrop).
+  await closeThenDrop(connected ? client : undefined, isolated);
 }, 30_000);
 
 const tag = (): string => randomUUID().replaceAll('-', '').slice(0, 10);

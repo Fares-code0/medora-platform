@@ -4878,7 +4878,9 @@ mapping), DR-05
    (`shared/authz/authz-policy.ts`). Each staff category has an **explicit allow-list ceiling** (a new
    capability is held by no category until listed); administrators hold no standing PHI; platform
    administration is admin-only. A custom role is hospital-bound: it confers capability only while its
-   holder works at the role's own hospital. The cache is keyed `user|role|authz_version` (ADR-046).
+   holder works at the role's own hospital. The cache is keyed `user|role|authz_version` (ADR-046),
+   and the database enforces G4 for every writer: permission and role writes bump the version, and a
+   role change revokes the account's sessions (migration `20261125103000`).
 2. **Organizational standing gates every doctor and staff member.** A doctor's standing is VERIFIED,
    ACTIVE or VACATION practice and **exactly one** active employment at an ACTIVE hospital (the
    database allows no second one). Outside standing — unverified, suspended, never employed, between
@@ -4894,8 +4896,9 @@ mapping), DR-05
    (`@HospitalScope()`), confined to the caller's hospital, and a Platform Admin is refused there or
    sees nothing. Hospital Admins act for exactly one hospital.
 4. **DR-05.** A doctor reaches a patient iff the patient has a Hospital Medical Record at the doctor's
-   one clinical hospital; every clinical read by id is filtered to that hospital, and worklists are the
-   doctor's own or live-care rows there. Registration opens the record and the primary care assignment
+   one clinical hospital; every clinical read by id is filtered to that hospital, and worklists — and
+   the doctor's own reports (analytics, snapshots, insights) — are the doctor's own or live-care rows
+   there. Registration opens the record and the primary care assignment
    in one transaction with its `patient.create` audit row (L1). Every clinical write — records, lab
    orders, prescriptions, history, notes, vitals, documents, allergies, alerts, **appointments**, AI and
    patient-tagged conversations, availability — is stamped with hospital, record and employment from a

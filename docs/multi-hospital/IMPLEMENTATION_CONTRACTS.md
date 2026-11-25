@@ -9,7 +9,7 @@ What the backend now guarantees, and where each guarantee lives. The decision re
 | Contract | Where |
 | --- | --- |
 | Authorization comes from the database on every request, never the token's `permissions` claim (display-only) | `shared/authz/permission-resolver.service.ts`, `authorization.guard.ts` |
-| Cache key `user\|role\|authz_version`; every authorization change bumps `users.authz_version` in its own transaction | `permission-resolver.service.ts`, writers in `users`, `doctors`, `hospitals`, `auth` |
+| Cache key `user\|role\|authz_version`; every authorization change bumps `users.authz_version` in its own transaction. The database also enforces G4 for any writer (migration `20261125103000`): the version never decreases, permission and role writes bump it, and a role change revokes the account's sessions | `permission-resolver.service.ts`, writers in `users`, `doctors`, `hospitals`, `auth`; `permission-version`, `role-change-sessions` e2e |
 | Role change revokes every session and refresh token; permission edits apply on the next request without revocation | `users/services/platform-user.service.ts`, ADR-046 |
 | Server policy overlay: no standing admin PHI; admin-only platform capabilities; category ceilings; custom roles capped by base category | `shared/authz/authz-policy.ts` |
 | Doctor/staff standing gate: no capability without clinical standing; terminated accounts refused at login and refresh | `prisma-role.repository.ts` (`standingOf`), `login.service.ts`, `refresh.service.ts` |
