@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+
+import { Secret, TOTP } from 'otpauth';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -963,7 +965,47 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
       .set('Authorization', 'Bearer ' + accessToken);
   }
 
-  it('refuses the stale token and lets one refresh mint the current role (promotion)', async () => {
+  // G4 / ADR-046 as approved (OWNER_DECISIONS.md, 2026-11-23): a role change
+  // revokes every session and refresh token and rejects old access tokens.
+  // Since migration 20261125103000 the database enforces it for any writer of
+  // `users.role_id` — these fixtures write it directly — so the old role's
+  // tokens are refused AND its sessions cannot be refreshed into the new role:
+  // the account signs in again to hold it.
+  function totp(secret: string): string {
+    return new TOTP({ algorithm: 'SHA1', digits: 6, period: 30, secret: Secret.fromBase32(secret) }).generate();
+  }
+
+  /** Enrols a second factor on a fresh session of the account's current role. */
+  async function enrolTwoFactor(email: string): Promise<string> {
+    const bootstrap = await signIn(email);
+    const setup = await request(harness.server)
+      .post('/api/v1/me/2fa/setup')
+      .set('Authorization', 'Bearer ' + bootstrap.accessToken)
+      .send({ password: PASSWORD });
+    const secret = dataOf<{ secret: string }>(setup).secret;
+    await request(harness.server)
+      .post('/api/v1/me/2fa/enable')
+      .set('Authorization', 'Bearer ' + bootstrap.accessToken)
+      .send({ code: totp(secret) });
+    return secret;
+  }
+
+  /** A fresh administrator sign-in (password, then the second factor, ADR-035 §7). */
+  async function signInAsAdmin(email: string, secret: string): Promise<SignedIn> {
+    const login = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const verified = await request(harness.server)
+      .post('/api/v1/auth/otp/verify')
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: totp(secret) });
+    expect(verified.status, JSON.stringify(verified.body)).toBe(200);
+    return { email, accessToken: dataOf<SessionPayload>(verified).accessToken, refreshToken: refreshTokenOf(verified) };
+  }
+
+  async function liveSessions(email: string): Promise<number> {
+    const user = await harness.prisma.db.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+    return harness.prisma.db.session.count({ where: { userId: user.id, revokedAt: null } });
+  }
+
+  it('refuses the stale token and its refresh after a promotion; no old session survives', async () => {
     const signedIn = await seedAndSignIn('f3-promoted');
     expect((await session(signedIn.accessToken)).status).toBe(200);
 
@@ -971,39 +1013,34 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
 
     // The doctor token no longer describes the account: 401, not a payload
     // whose `role` and hospital context disagree.
-    const stale = await session(signedIn.accessToken);
-    expect(stale.status).toBe(401);
-
-    const refreshed = await refresh(signedIn.refreshToken);
-    expect(refreshed.status).toBe(200);
-    expect(refreshed.role).toBe('admin');
-
-    const current = await session(refreshed.accessToken);
-    expect(current.status).toBe(200);
-    expect(dataOf<SessionUser>(current).role).toBe('admin');
-    // The context is the admin's (unmapped), never a doctor employment.
-    expect(dataOf<SessionUser>(current).activeHospital).toBeNull();
+    expect((await session(signedIn.accessToken)).status).toBe(401);
+    // And the doctor's session cannot be refreshed into the admin role.
+    expect((await refresh(signedIn.refreshToken)).status).toBe(401);
+    expect(await liveSessions(signedIn.email)).toBe(0);
   });
 
   it('withdraws an administrative capability as soon as the role is downgraded', async () => {
     const signedIn = await seedAndSignIn('f3-demoted');
+    const secret = await enrolTwoFactor(signedIn.email);
     await setRole(signedIn.email, 'admin');
-    const asAdmin = await refresh(signedIn.refreshToken);
-    expect(asAdmin.role).toBe('admin');
+    // Promoted out of band: every session of the old role ended with it, so
+    // the administrator signs in afresh, with the second factor.
+    const admin = await signInAsAdmin(signedIn.email, secret);
 
     const before = await request(harness.server)
       .get(USERS)
-      .set('Authorization', 'Bearer ' + asAdmin.accessToken);
+      .set('Authorization', 'Bearer ' + admin.accessToken);
     expect(before.status).toBe(200);
 
     await setRole(signedIn.email, 'doctor');
 
     // The admin token still carries `roles.manage` in its signed claims; it
-    // must not reach the administration route any more.
+    // must not reach the administration route any more, nor be refreshed.
     const after = await request(harness.server)
       .get(USERS)
-      .set('Authorization', 'Bearer ' + asAdmin.accessToken);
+      .set('Authorization', 'Bearer ' + admin.accessToken);
     expect(after.status).toBe(401);
+    expect((await refresh(admin.refreshToken)).status).toBe(401);
   });
 
   it('keeps the session payload consistent: role and hospital context describe one role', async () => {
@@ -1030,11 +1067,13 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
 
       // Promoted while still employed: the old payload shape (role: admin
       // with a doctor's activeHospital) must be impossible.
+      const secret = await enrolTwoFactor(signedIn.email);
       await setRole(signedIn.email, 'admin');
       expect((await session(signedIn.accessToken)).status).toBe(401);
+      expect((await refresh(signedIn.refreshToken)).status).toBe(401);
 
-      const refreshed = await refresh(signedIn.refreshToken);
-      const body = dataOf<SessionUser>(await session(refreshed.accessToken));
+      const admin = await signInAsAdmin(signedIn.email, secret);
+      const body = dataOf<SessionUser>(await session(admin.accessToken));
       expect(body.role).toBe('admin');
       expect(body.activeHospital).toBeNull();
       // The promoted fixture holds an explicit Platform Admin grant (OD-07),
@@ -1046,7 +1085,7 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     }
   });
 
-  it('refuses every older session token and accepts the tokens each session refreshes to', async () => {
+  it('refuses every older session token and every older refresh token', async () => {
     const email = await seedAccount('f3-concurrent');
     const older = await signIn(email);
     const newer = await signIn(email);
@@ -1057,44 +1096,26 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
 
     expect((await session(older.accessToken)).status).toBe(401);
     expect((await session(newer.accessToken)).status).toBe(401);
-
-    // Each session refreshes independently and both land on the new role.
-    // (A fresh password sign-in as an administrator goes through the MFA
-    // challenge instead — unchanged, and not what this case is about.)
-    const olderRefreshed = await refresh(older.refreshToken);
-    const newerRefreshed = await refresh(newer.refreshToken);
-    for (const token of [olderRefreshed.accessToken, newerRefreshed.accessToken]) {
-      const response = await session(token);
-      expect(response.status).toBe(200);
-      expect(dataOf<SessionUser>(response).role).toBe('admin');
-    }
-
-    // Demoted back: the tokens minted for the admin role stop in turn.
-    await setRole(email, 'doctor');
-    expect((await session(olderRefreshed.accessToken)).status).toBe(401);
-    expect((await session(newerRefreshed.accessToken)).status).toBe(401);
+    expect((await refresh(older.refreshToken)).status).toBe(401);
+    expect((await refresh(newer.refreshToken)).status).toBe(401);
+    expect(await liveSessions(email)).toBe(0);
   });
 
-  it('an out-of-band role write is caught by the guard alone (role changes through the API revoke — users-account)', async () => {
+  it('an out-of-band role write revokes the sessions in the database (G4), and the guard still refuses the token', async () => {
     const signedIn = await seedAndSignIn('f3-family');
+    expect(await liveSessions(signedIn.email)).toBeGreaterThan(0);
+
+    // This write bypasses `PlatformUserService` (which also revokes): the
+    // database trigger revokes in the same transaction, and the guard's own
+    // stale-role check remains an independent defence.
     await setRole(signedIn.email, 'admin');
 
-    // This write bypasses `PlatformUserService`, which is where a role change
-    // revokes every session (ADR-046 as corrected; users-account.e2e-spec).
-    // What is proved here is the guard's independent defence: the stale-role
-    // access token is refused even when nothing revoked the session, and the
-    // refresh that follows is re-derived from the account's current role.
-    const user = await harness.prisma.db.user.findUniqueOrThrow({
-      where: { email: signedIn.email },
-      select: { id: true },
-    });
-    await expect(
-      harness.prisma.db.session.count({ where: { userId: user.id, revokedAt: null } }),
-    ).resolves.toBeGreaterThan(0);
-    expect((await refresh(signedIn.refreshToken)).status).toBe(200);
+    expect(await liveSessions(signedIn.email)).toBe(0);
+    expect((await session(signedIn.accessToken)).status).toBe(401);
+    expect((await refresh(signedIn.refreshToken)).status).toBe(401);
   });
 
-  it('never authorizes a refreshed token from the old role’s cached set (doctor → pharmacy)', async () => {
+  it('never authorizes a token from the old role’s cached set (doctor → pharmacy)', async () => {
     const AI = '/api/v1/ai/conversations'; // ai.use: doctor yes, pharmacy no
     const RECORDS = '/api/v1/medical-records'; // records.view: doctor yes, pharmacy no
     const signedIn = await seedAndSignIn('f3-cache');
@@ -1108,16 +1129,16 @@ describe('a role change after token issuance (F3, ADR-046)', () => {
     ).toBe(200);
 
     await setRole(signedIn.email, 'pharmacy');
-    const refreshed = await refresh(signedIn.refreshToken);
-    expect(refreshed.status).toBe(200);
-    expect(refreshed.role).toBe('pharmacy');
+    expect((await refresh(signedIn.refreshToken)).status).toBe(401);
+    const pharmacy = await signIn(signedIn.email);
+    expect(dataOf<SessionUser>(await session(pharmacy.accessToken)).role).toBe('pharmacy');
 
     // The cache is keyed by user, role and authz_version: the doctor's entry
     // can never answer for the pharmacy token.
     for (const route of [AI, RECORDS]) {
       const response = await request(harness.server)
         .get(route)
-        .set('Authorization', 'Bearer ' + refreshed.accessToken);
+        .set('Authorization', 'Bearer ' + pharmacy.accessToken);
       expect(response.status).toBe(403);
     }
   });

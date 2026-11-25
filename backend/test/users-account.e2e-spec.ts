@@ -627,6 +627,16 @@ describe('PATCH /admin/users/{id} (§2.10)', () => {
       .post('/api/v1/auth/refresh')
       .set('Cookie', cookie ?? '');
     expect(refreshed.status).toBe(401);
+
+    // The audit row records the sessions the change ended, even though the
+    // database trigger (G4, migration 20261125103000) revoked them inside
+    // the update itself.
+    const audit = await harness.prisma.auditEvent.findFirstOrThrow({
+      where: { eventType: 'user.administer', target: { contains: await publicIdOf(email) } },
+      orderBy: { occurredAt: 'desc' },
+    });
+    expect(audit.payload).toMatchObject({ roleAfter: 'nurse' });
+    expect((audit.payload as { sessionsRevoked?: number }).sessionsRevoked).toBeGreaterThanOrEqual(1);
   });
 
   it('refuses to promote anyone to admin through this route', async () => {

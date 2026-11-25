@@ -308,26 +308,30 @@ describe('disabling', () => {
 
   it('refuses an administrator, who may not remove their own factor', async () => {
     const email = await seedAccount('marcus');
-    const { accessToken: doctorToken, refreshCookie } = await enrol(email, { keepSession: true });
+    const { accessToken: doctorToken, refreshCookie, secret } = await enrol(email, { keepSession: true });
 
     const adminRole = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'admin' } });
     await harness.prisma.user.update({ where: { email }, data: { roleId: adminRole.id } });
     await grantPlatformAdmin(harness.prisma, email);
 
-    // ADR-046: the token minted for the old role is refused outright, and
-    // the session's one refresh mints the administrator token this case is
-    // about. The ADR-035 refusal below is then exercised with a token that
-    // really carries the `admin` role.
+    // ADR-046 / G4: the token minted for the old role is refused outright,
+    // and the role change revoked the session (migration 20261125103000), so
+    // it cannot be refreshed into the new role either. The administrator signs
+    // in afresh with the second factor, and the ADR-035 refusal below is
+    // exercised with a token that really carries the `admin` role.
     const stale = await request(harness.server)
       .post(DISABLE)
       .set('Authorization', `Bearer ${doctorToken}`)
       .send({ password: PASSWORD });
     expect(stale.status).toBe(401);
+    expect((await request(harness.server).post(REFRESH).set('Cookie', refreshCookie)).status).toBe(401);
 
-    const refreshed = await request(harness.server).post(REFRESH).set('Cookie', refreshCookie);
-    expect(refreshed.status).toBe(200);
-    expect(dataOf<SessionPayload>(refreshed).user.role).toBe('admin');
-    const accessToken = dataOf<SessionPayload>(refreshed).accessToken;
+    const login = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false });
+    const verified = await request(harness.server)
+      .post(OTP_VERIFY)
+      .send({ otpToken: dataOf<{ otpToken: string }>(login).otpToken, code: currentCode(secret) });
+    expect(dataOf<SessionPayload>(verified).user.role).toBe('admin');
+    const accessToken = dataOf<SessionPayload>(verified).accessToken;
 
     const response = await request(harness.server)
       .post(DISABLE)

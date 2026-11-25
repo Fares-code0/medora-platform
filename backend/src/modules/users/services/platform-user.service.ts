@@ -182,6 +182,11 @@ export class PlatformUserService {
 
     await this.assertAdministrationSurvives(target.role.code, input.role, input.active);
 
+    // A role change revokes the account's sessions inside the update itself
+    // (database trigger, migration 20261125103000), so they are counted
+    // first: the audit row records how many the change ended.
+    const liveBefore = roleId !== undefined ? await this.users.liveSessionCount(target.id) : 0;
+
     const updated = await this.users
       .update(target.id, actor.id, { roleId, status })
       .catch((error: unknown) => {
@@ -204,7 +209,8 @@ export class PlatformUserService {
     // authorized with the old role's permissions after this commits.
     const roleChanged = roleId !== undefined;
     const deactivated = status !== undefined && status !== UserStatus.ACTIVE;
-    const revoked = roleChanged || deactivated ? await this.users.revokeSessions(target.id) : 0;
+    const revokedNow = roleChanged || deactivated ? await this.users.revokeSessions(target.id) : 0;
+    const revoked = liveBefore + revokedNow;
     await this.permissions.forget(target.id);
 
     await this.audit.record({

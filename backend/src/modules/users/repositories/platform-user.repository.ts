@@ -202,6 +202,11 @@ export class PlatformUserRepository {
    * account being used right now. `RefreshService` refuses a non-ACTIVE
    * account as a second line of defence; this is the first.
    */
+  /** Live sessions of an account — what a role change is about to end. */
+  liveSessionCount(userId: string): Promise<number> {
+    return this.prisma.db.session.count({ where: { userId, revokedAt: null } });
+  }
+
   async revokeSessions(userId: string): Promise<number> {
     const result = await this.prisma.db.session.updateMany({
       where: { userId, revokedAt: null },
