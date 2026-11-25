@@ -619,7 +619,14 @@ describe('Phase 21 multi-hospital data model (PostgreSQL 16)', () => {
       await expectSqlState('UPDATE public.queue_entries SET room_id = $1 WHERE id = $2', [roomB, scoped], '23514');
       // Ownership is immutable once assigned.
       await expectSqlState('UPDATE public.queue_entries SET hospital_id = $1 WHERE id = $2', [hospitalB, scoped], '23514');
-      // A legacy row may be assigned an owner once (approved-mapping path), consistently with its room.
+      // A legacy row may be assigned an owner once (approved-mapping path), consistently with its room —
+      // and only with the mapping recorded as evidence first (M2, migration 20261125102000).
+      await expectSqlState('UPDATE public.queue_entries SET hospital_id = $1 WHERE id = $2', [hospitalA, legacy], '23514');
+      await client.query(
+        `INSERT INTO public.ownership_assignments (table_name, row_id, hospital_id, evidence_rule, evidence)
+         VALUES ('queue_entries', $1, $2, 'approved_mapping', '{}')`,
+        [legacy, hospitalA],
+      );
       await client.query('UPDATE public.queue_entries SET hospital_id = $1 WHERE id = $2', [hospitalA, legacy]);
       // The owning hospital cannot be hard-deleted while it owns entries.
       await expectSqlState('DELETE FROM public.hospitals WHERE id = $1', [hospitalA], '23503');

@@ -156,6 +156,8 @@ afterAll(async () => {
   if (owner === undefined) return;
   await owner.query('DELETE FROM exceptional_access_grants WHERE patient_id = ANY($1::uuid[])', [[ids.patientA, ids.patientB]]);
   await owner.query('DELETE FROM information_requests WHERE patient_id = ANY($1::uuid[])', [[ids.patientA, ids.patientB]]);
+  // Allergies stamped onto record A by the M2 evidence test reference it.
+  await owner.query('DELETE FROM patient_allergies WHERE patient_id = ANY($1::uuid[])', [[ids.patientA, ids.patientB]]);
   await owner.query('DELETE FROM hospital_medical_records WHERE id = ANY($1::uuid[])', [[ids.recordA, ids.recordB]]);
   await owner.query('DELETE FROM patients WHERE id = ANY($1::uuid[])', [[ids.patientA, ids.patientB]]);
   await owner.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [[ids.doctorUserA, ids.requesterB, ids.approverA]]);
