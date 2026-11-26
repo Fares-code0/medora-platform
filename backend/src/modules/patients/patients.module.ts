@@ -3,10 +3,14 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../../shared/database';
 
 import { PatientController } from './controllers/patient.controller';
+import { PatientAccountLinkController } from './controllers/patient-account-link.controller';
+import { PatientSelfLinkController } from './controllers/patient-self-link.controller';
 import { PatientTabsController } from './controllers/patient-tabs.controller';
 import { PatientRepository } from './repositories/patient.repository';
+import { PatientAccountLinkRepository } from './repositories/patient-account-link.repository';
 import { PatientTabsRepository } from './repositories/patient-tabs.repository';
 import { PatientService } from './services/patient.service';
+import { PatientAccountLinkService } from './services/patient-account-link.service';
 import { PatientTabsService } from './services/patient-tabs.service';
 
 /**
@@ -49,7 +53,19 @@ import { PatientTabsService } from './services/patient-tabs.service';
  */
 @Module({
   imports: [DatabaseModule],
-  controllers: [PatientController, PatientTabsController],
-  providers: [PatientService, PatientRepository, PatientTabsService, PatientTabsRepository],
+  controllers: [
+    PatientController,
+    PatientTabsController,
+    PatientAccountLinkController,
+    PatientSelfLinkController,
+  ],
+  providers: [
+    PatientService,
+    PatientRepository,
+    PatientTabsService,
+    PatientTabsRepository,
+    PatientAccountLinkService,
+    PatientAccountLinkRepository,
+  ],
 })
 export class PatientsModule {}

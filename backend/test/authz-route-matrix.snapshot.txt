@@ -21,6 +21,7 @@ DELETE /api/v1/me/incident-bookmarks/:bookmarkId                          A.....
 DELETE /api/v1/me/sessions/:sessionId                                     ADRLPTN  authenticated
 DELETE /api/v1/me/time-off/:timeOffId                                     ADRLPTN  authenticated
 DELETE /api/v1/patients/:patientId                                        ADRLP..  can:patients.view
+DELETE /api/v1/patients/:patientId/account-link                           A......  can:patients.manageAccounts
 DELETE /api/v1/patients/:patientId/allergies/:allergyId                   ADRLP..  can:patients.view
 DELETE /api/v1/patients/:patientId/emergency-contacts/:contactId          ADRLP..  can:patients.view
 DELETE /api/v1/patients/:patientId/history/:eventId                       ADRLP..  can:patients.view
@@ -98,8 +99,11 @@ GET /api/v1/me/appointments/:appointmentId                                ADRLPT
 GET /api/v1/me/availability                                               ADRLPTN  authenticated
 GET /api/v1/me/devices                                                    ADRLPTN  authenticated
 GET /api/v1/me/incident-bookmarks                                         A......  can:logs.view
+GET /api/v1/me/insurance                                                  ADRLPTN  authenticated
+GET /api/v1/me/lab-orders                                                 ADRLPTN  authenticated
 GET /api/v1/me/login-history                                              ADRLPTN  authenticated
 GET /api/v1/me/notification-preferences                                   ADRLPTN  authenticated
+GET /api/v1/me/patient-link                                               ADRLPTN  authenticated
 GET /api/v1/me/profile                                                    ADRLPTN  authenticated
 GET /api/v1/me/sessions                                                   ADRLPTN  authenticated
 GET /api/v1/me/settings                                                   ADRLPTN  authenticated
@@ -122,6 +126,8 @@ GET /api/v1/notifications/badge-counts                                    ADRLPT
 GET /api/v1/notifications/summary                                         ADRLPTN  authenticated
 GET /api/v1/patient/doctors                                               ADRLPTN  authenticated
 GET /api/v1/patient/doctors/:doctorId                                     ADRLPTN  authenticated
+GET /api/v1/patient/hospitals                                             ADRLPTN  authenticated
+GET /api/v1/patient/hospitals/:hospitalId                                 ADRLPTN  authenticated
 GET /api/v1/patient/specialties                                           ADRLPTN  authenticated
 GET /api/v1/patients                                                      ADRLP..  can:patients.view
 GET /api/v1/patients/:patientId                                           ADRLP..  can:patients.view
@@ -280,6 +286,7 @@ POST /api/v1/me/integrations/:integrationId/connect                       ADRLPT
 POST /api/v1/me/integrations/:integrationId/disconnect                    ADRLPTN  authenticated
 POST /api/v1/me/password                                                  ADRLPTN  authenticated
 POST /api/v1/me/password/verify                                           ADRLPTN  authenticated
+POST /api/v1/me/patient-link/code                                         ADRLPTN  authenticated
 POST /api/v1/me/sessions/revoke-others                                    ADRLPTN  authenticated
 POST /api/v1/me/time-off                                                  ADRLPTN  authenticated
 POST /api/v1/me/time-off/:timeOffId/resolve                               ADRLPTN  authenticated
@@ -298,6 +305,7 @@ POST /api/v1/notifications/:notificationId/unread                         ADRLPT
 POST /api/v1/notifications/clear-read                                     ADRLPTN  authenticated
 POST /api/v1/notifications/read-all                                       ADRLPTN  authenticated
 POST /api/v1/patients                                                     ADRLP..  can:patients.view
+POST /api/v1/patients/:patientId/account-link                             A......  can:patients.manageAccounts
 POST /api/v1/patients/:patientId/alerts                                   ADRLP..  can:patients.view
 POST /api/v1/patients/:patientId/allergies                                ADRLP..  can:patients.view
 POST /api/v1/patients/:patientId/documents                                ADRLP..  can:patients.view

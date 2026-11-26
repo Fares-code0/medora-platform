@@ -42,6 +42,7 @@ export interface DoctorSearchCriteria {
   readonly q?: string | undefined;
   readonly specialtyId?: string | undefined;
   readonly departmentId?: string | undefined;
+  readonly hospitalId?: string | undefined;
   readonly sort: 'name:asc' | 'name:desc' | 'rating:desc';
   readonly page: number;
   readonly pageSize: number;
@@ -98,6 +99,22 @@ export class PatientDoctorRepository {
         ? {}
         : { specialties: { some: { specialtyId: criteria.specialtyId } } }),
       ...(criteria.departmentId === undefined ? {} : { departmentId: criteria.departmentId }),
+      // ANDed with PATIENT_VISIBLE's own employment clause, never replacing it.
+      ...(criteria.hospitalId === undefined
+        ? {}
+        : {
+            AND: [
+              {
+                employments: {
+                  some: {
+                    hospitalId: criteria.hospitalId,
+                    endedAt: null,
+                    hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+                  },
+                },
+              },
+            ],
+          }),
     };
 
     const [rows, totalItems] = await runAsSystem(
@@ -105,7 +122,7 @@ export class PatientDoctorRepository {
         await Promise.all([
           this.prisma.db.doctor.findMany({
             where,
-            select: SUMMARY_SELECT,
+            select: { ...SUMMARY_SELECT, employments: employmentSelect(criteria.hospitalId) },
             orderBy: orderFor(criteria.sort),
             skip: (criteria.page - 1) * criteria.pageSize,
             take: criteria.pageSize,
@@ -114,7 +131,7 @@ export class PatientDoctorRepository {
         ]),
     );
 
-    return { items: rows.map(toSummary), totalItems };
+    return { items: rows.map((row) => toSummary(row)), totalItems };
   }
 
   /**
@@ -133,6 +150,7 @@ export class PatientDoctorRepository {
           where: { id: doctorId, ...PATIENT_VISIBLE },
           select: {
             ...SUMMARY_SELECT,
+            employments: employmentSelect(undefined),
             biography: true,
             education: true,
             certifications: true,
@@ -184,6 +202,25 @@ interface SummaryRow {
   readonly languages: string[];
   readonly ratingAvg: { toNumber(): number } | null;
   readonly department: { name: string } | null;
+  readonly employments: readonly { hospital: { id: string; name: string } }[];
+}
+
+/**
+ * The active employment that names the doctor's hospital: at the filtered
+ * hospital when there is one, else the earliest-started active one — a
+ * deterministic choice for a doctor employed at two hospitals.
+ */
+function employmentSelect(hospitalId: string | undefined) {
+  return {
+    where: {
+      endedAt: null,
+      hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+      ...(hospitalId === undefined ? {} : { hospitalId }),
+    },
+    select: { hospital: { select: { id: true, name: true } } },
+    orderBy: [{ startedAt: 'asc' as const }, { id: 'asc' as const }],
+    take: 1,
+  };
 }
 
 function toSummary(row: SummaryRow): PatientDoctorSummary {
@@ -202,6 +239,7 @@ function toSummary(row: SummaryRow): PatientDoctorSummary {
     // would put `{ s, e, d }` on the wire where the contract promises a
     // number. Converted here, once, rather than in each caller.
     ratingAvg: row.ratingAvg === null ? null : row.ratingAvg.toNumber(),
+    hospital: row.employments[0]?.hospital ?? null,
   };
 }
 

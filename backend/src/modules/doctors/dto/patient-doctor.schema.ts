@@ -22,6 +22,8 @@ export const doctorSearchSchema = z.object({
   q: searchTerm.optional(),
   specialtyId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),
+  /** Doctors holding an active employment at this hospital (contract §2). */
+  hospitalId: z.string().uuid().optional(),
   // Whitelisted rather than free-form (`ListParams`: "whitelisted per
   // endpoint"). An open `sort` is an invitation to order by a column the
   // projection deliberately does not return.

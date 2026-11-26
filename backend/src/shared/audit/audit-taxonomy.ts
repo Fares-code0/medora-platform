@@ -196,6 +196,9 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
 
   // Clinical acts whose reversal is expensive or whose subject is gone.
   'patient.deactivate': 'warning',
+  // Staff-mediated account linking (ADR-048): who an account *is* changes.
+  'patient.account.link': 'warning',
+  'patient.account.unlink': 'warning',
   'appointment.cancel_administratively': 'warning',
   'medical_record.report_issue': 'warning',
   'file.delete': 'warning',
@@ -222,6 +225,8 @@ const PARTICIPLES: Readonly<Record<string, string>> = {
   two_factor_setup: 'two-factor set up',
 
   investigate: 'taken for investigation',
+  link: 'linked',
+  unlink: 'unlinked',
   reauthenticate: 're-authenticated',
   reauthenticate_failed: 're-authentication failed',
   add: 'added',

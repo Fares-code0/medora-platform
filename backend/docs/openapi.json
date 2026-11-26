@@ -10998,6 +10998,33 @@
         }
       }
     },
+    "/api/v1/me/insurance": {
+      "get": {
+        "operationId": "PatientSelfLink_insurance",
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientSelfLink"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
     "/api/v1/me/integrations/{integrationId}/connect": {
       "post": {
         "operationId": "Settings_connect",
@@ -11063,6 +11090,57 @@
         ],
         "tags": [
           "Settings"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/me/lab-orders": {
+      "get": {
+        "operationId": "PatientLabStatus_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientLabStatus"
         ],
         "x-medora-authz": {
           "authenticated": true,
@@ -11368,6 +11446,60 @@
         ],
         "tags": [
           "AccountPassword"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/me/patient-link": {
+      "get": {
+        "operationId": "PatientSelfLink_status",
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientSelfLink"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/me/patient-link/code": {
+      "post": {
+        "operationId": "PatientSelfLink_issueCode",
+        "responses": {
+          "201": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientSelfLink"
         ],
         "x-medora-authz": {
           "authenticated": true,
@@ -14159,6 +14291,16 @@
           },
           {
             "in": "query",
+            "name": "hospitalId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "sort",
             "required": false,
             "schema": {
@@ -14246,6 +14388,104 @@
         ],
         "tags": [
           "PatientDoctor"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/patient/hospitals": {
+      "get": {
+        "operationId": "PatientHospital_search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientHospital"
+        ],
+        "x-medora-authz": {
+          "authenticated": true,
+          "can": [],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/patient/hospitals/{hospitalId}": {
+      "get": {
+        "operationId": "PatientHospital_byId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hospitalId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientHospital"
         ],
         "x-medora-authz": {
           "authenticated": true,
@@ -14804,6 +15044,126 @@
           "authenticated": false,
           "can": [
             "patients.view"
+          ],
+          "public": false,
+          "roles": []
+        }
+      }
+    },
+    "/api/v1/patients/{patientId}/account-link": {
+      "delete": {
+        "operationId": "PatientAccountLink_unlink",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientAccountLink"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [
+            "patients.manageAccounts"
+          ],
+          "public": false,
+          "roles": []
+        }
+      },
+      "post": {
+        "operationId": "PatientAccountLink_link",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "code": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "verification": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "documentType": {
+                        "enum": [
+                          "national_id",
+                          "passport",
+                          "residence_permit",
+                          "driving_licence"
+                        ],
+                        "type": "string"
+                      },
+                      "method": {
+                        "const": "in_person_id_document",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "method",
+                      "documentType"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "code",
+                  "verification"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success status Nest answers with. The payload is the `{ \"data\": … }` envelope of BACKEND_API_CONTRACT.md §0.2; its shape is not derived from code."
+          },
+          "default": {
+            "description": "Error envelope of BACKEND_API_CONTRACT.md §0.3. Not modelled here (RM M33.1b)."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "PatientAccountLink"
+        ],
+        "x-medora-authz": {
+          "authenticated": false,
+          "can": [
+            "patients.manageAccounts"
           ],
           "public": false,
           "roles": []
@@ -19761,14 +20121,14 @@
     }
   ],
   "x-medora-coverage": {
-    "operations": 325,
-    "withAnyRequestSchema": 184,
-    "withoutRequestSchema": 141,
-    "withQuery": 46,
-    "withQuerySchema": 42,
+    "operations": 333,
+    "withAnyRequestSchema": 187,
+    "withoutRequestSchema": 146,
+    "withQuery": 48,
+    "withQuerySchema": 44,
     "withQueryWithoutSchema": 4,
-    "withRequestBody": 142,
-    "withRequestBodySchema": 142,
+    "withRequestBody": 143,
+    "withRequestBodySchema": 143,
     "withRequestBodyWithoutSchema": 0
   }
 }
