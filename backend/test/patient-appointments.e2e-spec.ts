@@ -26,10 +26,9 @@ import { body as mailBody } from './support/smtp-sink';
  * see, address or count patient B's appointments, and the response must
  * not tell the difference between "not yours" and "does not exist".
  *
- * The write routes (book, cancel, confirm, slots) are deliberately not
- * implemented — each needs a policy no source states — so there is
- * nothing here to test for them, and their absence is asserted rather
- * than assumed.
+ * The write routes (book, cancel, reschedule requests, slots) arrived with
+ * ADR-049 and are tested in `patient-booking.e2e-spec.ts`; `confirm`
+ * (ADR-033 Q3) is still absent, and that absence is asserted below.
  */
 let harness: AuthHarness;
 

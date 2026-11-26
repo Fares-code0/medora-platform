@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import request from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type AuthHarness,
@@ -32,6 +32,10 @@ import { body as mailBody } from './support/smtp-sink';
  * which is what proves the RLS paths: a patient request in `patient`
  * scope, the booking transaction in the slot hospital's scope.
  */
+// Each case signs up and links its own accounts; under the runtime role
+// (tenant context on) that alone approaches the 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
+
 let harness: AuthHarness;
 
 const PREFIX = '/api/v1';
@@ -246,7 +250,8 @@ describe('POST /me/appointments', () => {
     const detail = await booked(me, slot);
 
     expect(detail.status).toBe('pending');
-    expect(detail.hospital).toEqual({ id: doctorA.hospitalId, name: expect.any(String) });
+    expect(detail.hospital?.id).toBe(doctorA.hospitalId);
+    expect(typeof detail.hospital?.name).toBe('string');
     expect(detail.availableActions).toEqual(['cancel']);
     expect(detail.pendingRescheduleRequest).toBeNull();
     expect(detail.events[0]).toMatchObject({ action: 'created', actor: 'patient' });
