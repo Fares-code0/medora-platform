@@ -248,7 +248,7 @@ describe('standing ends access, and assignments do not outlive it', () => {
       // The repository is driven directly here; the service supplies the
       // acting administrator and the audit (XH-03), which this test is not about.
       actorId: doctorRow.userId,
-      audit: async () => undefined,
+      audit: () => Promise.resolve(),
     });
     // Sessions were revoked by the transfer; sign in again.
     await login('r5-a');
@@ -278,7 +278,7 @@ describe('standing ends access, and assignments do not outlive it', () => {
     await staffing.endEmployment(
       { ...employment, doctorId: doctorRow.id, endedAt: null, userId: doctorRow.userId },
       doctorRow.userId,
-      async () => undefined,
+      () => Promise.resolve(),
     );
     // The session it held is revoked, and the account cannot open a new one.
     const response = await request(harness.server).get(`${PATIENTS}/${stranger}/vitals`).set(as('r5-b'));
