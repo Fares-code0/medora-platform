@@ -73,14 +73,20 @@ export function isPinned(rule: NotificationRule): boolean {
   return rule.priority === NotificationPriority.CRITICAL;
 }
 
-const {
-  APPOINTMENTS,
-  LABORATORY,
-  MEDICAL_RECORDS,
-  SYSTEM,
-} = NotificationCategory;
+const { APPOINTMENTS, LABORATORY, MEDICAL_RECORDS, SYSTEM } = NotificationCategory;
 const { NORMAL, CRITICAL } = NotificationPriority;
 const { ALERT, UPDATE, REMINDER } = NotificationKind;
+
+/** See the two `lab_order.*` rules below. */
+const PATIENT_TEST_COMPLETED: NotificationRule = {
+  category: LABORATORY,
+  priority: NORMAL,
+  kind: UPDATE,
+  audiences: ['patient'],
+  // Lock-screen safe: names no test and no outcome.
+  title: 'Update about your test',
+  source: 'ADR-050 (patient-facing test status) + owner decision 2026-11-26',
+};
 
 export const NOTIFICATION_RULES: Readonly<Record<string, NotificationRule>> = {
   /**
@@ -153,6 +159,22 @@ export const NOTIFICATION_RULES: Readonly<Record<string, NotificationRule>> = {
    * Category-level text only: the body carries the reference and the
    * time, never a reason or anything clinical (push-safe).
    */
+  /**
+   * ADR-050 — the patient-facing test-status layer. The order completed; the
+   * RESULT is not released (ADR-031 is open), so the patient is told the
+   * status only.
+   *
+   * The two topics carry the SAME rule on purpose. The service publishes
+   * `lab_order.critical_released` instead of `lab_order.completed` when a
+   * value is critical; if only one of them notified the patient, the
+   * presence or absence of the notification would itself disclose that the
+   * result is critical. Identical title, priority, kind and audience make
+   * the two indistinguishable to the patient. Doctors are paged by
+   * `lab_result.critical`, not by these.
+   */
+  'lab_order.completed': PATIENT_TEST_COMPLETED,
+  'lab_order.critical_released': PATIENT_TEST_COMPLETED,
+
   'appointment.reschedule_request.approved': {
     category: APPOINTMENTS,
     priority: NORMAL,
