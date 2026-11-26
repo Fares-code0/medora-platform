@@ -130,7 +130,7 @@ repeating a count that goes stale the next time an endpoint lands.
 | `auth` | `httpAuthService` | — |
 | `clinic` | `unavailableService` | BE-11 |
 | `doctors` | `httpDoctorService` | — |
-| `emergency` | `unconfigured` | BE-11 |
+| `emergency` | `operatorConfigured` | BE-11 |
 | `health` | `unavailableService` | BE-09 / AD-5 |
 | `home` | `unavailableService` | BE-10 |
 | `messages` | `unavailableService` | AD-1 / BE-13 |
@@ -148,10 +148,11 @@ Two of those rows carry a caveat the single word "live" would hide:
   The four write routes are blocked on ADR-033, which is a policy decision
   rather than an unbuilt endpoint, and no client-side slot arithmetic stands in
   for it.
-- **`emergency`** is not `unavailableService` but `unconfigured` — the screen
-  works entirely offline from bundled content, and it is only the
-  operator-supplied numbers that are absent. It says so rather than showing a
-  plausible number.
+- **`emergency`** is not `unavailableService` but `operatorConfigured` — the
+  screen works entirely offline from bundled content. Its numbers come only
+  from the operator's build-time `EXPO_PUBLIC_EMERGENCY_NUMBERS` (validated at
+  boot by `src/configs/env.ts`); unset, they are absent and the screen says so
+  rather than showing a plausible number. The app never supplies a number.
 - **`home`** is the recent-activity feed alone (F-06), not the screen: Home's
   other sections read the appointments and notifications features. It is the
   one refusal a patient never sees, because `RecentActivity` renders nothing

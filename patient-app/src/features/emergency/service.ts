@@ -1,6 +1,11 @@
 import { selectService } from '@/api/seam';
+import { env, type ConfiguredEmergencyNumber } from '@/configs/env';
 
-import { UNCONFIGURED_EMERGENCY, type EmergencyService } from './model/types';
+import {
+  UNCONFIGURED_EMERGENCY,
+  type EmergencyConfiguration,
+  type EmergencyService,
+} from './model/types';
 
 /**
  * The emergency configuration service.
@@ -25,11 +30,36 @@ import { UNCONFIGURED_EMERGENCY, type EmergencyService } from './model/types';
  * fallback is not defensive programming; it is the contract.
  */
 
-const unconfigured: EmergencyService = {
-  getConfiguration: async () => UNCONFIGURED_EMERGENCY,
+/**
+ * The one configuration channel that exists today: the operator's own
+ * build-time list, `EXPO_PUBLIC_EMERGENCY_NUMBERS`, validated by the
+ * environment schema (`src/configs/env.ts`). Bundled with the app, so it
+ * answers signed out and offline — exactly where Emergency must work.
+ * Empty → `UNCONFIGURED_EMERGENCY`; the app never supplies a number of
+ * its own.
+ */
+export function configurationFrom(
+  numbers: readonly ConfiguredEmergencyNumber[],
+): EmergencyConfiguration {
+  if (numbers.length === 0) return UNCONFIGURED_EMERGENCY;
+  return {
+    numbers: numbers.map((n) => ({
+      id: n.id,
+      label: n.label,
+      number: n.number,
+      ...(n.whenToUse === undefined ? {} : { whenToUse: n.whenToUse }),
+      ...(n.region === undefined ? {} : { region: n.region }),
+    })),
+    clinic: null,
+    source: 'operator',
+  };
+}
+
+const operatorConfigured: EmergencyService = {
+  getConfiguration: async () => configurationFrom(env.emergencyNumbers),
 };
 
 export const emergencyService: EmergencyService = selectService({
-  fixture: unconfigured,
-  http: unconfigured,
+  fixture: operatorConfigured,
+  http: operatorConfigured,
 });

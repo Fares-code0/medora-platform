@@ -160,6 +160,27 @@ export function apiBaseUrlRejection(value: string, appEnv: string): string | nul
   return null;
 }
 
+/** One operator-configured emergency line. See `EXPO_PUBLIC_EMERGENCY_NUMBERS`. */
+const emergencyNumberSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9-]{1,32}$/),
+    label: z.string().trim().min(1).max(60),
+    number: z.string().regex(/^\+?[0-9]{2,15}$/),
+    whenToUse: z.string().trim().min(1).max(160).optional(),
+    region: z
+      .string()
+      .regex(/^[A-Z]{2}$/)
+      .optional(),
+  })
+  .strict();
+
+const emergencyNumbersSchema = z
+  .array(emergencyNumberSchema)
+  .max(6)
+  .refine((list) => new Set(list.map((n) => n.id)).size === list.length, 'ids must be unique');
+
+export type ConfiguredEmergencyNumber = z.infer<typeof emergencyNumberSchema>;
+
 const envSchema = z
   .object({
     /**
@@ -244,6 +265,51 @@ const envSchema = z
       .string()
       .refine(isHttpsUrl, 'EXPO_PUBLIC_PRIVACY_URL must be an https URL, or unset')
       .optional(),
+    /**
+     * The emergency numbers the Emergency screen offers (checklist N-04).
+     *
+     * Operator-supplied and OPTIONAL. The app never ships a number of its
+     * own: a wrong emergency number is worse than none, and the right one
+     * depends on the country the build is released in. Unset (or empty),
+     * the screen keeps its honest "not configured" state and tells the
+     * patient to call their local emergency number.
+     *
+     * A JSON array, validated strictly so a typo fails the build's boot
+     * rather than dialling the wrong line:
+     * `[{"id":"ambulance","label":"Ambulance — الإسعاف","number":"997","region":"SA"}]`
+     * `label` and `whenToUse` are rendered verbatim; give them in every
+     * language the build serves.
+     */
+    EXPO_PUBLIC_EMERGENCY_NUMBERS: z
+      .string()
+      .optional()
+      .transform((raw, ctx) => {
+        if (raw === undefined || raw.trim() === '') return [];
+        let value: unknown;
+        try {
+          value = JSON.parse(raw);
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'EXPO_PUBLIC_EMERGENCY_NUMBERS must be a JSON array, or unset.',
+          });
+          return z.NEVER;
+        }
+        const result = emergencyNumbersSchema.safeParse(value);
+        if (!result.success) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              'EXPO_PUBLIC_EMERGENCY_NUMBERS is invalid: each entry needs a unique id, a label, ' +
+              'and a number of 2–15 digits (an optional leading +); at most 6 entries. ' +
+              result.error.issues
+                .map((i) => `${i.path.join('.') || '(list)'}: ${i.message}`)
+                .join('; '),
+          });
+          return z.NEVER;
+        }
+        return result.data;
+      }),
   })
   .superRefine((v, ctx) => {
     // T-14. The message is the whole diagnosis — an operator reading a
@@ -286,6 +352,8 @@ export type Env = {
   readonly termsUrl: string | null;
   /** Where the privacy policy is published (E-05). */
   readonly privacyUrl: string | null;
+  /** Operator-configured emergency lines; empty when unconfigured (N-04). */
+  readonly emergencyNumbers: readonly ConfiguredEmergencyNumber[];
 };
 
 /** The environment speaks minutes; everything downstream speaks milliseconds. */
@@ -313,6 +381,7 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     supportEmail: parsed.data.EXPO_PUBLIC_SUPPORT_EMAIL ?? null,
     termsUrl: parsed.data.EXPO_PUBLIC_TERMS_URL ?? null,
     privacyUrl: parsed.data.EXPO_PUBLIC_PRIVACY_URL ?? null,
+    emergencyNumbers: parsed.data.EXPO_PUBLIC_EMERGENCY_NUMBERS,
   };
 }
 
@@ -332,4 +401,5 @@ export const env: Env = parseEnv({
   EXPO_PUBLIC_SUPPORT_EMAIL: process.env.EXPO_PUBLIC_SUPPORT_EMAIL as string | undefined,
   EXPO_PUBLIC_TERMS_URL: process.env.EXPO_PUBLIC_TERMS_URL as string | undefined,
   EXPO_PUBLIC_PRIVACY_URL: process.env.EXPO_PUBLIC_PRIVACY_URL as string | undefined,
+  EXPO_PUBLIC_EMERGENCY_NUMBERS: process.env.EXPO_PUBLIC_EMERGENCY_NUMBERS as string | undefined,
 });
