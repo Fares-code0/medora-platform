@@ -24,17 +24,17 @@ interface ExpoConfig {
     readonly name: string;
     readonly icon?: string;
     readonly plugins?: (
-      | string
-      | [
-          string,
-          {
-            image?: string;
-            imageWidth?: number;
-            resizeMode?: string;
-            backgroundColor?: string;
-          },
-        ]
-    )[];
+  | string
+  | [
+      string,
+      {
+        image?: string;
+        imageWidth?: number;
+        resizeMode?: string;
+        backgroundColor?: string;
+      },
+    ]
+)[];
     readonly ios?: { bundleIdentifier?: string };
     readonly android?: {
       package?: string;
@@ -91,18 +91,19 @@ describe('the three images exist and are the ones app.json names', () => {
     expect(splashOptions?.image).toBe('./assets/splash.png');
   });
 
-  it.each([['./assets/icon.png'], ['./assets/adaptive-icon.png'], ['./assets/splash.png']])(
-    '%s is a real PNG, 1024 square',
-    (declared) => {
-      const png = readPng(declared);
+  it.each([
+    ['./assets/icon.png'],
+    ['./assets/adaptive-icon.png'],
+    ['./assets/splash.png'],
+  ])('%s is a real PNG, 1024 square', (declared) => {
+    const png = readPng(declared);
 
-      expect(png.isPng).toBe(true);
-      // 1024 is what App Store Connect and Play Console take, and every
-      // smaller size is derived from it. A non-square icon is a rejection.
-      expect(png.width).toBe(1024);
-      expect(png.height).toBe(1024);
-    },
-  );
+    expect(png.isPng).toBe(true);
+    // 1024 is what App Store Connect and Play Console take, and every
+    // smaller size is derived from it. A non-square icon is a rejection.
+    expect(png.width).toBe(1024);
+    expect(png.height).toBe(1024);
+  });
 });
 
 describe('what the stores refuse', () => {

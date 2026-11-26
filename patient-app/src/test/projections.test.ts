@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { FIXTURE_DOCTORS, fixtureDoctorService } from '@/features/doctors/fixtures/doctor-fixtures';
+import { FIXTURE_DOCTORS , fixtureDoctorService } from '@/features/doctors/fixtures/doctor-fixtures';
 import { FORBIDDEN_DOCTOR_FIELDS } from '@/features/doctors/model/types';
 
 /**
