@@ -37,6 +37,7 @@ const IDENTITY: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-1' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Amina Yusuf',
     email: 'amina@example.com',
     emailVerified: true,

@@ -58,6 +58,16 @@ export type SessionCheckStackParamList = {
   Emergency: undefined;
 };
 
+/**
+ * The `ineligible` end of a session (C-11): a non-patient account signed
+ * in. Neither signed in nor an ordinary sign-in form, so its own stack —
+ * with `Emergency` as a route, for the reason it is one everywhere else.
+ */
+export type AccessDeniedStackParamList = {
+  AccessDenied: undefined;
+  Emergency: undefined;
+};
+
 export type HomeStackParamList = {
   HomeRoot: undefined;
   /**
@@ -151,6 +161,12 @@ export type ProfileStackParamList = {
   Consent: undefined;
   /** Help and feedback about the app — not a clinical channel (W-11). */
   Support: undefined;
+  /**
+   * Linking the account to a hospital record (ADR-048): the in-person
+   * steps and a short-lived code to show staff. Not in `linking.ts`: a
+   * code screen opened from outside the app has nothing to offer there.
+   */
+  LinkRecord: undefined;
 };
 
 export type AppTabsParamList = {

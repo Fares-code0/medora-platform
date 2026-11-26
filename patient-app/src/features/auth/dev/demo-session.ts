@@ -68,9 +68,9 @@ export const DEMO_PATIENT_REFRESH_TOKEN = 'dev-demo-patient-refresh';
  * The demo patient.
  *
  * `AuthenticatedIdentity` is deliberately minimal (see `model/types.ts`):
- * a subject id, a display name, an email and a verification flag, with no
- * role and no permissions, because the client makes no authorization
- * decision. This fixture invents nothing beyond it — in particular it does
+ * a subject id, a display name, an email, a verification flag and the
+ * `patient` role the eligibility gate requires (C-11), with no permissions,
+ * because the client makes no per-action authorization decision. This fixture invents nothing beyond it — in particular it does
  * not guess at how ADR-030 models patient identity, which is the rule that
  * file was written to obey.
  *
@@ -89,6 +89,7 @@ export const DEMO_PATIENT_SESSION: SignInResult = {
     displayName: 'Demo Patient',
     email: 'demo.patient@medora.local',
     emailVerified: true,
+    role: 'patient',
   },
 };
 

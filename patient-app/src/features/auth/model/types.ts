@@ -17,9 +17,12 @@
  * - a `displayName`, because a greeting needs one, and NOT a full name
  *   split, a date of birth, an MRN or any other identifier — none of
  *   which the login response's shape is settled enough to promise;
- * - no `role` and no `permissions`. The client makes no authorization
- *   decision (checklist T-07); hiding a button is presentation, and the
- *   server refuses the call regardless.
+ * - a `role`, read for ONE decision only: whether this app may be used
+ *   at all (C-11, eligibility). A non-patient account never reaches a
+ *   patient screen — `eligibility.ts`. It is not an authorization input
+ *   for anything else, and there are no `permissions`: the client makes
+ *   no per-action authorization decision (checklist T-07); hiding a
+ *   button is presentation, and the server refuses the call regardless.
  *
  * When ADR-030 lands, `AuthenticatedIdentity` gains whatever the contract
  * actually returns. The screens do not move.
@@ -33,6 +36,12 @@ export interface AuthenticatedIdentity {
   readonly displayName: string;
   readonly email: string;
   readonly emailVerified: boolean;
+  /**
+   * The server's role literal (`SessionUserPayload.role`), or `null` when
+   * the payload did not name one. Only `'patient'` is eligible for this
+   * app; anything else — `null` included — is refused (`eligibility.ts`).
+   */
+  readonly role: string | null;
 }
 
 /**
@@ -47,8 +56,13 @@ export interface AuthenticatedIdentity {
  * differently to the patient: `signed-out` was their own doing,
  * `session-expired` was the server's, and `locked` was this app's own
  * background timeout (checklist T-11).
+ *
+ * `ineligible` (C-11) is a fourth, and it is not a sign-in failure: the
+ * server accepted the credentials, but the account is not a patient
+ * account. The session was ended (server-side and locally) and the
+ * navigator shows the "patients only" screen instead of the sign-in form.
  */
-export type SessionEndReason = 'signed-out' | 'session-expired' | 'locked';
+export type SessionEndReason = 'signed-out' | 'session-expired' | 'locked' | 'ineligible';
 
 export type SessionState =
   | { readonly status: 'booting' }
@@ -221,7 +235,13 @@ export interface AuthService {
   resendOtp(otpToken: string): Promise<void>;
   /** Exchanges a stored refresh token for a new pair. */
   refresh(refreshToken: string): Promise<SignInResult>;
-  logout(): Promise<void>;
+  /**
+   * `POST /auth/logout`. `skipRefresh` is set by the eligibility gate
+   * alone: it revokes a session it is about to discard, sometimes from
+   * inside the transport's own refresh, and a 401 there must not start a
+   * second refresh that waits on the first (`ApiClient` `skipRefresh`).
+   */
+  logout(options?: { readonly skipRefresh?: boolean }): Promise<void>;
   forgotPassword(email: string): Promise<void>;
   resetPassword(input: ResetPasswordInput): Promise<void>;
   /**

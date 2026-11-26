@@ -37,5 +37,7 @@ export const PHI_QUERY_DOMAINS: readonly string[] = [
   'lab-results',
   'messages',
   'notifications',
+  // The linked record's name and link state (ADR-048).
+  'patient-link',
   'profile',
 ];

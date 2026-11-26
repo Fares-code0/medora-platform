@@ -24,6 +24,7 @@ import {
   isBiometricUnlockEnabled as defaultIsBiometricUnlockEnabled,
   shouldLockOnForeground,
 } from './biometrics';
+import { isEligibleIdentity } from './eligibility';
 import {
   decideOnForeground,
   sessionLockPolicy as defaultLockPolicy,
@@ -99,6 +100,16 @@ import { tokenStorage as defaultTokenStorage, type TokenStorage } from './storag
  * the server cannot be asked at all — `/auth/logout` revokes the session
  * an access token names — so the sign-out is this phone's only, and the
  * screen offering it says so.
+ *
+ * ── Eligibility (C-11) ───────────────────────────────────────────────
+ * Every session this provider would install — a sign-in, an OTP or
+ * recovery completion, the cold-start restore, every refresh — is first
+ * checked by `eligibility.ts`. A non-patient account is never installed:
+ * its refresh token is not written, its session is revoked server-side
+ * (`POST /auth/logout`, without refreshing on its own 401), and the same
+ * teardown as any sign-out runs, landing `unauthenticated` with
+ * `reason: 'ineligible'`. `endIneligibleSession` is the same path for the
+ * one other signal, the eligibility probe's `403 patient_only`.
  */
 
 interface SessionContextValue {
@@ -137,6 +148,13 @@ interface SessionContextValue {
   readonly pendingOtpToken: string | null;
   adoptSession: (result: SignInResult) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * C-11: the eligibility probe (`GET /me/patient-link`) answered
+   * `403 patient_only`. Revokes the session server-side and ends it as
+   * `ineligible`. A no-op unless signed in. Nothing else may call it — an
+   * ordinary endpoint's 403 is that endpoint's refusal (`eligibility.ts`).
+   */
+  endIneligibleSession: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -328,6 +346,45 @@ export function SessionProvider({
   );
 
   /**
+   * Ends a session whose account may not use this app (C-11). Queue-only.
+   *
+   * `revoke`, when given, is the session to revoke: a refresh or sign-in
+   * the server just issued and this app will never install. Its access
+   * token is put on the transport for the one `POST /auth/logout` call —
+   * after clearing the previous one, so the transport's session generation
+   * moves on and nothing queued under the old token is replayed with it.
+   * Without `revoke`, the installed token names the session.
+   *
+   * The epoch moves on and the session stops being live BEFORE the network
+   * call, so no guard write, retry or refresh that lands meanwhile can
+   * install anything. The logout skips the transport's refresh-on-401: it
+   * may run from inside that refresh, which would otherwise wait on itself.
+   * A failed revocation is logged and the local teardown happens anyway.
+   */
+  const endIneligibleNow = useCallback(
+    async (revoke: SignInResult | null, expectedEpoch: number | null) => {
+      if (expectedEpoch !== null && expectedEpoch !== epoch.current) return;
+      epoch.current += 1;
+      sessionLive.current = false;
+      // No identifier, no role literal: the kind of event is enough.
+      logger.warn('The signed-in account is not a patient account; ending the session');
+      if (revoke !== null) {
+        apiClient.setAccessToken(null);
+        apiClient.setAccessToken(revoke.tokens.accessToken);
+      }
+      if (apiClient.hasAccessToken()) {
+        try {
+          await authService.logout({ skipRefresh: true });
+        } catch {
+          logger.warn('Server-side logout of an ineligible session did not complete');
+        }
+      }
+      await endSessionNow('ineligible');
+    },
+    [authService, endSessionNow],
+  );
+
+  /**
    * Stores the rotated refresh token — first, before anything else about
    * the new session exists (audit M2). Queue-only.
    *
@@ -397,6 +454,11 @@ export function SessionProvider({
   const adoptSession = useCallback(
     (result: SignInResult) =>
       serialized(async () => {
+        // C-11: never installed, never written to the keychain.
+        if (!isEligibleIdentity(result.identity)) {
+          await endIneligibleNow(result, null);
+          return;
+        }
         if ((await persistNow(result, null)) === 'unstorable') {
           throw new SessionStorageError();
         }
@@ -408,7 +470,7 @@ export function SessionProvider({
         // lifetime owed does not carry over. Same task, so same epoch.
         await writeGuardNow(epoch.current, currentShape());
       }),
-    [activateNow, currentShape, persistNow, serialized, setLocked, writeGuardNow],
+    [activateNow, currentShape, endIneligibleNow, persistNow, serialized, setLocked, writeGuardNow],
   );
 
   /**
@@ -494,6 +556,15 @@ export function SessionProvider({
         return 'no-answer';
       }
 
+      // C-11, on the cold start and on every retry: a restored session
+      // whose account is not a patient's is revoked, not installed. The
+      // rotated token is never written; the teardown clears the old one.
+      if (!isEligibleIdentity(result.identity)) {
+        await settle();
+        await serialized(() => endIneligibleNow(result, started));
+        return 'settled';
+      }
+
       if ((await serialized(() => persistNow(result, started))) !== 'persisted') return 'settled';
       await settle();
       await serialized(async () => {
@@ -515,6 +586,7 @@ export function SessionProvider({
       authService,
       currentShape,
       declineNow,
+      endIneligibleNow,
       endSessionNow,
       persistNow,
       serialized,
@@ -682,6 +754,15 @@ export function SessionProvider({
         return null;
       }
 
+      // C-11 on every refresh: a role can change while a session is open.
+      // (ADR-046 revokes sessions on a role change, so that usually lands
+      // above as a 401; this is the line for a server that did not.) The
+      // waiting requests stop quietly; the navigator shows why.
+      if (!isEligibleIdentity(result.identity)) {
+        await serialized(() => endIneligibleNow(result, started));
+        throw normalizeCancellationError();
+      }
+
       const installed = await serialized(async () => {
         if ((await persistNow(result, started)) !== 'persisted') return false;
         return activateNow(result, started) === 'active';
@@ -698,7 +779,15 @@ export function SessionProvider({
       apiClient.setRefreshHandler(null);
       apiClient.setSessionLostHandler(null);
     };
-  }, [activateNow, authService, endSession, persistNow, serialized, tokenStorage]);
+  }, [
+    activateNow,
+    authService,
+    endIneligibleNow,
+    endSession,
+    persistNow,
+    serialized,
+    tokenStorage,
+  ]);
 
   // Background timeout (checklist T-11). `lock-policy.ts` decides; this
   // effect only measures the absence and carries the decision out.
@@ -868,6 +957,12 @@ export function SessionProvider({
     await endSession('signed-out');
   }, [authService, endSession]);
 
+  const endIneligibleSession = useCallback(async () => {
+    if (statusRef.current !== 'authenticated') return;
+    const expected = epoch.current;
+    await serialized(() => endIneligibleNow(null, expected));
+  }, [endIneligibleNow, serialized]);
+
   const unlock = useCallback(() => {
     setLocked(false);
     if (!sessionLive.current) return;
@@ -889,6 +984,7 @@ export function SessionProvider({
       pendingOtpToken,
       adoptSession,
       logout,
+      endIneligibleSession,
     }),
     [
       state,
@@ -902,6 +998,7 @@ export function SessionProvider({
       pendingOtpToken,
       adoptSession,
       logout,
+      endIneligibleSession,
     ],
   );
 

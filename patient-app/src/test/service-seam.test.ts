@@ -6,6 +6,7 @@ import { httpAuthService } from '@/features/auth/http-auth-service';
 import { httpDoctorService } from '@/features/doctors/http-doctor-service';
 import { httpHospitalService } from '@/features/hospitals/http-hospital-service';
 import { httpNotificationService } from '@/features/notifications/http-notification-service';
+import { httpPatientLinkService } from '@/features/patient-link/http-patient-link-service';
 import { httpProfileService } from '@/features/profile/http-profile-service';
 
 /**
@@ -67,6 +68,7 @@ const IMPLEMENTATIONS: Record<string, object> = {
   doctors: httpDoctorService,
   hospitals: httpHospitalService,
   notifications: httpNotificationService,
+  'patient-link': httpPatientLinkService,
   profile: httpProfileService,
 };
 
@@ -164,6 +166,7 @@ describe('no feature can serve a patient invented data', () => {
       'hospitals',
       'messages',
       'notifications',
+      'patient-link',
       'profile',
     ]);
   });

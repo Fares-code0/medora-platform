@@ -43,6 +43,7 @@ const SIGNED_IN: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-2' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Sara Ahmed',
     email: 'sara@example.com',
     emailVerified: true,
@@ -53,6 +54,7 @@ const SOMEONE_ELSE: SignInResult = {
   tokens: { accessToken: 'access-9', refreshToken: 'refresh-9' },
   identity: {
     subjectId: 'subject-9',
+    role: 'patient',
     displayName: 'Omar Hassan',
     email: 'omar@example.com',
     emailVerified: true,

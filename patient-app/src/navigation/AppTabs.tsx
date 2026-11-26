@@ -33,6 +33,7 @@ import { NotificationPrefsScreen } from '@/features/notifications/screens/Notifi
 import { NotificationsScreen } from '@/features/notifications/screens/NotificationsScreen';
 import { formatUnreadBadge, unreadTabAnnouncement } from '@/features/notifications/unread';
 import { useUnreadCount } from '@/features/notifications/useUnreadCount';
+import { LinkRecordScreen } from '@/features/patient-link/screens/LinkRecordScreen';
 import { EditProfileScreen } from '@/features/profile/screens/EditProfileScreen';
 import { PreferencesScreen } from '@/features/profile/screens/PreferencesScreen';
 import { PrivacyScreen } from '@/features/profile/screens/PrivacyScreen';
@@ -288,6 +289,11 @@ function ProfileNavigator() {
         name="Support"
         component={SupportScreen}
         options={{ title: t('nav.title.help') }}
+      />
+      <ProfileStack.Screen
+        name="LinkRecord"
+        component={LinkRecordScreen}
+        options={{ title: t('link.title') }}
       />
     </ProfileStack.Navigator>
   );
