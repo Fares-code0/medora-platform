@@ -79,7 +79,7 @@ describe('mode separation', () => {
     fireEvent.press(screen.getByTestId('ai-composer-send'));
     await waitFor(() => expect(screen.getByText('Your next visit is Monday.')).toBeTruthy());
     expect(create).toHaveBeenCalledWith('personal');
-    expect(screen.getByTestId('ai-chat-reply-status')).toBeTruthy();
+    expect(await screen.findByTestId('ai-chat-reply-status')).toBeTruthy();
   });
 });
 

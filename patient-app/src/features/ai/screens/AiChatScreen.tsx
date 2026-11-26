@@ -76,7 +76,7 @@ export function AiChatScreen({ route }: Props) {
   const chat = useAiChat(mode, openedId);
   const history = useAiConversation(openedId);
   const [draft, setDraft] = useState('');
-  const [arrived, setArrived] = useState(0);
+  const arrived = chat.completedReplies;
 
   const { hydrate } = chat;
   const loaded = history.data;
