@@ -1004,6 +1004,42 @@ describe('RM M16.1 — the gateway sees a prompt, never a chart', () => {
     });
   });
 
+  it('carries nothing of another chart the same doctor holds, in any mode (AI-08)', async () => {
+    // The whole request object — system, turns, settings — serialised, so
+    // a field added to the request later is covered too.
+    const other = await seedPatient(harness, doctorToken, { fullName: 'Leila Haddad' });
+    charts.push(other.id);
+    const ownOrder = await orderTest(harness, doctorToken, patient.id);
+    const otherOrder = await orderTest(harness, doctorToken, other.id);
+
+    // The same doctor talks about the other chart first, so a context
+    // cache or a shared history would have something to leak.
+    const otherThread = dataOf<ConversationView>(
+      await createThread(doctorToken, { mode: 'patient', patientId: other.id }),
+    );
+    script = { kind: 'stream', deltas: ['Noted.'] };
+    await send(doctorToken, otherThread.id, 'Leila Haddad private question');
+
+    const contexts = [
+      { mode: 'patient', patientId: patient.id },
+      { mode: 'labs', patientId: patient.id, refId: ownOrder.id },
+    ];
+
+    for (const context of contexts) {
+      const thread = dataOf<ConversationView>(await createThread(doctorToken, context));
+      script = { kind: 'stream', deltas: ['Noted.'] };
+      lastRequest = null;
+      await send(doctorToken, thread.id, 'Summarise');
+
+      const payload = JSON.stringify(gatewaySaw());
+      expect(payload).toContain(patient.id);
+      for (const foreign of [other.id, other.name, other.mrn, otherOrder.id, 'Leila Haddad private question']) {
+        expect(payload, `${context.mode} leaked ${foreign}`).not.toContain(foreign);
+      }
+      expect(payload).not.toContain(patient.mrn);
+    }
+  });
+
   it('applies the caller’s temperature and length to the request', async () => {
     const token = await seedDoctor(harness, 'ai-applies');
     await request(fakeServer)
