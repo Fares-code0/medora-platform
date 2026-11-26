@@ -1,4 +1,5 @@
 import { PrismaPg } from '@prisma/adapter-pg';
+import type { PoolConfig } from 'pg';
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 
 import { PrismaClient } from '../../generated/prisma/client';
@@ -7,6 +8,33 @@ import { ConfigService } from '../../config';
 import { tenantAwareFactory } from './tenant-context.adapter';
 import { bypassReasons, ROLE_FACTS_SQL, type RoleFacts } from './runtime-role.check';
 import { type SoftDeletedClient, withSoftDelete } from './soft-delete';
+
+/**
+ * OPS-03 — the `pg` pool configuration. `statement_timeout` and
+ * `idle_in_transaction_session_timeout` are node-postgres client options sent
+ * as startup parameters, so they are session defaults for every pooled
+ * connection; transaction-local `set_config(..., true)` overrides still win.
+ */
+export function pgPoolConfig(
+  env: Pick<
+    ConfigService['env'],
+    | 'DATABASE_URL'
+    | 'DATABASE_POOL_MAX'
+    | 'DATABASE_CONNECTION_TIMEOUT_MS'
+    | 'DATABASE_IDLE_TIMEOUT_MS'
+    | 'DATABASE_STATEMENT_TIMEOUT_MS'
+    | 'DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS'
+  >,
+): PoolConfig {
+  return {
+    connectionString: env.DATABASE_URL,
+    max: env.DATABASE_POOL_MAX,
+    connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT_MS,
+    idleTimeoutMillis: env.DATABASE_IDLE_TIMEOUT_MS,
+    statement_timeout: env.DATABASE_STATEMENT_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS,
+  };
+}
 
 /**
  * The database client (RM M4).
@@ -38,7 +66,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   readonly db: SoftDeletedClient;
 
   constructor(private readonly config: ConfigService) {
-    const adapter = new PrismaPg({ connectionString: config.env.DATABASE_URL });
+    const adapter = new PrismaPg(pgPoolConfig(config.env));
     // §2.15: with tenant context on, every transaction opens with the
     // request's transaction-local RLS settings (tenant-context.adapter.ts).
     super({ adapter: config.env.DATABASE_TENANT_CONTEXT ? tenantAwareFactory(adapter) : adapter });

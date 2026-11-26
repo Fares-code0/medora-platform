@@ -413,6 +413,49 @@ describe('the hospital scope shadow bounds (C1, #26)', () => {
   });
 });
 
+describe('the database pool bounds (OPS-03)', () => {
+  const keys = [
+    'DATABASE_POOL_MAX',
+    'DATABASE_CONNECTION_TIMEOUT_MS',
+    'DATABASE_IDLE_TIMEOUT_MS',
+    'DATABASE_STATEMENT_TIMEOUT_MS',
+    'DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS',
+  ] as const;
+
+  it('defaults to a pool of 10, no statement ceiling, and is optional in production', () => {
+    setEnv({});
+    const env = loadEnv();
+    expect(keys.map((k) => env[k])).toEqual([10, 5_000, 30_000, 0, 60_000]);
+  });
+
+  it('reads explicit values and allows 0 to disable a server timeout', () => {
+    setEnv({
+      DATABASE_POOL_MAX: '20',
+      DATABASE_STATEMENT_TIMEOUT_MS: '0',
+      DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: '0',
+    });
+    const env = loadEnv();
+    expect(env.DATABASE_POOL_MAX).toBe(20);
+    expect(env.DATABASE_STATEMENT_TIMEOUT_MS).toBe(0);
+    expect(env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS).toBe(0);
+  });
+
+  it.each([
+    ['DATABASE_POOL_MAX', '0'],
+    ['DATABASE_POOL_MAX', '201'],
+    ['DATABASE_POOL_MAX', '2.5'],
+    ['DATABASE_POOL_MAX', 'lots'],
+    ['DATABASE_CONNECTION_TIMEOUT_MS', '99'],
+    ['DATABASE_IDLE_TIMEOUT_MS', '10'],
+    ['DATABASE_STATEMENT_TIMEOUT_MS', '-1'],
+    ['DATABASE_STATEMENT_TIMEOUT_MS', 'soon'],
+    ['DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS', '3600001'],
+  ])('refuses %s=%j', (key, value) => {
+    setEnv({ [key]: value });
+    expect(captureError().message).toContain(key);
+  });
+});
+
 describe('.env.example (RM M3.2)', () => {
   it('is itself a valid environment', () => {
     // The classic rot: the schema gains a required variable and the

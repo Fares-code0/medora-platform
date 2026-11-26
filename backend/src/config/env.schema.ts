@@ -107,6 +107,23 @@ export const envSchema = z.object({
   // ── Datastores (M4, M31) ─────────────────────────────────────────────
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
+  /**
+   * OPS-03 — connection pool and session bounds for the `pg` pool behind
+   * Prisma. All optional with safe defaults (no new required variable).
+   * `DATABASE_POOL_MAX` stays above `HOSPITAL_SCOPE_SHADOW_MAX_IN_FLIGHT`'s cap
+   * of 8 so the shadow cannot hold the whole pool. The two server timeouts are
+   * pool-wide session defaults sent as startup parameters; `0` disables one.
+   * A transaction-local `set_config('statement_timeout', …, true)` (shadow
+   * queries) overrides the session value for that transaction only.
+   */
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  DATABASE_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(5_000),
+  DATABASE_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(30_000),
+  // Opt-in (0 = off by default): a pool-wide ceiling would also cut long
+  // legitimate statements (exports, retention sweeps) that no test bounds
+  // yet. Set it per deployment once those are measured.
+  DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).max(3_600_000).default(0),
+  DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().min(0).max(3_600_000).default(60_000),
 
   // ── Object storage (M25) ─────────────────────────────────────────────
   S3_ENDPOINT: z.string().url(),
