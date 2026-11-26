@@ -7,9 +7,9 @@ import { Text } from 'react-native';
 import { apiClient } from '@/api/client';
 import { createQueryClient } from '@/api/query-client';
 import { listRecentDoctors, recordDoctorView } from '@/features/doctors/recent';
-import { createInMemorySecureStore } from '@/storage/secure-store';
-
 import { isIneligibleProbeRefusal } from '@/features/patient-link/probe';
+import { createInMemorySecureStore } from '@/storage/secure-store';
+import type { ApiError } from '@/types/api';
 
 import { isEligibleIdentity } from './eligibility';
 import type { AuthService, SignInResult } from './model/types';
@@ -41,6 +41,10 @@ function result(role: string | null, suffix = ''): SignInResult {
 
 const PATIENT = result('patient', '-p');
 const DOCTOR = result('doctor', '-d');
+
+function apiError(error: ApiError): Error {
+  return Object.assign(new Error(`API error: ${error.kind}`), error);
+}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -206,7 +210,7 @@ describe('sign-in', () => {
   it('still ends the session locally when the server-side revocation fails', async () => {
     const t = await mount({
       login: jest.fn(() => Promise.resolve({ kind: 'authenticated', result: DOCTOR })),
-      logout: jest.fn(() => Promise.reject({ kind: 'network' })),
+      logout: jest.fn(() => Promise.reject(apiError({ kind: 'network' }))),
     });
     await act(async () => {
       await session?.login({ email: 'a@b.c', password: 'x', rememberMe: false });
@@ -236,7 +240,11 @@ describe('cold-start restore', () => {
 
   it('does not treat a 403 on refresh as ineligibility: the token is kept, unconfirmed', async () => {
     const t = await mount(
-      { refresh: jest.fn(() => Promise.reject({ kind: 'forbidden', code: 'patient_only' })) },
+      {
+        refresh: jest.fn(() =>
+          Promise.reject(apiError({ kind: 'forbidden', code: 'patient_only' })),
+        ),
+      },
       'stored-1',
     );
     await waitFor(() => expect(t.status()).toBe('unconfirmed'));
@@ -272,7 +280,7 @@ describe('mid-session refresh', () => {
 
   it('a 401 refusal (ADR-046 revocation on role change) is an ordinary expiry', async () => {
     const t = await mount({
-      refresh: jest.fn(() => Promise.reject({ kind: 'auth', code: 'unauthorized' })),
+      refresh: jest.fn(() => Promise.reject(apiError({ kind: 'auth', code: 'unauthorized' }))),
     });
     await act(async () => {
       await session?.adoptSession(PATIENT);
