@@ -80,7 +80,7 @@ async function patientAccount(local: string): Promise<{ token: string; userId: s
 
 async function admin(local: string, scope: { platform: true } | { hospitalId: string }): Promise<string> {
   const email = testEmail(local);
-  await request(harness.server).post(`${PREFIX}/auth/register`).send(registrationBody({ email }));
+  await request(harness.server).post(`${PREFIX}/auth/register`).send(registrationBody({ email })).expect(201);
   await markVerified(harness.prisma, email);
   const bootstrap = await login(email);
   const secret = dataOf<{ secret: string }>(
