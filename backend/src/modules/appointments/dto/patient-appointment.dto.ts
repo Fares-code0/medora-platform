@@ -1,35 +1,55 @@
 /**
- * The patient's view of their own appointments — contract §4.1/§4.2.
+ * The patient's view of their own appointments — contract §4.1/§4.2, and
+ * the patient actions of ADR-049.
  *
- * ## What is deliberately NOT here: `availableActions`
+ * ## `availableActions` is the server's answer
  *
- * The contract's §4 specifies `availableActions` on every appointment,
- * and the rule that goes with it — *"the client must never compute
- * whether an action is allowed"*. That field is **omitted** rather than
- * shipped empty or guessed, because the server cannot yet answer it
- * honestly.
- *
- * ADR-001's transition table says which *statuses* may follow which. It
- * does not say **who** may make a transition, and no source in this
- * repository states a patient's cancellation window, reschedule cut-off,
- * or whether a patient may cancel a `confirmed` appointment at all. Those
- * are product decisions (see `PATIENT_MOBILE_API_CONTRACT.md` §4).
- *
- * Three ways to be wrong here, and all three were rejected:
- *
- *  - **`availableActions: []`** would assert "no action is available",
- *    which is a claim nobody has authority to make. The client would
- *    render an appointment with no cancel button and the patient would
- *    conclude they cannot cancel.
- *  - **Guessing a window** ("cancel allowed up to 24 h before") invents
- *    clinical-operations policy in a DTO.
- *  - **Letting the client compute it** is the one thing §4 forbids.
- *
- * Omitting the field is the honest option: the mobile client renders
- * read-only appointment views today, and the field arrives with the write
- * routes it describes, once the policy exists. An absent field is a
- * visible gap; a wrong one is a silent defect.
+ * Every payload carries the actions the patient may take *now*, computed by
+ * `patient-appointment.policy.ts` — the same functions the write routes
+ * call. The client renders buttons from it and never computes the rule
+ * itself (contract §4). It was omitted until the owner decided the policy
+ * (2026-11-26: cancel any time before `startsAt`; reschedule by request).
  */
+
+import type { PatientAction, RescheduleRequestStatus } from '../services/patient-appointment.policy';
+
+/** The hospital an appointment belongs to — `null` for legacy rows. */
+export interface AppointmentHospitalView {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** A reschedule request as the patient (and staff) see it. */
+export interface RescheduleRequestView {
+  readonly id: string;
+  /** The appointment's `APT-…` reference. */
+  readonly appointmentId: string;
+  readonly status: RescheduleRequestStatus;
+  readonly requestedSlot: {
+    readonly id: string;
+    readonly startsAt: string;
+    readonly durationMin: number;
+  };
+  readonly note: string | null;
+  readonly decisionReason: string | null;
+  readonly createdAt: string;
+  readonly decidedAt: string | null;
+}
+
+/** A bookable published slot (`GET /patient/doctors/:doctorId/slots`). */
+export interface PatientSlotView {
+  readonly id: string;
+  readonly startsAt: string;
+  readonly durationMin: number;
+  readonly hospital: AppointmentHospitalView;
+}
+
+/** An active visit type (`GET /patient/visit-types`). */
+export interface PatientVisitTypeView {
+  readonly id: string;
+  readonly name: string;
+  readonly durationMin: number | null;
+}
 
 /** The doctor as a patient may see them — the §3 projection, embedded. */
 export interface AppointmentDoctorView {
@@ -55,6 +75,9 @@ export interface PatientAppointmentSummary {
   readonly visitType: string;
   readonly departmentName: string | null;
   readonly doctor: AppointmentDoctorView;
+  readonly hospital: AppointmentHospitalView | null;
+  /** Server-computed (ADR-049); the client never derives it. */
+  readonly availableActions: readonly PatientAction[];
 }
 
 /** One entry of the appointment's history (`appointment_events`). */
@@ -80,4 +103,5 @@ export interface PatientAppointmentDetail extends PatientAppointmentSummary {
   readonly notes: string | null;
   readonly cancelledReason: string | null;
   readonly events: readonly PatientAppointmentEvent[];
+  readonly pendingRescheduleRequest: RescheduleRequestView | null;
 }

@@ -124,11 +124,10 @@ export const NOTIFICATION_RULES: Readonly<Record<string, NotificationRule>> = {
   },
 
   /**
-   * The patient, because today only a doctor can reach this transition:
-   * ADR-033 (patient appointment actions) is **proposed, not accepted**,
-   * so no patient-initiated cancellation route exists to notify the
-   * other way round. If ADR-033 is accepted this rule gains a second
-   * audience rather than changing.
+   * The patient, for a cancellation **by the clinic** — the only path that
+   * publishes this topic. A patient's own cancellation publishes
+   * `appointment.cancelled_by_patient` instead (ADR-049), so the patient
+   * who cancelled is never notified of their own act.
    */
   'appointment.cancelled': {
     category: APPOINTMENTS,
@@ -136,7 +135,40 @@ export const NOTIFICATION_RULES: Readonly<Record<string, NotificationRule>> = {
     kind: UPDATE,
     audiences: ['patient'],
     title: 'Appointment cancelled',
-    source: 'API §5.7 + ADR-033 (patient-initiated cancellation not in scope)',
+    source: 'API §5.7 (clinic-initiated cancellation)',
+  },
+
+  /** ADR-049 / contract §5: the doctor is told; the patient is not re-notified. */
+  'appointment.cancelled_by_patient': {
+    category: APPOINTMENTS,
+    priority: NORMAL,
+    kind: UPDATE,
+    audiences: ['doctor'],
+    title: 'Appointment cancelled by the patient',
+    source: 'ADR-049 + Patient App contract §5 — "the doctor is told instead"',
+  },
+
+  /**
+   * The clinic's answers to a patient reschedule request (ADR-049).
+   * Category-level text only: the body carries the reference and the
+   * time, never a reason or anything clinical (push-safe).
+   */
+  'appointment.reschedule_request.approved': {
+    category: APPOINTMENTS,
+    priority: NORMAL,
+    kind: UPDATE,
+    audiences: ['patient'],
+    title: 'Reschedule request approved',
+    source: 'ADR-049 + Patient App contract §5',
+  },
+
+  'appointment.reschedule_request.rejected': {
+    category: APPOINTMENTS,
+    priority: NORMAL,
+    kind: UPDATE,
+    audiences: ['patient'],
+    title: 'Reschedule request declined',
+    source: 'ADR-049 + Patient App contract §5',
   },
 
   'appointment.rescheduled': {
@@ -250,6 +282,10 @@ export const NOTIFICATION_RULES: Readonly<Record<string, NotificationRule>> = {
 export const UNSOURCED_TOPICS: readonly string[] = [
   'appointment.completed',
   'appointment.no_show',
+  // ADR-049: a patient filed a reschedule request. The clinic sees it in
+  // its queue (`GET /appointments/reschedule-requests`); no source yet says
+  // the doctor is paged for it.
+  'appointment.reschedule_request.created',
   'medical_record.created',
   'medical_record.updated',
   'medical_record.status_changed',

@@ -60,6 +60,7 @@ GET /api/v1/ai/model                                                      .D....
 GET /api/v1/ai/prompts                                                    .D.....  can:ai.use
 GET /api/v1/appointments                                                  .DR....  can:appointments.manageOwn
 GET /api/v1/appointments/:appointmentId                                   .DR....  can:appointments.manageOwn
+GET /api/v1/appointments/reschedule-requests                              .DR....  can:appointments.manageOwn
 GET /api/v1/appointments/summary                                          .DR....  can:appointments.manageOwn
 GET /api/v1/attachments/:attachmentId/download                            ADRLP..  can:messages.send
 GET /api/v1/audit-events                                                  A......  can:logs.view
@@ -96,6 +97,7 @@ GET /api/v1/me/ai/conversations                                           ADRLPT
 GET /api/v1/me/ai/conversations/:conversationId                           ADRLPTN  authenticated
 GET /api/v1/me/appointments                                               ADRLPTN  authenticated
 GET /api/v1/me/appointments/:appointmentId                                ADRLPTN  authenticated
+GET /api/v1/me/appointments/:appointmentId/reschedule-requests            ADRLPTN  authenticated
 GET /api/v1/me/availability                                               ADRLPTN  authenticated
 GET /api/v1/me/devices                                                    ADRLPTN  authenticated
 GET /api/v1/me/incident-bookmarks                                         A......  can:logs.view
@@ -126,9 +128,11 @@ GET /api/v1/notifications/badge-counts                                    ADRLPT
 GET /api/v1/notifications/summary                                         ADRLPTN  authenticated
 GET /api/v1/patient/doctors                                               ADRLPTN  authenticated
 GET /api/v1/patient/doctors/:doctorId                                     ADRLPTN  authenticated
+GET /api/v1/patient/doctors/:doctorId/slots                               ADRLPTN  authenticated
 GET /api/v1/patient/hospitals                                             ADRLPTN  authenticated
 GET /api/v1/patient/hospitals/:hospitalId                                 ADRLPTN  authenticated
 GET /api/v1/patient/specialties                                           ADRLPTN  authenticated
+GET /api/v1/patient/visit-types                                           ADRLPTN  authenticated
 GET /api/v1/patients                                                      ADRLP..  can:patients.view
 GET /api/v1/patients/:patientId                                           ADRLP..  can:patients.view
 GET /api/v1/patients/:patientId/alerts                                    ADRLP..  can:patients.view
@@ -223,6 +227,8 @@ POST /api/v1/appointments/:appointmentId/no-show                          .DR...
 POST /api/v1/appointments/:appointmentId/propose-slots                    .DR....  can:appointments.manageOwn
 POST /api/v1/appointments/:appointmentId/reject                           .DR....  can:appointments.manageOwn
 POST /api/v1/appointments/:appointmentId/reschedule                       .DR....  can:appointments.manageOwn
+POST /api/v1/appointments/reschedule-requests/:requestId/approve          .DR....  can:appointments.manageOwn
+POST /api/v1/appointments/reschedule-requests/:requestId/reject           .DR....  can:appointments.manageOwn
 POST /api/v1/audit-events/export                                          A......  can:logs.export
 POST /api/v1/auth/admin-invitations                                       A......  can:roles.manage
 POST /api/v1/auth/admin-invitations/accept                                ADRLPTN  public
@@ -279,6 +285,9 @@ POST /api/v1/me/2fa/reenroll/confirm                                      ADRLPT
 POST /api/v1/me/2fa/setup                                                 ADRLPTN  authenticated
 POST /api/v1/me/ai/conversations                                          ADRLPTN  authenticated
 POST /api/v1/me/ai/conversations/:conversationId/messages                 ADRLPTN  authenticated
+POST /api/v1/me/appointments                                              ADRLPTN  authenticated
+POST /api/v1/me/appointments/:appointmentId/cancel                        ADRLPTN  authenticated
+POST /api/v1/me/appointments/:appointmentId/reschedule-requests           ADRLPTN  authenticated
 POST /api/v1/me/data-export                                               ADRLPTN  authenticated
 POST /api/v1/me/devices                                                   ADRLPTN  authenticated
 POST /api/v1/me/incident-bookmarks                                        A......  can:logs.view
@@ -287,6 +296,7 @@ POST /api/v1/me/integrations/:integrationId/disconnect                    ADRLPT
 POST /api/v1/me/password                                                  ADRLPTN  authenticated
 POST /api/v1/me/password/verify                                           ADRLPTN  authenticated
 POST /api/v1/me/patient-link/code                                         ADRLPTN  authenticated
+POST /api/v1/me/reschedule-requests/:requestId/withdraw                   ADRLPTN  authenticated
 POST /api/v1/me/sessions/revoke-others                                    ADRLPTN  authenticated
 POST /api/v1/me/time-off                                                  ADRLPTN  authenticated
 POST /api/v1/me/time-off/:timeOffId/resolve                               ADRLPTN  authenticated

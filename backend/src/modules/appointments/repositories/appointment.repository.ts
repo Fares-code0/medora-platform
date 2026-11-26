@@ -638,11 +638,20 @@ export class AppointmentRepository {
     });
   }
 
-  /** Supersedes any outstanding proposal when the appointment resolves. */
+  /**
+   * Supersedes any outstanding proposal when the appointment resolves —
+   * and any patient reschedule request still pending (ADR-049: a request
+   * is `superseded` when the appointment is cancelled, completed or moved
+   * by the clinic while it waits).
+   */
   async expireProposals(appointmentId: string): Promise<void> {
     await this.prisma.db.appointmentRescheduleProposal.updateMany({
       where: { appointmentId, status: 'pending' },
       data: { status: 'expired' },
+    });
+    await this.prisma.db.appointmentRescheduleRequest.updateMany({
+      where: { appointmentId, status: 'pending' },
+      data: { status: 'superseded', decidedAt: new Date() },
     });
   }
 
