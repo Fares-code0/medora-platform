@@ -445,16 +445,17 @@ describe('GET /me/appointments/:id', () => {
 });
 
 describe('the write routes are absent, not half-built', () => {
-  it('does not expose booking, cancel or confirm', async () => {
-    // Each needs a policy no source states (contract §4). Their absence
-    // is asserted so that adding one is a deliberate act with a decision
+  it('does not expose cancel or confirm', async () => {
+    // Each needs a policy no source states (ADR-033). Their absence is
+    // asserted so that adding one is a deliberate act with a decision
     // behind it, rather than something that appears by accident.
+    // `POST /me/appointments` (booking a published slot, DR-10/DR-11) now
+    // exists and is covered by `patient-booking.e2e-spec.ts`.
     const session = await signUp('sara');
     const pt = await linkTo(session, 0);
     const apt = await seedAppointment(pt, new Date('2026-10-01T09:00:00Z'));
 
     for (const path of [
-      APPOINTMENTS,
       `${APPOINTMENTS}/${apt}/cancel`,
       `${APPOINTMENTS}/${apt}/confirm`,
     ]) {

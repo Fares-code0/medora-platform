@@ -34,7 +34,12 @@ import {
   type SchedulingRow,
 } from '../repositories/appointment.repository';
 
-import { findSlotConflict, type SlotCandidate } from './slot-conflict';
+import {
+  findOccupancyConflict,
+  findSlotConflict,
+  type SlotCandidate,
+  type SlotConflict,
+} from './slot-conflict';
 
 /**
  * How far back the booking query reaches, in minutes.
@@ -95,27 +100,7 @@ export class SlotConflictChecker {
   /** Throws 409 naming the rule that refused; returns on a bookable slot. */
   async assertBookable(request: BookabilityRequest): Promise<void> {
     const { candidate, scheduling } = request;
-    const bufferMs = Math.max(0, scheduling.bufferMin) * 60_000;
-    const start = candidate.startsAt.getTime();
-    const end = start + Math.max(0, candidate.durationMin) * 60_000;
-
-    const [timeOff, booked] = await Promise.all([
-      this.appointments.timeOffOverlapping(
-        request.doctorId,
-        new Date(start - bufferMs),
-        new Date(end + bufferMs),
-        request.tx,
-      ),
-      this.appointments.bookedBetween(
-        {
-          doctorId: request.doctorId,
-          from: new Date(start - bufferMs - LOOKBACK_MINUTES * 60_000),
-          to: new Date(end + bufferMs),
-          excludeId: request.excludeAppointmentId,
-        },
-        request.tx,
-      ),
-    ]);
+    const { timeOff, booked } = await this.occupancyAround(request, scheduling.bufferMin);
 
     const conflict = findSlotConflict({
       candidate,
@@ -141,6 +126,72 @@ export class SlotConflictChecker {
       'slot_conflict',
     );
   }
+
+  /**
+   * The published-slot variant (DR-10): ADR-005 §4 rules 3–5 — time off,
+   * other live appointments with the buffer, duration — without the
+   * weekly grid (see `findOccupancyConflict`). Returns the conflict rather
+   * than throwing, because its two callers answer it differently:
+   * publishing with `409 slot_conflict`, booking with `409 slot_taken`.
+   */
+  async findOccupancy(request: OccupancyRequest): Promise<SlotConflict | null> {
+    const { timeOff, booked } = await this.occupancyAround(request, request.bufferMin);
+
+    return findOccupancyConflict({
+      candidate: request.candidate,
+      timeZone: request.timeZone,
+      bufferMin: request.bufferMin,
+      timeOff,
+      booked,
+    });
+  }
+
+  /** Time off and live bookings in the window a candidate could touch. */
+  private async occupancyAround(
+    request: {
+      readonly doctorId: string;
+      readonly candidate: SlotCandidate;
+      readonly excludeAppointmentId?: string | undefined;
+      readonly tx?: ScheduleTx | undefined;
+    },
+    bufferMin: number,
+  ): Promise<{
+    timeOff: readonly { startsAt: Date; endsAt: Date }[];
+    booked: readonly { publicId: string; startsAt: Date; durationMin: number }[];
+  }> {
+    const bufferMs = Math.max(0, bufferMin) * 60_000;
+    const start = request.candidate.startsAt.getTime();
+    const end = start + Math.max(0, request.candidate.durationMin) * 60_000;
+
+    const [timeOff, booked] = await Promise.all([
+      this.appointments.timeOffOverlapping(
+        request.doctorId,
+        new Date(start - bufferMs),
+        new Date(end + bufferMs),
+        request.tx,
+      ),
+      this.appointments.bookedBetween(
+        {
+          doctorId: request.doctorId,
+          from: new Date(start - bufferMs - LOOKBACK_MINUTES * 60_000),
+          to: new Date(end + bufferMs),
+          excludeId: request.excludeAppointmentId,
+        },
+        request.tx,
+      ),
+    ]);
+
+    return { timeOff, booked };
+  }
+}
+
+export interface OccupancyRequest {
+  readonly doctorId: string;
+  readonly bufferMin: number;
+  readonly timeZone: string;
+  readonly candidate: SlotCandidate;
+  /** The transaction holding the doctor's schedule lock (BE-1). */
+  readonly tx?: ScheduleTx | undefined;
 }
 
 function scheduleBusy(): AppException {

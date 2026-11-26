@@ -12,4 +12,18 @@ export const IDEMPOTENT = 'medora:idempotent';
  * appointment create, message send — and the other side-effecting sends
  * beside them.
  */
-export const Idempotent = (): MethodDecorator & ClassDecorator => SetMetadata(IDEMPOTENT, true);
+export interface IdempotentOptions {
+  /**
+   * The route refuses a request without `Idempotency-Key` (422), instead
+   * of taking ADR-014 §3's unkeyed default path. For writes whose double
+   * execution is a harm the client cannot undo — a patient booking
+   * (contract §6).
+   */
+  readonly required?: boolean;
+}
+
+/** What `@Idempotent()` stores: `true` (optional key) or the options. */
+export type IdempotentMetadata = true | IdempotentOptions;
+
+export const Idempotent = (options?: IdempotentOptions): MethodDecorator & ClassDecorator =>
+  SetMetadata(IDEMPOTENT, options === undefined ? true : options);
