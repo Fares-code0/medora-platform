@@ -8,6 +8,7 @@ import type {
   DetailRow,
   PatientAppointmentRepository,
 } from '../repositories/patient-appointment.repository';
+import type { PatientBookingRepository } from '../repositories/patient-booking.repository';
 
 import type { ClinicTimezoneSource } from './clinic-timezone';
 import { PatientAppointmentService } from './patient-appointment.service';
@@ -28,6 +29,8 @@ const PRINCIPAL = { userId: 'u1', role: 'patient' } as unknown as Principal;
 
 function row(publicId: string, photoUrl: string | null): DetailRow {
   return {
+    id: `id-${publicId}`,
+    hospitalId: null,
     publicId,
     startsAt: new Date('2026-11-02T09:00:00.000Z'),
     durationMin: 30,
@@ -72,6 +75,13 @@ function serviceWith(rows: DetailRow[], options: { signingFails?: boolean } = {}
     { patientIdFor: vi.fn().mockResolvedValue('PT-1') } as unknown as PatientSelfScopeService,
     timezone,
     new ProfilePhotoUrls({ file: { findMany } } as unknown as PrismaService, storage),
+    {
+      supersedeStale: vi.fn().mockResolvedValue(undefined),
+      hospitalNames: vi.fn().mockResolvedValue(new Map()),
+      pendingAmong: vi.fn().mockResolvedValue(new Set()),
+      pendingRequestFor: vi.fn().mockResolvedValue(null),
+      slotTimings: vi.fn().mockResolvedValue(new Map()),
+    } as unknown as PatientBookingRepository,
   );
 
   return { service, findMany };
