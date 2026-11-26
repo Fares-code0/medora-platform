@@ -35,7 +35,23 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'modules/doctors/repositories/admin-doctor.repository.ts': 'per-doctor counts only (patients, appointments) for the doctor directory',
   'modules/controlled-access/services/controlled-access.service.ts':
     'whether the target hospital holds the record a grant or request names (ids only), and its admins to notify',
+  'modules/doctors/discovery/discovery.repository.ts':
+    "authenticated patient discovery across hospitals: public columns only, and a published slot's occupancy as existence only (DSC-01)",
+  'modules/messaging/repositories/conversation.repository.ts':
+    "the caller's own staff affiliation, deciding which hospital a new thread belongs to (MSG-01)",
+  'modules/appointments/services/published-slot.service.ts':
+    'patient slot inventory: published slots of a patient-visible doctor; slot and hospital fields only (DR-10)',
+  'modules/appointments/services/patient-booking.service.ts':
+    "the booking transaction, keyed by the slot id and the caller's own session-derived patient id; writes only that patient's appointment and record (DR-11)",
+  'modules/hospitals/repositories/hospital-staffing.repository.ts':
+    "revoking a departing user's own grants and requests inside the authorized staffing transaction; narrows access only (XH-03)",
 };
+
+/**
+ * A raw write of `app.scope` is a scope selection too — and one the
+ * helper-name pattern below would not see — so it is matched as well.
+ */
+const SELECTS_SCOPE = /\b(runAsSystem|runWithTenantContext|setTenantContext)\(|set_config\(\s*'app\.scope'/;
 
 function sources(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
@@ -49,7 +65,7 @@ describe('RLS scope selection (F-15)', () => {
   it('chooses `system` or an explicit context only at reviewed call sites', () => {
     const found = sources(SRC)
       .filter((path) => !path.endsWith('shared/database/tenant-context.ts') && !path.endsWith('shared/database/index.ts'))
-      .filter((path) => /\b(runAsSystem|runWithTenantContext|setTenantContext)\(/.test(readFileSync(path, 'utf8')))
+      .filter((path) => SELECTS_SCOPE.test(readFileSync(path, 'utf8')))
       .map((path) => relative(SRC, path).split('\\').join('/'))
       .sort();
 

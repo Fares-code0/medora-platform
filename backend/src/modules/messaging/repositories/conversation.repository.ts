@@ -340,8 +340,10 @@ export class ConversationRepository {
   async staffHospitalOf(userId: string): Promise<string | null> {
     // Trusted lookup of the caller's own staffing (the same read the
     // tenant-context resolver makes before any tenant context exists).
-    const rows = await runAsSystem(() =>
-      this.prisma.db.hospitalStaffAffiliation.findMany({
+    // `async` + `await`: a Prisma query is lazy, so returned un-awaited it
+    // would run after `runAsSystem` had returned — under the caller's scope.
+    const rows = await runAsSystem(async () =>
+      await this.prisma.db.hospitalStaffAffiliation.findMany({
         where: {
           endedAt: null,
           staff: { is: { userId, deletedAt: null } },
