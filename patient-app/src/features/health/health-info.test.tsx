@@ -8,9 +8,9 @@ import { patientInfoEndpoints } from '@/api/endpoints/patient-info';
 import { renderWithProviders } from '@/test/render';
 
 import { fixtureHealthService } from './fixtures/health-fixtures';
-import { healthService } from './service';
 import { InsuranceScreen } from './screens/InsuranceScreen';
 import { TestsScreen } from './screens/TestsScreen';
+import { healthService } from './service';
 
 const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => ({

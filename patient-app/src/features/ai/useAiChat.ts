@@ -40,6 +40,8 @@ export interface AiChat {
   /** The last refusal or failure, for the screen to classify (not linked, …). */
   readonly error: unknown;
   readonly conversationId: string | undefined;
+  /** How many replies have finished this session; drives the "reply arrived" announcement. */
+  readonly completedReplies: number;
   /** False if a turn is already running or the text is empty. */
   readonly send: (content: string) => Promise<boolean>;
   readonly retry: () => void;
@@ -54,6 +56,7 @@ export function useAiChat(mode: AiMode, initialConversationId?: string): AiChat 
   const [messages, setMessages] = useState<readonly AiMessage[]>([]);
   const [turn, setTurn] = useState<AiTurnState>('idle');
   const [error, setError] = useState<unknown>(null);
+  const [completedReplies, setCompletedReplies] = useState(0);
   const [conversationId, setConversationId] = useState(initialConversationId);
 
   const idRef = useRef(initialConversationId);
@@ -163,6 +166,7 @@ export function useAiChat(mode: AiMode, initialConversationId?: string): AiChat 
           setTurn('failed');
         } else {
           setTurn('idle');
+          setCompletedReplies((n) => n + 1);
         }
         void queryClient.invalidateQueries({ queryKey: aiKeys.lists() });
         return true;
@@ -204,5 +208,5 @@ export function useAiChat(mode: AiMode, initialConversationId?: string): AiChat 
     void run(text);
   }, [run]);
 
-  return { messages, turn, error, conversationId, send: run, retry, hydrate };
+  return { messages, turn, error, conversationId, completedReplies, send: run, retry, hydrate };
 }

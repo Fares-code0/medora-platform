@@ -7,17 +7,21 @@ import { apiClient } from '@/api/client';
 import { patientAiEndpoints } from '@/api/endpoints/patient-ai';
 import { renderWithProviders } from '@/test/render';
 
+import type { AiTurnEvent } from './model/types';
 import { AiChatScreen } from './screens/AiChatScreen';
 import { AiConversationsScreen } from './screens/AiConversationsScreen';
 import { AiHomeScreen } from './screens/AiHomeScreen';
 import { aiService } from './service';
-import type { AiTurnEvent } from './model/types';
 
 const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual('@react-navigation/native'),
   useNavigation: () => ({ navigate: mockNavigate }),
 }));
+
+function routeProps<T extends (props: never) => unknown>(params: object): Parameters<T>[0] {
+  return { route: { params } } as unknown as Parameters<T>[0];
+}
 
 const unavailable503 = () =>
   Object.assign(new Error('x'), { kind: 'server', status: 503, code: 'service_unavailable', ref: 'r' });
@@ -29,9 +33,9 @@ const done = (escalated = false): AiTurnEvent => ({
   type: 'done', messageId: 'm1', status: 'COMPLETE', error: null, escalated,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 const chat = (mode: 'general' | 'personal', id?: string) => (
-  <AiChatScreen {...({ route: { params: { mode, conversationId: id } } } as never)} />
+  <AiChatScreen {...routeProps<typeof AiChatScreen>({ mode, conversationId: id })} />
 );
 
 afterEach(() => {
@@ -56,7 +60,7 @@ describe('mode separation', () => {
       { id: 'p1', mode: 'personal', title: 'My next visit', createdAt: '2026-11-02T00:00:00Z' },
     ]);
     renderWithProviders(
-      <AiConversationsScreen {...({ route: { params: { mode: 'personal' } } } as never)} />,
+      <AiConversationsScreen {...routeProps<typeof AiConversationsScreen>({ mode: 'personal' })} />,
     );
     await waitFor(() => expect(screen.getByText('My next visit')).toBeTruthy());
     expect(screen.queryByText('About sleep')).toBeNull();
@@ -108,7 +112,7 @@ describe('503 service_unavailable', () => {
 
   it('is what mock builds see too (the fixture refuses like the server)', async () => {
     renderWithProviders(
-      <AiConversationsScreen {...({ route: { params: { mode: 'general' } } } as never)} />,
+      <AiConversationsScreen {...routeProps<typeof AiConversationsScreen>({ mode: 'general' })} />,
     );
     await waitFor(() => expect(screen.getByTestId('ai-unavailable')).toBeTruthy());
     expect(screen.queryByTestId('ai-new-conversation')).toBeNull();

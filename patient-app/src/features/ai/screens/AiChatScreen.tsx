@@ -84,12 +84,6 @@ export function AiChatScreen({ route }: Props) {
     if (loaded !== undefined) hydrate(loaded.messages);
   }, [loaded, hydrate]);
 
-  const previousTurn = useRef(chat.turn);
-  useEffect(() => {
-    if (previousTurn.current === 'responding' && chat.turn === 'idle') setArrived((n) => n + 1);
-    previousTurn.current = chat.turn;
-  }, [chat.turn]);
-
   const last = chat.messages[chat.messages.length - 1];
   const escalationBody = last?.escalated === true ? last.body : undefined;
   useAnnounceOnChange(escalationBody);
