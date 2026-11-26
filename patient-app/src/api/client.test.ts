@@ -657,7 +657,7 @@ describe('retry policy', () => {
   });
 
   it('never retries a missing endpoint', () => {
-    expect(shouldRetry(0, new EndpointNotImplementedError('BE-05', 'capability.booking'))).toBe(
+    expect(shouldRetry(0, new EndpointNotImplementedError('BE-05', 'capability.messages'))).toBe(
       false,
     );
   });
@@ -870,12 +870,12 @@ describe('the service seam', () => {
     interface Thing {
       load(): Promise<void>;
     }
-    const service = unavailableService<Thing>('BE-05', 'capability.booking', ['load']);
+    const service = unavailableService<Thing>('BE-05', 'capability.messages', ['load']);
 
     await expect(service.load()).rejects.toBeInstanceOf(EndpointNotImplementedError);
     await expect(service.load()).rejects.toMatchObject({
       dependency: 'BE-05',
-      capability: 'capability.booking',
+      capability: 'capability.messages',
     });
   });
 });

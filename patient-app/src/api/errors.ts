@@ -58,7 +58,14 @@ export async function normalizeHttpError(response: Response): Promise<ApiError &
   switch (response.status) {
     case 400:
     case 422:
-      return toThrowable({ ...code, kind: 'validation', fieldErrors: body.fieldErrors ?? {} });
+      return toThrowable({
+        ...code,
+        kind: 'validation',
+        fieldErrors: body.fieldErrors ?? {},
+        // The envelope's `detail` (ADR-012), carried where the server sent
+        // one — `422 insurance_not_covered` explains itself there.
+        ...(typeof body.detail === 'string' ? { detail: body.detail } : {}),
+      });
     case 401:
       return toThrowable({ ...code, kind: 'auth' });
     case 403:

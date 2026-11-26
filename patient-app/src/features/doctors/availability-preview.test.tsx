@@ -48,7 +48,12 @@ function hoursFromNow(hours: number): string {
 }
 
 function slot(id: string, hours: number): BookableSlot {
-  return { id, startsAt: hoursFromNow(hours), durationMin: 30 };
+  return {
+    id,
+    startsAt: hoursFromNow(hours),
+    durationMin: 30,
+    hospital: { id: 'HOS-1', name: 'Medora Central' },
+  };
 }
 
 const installed: { mockRestore: () => void }[] = [];
@@ -125,7 +130,7 @@ describe('the preview', () => {
 
   it('opens the booking flow on the time that was tapped', async () => {
     const when = hoursFromNow(24);
-    stub([{ id: 'SL-1', startsAt: when, durationMin: 30 }]);
+    stub([{ ...slot('SL-1', 24), startsAt: when }]);
     const view = renderProfile();
 
     const chip = await view.findByTestId('doctor-availability-SL-1');
@@ -162,7 +167,7 @@ describe('when there is nothing to show', () => {
   });
 
   it('renders nothing at all when the slots cannot be read', async () => {
-    stub(new EndpointNotImplementedError('ADR-033', 'capability.slots'));
+    stub(new EndpointNotImplementedError('ADR-033', 'capability.messages'));
     const view = renderProfile();
 
     // Waited on the profile first: the availability section renders

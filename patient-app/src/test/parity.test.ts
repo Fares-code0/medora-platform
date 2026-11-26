@@ -369,8 +369,9 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     // patient-safe projection, so `GET /patient/doctors`, `/{id}` and
     // `/patient/specialties` are three more real routes. `appointments.ts`
     // joined them with I-01/I-06: `GET /me/appointments` and
-    // `/me/appointments/{id}` are live, and the four write routes are NOT —
-    // which is why that module calls two paths and rejects five methods.
+    // `/me/appointments/{id}` are live,
+    // and its write routes (booking, cancellation, reschedule requests)
+    // joined them with ADR-049. `hospitals.ts` is hospital discovery.
     // `sessions.ts` joined them with P-06: M8 shipped
     // `account-security.controller.ts`, so `GET /me/sessions` and
     // `DELETE /me/sessions/{id}` are two more real routes. It is a
@@ -385,6 +386,7 @@ describe('the endpoint layer names only real routes (V-02)', () => {
       'appointments.ts',
       'auth.ts',
       'doctors.ts',
+      'hospitals.ts',
       'notifications.ts',
       'profile.ts',
       'sessions.ts',
@@ -414,14 +416,7 @@ describe('the endpoint layer names only real routes (V-02)', () => {
 
   it('the two session routes exist on the controller behind them', () => {
     const controller = fs.readFileSync(
-      path.join(
-        BACKEND,
-        'src',
-        'modules',
-        'auth',
-        'controllers',
-        'account-security.controller.ts',
-      ),
+      path.join(BACKEND, 'src', 'modules', 'auth', 'controllers', 'account-security.controller.ts'),
       'utf8',
     );
 
@@ -455,26 +450,53 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     expect(source).not.toMatch(/['"`]doctors['"`]/);
   });
 
-  it('the appointment adapter calls the two read routes and no write route', () => {
+  it('the appointment adapter calls exactly the contract §3 routes', () => {
     // Comments are stripped first, as in the invented-route test below:
-    // this module explains at length which routes it refuses to call, and
-    // punishing it for naming them in a docblock would reward silence.
+    // this module explains at length what each route is, and punishing it
+    // for naming them in a docblock would reward silence.
     const source = fs
       .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'appointments.ts'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*$/gm, '');
-    const called = [...source.matchAll(/apiClient\.\w+<[^>]*>\(\s*[`']([^`'$]+)/g)].map(
-      (entry) => entry[1],
-    );
+    // `verb path-template`, with `${…}` interpolations kept so the SHAPE of
+    // each route is what is compared.
+    const called = [
+      ...source.matchAll(/apiClient\.(get|post|put|patch|delete)<[^>]*>\(\s*[`']([^`']+)[`']/g),
+    ].map((entry) => `${(entry[1] ?? '').toUpperCase()} ${entry[2] ?? ''}`);
 
-    expect(new Set(called)).toEqual(new Set(['me/appointments', 'me/appointments/']));
-    // The write routes are ADR-033's and do not exist. A path string for
-    // any of them here would be an invented endpoint.
-    for (const blocked of ['/cancel', '/confirm', '/reschedule', 'slots']) {
-      expect(source).not.toContain(blocked);
-    }
-    // Reads only: no POST, PUT, PATCH or DELETE reaches this surface.
-    expect(source).not.toMatch(/apiClient\.(post|put|patch|delete)/);
+    // ADR-049's routes, as the shared contract states them (the backend
+    // controller for the writes is built in parallel — see the checklist).
+    expect(new Set(called)).toEqual(
+      new Set([
+        'GET me/appointments',
+        'GET me/appointments/${encodeURIComponent(appointmentId)}',
+        'GET patient/doctors/${encodeURIComponent(doctorId)}/slots',
+        'GET patient/visit-types',
+        'POST me/appointments',
+        'POST me/appointments/${encodeURIComponent(appointmentId)}/cancel',
+        'POST me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests',
+        'GET me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests',
+        'POST me/reschedule-requests/${encodeURIComponent(requestId)}/withdraw',
+      ]),
+    );
+    // Rescheduling is a REQUEST. No route moves an appointment, and there
+    // is no confirm/accept-proposal route in the contract.
+    expect(source).not.toContain('/confirm');
+    expect(source).not.toMatch(/apiClient\.(put|patch|delete)/);
+  });
+
+  it('the hospital adapter calls the two discovery routes and nothing else', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'hospitals.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const called = [
+      ...source.matchAll(/apiClient\.(get|post|put|patch|delete)<[^>]*>\(\s*[`']([^`']+)[`']/g),
+    ].map((entry) => `${(entry[1] ?? '').toUpperCase()} ${entry[2] ?? ''}`);
+
+    expect(new Set(called)).toEqual(
+      new Set(['GET patient/hospitals', 'GET patient/hospitals/${encodeURIComponent(hospitalId)}']),
+    );
   });
 
   it('the notification adapter calls the live routes and no unbuilt one', () => {

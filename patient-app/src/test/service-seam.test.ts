@@ -4,6 +4,7 @@ import path from 'node:path';
 import { httpAppointmentService } from '@/features/appointments/http-appointment-service';
 import { httpAuthService } from '@/features/auth/http-auth-service';
 import { httpDoctorService } from '@/features/doctors/http-doctor-service';
+import { httpHospitalService } from '@/features/hospitals/http-hospital-service';
 import { httpNotificationService } from '@/features/notifications/http-notification-service';
 import { httpProfileService } from '@/features/profile/http-profile-service';
 
@@ -64,6 +65,7 @@ const IMPLEMENTATIONS: Record<string, object> = {
   appointments: httpAppointmentService,
   auth: httpAuthService,
   doctors: httpDoctorService,
+  hospitals: httpHospitalService,
   notifications: httpNotificationService,
   profile: httpProfileService,
 };
@@ -159,6 +161,7 @@ describe('no feature can serve a patient invented data', () => {
       'emergency',
       'health',
       'home',
+      'hospitals',
       'messages',
       'notifications',
       'profile',

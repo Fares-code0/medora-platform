@@ -52,7 +52,12 @@ interface ApiErrorBase {
 /** Every failure leaving the API layer is one of these. */
 export type ApiError = ApiErrorBase &
   (
-    | { readonly kind: 'validation'; readonly fieldErrors: Readonly<Record<string, string[]>> }
+    | {
+        readonly kind: 'validation';
+        readonly fieldErrors: Readonly<Record<string, string[]>>;
+        /** The envelope's `detail`, when the server sent one. */
+        readonly detail?: string;
+      }
     | { readonly kind: 'auth' }
     | { readonly kind: 'forbidden' }
     | { readonly kind: 'not_found' }

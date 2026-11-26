@@ -102,7 +102,21 @@ export function DoctorProfileScreen({ route }: Props) {
                   {data.specialty}
                 </Text>
 
-                <View style={[styles.row, { columnGap: theme.space[2] }]}>
+                <View
+                  style={[
+                    styles.wrap,
+                    styles.center,
+                    { columnGap: theme.space[2], rowGap: theme.space[2] },
+                  ]}
+                >
+                  {data.hospital === null ? null : (
+                    <Badge
+                      label={data.hospital.name}
+                      tone="info"
+                      icon="mapPin"
+                      testID="doctor-profile-hospital"
+                    />
+                  )}
                   {data.departmentName === null ? null : (
                     <Badge label={data.departmentName} tone="primary" />
                   )}
@@ -179,7 +193,7 @@ export function DoctorProfileScreen({ route }: Props) {
                 <Section title={t('doctor.where')}>
                   <Card>
                     {data.hospital === null ? null : (
-                      <Text variant="bodyStrong">{data.hospital}</Text>
+                      <Text variant="bodyStrong">{data.hospital.name}</Text>
                     )}
                     {data.officeLocation === null ? null : (
                       <Text variant="bodySm" color="textSecondary">
@@ -199,6 +213,7 @@ export function DoctorProfileScreen({ route }: Props) {
 
 const styles = StyleSheet.create({
   grow: { flex: 1 },
+  center: { justifyContent: 'center' },
   header: { alignItems: 'center' },
   row: { alignItems: 'center', flexDirection: 'row' },
   wrap: { flexDirection: 'row', flexWrap: 'wrap' },

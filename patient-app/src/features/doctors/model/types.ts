@@ -42,12 +42,18 @@ export interface PatientSafeDoctor {
   /** Derived server-side from `SatisfactionSurvey`; null when unrated. */
   readonly ratingAvg: number | null;
   /**
-   * Free-text display string (`doctors.hospital varchar(80)`). NOT an
-   * entity, not searchable, no address, no phone — v1 is single-clinic
-   * (ADR-018 §1) and there is no facilities table to link to (audit §8).
+   * The hospital of the doctor's active employment — an entity now
+   * (multi-hospital, contract §2), not the old free-text string. `null`
+   * when the server names none; never derived from a department or an
+   * office string.
    */
-  readonly hospital: string | null;
+  readonly hospital: HospitalRef | null;
   readonly officeLocation: string | null;
+}
+
+export interface HospitalRef {
+  readonly id: string;
+  readonly name: string;
 }
 
 export interface Specialty {
@@ -65,6 +71,7 @@ export interface DoctorSearchParams {
   readonly q?: string;
   readonly specialtyId?: string;
   readonly departmentId?: string;
+  readonly hospitalId?: string;
   readonly page?: number;
 }
 

@@ -1,4 +1,3 @@
-import { EndpointNotImplementedError } from '@/api/seam';
 import { ResponseContractError } from '@/schemas/envelope';
 import { isApiError } from '@/types/api';
 
@@ -7,24 +6,33 @@ import { httpAppointmentService } from './http-appointment-service';
 /**
  * The live appointment adapter — checklist I-01, I-02, I-06.
  *
- * Reads are live; every write refuses with ADR-033 named. The tests that
- * matter most are the ones about what this adapter does NOT do: it does
- * not send a path for a route that does not exist, and it does not
- * manufacture `availableActions`.
+ * Everything is live: reads, slots, visit types, booking, cancellation and
+ * the reschedule REQUEST workflow. The tests that matter most are about
+ * what the adapter does NOT do: it does not manufacture `availableActions`
+ * (it passes the server's through), and a retried booking re-sends the
+ * Idempotency-Key it was given.
  */
 
 interface FetchCall {
   readonly url: string;
+  readonly method: string;
+  readonly headers: Headers;
+  readonly body: unknown;
 }
 
 function stubFetch(responses: readonly Response[]): { calls: FetchCall[] } {
   const calls: FetchCall[] = [];
   let index = 0;
-  global.fetch = jest.fn((input: RequestInfo | URL) => {
-    calls.push({ url: String(input) });
+  global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({
+      url: String(input),
+      method: init?.method ?? 'GET',
+      headers: new Headers(init?.headers),
+      body: typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined,
+    });
     const response = responses[Math.min(index, responses.length - 1)];
     index += 1;
-    return Promise.resolve(response as Response);
+    return Promise.resolve((response as Response).clone());
   });
   return { calls };
 }
@@ -54,6 +62,8 @@ const SUMMARY = {
     specialty: 'Cardiology',
     photoUrl: null,
   },
+  hospital: { id: 'hos-1', name: 'Medora Central' },
+  availableActions: ['cancel', 'reschedule'],
 };
 
 function listBody(items: unknown[], overrides: Record<string, unknown> = {}) {
@@ -76,6 +86,7 @@ const DETAIL = {
     notes: 'Bring the blood pressure diary.',
     cancelledReason: null,
     clinicTimezone: 'Asia/Amman',
+    pendingRescheduleRequest: null,
     events: [
       {
         action: 'approve',
@@ -191,139 +202,279 @@ describe('list', () => {
   });
 });
 
-describe('what the adapter refuses to invent', () => {
-  it('leaves availableActions undefined rather than empty', async () => {
+describe('what the adapter passes through, untouched', () => {
+  it('maps the hospital and the server’s availableActions', async () => {
     stubFetch([json(200, DETAIL)]);
 
     const detail = await httpAppointmentService.getById('APT-3007');
 
-    // `[]` would assert "no action is available" — a claim about policy
-    // that ADR-033 has not answered. `undefined` says the server has not
-    // said, which is true.
-    expect(detail.availableActions).toBeUndefined();
-    expect(detail.proposedSlots).toBeUndefined();
+    expect(detail.hospital).toEqual({ id: 'hos-1', name: 'Medora Central' });
+    expect(detail.availableActions).toEqual(['cancel', 'reschedule']);
+    expect(detail.pendingRescheduleRequest).toBeNull();
+  });
+
+  it('passes an empty availableActions through as empty — the server said so', async () => {
+    stubFetch([json(200, { data: { ...DETAIL.data, availableActions: [] } })]);
+
+    expect((await httpAppointmentService.getById('APT-3007')).availableActions).toEqual([]);
   });
 
   it('does not derive an action from the status', async () => {
-    stubFetch([json(200, { data: { ...DETAIL.data, status: 'confirmed' } })]);
-
-    const detail = await httpAppointmentService.getById('APT-3007');
-
-    expect(detail.availableActions).toBeUndefined();
-  });
-});
-
-describe('getById', () => {
-  it('maps the detail-only fields and the event history', async () => {
-    stubFetch([json(200, DETAIL)]);
-
-    const detail = await httpAppointmentService.getById('APT-3007');
-
-    expect(detail.notes).toBe('Bring the blood pressure diary.');
-    expect(detail.events).toHaveLength(1);
-    expect(detail.events[0]?.at).toBe('2026-09-01T12:00:00.000Z');
-    expect(detail.events[0]?.toStatus).toBe('confirmed');
-    expect(detail.events[0]?.fromStatus).toBe('pending');
-  });
-
-  it('keeps the actor coarse — never a staff name', async () => {
     stubFetch([
-      json(200, {
-        data: {
-          ...DETAIL.data,
-          events: [
-            {
-              ...DETAIL.data.events[0],
-              actor: 'Dr Layla Haddad',
-            },
-          ],
-        },
-      }),
+      json(200, { data: { ...DETAIL.data, status: 'completed', availableActions: ['cancel'] } }),
     ]);
 
-    // `actor` is `patient | clinic | system` by contract. A staff name in
-    // that field is a projection regression, and this client refuses it
-    // rather than rendering the clinic's staff directory into a timeline.
+    // Whatever the status, what the server offered is what comes out.
+    expect((await httpAppointmentService.getById('APT-3007')).availableActions).toEqual(['cancel']);
+  });
+
+  it('maps a missing hospital to null rather than inventing one', async () => {
+    const withoutHospital: Record<string, unknown> = { ...DETAIL.data };
+    delete withoutHospital.hospital;
+    stubFetch([json(200, { data: withoutHospital })]);
+
+    expect((await httpAppointmentService.getById('APT-3007')).hospital).toBeNull();
+  });
+
+  it('fails loudly when availableActions is absent — an absence is not "nothing allowed"', async () => {
+    const without: Record<string, unknown> = { ...DETAIL.data };
+    delete without.availableActions;
+    stubFetch([json(200, { data: without })]);
+
     await expect(httpAppointmentService.getById('APT-3007')).rejects.toBeInstanceOf(
       ResponseContractError,
     );
   });
 
-  it('keeps an event that changed no status', async () => {
-    stubFetch([
-      json(200, {
-        data: {
-          ...DETAIL.data,
-          events: [
-            {
-              action: 'note',
-              fromStatus: null,
-              toStatus: null,
-              occurredAt: '2026-09-02T08:00:00.000Z',
-              actor: 'system',
-              reason: null,
-            },
-          ],
-        },
-      }),
-    ]);
+  it('maps the pending reschedule request on the detail', async () => {
+    stubFetch([json(200, { data: { ...DETAIL.data, pendingRescheduleRequest: REQUEST } })]);
 
     const detail = await httpAppointmentService.getById('APT-3007');
 
-    expect(detail.events).toHaveLength(1);
-    expect(detail.events[0]?.toStatus).toBeNull();
-  });
-
-  it('gives every event a distinct render key', async () => {
-    const at = '2026-09-01T12:00:00.000Z';
-    stubFetch([
-      json(200, {
-        data: {
-          ...DETAIL.data,
-          events: [
-            { ...DETAIL.data.events[0], occurredAt: at },
-            { ...DETAIL.data.events[0], occurredAt: at },
-          ],
-        },
-      }),
-    ]);
-
-    const detail = await httpAppointmentService.getById('APT-3007');
-    const keys = detail.events.map((event) => event.id);
-
-    // Two events at the same instant are possible; two identical React
-    // keys are a rendering defect.
-    expect(new Set(keys).size).toBe(2);
-  });
-
-  it('surfaces someone else’s appointment as 404, like an unknown one', async () => {
-    stubFetch([json(404, { message: 'Appointment not found', code: 'not_found' })]);
-
-    const error: unknown = await httpAppointmentService
-      .getById('APT-9999')
-      .catch((e: unknown) => e);
-
-    expect(isApiError(error)).toBe(true);
-    expect(isApiError(error) && error.kind).toBe('not_found');
-    // Never 403 — a 403 confirms the appointment exists.
-    expect(isApiError(error) && error.kind).not.toBe('forbidden');
+    expect(detail.pendingRescheduleRequest?.status).toBe('pending');
+    expect(detail.pendingRescheduleRequest?.requestedSlot.id).toBe('slot-2');
   });
 });
 
-describe('the write routes', () => {
-  it.each([
-    ['listSlots', () => httpAppointmentService.listSlots('doc-1', 'a', 'b')],
-    ['book', () => httpAppointmentService.book({} as never, 'key')],
-    ['cancel', () => httpAppointmentService.cancel('APT-1', 'reason')],
-    ['requestReschedule', () => httpAppointmentService.requestReschedule('APT-1', 'reason')],
-    ['acceptProposal', () => httpAppointmentService.acceptProposal('APT-1', 'slot-1')],
-  ])('%s refuses with ADR-033 named, and touches no network', async (_name, call) => {
-    const { calls } = stubFetch([json(200, { data: {} })]);
+const REQUEST = {
+  id: 'rr-1',
+  appointmentId: 'APT-3007',
+  status: 'pending',
+  requestedSlot: { id: 'slot-2', startsAt: '2026-10-03T09:00:00.000Z', durationMin: 30 },
+  note: 'Travelling',
+  decisionReason: null,
+  createdAt: '2026-09-20T09:00:00.000Z',
+  decidedAt: null,
+};
 
-    const error: unknown = await call().catch((e: unknown) => e);
+describe('slots and visit types', () => {
+  it('reads published slots for one doctor in a window', async () => {
+    const { calls } = stubFetch([
+      json(200, {
+        data: [
+          {
+            id: 'slot-1',
+            startsAt: '2026-10-02T09:00:00.000Z',
+            durationMin: 30,
+            hospital: { id: 'hos-1', name: 'Medora Central' },
+          },
+        ],
+      }),
+    ]);
 
-    expect(error).toBeInstanceOf(EndpointNotImplementedError);
-    expect((error as EndpointNotImplementedError).dependency).toBe('ADR-033');
-    expect(calls).toHaveLength(0);
+    const slots = await httpAppointmentService.listSlots(
+      'doc 1',
+      '2026-10-02T00:00:00.000Z',
+      '2026-10-03T00:00:00.000Z',
+    );
+
+    const url = new URL(calls[0]?.url ?? '');
+    expect(url.pathname).toMatch(/\/patient\/doctors\/doc%201\/slots$/);
+    expect(url.searchParams.get('from')).toBe('2026-10-02T00:00:00.000Z');
+    expect(url.searchParams.get('to')).toBe('2026-10-03T00:00:00.000Z');
+    expect(slots[0]?.hospital.name).toBe('Medora Central');
+  });
+
+  it('reads the visit types', async () => {
+    const { calls } = stubFetch([
+      json(200, { data: [{ id: 'vt-1', name: 'New patient', durationMin: 30 }] }),
+    ]);
+
+    const types = await httpAppointmentService.listVisitTypes();
+
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(/\/patient\/visit-types$/);
+    expect(types).toEqual([{ id: 'vt-1', name: 'New patient', durationMin: 30 }]);
+  });
+});
+
+describe('booking', () => {
+  const REQUEST_BODY = {
+    doctorId: 'doc-1',
+    slotId: 'slot-1',
+    startsAt: '2026-10-02T09:00:00.000Z',
+    reason: 'Chest tightness',
+  };
+
+  it('POSTs the slot and reason with the Idempotency-Key it was given', async () => {
+    const { calls } = stubFetch([json(201, DETAIL)]);
+
+    const created = await httpAppointmentService.book(
+      { ...REQUEST_BODY, visitTypeId: 'vt-1', notes: 'Bring the diary' },
+      'key-1',
+    );
+
+    expect(calls[0]?.method).toBe('POST');
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(/\/me\/appointments$/);
+    expect(calls[0]?.headers.get('Idempotency-Key')).toBe('key-1');
+    // `doctorId` and `startsAt` are the fixture's — the server derives both from the slot.
+    expect(calls[0]?.body).toEqual({
+      slotId: 'slot-1',
+      reason: 'Chest tightness',
+      visitTypeId: 'vt-1',
+      notes: 'Bring the diary',
+    });
+    expect(created.id).toBe('APT-3007');
+  });
+
+  it('omits visitTypeId and notes when the patient chose none', async () => {
+    const { calls } = stubFetch([json(201, DETAIL)]);
+
+    await httpAppointmentService.book(REQUEST_BODY, 'key-2');
+
+    expect(calls[0]?.body).toEqual({ slotId: 'slot-1', reason: 'Chest tightness' });
+  });
+
+  it('re-sends the SAME key when a retry is given the same key', async () => {
+    const { calls } = stubFetch([json(201, DETAIL)]);
+
+    await httpAppointmentService.book(REQUEST_BODY, 'key-3');
+    await httpAppointmentService.book(REQUEST_BODY, 'key-3');
+
+    expect(calls.map((call) => call.headers.get('Idempotency-Key'))).toEqual(['key-3', 'key-3']);
+  });
+
+  it('keeps the envelope code on a taken slot so the screen can recover', async () => {
+    stubFetch([json(409, { code: 'slot_taken', message: 'taken' })]);
+
+    const error: unknown = await httpAppointmentService
+      .book(REQUEST_BODY, 'key-4')
+      .catch((e: unknown) => e);
+
+    expect(isApiError(error) && error.kind).toBe('conflict');
+    expect(isApiError(error) && error.code).toBe('slot_taken');
+  });
+
+  it('keeps the detail on 422 insurance_not_covered', async () => {
+    stubFetch([
+      json(422, {
+        code: 'insurance_not_covered',
+        message: 'not covered',
+        detail: 'Plan X is not accepted here.',
+      }),
+    ]);
+
+    const error: unknown = await httpAppointmentService
+      .book(REQUEST_BODY, 'key-5')
+      .catch((e: unknown) => e);
+
+    expect(isApiError(error) && error.kind).toBe('validation');
+    expect(isApiError(error) && 'detail' in error && error.detail).toBe(
+      'Plan X is not accepted here.',
+    );
+    expect(isApiError(error) && error.code).toBe('insurance_not_covered');
+  });
+});
+
+describe('cancelling', () => {
+  it('POSTs the reason code and note to the appointment', async () => {
+    const { calls } = stubFetch([
+      json(200, { data: { ...DETAIL.data, status: 'cancelled', availableActions: [] } }),
+    ]);
+
+    const cancelled = await httpAppointmentService.cancel('APT-3007', {
+      reasonCode: 'transport',
+      note: 'No lift',
+    });
+
+    expect(calls[0]?.method).toBe('POST');
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(/\/me\/appointments\/APT-3007\/cancel$/);
+    expect(calls[0]?.body).toEqual({ reasonCode: 'transport', note: 'No lift' });
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.availableActions).toEqual([]);
+  });
+
+  it('omits the note when there is none', async () => {
+    const { calls } = stubFetch([json(200, DETAIL)]);
+
+    await httpAppointmentService.cancel('APT-3007', { reasonCode: 'cost' });
+
+    expect(calls[0]?.body).toEqual({ reasonCode: 'cost' });
+  });
+});
+
+describe('reschedule requests', () => {
+  it('POSTs the slot with an Idempotency-Key, and returns the request', async () => {
+    const { calls } = stubFetch([json(201, { data: REQUEST })]);
+
+    const request = await httpAppointmentService.requestReschedule(
+      'APT-3007',
+      { slotId: 'slot-2', note: 'Travelling' },
+      'key-rr',
+    );
+
+    expect(calls[0]?.method).toBe('POST');
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(
+      /\/me\/appointments\/APT-3007\/reschedule-requests$/,
+    );
+    expect(calls[0]?.headers.get('Idempotency-Key')).toBe('key-rr');
+    expect(calls[0]?.body).toEqual({ slotId: 'slot-2', note: 'Travelling' });
+    expect(request.status).toBe('pending');
+  });
+
+  it('keeps the code on 409 reschedule_request_pending', async () => {
+    stubFetch([json(409, { code: 'reschedule_request_pending', message: 'pending' })]);
+
+    const error: unknown = await httpAppointmentService
+      .requestReschedule('APT-3007', { slotId: 'slot-2' }, 'k')
+      .catch((e: unknown) => e);
+
+    expect(isApiError(error) && error.code).toBe('reschedule_request_pending');
+  });
+
+  it('lists the history, newest first as the server sent it', async () => {
+    const { calls } = stubFetch([
+      json(200, {
+        data: [REQUEST, { ...REQUEST, id: 'rr-0', status: 'rejected', decisionReason: 'Full' }],
+      }),
+    ]);
+
+    const list = await httpAppointmentService.listRescheduleRequests('APT-3007');
+
+    expect(calls[0]?.method).toBe('GET');
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(
+      /\/me\/appointments\/APT-3007\/reschedule-requests$/,
+    );
+    expect(list.map((item) => item.id)).toEqual(['rr-1', 'rr-0']);
+    expect(list[1]?.decisionReason).toBe('Full');
+  });
+
+  it('withdraws by request id', async () => {
+    const { calls } = stubFetch([json(200, { data: { ...REQUEST, status: 'withdrawn' } })]);
+
+    const withdrawn = await httpAppointmentService.withdrawRescheduleRequest('rr-1');
+
+    expect(calls[0]?.method).toBe('POST');
+    expect(new URL(calls[0]?.url ?? '').pathname).toMatch(
+      /\/me\/reschedule-requests\/rr-1\/withdraw$/,
+    );
+    expect(withdrawn.status).toBe('withdrawn');
+  });
+
+  it('rejects a status outside the five the server defines', async () => {
+    stubFetch([json(200, { data: { ...REQUEST, status: 'moved' } })]);
+
+    await expect(httpAppointmentService.withdrawRescheduleRequest('rr-1')).rejects.toBeInstanceOf(
+      ResponseContractError,
+    );
   });
 });

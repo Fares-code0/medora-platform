@@ -58,8 +58,9 @@ const DETAIL = (overrides: Partial<AppointmentDetail> = {}): AppointmentDetail =
   notes: null,
   cancelledReason: null,
   clinicTimezone: 'Asia/Amman',
+  hospital: null,
   availableActions: [],
-  proposedSlots: [],
+  pendingRescheduleRequest: null,
   events: [EVENT()],
   ...overrides,
 });
@@ -164,11 +165,10 @@ describe('the server owns every transition (I-07, audit §6)', () => {
     expect(view.queryByTestId('appointment-reschedule')).toBeNull();
   });
 
-  it('treats an absent `availableActions` as "the server has not said", not as "none"', async () => {
-    // The live payload does not carry the field yet. `undefined` and `[]`
-    // render the same and mean different things; the distinction is the
-    // contract, and neither may become an invented button.
-    const view = await renderDetail(DETAIL({ availableActions: undefined }));
+  it('renders no action for an empty `availableActions` — the server said "none"', async () => {
+    // The field is required now: `[]` is the server's own statement, and
+    // no button is invented on a status that looks cancellable.
+    const view = await renderDetail(DETAIL({ status: 'pending', availableActions: [] }));
 
     expect(view.queryByTestId('appointment-cancel')).toBeNull();
     expect(view.queryByTestId('appointment-reschedule')).toBeNull();

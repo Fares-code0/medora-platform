@@ -103,22 +103,28 @@ names the dependency — it does not invent a plausible path.
 > client renders `availableActions` and renders `409 conflict` when it loses a
 > race. `appointments.test.tsx` asserts no action is derived from `status`.
 >
-> The live payload does not carry `availableActions` yet, and its absence is
-> the contract (§4): `[]` would assert that no action is available, which is a
-> statement about policy ADR-033 has not made. The port therefore makes the
-> field optional — `undefined` is *not stated*, `[]` would be *stated as none*.
+> `availableActions` is now server-computed on every payload and required: `[]`
+> is the server saying "nothing may be done", and a payload without the field
+> fails at the seam rather than rendering no buttons.
 
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
 | `AppointmentsScreen` | `list('upcoming' \| 'past')` | `GET /me/appointments` | appointments (M11) | `appointments` | ✅ **LIVE** — `upcoming=true` resolves on the server's clock; Past uses the contract's `to` |
 | `AppointmentCard` | — | — | — | `appointment_status` | ✅ **LIVE** — all 8 statuses render; the wire value is checked against `APPOINTMENT_STATUSES` at the seam |
 | `AppointmentDetailScreen` | `getById` | `GET /me/appointments/{appointmentId}` | appointments (M11) | `appointments`, `appointment_events` | ✅ **LIVE** — 404 for unknown, not-yours and unlinked alike |
-| `BookingFlow` (5 steps) | `listSlots` + `book` | `GET …/slots` · `POST /me/appointments` | appointments (M11) | `appointments` | 🔴 **ADR-033 / RA-033.1** — a decision, not an unbuilt endpoint |
-| Slot step | `listSlots` | `GET /patient/doctors/:id/slots` (proposed, §6, DR-10; supersedes `GET /public/doctors/{id}/slots`) | appointments (M11) | availability − time-off − booked − buffer | 🔴 **RA-033.1 — no client-side generation.** The slot maths is derivable from ADR-005; the booking policy is not |
-| Cancel sheet | `cancel(id, reason)` | `POST /me/appointments/{id}/cancel` | appointments (M11) | `appointments.cancelled_reason` | 🔴 **ADR-033 Q1** — may a patient cancel, from which statuses, up to when? |
-| Reschedule sheet | `requestReschedule` | `POST …/reschedule` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q2** — request-shaped or direct? |
-| Proposal response | `acceptProposal` | `POST …/confirm` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q3** — plus the doctor-side `propose-slots` (M11.4), unbuilt |
+| `BookingFlow` (5 steps) | `listSlots` + `listVisitTypes` + `book` | `GET /patient/doctors/{id}/slots` · `GET /patient/visit-types` · `POST /me/appointments` (Idempotency-Key) | appointments (M11) | `appointments` | ✅ **Client built to the shared contract (ADR-049)** — backend routes land in parallel. Recovers from `slot_taken`, `insurance_not_covered`, `patient_not_linked` and a dropped connection without losing input |
+| Slot step | `listSlots` | `GET /patient/doctors/{id}/slots` | appointments (M11) | published slots | ✅ Server-listed only; each slot names its hospital. No client-side generation |
+| Cancel sheet | `cancel(id, {reasonCode, note?})` | `POST /me/appointments/{id}/cancel` | appointments (M11) | `appointments.cancelled_reason` | ✅ Closed list of six reason codes, localized; shown only when `availableActions` has `cancel` |
+| `RescheduleRequestScreen` + pending-request panel | `requestReschedule` · `listRescheduleRequests` · `withdrawRescheduleRequest` | `POST /me/appointments/{id}/reschedule-requests` · `GET` same · `POST /me/reschedule-requests/{id}/withdraw` | appointments (M11) | reschedule requests | ✅ A REQUEST (ADR-033 Q2 = R-B): the appointment stays booked and the requested time is not held until the hospital approves |
+| Proposal response | — | — | — | — | ⛔ Removed: the contract has no confirm / accept-proposal route (ADR-033 Q3 stays open) |
 | Event timeline | `getById` | same | appointments (M11) | `appointment_events` | ✅ **LIVE** — `actor` is the coarse `patient \| clinic \| system`; `actor_name` is deliberately not projected |
+
+## Hospitals (discovery)
+
+| Screen | Service | Endpoint | Module | Tables | State |
+|---|---|---|---|---|---|
+| `HospitalsScreen` | `hospitalService.list` | `GET /patient/hospitals` | patients / identity (§2) | hospitals | ✅ Search and paging server-side |
+| `HospitalDetailScreen` | `hospitalService.getById` | `GET /patient/hospitals/{id}` | patients / identity (§2) | hospitals, clinics, locations, departments | ✅ Sections render only what the server sent; "Find doctors here" opens Discover filtered by hospital |
 
 ---
 

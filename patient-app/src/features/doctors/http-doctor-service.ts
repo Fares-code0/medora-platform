@@ -68,8 +68,8 @@ function fromSummary(wire: WireDoctorSummary): PatientSafeDoctor {
     biography: null,
     education: [],
     officeLocation: null,
-    // Not in ANY patient-facing projection. See the docblock.
-    hospital: null,
+    // From the active employment (contract §2); null when the doctor has none.
+    hospital: wire.hospital ?? null,
   };
 }
 
@@ -95,6 +95,7 @@ export const httpDoctorService: DoctorService = {
       q: params.q,
       specialtyId: params.specialtyId,
       departmentId: params.departmentId,
+      hospitalId: params.hospitalId,
       page,
     });
     const { items, totalItems, totalPages } = response.data;
@@ -117,8 +118,6 @@ export const httpDoctorService: DoctorService = {
 
   /** `GET /patient/departments` is contract §3.4 P3.4 — NOT BUILT (M23). */
   listDepartments(): Promise<readonly Department[]> {
-    return Promise.reject(
-      new EndpointNotImplementedError('BE-11 / M23', 'capability.departments'),
-    );
+    return Promise.reject(new EndpointNotImplementedError('BE-11 / M23', 'capability.departments'));
   },
 };

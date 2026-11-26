@@ -133,6 +133,7 @@ repeating a count that goes stale the next time an endpoint lands.
 | `emergency` | `unconfigured` | BE-11 |
 | `health` | `unavailableService` | BE-09 / AD-5 |
 | `home` | `unavailableService` | BE-10 |
+| `hospitals` | `httpHospitalService` | — |
 | `messages` | `unavailableService` | AD-1 / BE-13 |
 | `notifications` | `httpNotificationService` | — |
 | `profile` | `httpProfileService` | — |
@@ -144,10 +145,16 @@ Two of those rows carry a caveat the single word "live" would hide:
 - **`doctors`** is live except `listDepartments`, which refuses by name because
   `GET /patient/departments` (M23) is unbuilt. A service may be live in nine
   methods and honest in the tenth.
-- **`appointments`** is live for the two **read** routes and for nothing else.
-  The four write routes are blocked on ADR-033, which is a policy decision
-  rather than an unbuilt endpoint, and no client-side slot arithmetic stands in
-  for it.
+- **`appointments`** is live for every method: the two reads, slots, visit
+  types, booking, cancellation, and the reschedule **request** workflow with
+  its history and withdrawal. The server computes `availableActions` and the
+  client renders them; no policy is derived from `status`. A reschedule is a
+  request the hospital approves — the appointment keeps its time, and the
+  requested slot is not held, until then (ADR-049, ADR-033 Q2 = R-B).
+- **`hospitals`** is hospital discovery (`GET /patient/hospitals` and
+  `/{id}`) and is what the Discover tab's "where" entry opens; the older
+  single-clinic `clinic` feature remains behind `unavailableService` and is no
+  longer linked from Discover.
 - **`emergency`** is not `unavailableService` but `unconfigured` — the screen
   works entirely offline from bundled content, and it is only the
   operator-supplied numbers that are absent. It says so rather than showing a
@@ -165,14 +172,15 @@ Two of those rows carry a caveat the single word "live" would hide:
 exposes, and the directory listing itself is pinned so a seventh module cannot
 appear without that test being updated deliberately.
 
-The seven modules and what backs each:
+The eight modules and what backs each:
 
 | Module | Controller | Checklist |
 |---|---|---|
 | `auth.ts` | `auth.controller.ts` | D-01…D-12 |
 | `account.ts` | `account-password.controller.ts`, `two-factor.controller.ts`, `account.controller.ts` | P-05, D-16, P-03 |
 | `doctors.ts` | `patient-doctor.controller.ts` | G-01…G-08 |
-| `appointments.ts` | `patient-appointment.controller.ts` (reads only) | I-01, I-02, I-06 |
+| `appointments.ts` | `patient-appointment.controller.ts` (reads, booking, cancel, reschedule requests, slots, visit types) | I-01…I-06 |
+| `hospitals.ts` | the patient hospital-discovery controller (`/patient/hospitals`) | — |
 | `notifications.ts` | `notification.controller.ts` | O-01, O-02 |
 | `profile.ts` | `self-profile.controller.ts` | P-01, P-02 |
 | `sessions.ts` | `account-security.controller.ts` (two routes of eight) | P-06 |

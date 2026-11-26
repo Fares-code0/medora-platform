@@ -11,6 +11,7 @@ import { AiSymptomsScreen } from '@/features/ai/screens/AiSymptomsScreen';
 import { DeprecationBanner } from '@/features/app-version/DeprecationBanner';
 import { AppointmentDetailScreen } from '@/features/appointments/screens/AppointmentDetailScreen';
 import { AppointmentsScreen } from '@/features/appointments/screens/AppointmentsScreen';
+import { RescheduleRequestScreen } from '@/features/appointments/screens/RescheduleRequestScreen';
 import { ConsentScreen } from '@/features/auth/screens/ConsentScreen';
 import { ClinicScreen } from '@/features/clinic/screens/ClinicScreen';
 import { DepartmentScreen } from '@/features/clinic/screens/DepartmentScreen';
@@ -24,6 +25,8 @@ import { PrescriptionsScreen } from '@/features/health/screens/PrescriptionsScre
 import { VisitDetailScreen } from '@/features/health/screens/VisitDetailScreen';
 import { VisitsScreen } from '@/features/health/screens/VisitsScreen';
 import { HomeScreen } from '@/features/home/screens/HomeScreen';
+import { HospitalDetailScreen } from '@/features/hospitals/screens/HospitalDetailScreen';
+import { HospitalsScreen } from '@/features/hospitals/screens/HospitalsScreen';
 import { MessagesScreen } from '@/features/messages/screens/MessagesScreen';
 import { ThreadScreen } from '@/features/messages/screens/ThreadScreen';
 import { NotificationPrefsScreen } from '@/features/notifications/screens/NotificationPrefsScreen';
@@ -131,6 +134,16 @@ function DiscoverNavigator() {
         options={{ title: t('nav.title.doctor') }}
       />
       <DiscoverStack.Screen
+        name="Hospitals"
+        component={HospitalsScreen}
+        options={{ title: t('nav.title.hospitals') }}
+      />
+      <DiscoverStack.Screen
+        name="Hospital"
+        component={HospitalDetailScreen}
+        options={({ route }) => ({ title: route.params.hospitalName ?? t('nav.title.hospital') })}
+      />
+      <DiscoverStack.Screen
         name="Clinic"
         component={ClinicScreen}
         options={{ title: t('nav.title.clinic') }}
@@ -165,6 +178,11 @@ function AppointmentsNavigator() {
         name="AppointmentDetail"
         component={AppointmentDetailScreen}
         options={{ title: t('nav.title.appointment') }}
+      />
+      <AppointmentsStack.Screen
+        name="RescheduleRequest"
+        component={RescheduleRequestScreen}
+        options={{ title: t('nav.title.rescheduleRequest') }}
       />
     </AppointmentsStack.Navigator>
   );

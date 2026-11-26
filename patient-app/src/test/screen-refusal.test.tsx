@@ -5,6 +5,7 @@ import { act, waitFor } from '@testing-library/react-native';
 import { EndpointNotImplementedError } from '@/api/seam';
 import { appointmentService } from '@/features/appointments/service';
 import { clinicService } from '@/features/clinic/service';
+import { hospitalService } from '@/features/hospitals/service';
 import { doctorService } from '@/features/doctors/service';
 import { emergencyService } from '@/features/emergency/service';
 import { healthService } from '@/features/health/service';
@@ -70,7 +71,8 @@ jest.mock('@react-navigation/native', () => ({
  * produced a half-translated refusal. `api/seam.ts` carries the reasoning.
  */
 const SERVICES: readonly (readonly [MessageKey, object])[] = [
-  ['capability.booking', appointmentService],
+  ['capability.messages', appointmentService],
+  ['capability.clinic', hospitalService],
   ['capability.clinic', clinicService],
   ['capability.departments', doctorService],
   ['capability.clinic', emergencyService],
