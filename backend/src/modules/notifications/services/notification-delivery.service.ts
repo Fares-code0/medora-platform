@@ -48,6 +48,8 @@ export interface DeliveryRunResult {
   readonly sent: number;
   readonly failed: number;
   readonly skipped: number;
+  /** Failures returned to `pending` for another attempt (NOT-01). */
+  readonly retried: number;
 }
 
 /**
@@ -66,6 +68,7 @@ interface ClaimedDelivery {
   readonly body: string;
   readonly email: string | null;
   readonly recipientId: string;
+  readonly attempts: number;
 }
 
 /**
@@ -83,6 +86,26 @@ const COLUMN_VALUE: Record<NotificationChannel, ChannelColumnValue> = {
 
 const BATCH = 50;
 
+/**
+ * NOT-01 — crash recovery and retry, on the columns the table already has
+ * (`status`, `attempts`, `last_attempt_at`; no `next_attempt_at` exists).
+ *
+ * - A row in `sending` whose `last_attempt_at` (stamped by the claim) is
+ *   older than the lease belongs to a worker that died; it is re-claimed.
+ *   The lease must exceed the longest legitimate send (job timeout is
+ *   120 s), or a slow-but-alive worker would be raced by a second one.
+ *   Delivery is therefore at-least-once across a crash that lands between
+ *   the relay accepting a message and `finish` recording it.
+ * - A failed email goes back to `pending` and is re-claimed once
+ *   `last_attempt_at + backoff(attempts)` has passed — the "next attempt
+ *   time" is derived, not stored. After `MAX_ATTEMPTS` the row is
+ *   terminal `failed`.
+ */
+export const DELIVERY_LEASE_SECONDS = 10 * 60;
+export const DELIVERY_MAX_ATTEMPTS = 5;
+export const DELIVERY_BACKOFF_BASE_SECONDS = 30;
+export const DELIVERY_BACKOFF_CAP_SECONDS = 30 * 60;
+
 @Injectable()
 export class NotificationDeliveryService {
   private readonly logger = new Logger('NotificationDelivery');
@@ -94,21 +117,48 @@ export class NotificationDeliveryService {
   ) {}
 
   async run(limit: number = BATCH): Promise<DeliveryRunResult> {
+    await this.failExhaustedClaims();
     const claimed = await this.claim(limit);
 
     let sent = 0;
     let failed = 0;
     let skipped = 0;
+    let retried = 0;
 
     for (const delivery of claimed) {
       const outcome = await this.deliver(delivery);
 
       if (outcome === 'sent') sent += 1;
       else if (outcome === 'failed') failed += 1;
+      else if (outcome === 'retry') retried += 1;
       else skipped += 1;
     }
 
-    return { claimed: claimed.length, sent, failed, skipped };
+    return { claimed: claimed.length, sent, failed, skipped, retried };
+  }
+
+  /**
+   * A `sending` row whose lease expired and which has already used every
+   * attempt is terminal: re-sending it forever after repeated crashes is
+   * the unbounded retry the cap exists to stop. Same SKIP LOCKED shape
+   * as the claim, so two instances do not both touch it.
+   */
+  private async failExhaustedClaims(): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE notification_deliveries AS d
+      SET status = 'failed',
+          error = 'lease-expired',
+          updated_at = now()
+      FROM (
+        SELECT id
+        FROM notification_deliveries
+        WHERE status = 'sending'
+          AND last_attempt_at < now() - make_interval(secs => ${DELIVERY_LEASE_SECONDS}::double precision)
+          AND attempts >= ${DELIVERY_MAX_ATTEMPTS}
+        FOR UPDATE SKIP LOCKED
+      ) AS stale
+      WHERE d.id = stale.id
+    `;
   }
 
   /**
@@ -122,7 +172,24 @@ export class NotificationDeliveryService {
       WITH claimed AS (
         SELECT id
         FROM notification_deliveries
-        WHERE status = 'pending'
+        WHERE (
+            status = 'pending'
+            AND (
+              attempts = 0
+              OR last_attempt_at IS NULL
+              OR last_attempt_at + make_interval(
+                   secs => LEAST(
+                     ${DELIVERY_BACKOFF_CAP_SECONDS}::double precision,
+                     ${DELIVERY_BACKOFF_BASE_SECONDS}::double precision * power(2, attempts - 1)
+                   )
+                 ) <= now()
+            )
+          )
+          OR (
+            status = 'sending'
+            AND last_attempt_at < now() - make_interval(secs => ${DELIVERY_LEASE_SECONDS}::double precision)
+            AND attempts < ${DELIVERY_MAX_ATTEMPTS}
+          )
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
         LIMIT ${limit}
@@ -134,21 +201,22 @@ export class NotificationDeliveryService {
             last_attempt_at = now()
         FROM claimed
         WHERE d.id = claimed.id
-        RETURNING d.id, d.channel, d.notification_id
+        RETURNING d.id, d.channel, d.notification_id, d.attempts
       )
       SELECT taken.id,
              taken.channel,
              n.title,
              n.body,
              u.email,
-             u.id AS "recipientId"
+             u.id AS "recipientId",
+             taken.attempts
       FROM taken
       JOIN notifications n ON n.id = taken.notification_id
       JOIN users u ON u.id = n.recipient_id
     `;
   }
 
-  private async deliver(delivery: ClaimedDelivery): Promise<'sent' | 'failed' | 'skipped'> {
+  private async deliver(delivery: ClaimedDelivery): Promise<'sent' | 'failed' | 'skipped' | 'retry'> {
     if (delivery.channel === COLUMN_VALUE[NotificationChannel.IN_APP]) {
       // The notification row **is** the in-app delivery, so this is the
       // one channel that can honestly claim `delivered` rather than
@@ -187,7 +255,21 @@ export class NotificationDeliveryService {
         return 'sent';
       }
 
-      await this.finish(delivery.id, 'failed', result.error ?? 'send-failed', null);
+      // Transient until proven otherwise: the mailer reports no
+      // permanent/temporary distinction, so every failure is retried with
+      // backoff up to the cap, then becomes terminal.
+      const error = result.error ?? 'send-failed';
+      if (delivery.attempts < DELIVERY_MAX_ATTEMPTS) {
+        await this.finish(delivery.id, 'pending', error, null);
+        this.logger.warn(
+          { deliveryId: delivery.id, attempts: delivery.attempts },
+          'Email delivery failed; will retry',
+        );
+
+        return 'retry';
+      }
+
+      await this.finish(delivery.id, 'failed', error, null);
       this.logger.warn({ deliveryId: delivery.id }, 'Email delivery failed');
 
       return 'failed';
@@ -216,7 +298,7 @@ export class NotificationDeliveryService {
    * says is permanently invalid is cleared, so the next notification does
    * not try it again.
    */
-  private async deliverPush(delivery: ClaimedDelivery): Promise<'sent' | 'failed' | 'skipped'> {
+  private async deliverPush(delivery: ClaimedDelivery): Promise<'sent' | 'failed' | 'skipped' | 'retry'> {
     if (!this.push.configured) {
       await this.finish(delivery.id, 'skipped', 'no-provider', null);
       return 'skipped';
@@ -281,7 +363,7 @@ export class NotificationDeliveryService {
    */
   private async finish(
     id: string,
-    status: 'delivered' | 'sent' | 'failed' | 'skipped',
+    status: 'delivered' | 'sent' | 'failed' | 'skipped' | 'pending',
     error: string | null,
     providerRef: string | null,
   ): Promise<void> {
