@@ -366,11 +366,10 @@ export const en = {
   'nav.title.profile': 'Profile',
   'nav.title.yourDetails': 'Your details',
   'nav.title.healthRecords': 'Health records',
-  'nav.title.labResults': 'Lab results',
-  'nav.title.prescriptions': 'Prescriptions',
-  'nav.title.documents': 'Documents',
-  'nav.title.visits': 'Visit summaries',
-  'nav.title.visit': 'Visit',
+  'nav.title.tests': 'Tests',
+  'nav.title.insurance': 'Insurance',
+  'nav.title.assistantGeneral': 'Health assistant',
+  'nav.title.assistantPersonal': 'My care assistant',
   'nav.title.notifications': 'Notifications',
   'nav.title.notificationPrefs': 'Notification settings',
   'nav.title.privacy': 'Your data',
@@ -511,11 +510,10 @@ export const en = {
     'Appointments and records from your clinic appear here once your account is linked to your record. Until then there is nothing to show, and that is not an error.',
   'profile.section.health': 'Your health',
   'profile.section.account': 'Account',
-  'profile.healthRecords': 'Health records',
-  'profile.healthRecords.subtitle': 'Allergies, conditions, medicines and history',
-  'profile.labResults': 'Lab results',
-  'profile.prescriptions': 'Prescriptions',
-  'profile.documents': 'Documents',
+  'profile.healthRecords': 'Health information',
+  'profile.healthRecords.subtitle': 'Tests, insurance and appointments',
+  'profile.tests': 'Tests',
+  'profile.insurance': 'Insurance',
   'profile.personalDetails': 'Personal details',
   'profile.notifications': 'Notifications',
   'profile.appearance': 'Appearance',
@@ -928,87 +926,72 @@ export const en = {
   //
   // The section titles, the empty states and the notices are here. The
   // CLINICAL VOCABULARY is not — see the exclusion note at the top.
-  'health.title': 'Health records',
-  'health.notice':
-    'These records are kept by your clinic. You cannot change them here — if something looks wrong, tell the clinic at your next appointment.',
-  'health.allergies': 'Allergies',
-  'health.allergies.empty': 'No allergies recorded',
-  'health.conditions': 'Long-term conditions',
-  'health.conditions.empty': 'No long-term conditions recorded',
-  'health.conditions.recorded': 'Recorded {date}',
-  'health.medications': 'Medicines',
-  'health.medications.empty': 'No medicines recorded',
-  'health.medications.started': 'Started {date}',
-  'health.more': 'More',
-  'health.more.subtitle': 'Lab results, prescriptions and documents',
-  'health.history': 'Medical history',
-  'health.history.empty': 'Nothing recorded yet',
-  'health.history.subtitle': 'Newest first',
-  'health.labs.title': 'Lab results',
-  'health.labs.section': 'Your tests',
-  'health.labs.empty.title': 'No lab tests yet',
-  'health.labs.empty.body': 'Tests your clinic orders will appear here.',
-  'health.labs.hint': 'Opens the results',
-  'health.labs.hide': 'Hide results',
-  'health.labs.hide.hint': 'Collapses {panel}',
-  'health.labs.resultCount': '{count} results',
-  'health.prescriptions.title': 'Prescriptions',
-  'health.prescriptions.empty.title': 'No prescriptions',
-  'health.prescriptions.empty.body': 'Anything prescribed for you will be listed here.',
-  'health.documents.title': 'Documents',
-  'health.documents.empty.title': 'No documents',
-  'health.documents.empty.body': 'Letters and forms from your clinic will appear here.',
-  'health.documents.open': 'Open',
-  'health.documents.notAvailable': 'Opening documents is not available yet.',
-  'health.release.pending.title': 'Waiting for a clinician to review',
-  'health.release.pending.body':
-    'Your results are back and a clinician is looking at them. You will see them here once that is done.',
-  'health.release.withheld.title': 'Not shared with you',
-  'health.release.withheld.body':
-    'The clinic has not shared this in Medora. Ask at your next appointment or message the clinic.',
-  'health.release.notReady.title': 'Not ready yet',
-  'health.release.notReady.body': 'This is still being processed at the laboratory.',
+
+  // ── Health information (ADR-050) ──────────────────────────────────
+  //
+  // The patient-facing layer only: test STATUS and insurance on file.
+  // Results, prescriptions, visit notes, documents and history are not
+  // shown in the app (owner decision, 2026-11-26) and there is no copy
+  // here that describes any of them as "coming soon".
+  'health.hub.title': 'Health information',
+  'health.hub.subtitle': 'Your tests, your insurance and your appointments, in one place.',
+  'health.hub.section': 'What you can see here',
+  'health.hub.tests.subtitle': 'Where each test has got to',
+  'health.hub.insurance.subtitle': 'The cover your hospital has on file',
+  'health.hub.appointments': 'Appointments',
+  'health.hub.appointments.subtitle': 'Upcoming and past visits',
+  'health.hub.careTeam.title': 'Your medical record is not shown in the app',
+  'health.hub.careTeam.body':
+    'Test results, prescriptions, visit notes, documents and your medical history are available from your care team. Ask them at your next appointment or at the hospital desk.',
+  'health.tests.title': 'Tests',
+  'health.tests.notice':
+    'This shows where each test you were sent for has got to. Results are not shown in the app. Your care team will share them with you once they are released.',
+  'health.tests.empty.title': 'No tests yet',
+  'health.tests.empty.body': 'Tests your care team orders for you will appear here.',
+  'health.tests.status.awaiting_collection': 'Waiting for your sample',
+  'health.tests.status.in_progress': 'In progress',
+  'health.tests.status.completed': 'Completed',
+  'health.tests.status.cancelled': 'Cancelled',
+  'health.tests.requested': 'Requested {date}',
+  'health.tests.collected': 'Sample taken {date}',
+  'health.tests.completedOn': 'Completed {date}',
+  'health.tests.a11y': '{test}, {status}',
+  'health.tests.resultsNote': 'Results will be shared by your care team once released.',
+  'health.tests.loadMore': 'Show more tests',
+  'health.tests.loadMore.hint': 'Loads the next tests in your list.',
+  'health.tests.end': 'That is all of your tests.',
+  'health.insurance.title': 'Insurance',
+  'health.insurance.section': 'On file',
+  'health.insurance.empty.title': 'No insurance on file',
+  'health.insurance.empty.body':
+    'If you have insurance, ask the hospital desk to add it to your record.',
+  'health.insurance.policy': 'Policy number ending in {last4}',
+  'health.insurance.validUntil': 'Valid until {date}',
+  'health.insurance.noEnd': 'No end date on file',
+  'health.insurance.active': 'Active',
+  'health.insurance.inactive': 'Not active',
+  'health.insurance.auth.title': 'Approvals are not available yet',
+  'health.insurance.auth.body':
+    'Whether your insurer has approved or declined a service cannot be shown in the app yet. Please ask the hospital desk or your insurer.',
+  'health.notLinked.title': 'Your account is not linked yet',
+  'health.notLinked.body':
+    'To see information from your hospital, your account must be linked to your patient file. This is done at the hospital desk, where staff check your identity in person. Please bring an identity document.',
+  'health.notLinked.action': 'How to link my account',
 
   // ── Forced upgrade (W-06) ─────────────────────────────────────────
   'upgrade.title': 'Update Medora to continue',
   'upgrade.action': 'Update Medora',
 
-  'health.labs.notice':
-    "Medora shows the values and the laboratory's own flags. It does not tell you what they mean — ask the doctor who ordered the test.",
-  'health.labs.a11y': '{panel}, {status}',
-  'health.labs.ordered': 'Ordered {date}',
   // Where the order is in the laboratory's WORKFLOW — the same class of
   // fact as an appointment's status, and on the near side of the line in
   // the docblock above. The result FLAGS are not here and must not be:
   // "Critically high" is clinical vocabulary and is W-10's to sign off.
-  'health.labs.status.ordered': 'Ordered',
-  'health.labs.status.collected': 'Sample taken',
-  'health.labs.status.processing': 'At the laboratory',
-  'health.labs.status.completed': 'Complete',
-  'health.labs.status.cancelled': 'Cancelled',
-  'health.labs.range': 'Laboratory range {range}',
-  'health.labs.result.a11y': '{analyte}, {value}, {flag}',
-  'health.labs.result.noValue': 'no value',
-  'health.labs.result.unflagged': 'unflagged',
-  'health.prescriptions.notice':
-    'This is a record of what has been prescribed for you. Repeat prescriptions are arranged with your clinic, not here.',
-  'health.prescriptions.issued': 'Issued {date}',
-  'health.prescriptions.refills': '{count} refills left',
-  'health.documents.added': 'Added {date}',
-  'health.documents.scanning': 'Being checked for safety. It will be available shortly.',
-  'health.documents.scanFailed':
-    'This file could not be checked and cannot be opened. The clinic has been told.',
   /**
    * How the clinic filed a document — administrative, not clinical, so
    * it is translated. It reached a patient's screen as the wire literal
    * until 2026-09-13: `<Badge label={document.category} />` rendered
    * `external-record`, hyphen and all, in both languages.
    */
-  'health.documents.category.referral': 'Referral',
-  'health.documents.category.consent': 'Consent form',
-  'health.documents.category.external-record': 'External record',
-  'health.documents.category.insurance': 'Insurance',
-  'health.documents.category.report': 'Report',
 
   /**
    * Visit summaries (J-08). "Summary" is doing deliberate work: this is
@@ -1016,19 +999,6 @@ export const en = {
    * note, and the notice says so on both screens rather than leaving a
    * patient to assume they are reading everything their clinician wrote.
    */
-  'health.visits.title': 'Visit summaries',
-  'health.visits.notice':
-    'A short summary of each visit, written for you. It is not the full note your clinician keeps, and it does not tell you what your results mean — ask your clinic about anything here.',
-  'health.visits.empty.title': 'No visit summaries yet',
-  'health.visits.empty.body':
-    'A summary appears here after a visit, once your clinician has shared it with you.',
-  'health.visits.with': 'With {doctor}',
-  'health.visits.on': 'Seen {date}',
-  'health.visits.hint': 'Opens the summary',
-  'health.visits.a11y': '{title}, {date}',
-  'health.visits.noSummary': 'Your clinician has not written a summary of this visit for you.',
-  'health.visits.notFound.title': 'This summary is not in your record',
-  'health.visits.notFound.body': 'Go back to your visit summaries and open it from the list.',
 
   'upgrade.body':
     'This version of Medora is no longer supported. Update to the latest version to sign in and see your appointments and records.',
@@ -1090,51 +1060,29 @@ export const en = {
   'biometric.setting.body':
     'After Medora has been closed for a few minutes, it will ask for {method} before showing your information again. This stops someone using your unlocked phone from reading your records. It does not encrypt anything, and it does not replace signing out.',
   'biometric.setting.password': 'You can always sign in with your password instead.',
-  // ── The assistant (Phase K, Phase L) ───────────────────────────────
+  // ── The assistant (ADR-050) ────────────────────────────────────────
   //
-  // These screens are DESIGNED and NOT CONNECTED — `features/ai/
-  // availability.ts` says at length why, and what must never be done to
-  // change it. The copy below is written for that state and not as a
-  // placeholder for a working one: nothing here is a greeting from an
-  // assistant, a generated sentence, or a promise that something is
-  // arriving on a date.
+  // Two assistants: a general health assistant that is given no patient
+  // data, and a personal care assistant grounded in the patient's own
+  // appointments, test STATUS and insurance — never results or records.
+  // The server answers 503 until a provider is configured, and the copy
+  // below says so honestly: nothing here is a greeting from an assistant,
+  // a generated sentence, or a promise that something is arriving on a
+  // date.
   //
   // Disclaimers ARE on the near side of the catalogue's clinical line
   // (see this file's header): they say what Medora is not, which is
-  // product and legal copy. The symptom DESCRIPTIONS sit closer to the
-  // line and are covered by W-10's review along with everything else.
-  'ai.disclaimer.body':
-    'Medora Assistant gives general information only. It is not a doctor, it cannot diagnose you, and it must never be used for an emergency.',
+  // product and legal copy.
+  'ai.disclaimer.body': 'The health assistant gives general information only. It is software, not a doctor. It is not a diagnosis, and it is not for emergencies.',
 
-  'ai.badge.notConnected': 'Not connected yet',
 
   'ai.home.title': 'Medora Assistant',
-  'ai.home.subtitle': 'General health information, and help finding the right care.',
-  'ai.home.entry': 'See what the assistant will do, and what to use instead until it is connected.',
-  'ai.home.capabilities': 'What it will help with',
-  'ai.home.capabilitiesSubtitle': 'None of these is connected to an assistant yet.',
+  'ai.home.subtitle': 'Two assistants, for two different things. Choose the one you need.',
+  'ai.home.entry': 'Ask a general health question, or ask about your own appointments, tests and insurance.',
+  'ai.home.entry.hint': 'Opens the two assistants.',
   'ai.home.safety': 'Before you use it',
-  'ai.home.scope.title': 'What it is for',
-  'ai.home.scope.body':
-    'Finding the right specialty, describing a symptom so you can tell a clinician, help with booking, and general information about a medicine.',
-  'ai.home.scope.excluded':
-    'It will not read your records, your test results or your prescriptions, and it will not tell you what is wrong with you.',
 
-  'ai.capability.hint': 'Opens the screen for this part of the assistant.',
-  'ai.capability.chat.title': 'Ask a question',
-  'ai.capability.chat.body': 'General health information, in your own words.',
-  'ai.capability.symptoms.title': 'Describe a symptom',
-  'ai.capability.symptoms.body':
-    'A short set of questions, so you can say clearly what is wrong when you speak to someone.',
-  'ai.capability.image.title': 'Show a photo',
-  'ai.capability.image.body': 'For a rash or a wound, when words are hard.',
 
-  'ai.unavailable.title': 'No assistant is connected',
-  'ai.unavailable.body':
-    'This copy of Medora has not been connected to an assistant, so nothing on this screen can answer you. This is not a fault and retrying will not change it.',
-  'ai.unavailable.instead':
-    'For anything about your own health, message your care team or book an appointment. For an emergency, use the button below.',
-  'ai.unavailable.blockedBy': 'Waiting on: {rows}',
 
   'ai.safety.emergency.title': 'This is not for emergencies',
   'ai.safety.emergency.body':
@@ -1152,13 +1100,55 @@ export const en = {
     'Anything about your own body, your results or your treatment belongs with a clinician who can see your record.',
   'ai.safety.findCare': 'Find a doctor',
 
-  'ai.chat.title': 'Ask a question',
+  'ai.disclaimer.personal':
+    'The care assistant uses only your appointments, the status of your tests and your insurance on file. It does not see your results or your medical record. It is not a diagnosis, and it is not for emergencies.',
+  'ai.mode.general.title': 'Health assistant',
+  'ai.mode.general.body':
+    'General health information. It knows nothing about you and is never given your details.',
+  'ai.mode.personal.title': 'My care assistant',
+  'ai.mode.personal.body':
+    'Questions about your own appointments, the status of your tests and your insurance. It does not see your results or your medical record.',
+  'ai.mode.hint': 'Opens your conversations with this assistant.',
+  'ai.mode.a11y': '{title}. {body}',
+  'ai.mode.separate': 'These are two separate assistants. Each keeps its own conversations.',
+  'ai.conversations.new': 'New conversation',
+  'ai.conversations.new.hint': 'Starts a new conversation with this assistant.',
+  'ai.conversations.empty.title': 'No conversations yet',
+  'ai.conversations.empty.body':
+    'Start one to ask a question. Conversations are kept on our servers, not on this phone, and you can delete any of them.',
+  'ai.conversations.untitled': 'Conversation from {date}',
+  'ai.conversations.open.hint': 'Opens this conversation.',
+  'ai.conversations.delete': 'Delete',
+  'ai.conversations.delete.a11y': 'Delete {title}',
+  'ai.conversations.delete.title': 'Delete this conversation?',
+  'ai.conversations.delete.body': 'It will be removed from your list. This cannot be undone.',
+  'ai.conversations.delete.keep': 'Keep it',
+  'ai.conversations.delete.failed': 'The conversation could not be deleted. Please try again.',
+  'ai.unavailable.title': 'The assistant is not available yet',
+  'ai.unavailable.body':
+    'This assistant has not been switched on for Medora yet, so it cannot answer. Nothing is wrong with your phone or your account, and trying again will not change it.',
+  'ai.unavailable.instead':
+    'For anything about your health, contact your care team or book an appointment. For an emergency, use the button below.',
+  'ai.chat.title.general': 'Health assistant',
+  'ai.chat.title.personal': 'My care assistant',
+  'ai.chat.empty.general.title': 'Ask a general health question',
+  'ai.chat.empty.general.body':
+    'It gives general information only. Please do not type your name or other personal details.',
+  'ai.chat.empty.personal.title': 'Ask about your care',
+  'ai.chat.empty.personal.body':
+    'For example, when your next appointment is, or where a test has got to. It cannot tell you any result.',
+  'ai.chat.replyArrived': 'The assistant has replied.',
+  'ai.chat.failed': 'That did not go through, or the reply was cut short.',
+  'ai.chat.escalation.title': 'Please get help now',
+  'ai.chat.escalation.note':
+    'This is a safety message from Medora, not an answer from the assistant.',
+  'ai.chat.escalation.a11y': 'Safety message. {body}',
+  'ai.composer.counter': '{count} of {max} characters',
+  'ai.composer.disabledHint': 'The assistant is not available yet, so nothing can be sent.',
+
   'ai.chat.author.you': 'You',
   'ai.chat.author.assistant': 'Medora Assistant',
   'ai.chat.typing': 'Writing a reply',
-  'ai.chat.empty.title': 'Nothing here yet',
-  'ai.chat.empty.body':
-    'When an assistant is connected, what you ask and what it replies will appear here.',
   'ai.chat.bubble.a11y': '{author} said: {body}. {time}',
   'ai.chat.bubble.failedA11y': '{author} said: {body}. Not sent.',
   'ai.chat.bubble.failed': 'Not sent',
@@ -1166,87 +1156,15 @@ export const en = {
   'ai.composer.label': 'Your message',
   'ai.composer.placeholder': 'Type your question',
   'ai.composer.send': 'Send',
-  'ai.composer.attach': 'Add a photo',
-  'ai.composer.attachHint': 'Opens the photo screen.',
   'ai.composer.disabled': 'Not available yet',
-  'ai.composer.disabledHint': 'No assistant is connected, so nothing can be sent.',
-  'ai.composer.disabledReason':
-    'You cannot send anything yet — no assistant is connected to this copy of Medora.',
 
-  'ai.intake.title': 'Describe a symptom',
-  'ai.intake.step': 'Step {step} of {total}',
-  'ai.intake.next': 'Continue',
-  'ai.intake.what.title': 'What are you noticing?',
-  'ai.intake.what.subtitle': 'Choose everything that applies. Nothing here is sent anywhere.',
-  'ai.intake.when.title': 'How long has it been going on?',
-  'ai.intake.when.subtitle': 'An approximate answer is fine.',
-  'ai.intake.review.title': 'What you told us',
-  'ai.intake.alwaysEmergency':
-    'Whatever you choose on this screen, if it feels like an emergency, treat it as one. This screen does not decide that for you.',
 
-  'ai.result.title': 'Nothing has looked at this',
-  'ai.result.body':
-    'No assistant is connected to this copy of Medora, so nothing has read what you entered and there is no result to show.',
-  'ai.result.notSent': 'Nothing has been sent anywhere, and nothing has been saved on this phone.',
-  'ai.result.summaryTitle': 'What you chose',
-  'ai.result.summaryA11y': 'What you chose: {items}',
-  'ai.result.findCare': 'Find a doctor',
 
-  'ai.image.title': 'Show a photo',
-  'ai.image.subtitle': 'For a rash or a wound, when words are hard.',
-  'ai.image.section': 'Your photo',
-  'ai.image.empty.title': 'No photo chosen',
-  'ai.image.empty.body': 'Choosing a photo is not available in this build.',
-  'ai.image.choose': 'Choose a photo',
-  'ai.image.disabledHint': 'Choosing a photo is not available in this build.',
-  'ai.image.remove': 'Remove photo',
-  'ai.image.previewA11y': 'Photo you chose: {name}. Nothing has looked at it.',
-  'ai.image.unnamed': 'unnamed',
-  'ai.image.localOnly': 'This photo is only on your phone. It has not been sent anywhere.',
-  'ai.image.processing': 'Looking at your photo',
-  'ai.image.done': 'Finished.',
-  'ai.image.privacy.title': 'What would happen to your photo',
-  'ai.image.privacy.body':
-    'When this is built, a photo will have its location and camera details removed before it leaves your phone, and it will be checked before anyone can open it. None of that exists yet, which is why you cannot choose one.',
 
   // The intake vocabulary. Plain descriptions, not clinical terms — the
   // point of the screen is that a patient can say what they notice.
-  'ai.symptomGroup.general': 'All over',
-  'ai.symptomGroup.head': 'Head and throat',
-  'ai.symptomGroup.chest': 'Chest and breathing',
-  'ai.symptomGroup.abdomen': 'Stomach',
-  'ai.symptomGroup.skin': 'Skin',
-  'ai.symptomGroup.mood': 'Mood and sleep',
-  'ai.symptom.fever': 'Fever',
-  'ai.symptom.fatigue': 'Very tired',
-  'ai.symptom.chills': 'Chills',
-  'ai.symptom.appetite': 'Not eating',
-  'ai.symptom.headache': 'Headache',
-  'ai.symptom.dizziness': 'Dizzy',
-  'ai.symptom.vision': 'Trouble seeing',
-  'ai.symptom.soreThroat': 'Sore throat',
-  'ai.symptom.chestPain': 'Chest pain',
-  'ai.symptom.breathless': 'Short of breath',
-  'ai.symptom.cough': 'Cough',
-  'ai.symptom.palpitations': 'Racing heart',
-  'ai.symptom.nausea': 'Feeling sick',
-  'ai.symptom.abdominalPain': 'Stomach pain',
-  'ai.symptom.bowel': 'Bowel changes',
-  'ai.symptom.rash': 'Rash',
-  'ai.symptom.swelling': 'Swelling',
-  'ai.symptom.wound': 'A wound that is not healing',
-  'ai.symptom.lowMood': 'Low mood',
-  'ai.symptom.anxiety': 'Anxious',
-  'ai.symptom.sleep': 'Not sleeping',
-  'ai.duration.today': 'Today',
-  'ai.duration.days': 'A few days',
-  'ai.duration.weeks': 'A few weeks',
-  'ai.duration.longer': 'Longer than that',
 
   'nav.title.assistant': 'Assistant',
-  'nav.title.assistantChat': 'Ask a question',
-  'nav.title.assistantSymptoms': 'Describe a symptom',
-  'nav.title.assistantImage': 'Show a photo',
   'security.section.unlock': 'Unlocking this app',
   // ── Emergency (N-07, W-10) ────────────────────────────────────────
   //
@@ -1339,30 +1257,6 @@ export const en = {
   //
   // The words the record is written in. Keyed by the wire literal in
   // `types/vocabularies.ts`; the literal itself never reaches a screen.
-  'health.allergy.severity.mild': 'Mild',
-  'health.allergy.severity.moderate': 'Moderate',
-  'health.allergy.severity.severe': 'Severe',
-  'health.medication.status.active': 'Active',
-  'health.medication.status.completed': 'Completed',
-  'health.medication.status.discontinued': 'Discontinued',
-  'health.history.kind.diagnosis': 'Diagnosis',
-  'health.history.kind.surgery': 'Surgery',
-  'health.history.kind.procedure': 'Procedure',
-  'health.history.kind.hospitalization': 'Hospitalization',
-  'health.history.kind.vaccination': 'Vaccination',
-  'health.labs.flag.normal': 'Normal',
-  'health.labs.flag.low': 'Low',
-  'health.labs.flag.high': 'High',
-  'health.labs.flag.criticalLow': 'Critically low',
-  'health.labs.flag.criticalHigh': 'Critically high',
-  'health.labs.flag.abnormal': 'Abnormal',
-  'health.prescriptions.status.draft': 'Draft',
-  'health.prescriptions.status.pendingApproval': 'Awaiting approval',
-  'health.prescriptions.status.active': 'Active',
-  'health.prescriptions.status.dispensed': 'Dispensed',
-  'health.prescriptions.status.completed': 'Finished',
-  'health.prescriptions.status.discontinued': 'Stopped',
-  'health.prescriptions.status.expired': 'Expired',
 
   // ── Form validation (C-09) ────────────────────────────────────────
   //

@@ -313,11 +313,10 @@ export const ar: Messages = {
   'nav.title.profile': 'حسابي',
   'nav.title.yourDetails': 'بياناتك',
   'nav.title.healthRecords': 'السجلات الصحية',
-  'nav.title.labResults': 'نتائج التحاليل',
-  'nav.title.prescriptions': 'الوصفات الطبية',
-  'nav.title.documents': 'المستندات',
-  'nav.title.visits': 'ملخصات الزيارات',
-  'nav.title.visit': 'زيارة',
+  'nav.title.tests': 'الفحوصات',
+  'nav.title.insurance': 'التأمين',
+  'nav.title.assistantGeneral': 'المساعد الصحي',
+  'nav.title.assistantPersonal': 'مساعد رعايتي',
   'nav.title.notifications': 'الإشعارات',
   'nav.title.notificationPrefs': 'إعدادات الإشعارات',
   'nav.title.privacy': 'بياناتك',
@@ -454,11 +453,10 @@ export const ar: Messages = {
     'تظهر هنا المواعيد والسجلات من عيادتك بعد ربط حسابك بسجلك. حتى ذلك الحين لا يوجد ما يُعرض، وهذا ليس خطأ.',
   'profile.section.health': 'صحتك',
   'profile.section.account': 'الحساب',
-  'profile.healthRecords': 'السجلات الصحية',
-  'profile.healthRecords.subtitle': 'الحساسيات والحالات والأدوية والتاريخ الطبي',
-  'profile.labResults': 'نتائج التحاليل',
-  'profile.prescriptions': 'الوصفات الطبية',
-  'profile.documents': 'المستندات',
+  'profile.healthRecords': 'المعلومات الصحية',
+  'profile.healthRecords.subtitle': 'الفحوصات والتأمين والمواعيد',
+  'profile.tests': 'الفحوصات',
+  'profile.insurance': 'التأمين',
   'profile.personalDetails': 'البيانات الشخصية',
   'profile.notifications': 'الإشعارات',
   'profile.appearance': 'المظهر',
@@ -847,89 +845,61 @@ export const ar: Messages = {
   //
   // The section titles, the empty states and the notices are here. The
   // CLINICAL VOCABULARY is not — see the exclusion note at the top.
-  'health.title': 'السجلات الصحية',
-  'health.notice':
-    'تحتفظ عيادتك بهذه السجلات. لا يمكنك تعديلها هنا — وإذا بدا شيء غير صحيح فأبلغ العيادة في موعدك القادم.',
-  'health.allergies': 'الحساسيات',
-  'health.allergies.empty': 'لا توجد حساسيات مسجّلة',
-  'health.conditions': 'الحالات المزمنة',
-  'health.conditions.empty': 'لا توجد حالات مزمنة مسجّلة',
-  'health.conditions.recorded': 'سُجّلت في {date}',
-  'health.medications': 'الأدوية',
-  'health.medications.empty': 'لا توجد أدوية مسجّلة',
-  'health.medications.started': 'بدأ في {date}',
-  'health.more': 'المزيد',
-  'health.more.subtitle': 'نتائج التحاليل والوصفات والمستندات',
-  'health.history': 'التاريخ الطبي',
-  'health.history.empty': 'لا يوجد شيء مسجّل بعد',
-  'health.history.subtitle': 'الأحدث أولاً',
-  'health.labs.title': 'نتائج التحاليل',
-  'health.labs.section': 'تحاليلك',
-  'health.labs.empty.title': 'لا توجد تحاليل بعد',
-  'health.labs.empty.body': 'ستظهر هنا التحاليل التي تطلبها عيادتك.',
-  'health.labs.hint': 'يفتح النتائج',
-  'health.labs.hide': 'إخفاء النتائج',
-  'health.labs.hide.hint': 'يُخفي {panel}',
-  'health.labs.resultCount': '{count} نتائج',
-  'health.prescriptions.title': 'الوصفات الطبية',
-  'health.prescriptions.empty.title': 'لا توجد وصفات',
-  'health.prescriptions.empty.body': 'سيُدرج هنا كل ما يوصف لك.',
-  'health.documents.title': 'المستندات',
-  'health.documents.empty.title': 'لا توجد مستندات',
-  'health.documents.empty.body': 'ستظهر هنا الخطابات والنماذج من عيادتك.',
-  'health.documents.open': 'فتح',
-  'health.documents.notAvailable': 'فتح المستندات غير متاح بعد.',
-  'health.release.pending.title': 'بانتظار مراجعة الفريق الطبي',
-  'health.release.pending.body':
-    'وصلت نتائجك ويطّلع عليها أحد أفراد الفريق الطبي الآن. ستظهر لك هنا بعد انتهائه.',
-  'health.release.withheld.title': 'غير مشاركة معك',
-  'health.release.withheld.body':
-    'لم تشارك العيادة هذا في ميدورا. اسأل في موعدك القادم أو راسل العيادة.',
-  'health.release.notReady.title': 'غير جاهزة بعد',
-  'health.release.notReady.body': 'ما زالت قيد المعالجة في المختبر.',
+
+  // ── المعلومات الصحية (ADR-050) ─────────────────────────────────────
+  //
+  // الطبقة المخصّصة للمريض فقط: حالة الفحوصات والتأمين المسجَّل. أمّا
+  // النتائج والوصفات الطبية وملاحظات الزيارات والمستندات والتاريخ المرضي
+  // فلا تُعرض في التطبيق (قرار المالك، 2026-11-26)، ولا يوجد هنا نص
+  // يصفها بأنها «قريبًا».
+  'health.hub.title': 'المعلومات الصحية',
+  'health.hub.subtitle': 'فحوصاتك وتأمينك ومواعيدك في مكان واحد.',
+  'health.hub.section': 'ما يمكنك الاطلاع عليه هنا',
+  'health.hub.tests.subtitle': 'أين وصل كل فحص',
+  'health.hub.insurance.subtitle': 'التغطية المسجَّلة لدى المستشفى',
+  'health.hub.appointments': 'المواعيد',
+  'health.hub.appointments.subtitle': 'الزيارات القادمة والسابقة',
+  'health.hub.careTeam.title': 'سجلك الطبي لا يُعرض في التطبيق',
+  'health.hub.careTeam.body':
+    'نتائج الفحوصات والوصفات الطبية وملاحظات الزيارات والمستندات وتاريخك المرضي متاحة لدى فريق الرعاية. اطلبها منهم في موعدك القادم أو من مكتب الاستقبال في المستشفى.',
+  'health.tests.title': 'الفحوصات',
+  'health.tests.notice':
+    'تعرض هذه الشاشة أين وصل كل فحص طُلب لك. النتائج لا تُعرض في التطبيق، وسيطلعك فريق الرعاية عليها بعد الإفراج عنها.',
+  'health.tests.empty.title': 'لا توجد فحوصات بعد',
+  'health.tests.empty.body': 'ستظهر هنا الفحوصات التي يطلبها لك فريق الرعاية.',
+  'health.tests.status.awaiting_collection': 'بانتظار أخذ العيّنة',
+  'health.tests.status.in_progress': 'قيد الإجراء',
+  'health.tests.status.completed': 'مكتمل',
+  'health.tests.status.cancelled': 'ملغى',
+  'health.tests.requested': 'طُلب في {date}',
+  'health.tests.collected': 'أُخذت العيّنة في {date}',
+  'health.tests.completedOn': 'اكتمل في {date}',
+  'health.tests.a11y': '{test}، {status}',
+  'health.tests.resultsNote': 'سيطلعك فريق الرعاية على النتيجة بعد الإفراج عنها.',
+  'health.tests.loadMore': 'عرض المزيد من الفحوصات',
+  'health.tests.loadMore.hint': 'يحمّل الفحوصات التالية في قائمتك.',
+  'health.tests.end': 'هذه كل فحوصاتك.',
+  'health.insurance.title': 'التأمين',
+  'health.insurance.section': 'المسجَّل لدينا',
+  'health.insurance.empty.title': 'لا يوجد تأمين مسجَّل',
+  'health.insurance.empty.body':
+    'إن كان لديك تأمين، اطلب من مكتب الاستقبال في المستشفى إضافته إلى ملفك.',
+  'health.insurance.policy': 'رقم الوثيقة المنتهي بـ \u2066{last4}\u2069',
+  'health.insurance.validUntil': 'سارية حتى {date}',
+  'health.insurance.noEnd': 'لا يوجد تاريخ انتهاء مسجَّل',
+  'health.insurance.active': 'سارية',
+  'health.insurance.inactive': 'غير سارية',
+  'health.insurance.auth.title': 'حالة الموافقات غير متاحة بعد',
+  'health.insurance.auth.body':
+    'لا يمكن بعدُ عرض ما إذا كانت شركة التأمين قد وافقت على خدمة أو رفضتها. يُرجى سؤال مكتب الاستقبال في المستشفى أو شركة التأمين.',
+  'health.notLinked.title': 'حسابك غير مرتبط بعد',
+  'health.notLinked.body':
+    'للاطلاع على معلومات مستشفاك، يجب ربط حسابك بملفك كمريض. يتم ذلك في مكتب الاستقبال بالمستشفى، حيث يتحقق الموظفون من هويتك شخصيًا. يُرجى إحضار وثيقة إثبات الهوية.',
+  'health.notLinked.action': 'كيف أربط حسابي',
 
   // ── Forced upgrade (W-06) ─────────────────────────────────────────
   'upgrade.title': 'حدّث ميدورا للمتابعة',
   'upgrade.action': 'تحديث ميدورا',
-
-  'health.labs.notice':
-    'يعرض ميدورا القيم وعلامات المختبر نفسه. ولا يخبرك بمعناها — اسأل الطبيب الذي طلب التحليل.',
-  'health.labs.a11y': '{panel}، {status}',
-  'health.labs.ordered': 'طُلب في {date}',
-  'health.labs.status.ordered': 'تم الطلب',
-  'health.labs.status.collected': 'تم أخذ العينة',
-  'health.labs.status.processing': 'في المختبر',
-  'health.labs.status.completed': 'مكتمل',
-  'health.labs.status.cancelled': 'ملغى',
-  'health.labs.range': 'النطاق المخبري {range}',
-  'health.labs.result.a11y': '{analyte}، {value}، {flag}',
-  'health.labs.result.noValue': 'بلا قيمة',
-  'health.labs.result.unflagged': 'بلا إشارة',
-  'health.prescriptions.notice':
-    'هذا سجل بما وُصف لك. أما الوصفات المتكررة فتُرتَّب مع عيادتك وليس من هنا.',
-  'health.prescriptions.issued': 'صدرت في {date}',
-  'health.prescriptions.refills': 'بقي {count} صرف',
-  'health.documents.added': 'أُضيف في {date}',
-  'health.documents.scanning': 'يجري فحصه للتأكد من سلامته. سيتاح بعد قليل.',
-  'health.documents.scanFailed': 'تعذّر فحص هذا الملف ولا يمكن فتحه. وقد أُبلغت العيادة.',
-  'health.documents.category.referral': 'إحالة',
-  'health.documents.category.consent': 'نموذج موافقة',
-  'health.documents.category.external-record': 'سجل خارجي',
-  'health.documents.category.insurance': 'تأمين',
-  'health.documents.category.report': 'تقرير',
-
-  'health.visits.title': 'ملخصات الزيارات',
-  'health.visits.notice':
-    'ملخص قصير لكل زيارة، مكتوب لك. وهو ليس الملاحظة الكاملة التي يحتفظ بها فريقك الطبي، ولا يفسّر لك نتائجك — اسأل عيادتك عن أي شيء هنا.',
-  'health.visits.empty.title': 'لا توجد ملخصات زيارات بعد',
-  'health.visits.empty.body': 'يظهر الملخص هنا بعد الزيارة، متى شاركه فريقك الطبي معك.',
-  'health.visits.with': 'مع {doctor}',
-  'health.visits.on': 'زيارة بتاريخ {date}',
-  'health.visits.hint': 'يفتح الملخص',
-  'health.visits.a11y': '{title}، {date}',
-  'health.visits.noSummary': 'لم يكتب فريقك الطبي ملخصًا لهذه الزيارة.',
-  'health.visits.notFound.title': 'هذا الملخص ليس في سجلك',
-  'health.visits.notFound.body': 'ارجع إلى ملخصات الزيارات وافتحه من القائمة.',
 
   'upgrade.body':
     'لم تعد هذه النسخة من ميدورا مدعومة. حدّث إلى أحدث نسخة لتسجيل الدخول والاطلاع على مواعيدك وسجلاتك.',
@@ -984,42 +954,21 @@ export const ar: Messages = {
   'biometric.setting.body':
     'بعد إغلاق ميدورا لبضع دقائق، سيطلب {method} قبل عرض معلوماتك مجددًا. هذا يمنع مَن يمسك هاتفك المفتوح من قراءة سجلاتك. وهو لا يشفّر شيئًا ولا يغني عن تسجيل الخروج.',
   'biometric.setting.password': 'يمكنك دائمًا تسجيل الدخول بكلمة المرور بدلًا من ذلك.',
-  // ── المساعد (المرحلة K والمرحلة L) ────────────────────────────────
+  // ── المساعد (ADR-050) ──────────────────────────────────────────────
   //
-  // هذه الشاشات مصمَّمة وغير موصولة بأي مساعد — انظر
-  // `features/ai/availability.ts`. النصوص هنا مكتوبة لهذه الحالة، لا
-  // كنصوص مؤقتة لحالة عاملة.
+  // مساعدان: مساعد صحي عام لا تُعطى له أي بيانات للمريض، ومساعد رعاية
+  // شخصي يعتمد على مواعيد المريض وحالة فحوصاته وتأمينه فقط — لا نتائج
+  // ولا سجلات. يردّ الخادم برمز 503 إلى أن يُضبط مزوّد الخدمة، وتقول
+  // النصوص ذلك بصدق: لا شيء هنا تحية من مساعد ولا جملة مولَّدة ولا وعد
+  // بشيء يصل في تاريخ معيّن.
   'ai.disclaimer.body':
-    'يقدّم مساعد ميدورا معلومات عامة فقط. وهو ليس طبيبًا، ولا يستطيع تشخيصك، ولا يجوز استخدامه أبدًا في حالة طارئة.',
-
-  'ai.badge.notConnected': 'غير موصول بعد',
+    'يقدّم المساعد الصحي معلومات عامة فقط. وهو برنامج وليس طبيبًا. وهو ليس تشخيصًا، وليس للحالات الطارئة.',
 
   'ai.home.title': 'مساعد ميدورا',
-  'ai.home.subtitle': 'معلومات صحية عامة، ومساعدة في الوصول إلى الرعاية المناسبة.',
-  'ai.home.entry': 'اطّلع على ما سيفعله المساعد، وما الذي تستخدمه بدلًا منه حتى يتم وصله.',
-  'ai.home.capabilities': 'ما الذي سيساعد فيه',
-  'ai.home.capabilitiesSubtitle': 'لا شيء من هذه موصول بمساعد بعد.',
+  'ai.home.subtitle': 'مساعدان لغرضين مختلفين. اختر ما تحتاج إليه.',
+  'ai.home.entry': 'اطرح سؤالًا صحيًا عامًا، أو اسأل عن مواعيدك وفحوصاتك وتأمينك.',
+  'ai.home.entry.hint': 'يفتح المساعدَين.',
   'ai.home.safety': 'قبل أن تستخدمه',
-  'ai.home.scope.title': 'ما الغرض منه',
-  'ai.home.scope.body':
-    'إيجاد التخصص المناسب، ووصف العَرَض حتى تستطيع إخبار أحد أفراد الفريق الطبي، والمساعدة في الحجز، ومعلومات عامة عن دواء.',
-  'ai.home.scope.excluded': 'لن يقرأ سجلاتك ولا نتائج فحوصك ولا وصفاتك، ولن يخبرك بما تعاني منه.',
-
-  'ai.capability.hint': 'يفتح شاشة هذا الجزء من المساعد.',
-  'ai.capability.chat.title': 'اطرح سؤالًا',
-  'ai.capability.chat.body': 'معلومات صحية عامة، بكلماتك أنت.',
-  'ai.capability.symptoms.title': 'صِف عَرَضًا',
-  'ai.capability.symptoms.body':
-    'مجموعة أسئلة قصيرة، لتقول بوضوح ما الذي تشعر به حين تتحدث إلى شخص.',
-  'ai.capability.image.title': 'اعرض صورة',
-  'ai.capability.image.body': 'لطفح جلدي أو جرح، حين يصعب الوصف بالكلمات.',
-
-  'ai.unavailable.title': 'لا يوجد مساعد موصول',
-  'ai.unavailable.body':
-    'لم يتم وصل هذه النسخة من ميدورا بمساعد، لذلك لا شيء في هذه الشاشة يستطيع الإجابة. هذا ليس عطلًا، وإعادة المحاولة لن تغيّر شيئًا.',
-  'ai.unavailable.instead':
-    'لأي أمر يخص صحتك، راسل فريق الرعاية أو احجز موعدًا. وفي حالة الطوارئ، استخدم الزر أدناه.',
-  'ai.unavailable.blockedBy': 'في انتظار: {rows}',
 
   'ai.safety.emergency.title': 'هذا ليس للطوارئ',
   'ai.safety.emergency.body':
@@ -1037,12 +986,53 @@ export const ar: Messages = {
     'كل ما يخص جسدك أو نتائجك أو علاجك يعود إلى أحد أفراد الفريق الطبي ممن يستطيعون الاطلاع على سجلك.',
   'ai.safety.findCare': 'ابحث عن طبيب',
 
-  'ai.chat.title': 'اطرح سؤالًا',
+  'ai.disclaimer.personal':
+    'يعتمد مساعد الرعاية على مواعيدك وحالة فحوصاتك وتأمينك المسجَّل فقط. ولا يطّلع على نتائجك ولا على سجلك الطبي. وهو ليس تشخيصًا، وليس للحالات الطارئة.',
+  'ai.mode.general.title': 'المساعد الصحي',
+  'ai.mode.general.body': 'معلومات صحية عامة. لا يعرف شيئًا عنك ولا تُعطى له بياناتك أبدًا.',
+  'ai.mode.personal.title': 'مساعد رعايتي',
+  'ai.mode.personal.body':
+    'أسئلة عن مواعيدك أنت وحالة فحوصاتك وتأمينك. لا يطّلع على نتائجك ولا على سجلك الطبي.',
+  'ai.mode.hint': 'يفتح محادثاتك مع هذا المساعد.',
+  'ai.mode.a11y': '{title}، {body}',
+  'ai.mode.separate': 'هذان مساعدان منفصلان، ولكلٍّ منهما محادثاته الخاصة.',
+  'ai.conversations.new': 'محادثة جديدة',
+  'ai.conversations.new.hint': 'تبدأ محادثة جديدة مع هذا المساعد.',
+  'ai.conversations.empty.title': 'لا توجد محادثات بعد',
+  'ai.conversations.empty.body':
+    'ابدأ محادثة لتطرح سؤالًا. تُحفظ المحادثات على خوادمنا لا على هذا الهاتف، ويمكنك حذف أي منها.',
+  'ai.conversations.untitled': 'محادثة بتاريخ {date}',
+  'ai.conversations.open.hint': 'يفتح هذه المحادثة.',
+  'ai.conversations.delete': 'حذف',
+  'ai.conversations.delete.a11y': 'حذف {title}',
+  'ai.conversations.delete.title': 'هل تريد حذف هذه المحادثة؟',
+  'ai.conversations.delete.body': 'ستُزال من قائمتك، ولا يمكن التراجع عن ذلك.',
+  'ai.conversations.delete.keep': 'إبقاؤها',
+  'ai.conversations.delete.failed': 'تعذّر حذف المحادثة. يُرجى المحاولة مرة أخرى.',
+  'ai.unavailable.title': 'المساعد غير متاح بعد',
+  'ai.unavailable.body':
+    'لم يُفعَّل هذا المساعد في ميدورا بعد، لذلك لا يستطيع الإجابة. ليس هناك خلل في هاتفك أو حسابك، وإعادة المحاولة لن تغيّر شيئًا.',
+  'ai.unavailable.instead':
+    'لأي أمر يخص صحتك، تواصل مع فريق الرعاية أو احجز موعدًا. وفي حالة الطوارئ، استخدم الزر أدناه.',
+  'ai.chat.title.general': 'المساعد الصحي',
+  'ai.chat.title.personal': 'مساعد رعايتي',
+  'ai.chat.empty.general.title': 'اطرح سؤالًا صحيًا عامًا',
+  'ai.chat.empty.general.body':
+    'يقدّم معلومات عامة فقط. يُرجى عدم كتابة اسمك أو أي بيانات شخصية أخرى.',
+  'ai.chat.empty.personal.title': 'اسأل عن رعايتك',
+  'ai.chat.empty.personal.body':
+    'مثلًا: متى موعدي القادم، أو أين وصل فحص ما. لا يستطيع إخبارك بأي نتيجة.',
+  'ai.chat.replyArrived': 'ردّ المساعد.',
+  'ai.chat.failed': 'لم تكتمل العملية، أو انقطع الرد قبل أن ينتهي.',
+  'ai.chat.escalation.title': 'يُرجى طلب المساعدة الآن',
+  'ai.chat.escalation.note': 'هذه رسالة سلامة من ميدورا، وليست ردًّا من المساعد.',
+  'ai.chat.escalation.a11y': 'رسالة سلامة. {body}',
+  'ai.composer.counter': '{count} من {max} حرفًا',
+  'ai.composer.disabledHint': 'المساعد غير متاح بعد، لذلك لا يمكن إرسال شيء.',
+
   'ai.chat.author.you': 'أنت',
   'ai.chat.author.assistant': 'مساعد ميدورا',
   'ai.chat.typing': 'يكتب ردًا',
-  'ai.chat.empty.title': 'لا يوجد شيء هنا بعد',
-  'ai.chat.empty.body': 'عند وصل مساعد، سيظهر هنا ما تسأله وما يجيب به.',
   'ai.chat.bubble.a11y': 'قال {author}: {body}. {time}',
   'ai.chat.bubble.failedA11y': 'قال {author}: {body}. لم يُرسل.',
   'ai.chat.bubble.failed': 'لم يُرسل',
@@ -1050,85 +1040,9 @@ export const ar: Messages = {
   'ai.composer.label': 'رسالتك',
   'ai.composer.placeholder': 'اكتب سؤالك',
   'ai.composer.send': 'إرسال',
-  'ai.composer.attach': 'إضافة صورة',
-  'ai.composer.attachHint': 'يفتح شاشة الصور.',
   'ai.composer.disabled': 'غير متاح بعد',
-  'ai.composer.disabledHint': 'لا يوجد مساعد موصول، لذلك لا يمكن إرسال شيء.',
-  'ai.composer.disabledReason':
-    'لا يمكنك إرسال أي شيء بعد — لا يوجد مساعد موصول بهذه النسخة من ميدورا.',
-
-  'ai.intake.title': 'صِف عَرَضًا',
-  'ai.intake.step': 'الخطوة {step} من {total}',
-  'ai.intake.next': 'متابعة',
-  'ai.intake.what.title': 'ما الذي تلاحظه؟',
-  'ai.intake.what.subtitle': 'اختر كل ما ينطبق. لا يُرسل أي شيء هنا إلى أي جهة.',
-  'ai.intake.when.title': 'منذ متى وهذا يحدث؟',
-  'ai.intake.when.subtitle': 'الإجابة التقريبية كافية.',
-  'ai.intake.review.title': 'ما الذي أخبرتنا به',
-  'ai.intake.alwaysEmergency':
-    'مهما اخترت في هذه الشاشة، إن بدا الأمر طارئًا فتعامل معه على أنه كذلك. هذه الشاشة لا تقرر ذلك عنك.',
-
-  'ai.result.title': 'لم يطّلع أحد على هذا',
-  'ai.result.body':
-    'لا يوجد مساعد موصول بهذه النسخة من ميدورا، لذلك لم يقرأ أحد ما أدخلته ولا توجد نتيجة لعرضها.',
-  'ai.result.notSent': 'لم يُرسل أي شيء إلى أي جهة، ولم يُحفظ أي شيء على هذا الهاتف.',
-  'ai.result.summaryTitle': 'ما الذي اخترته',
-  'ai.result.summaryA11y': 'ما الذي اخترته: {items}',
-  'ai.result.findCare': 'ابحث عن طبيب',
-
-  'ai.image.title': 'اعرض صورة',
-  'ai.image.subtitle': 'لطفح جلدي أو جرح، حين يصعب الوصف بالكلمات.',
-  'ai.image.section': 'صورتك',
-  'ai.image.empty.title': 'لم تُختَر أي صورة',
-  'ai.image.empty.body': 'اختيار صورة غير متاح في هذه النسخة.',
-  'ai.image.choose': 'اختر صورة',
-  'ai.image.disabledHint': 'اختيار صورة غير متاح في هذه النسخة.',
-  'ai.image.remove': 'إزالة الصورة',
-  'ai.image.previewA11y': 'الصورة التي اخترتها: {name}. لم يطّلع عليها شيء.',
-  'ai.image.unnamed': 'بلا اسم',
-  'ai.image.localOnly': 'هذه الصورة على هاتفك فقط. لم تُرسل إلى أي جهة.',
-  'ai.image.processing': 'جارٍ الاطلاع على صورتك',
-  'ai.image.done': 'انتهى.',
-  'ai.image.privacy.title': 'ما الذي سيحدث لصورتك',
-  'ai.image.privacy.body':
-    'عند بناء هذه الميزة، ستُزال بيانات الموقع وتفاصيل الكاميرا من الصورة قبل أن تغادر هاتفك، وستُفحص قبل أن يفتحها أحد. لا شيء من ذلك موجود بعد، ولهذا لا يمكنك اختيار صورة.',
-
-  'ai.symptomGroup.general': 'عام في الجسم',
-  'ai.symptomGroup.head': 'الرأس والحلق',
-  'ai.symptomGroup.chest': 'الصدر والتنفس',
-  'ai.symptomGroup.abdomen': 'المعدة',
-  'ai.symptomGroup.skin': 'الجلد',
-  'ai.symptomGroup.mood': 'المزاج والنوم',
-  'ai.symptom.fever': 'حُمّى',
-  'ai.symptom.fatigue': 'تعب شديد',
-  'ai.symptom.chills': 'قشعريرة',
-  'ai.symptom.appetite': 'فقدان الشهية',
-  'ai.symptom.headache': 'صداع',
-  'ai.symptom.dizziness': 'دوخة',
-  'ai.symptom.vision': 'صعوبة في الرؤية',
-  'ai.symptom.soreThroat': 'التهاب الحلق',
-  'ai.symptom.chestPain': 'ألم في الصدر',
-  'ai.symptom.breathless': 'ضيق في التنفس',
-  'ai.symptom.cough': 'سعال',
-  'ai.symptom.palpitations': 'خفقان في القلب',
-  'ai.symptom.nausea': 'غثيان',
-  'ai.symptom.abdominalPain': 'ألم في المعدة',
-  'ai.symptom.bowel': 'تغيّر في الإخراج',
-  'ai.symptom.rash': 'طفح جلدي',
-  'ai.symptom.swelling': 'تورّم',
-  'ai.symptom.wound': 'جرح لا يلتئم',
-  'ai.symptom.lowMood': 'مزاج منخفض',
-  'ai.symptom.anxiety': 'قلق',
-  'ai.symptom.sleep': 'صعوبة في النوم',
-  'ai.duration.today': 'اليوم',
-  'ai.duration.days': 'بضعة أيام',
-  'ai.duration.weeks': 'بضعة أسابيع',
-  'ai.duration.longer': 'أطول من ذلك',
 
   'nav.title.assistant': 'المساعد',
-  'nav.title.assistantChat': 'اطرح سؤالًا',
-  'nav.title.assistantSymptoms': 'صِف عَرَضًا',
-  'nav.title.assistantImage': 'اعرض صورة',
   'security.section.unlock': 'قفل هذا التطبيق',
   // ── الطوارئ (N-07, W-10) ──────────────────────────────────────────
   //
@@ -1213,30 +1127,6 @@ export const ar: Messages = {
   'upgrade.emergency': 'إذا كنت بحاجة إلى مساعدة عاجلة، فاتصل برقم الطوارئ المحلي من تطبيق الهاتف.',
 
   // ── المفردات السريرية (W-10، بانتظار المراجعة السريرية) ───────────
-  'health.allergy.severity.mild': 'خفيفة',
-  'health.allergy.severity.moderate': 'متوسطة',
-  'health.allergy.severity.severe': 'شديدة',
-  'health.medication.status.active': 'قيد الاستخدام',
-  'health.medication.status.completed': 'مكتمل',
-  'health.medication.status.discontinued': 'أُوقِف',
-  'health.history.kind.diagnosis': 'تشخيص',
-  'health.history.kind.surgery': 'عملية جراحية',
-  'health.history.kind.procedure': 'إجراء طبي',
-  'health.history.kind.hospitalization': 'دخول المستشفى',
-  'health.history.kind.vaccination': 'تطعيم',
-  'health.labs.flag.normal': 'طبيعي',
-  'health.labs.flag.low': 'منخفض',
-  'health.labs.flag.high': 'مرتفع',
-  'health.labs.flag.criticalLow': 'منخفض بدرجة حرجة',
-  'health.labs.flag.criticalHigh': 'مرتفع بدرجة حرجة',
-  'health.labs.flag.abnormal': 'غير طبيعي',
-  'health.prescriptions.status.draft': 'مسودة',
-  'health.prescriptions.status.pendingApproval': 'بانتظار الموافقة',
-  'health.prescriptions.status.active': 'سارية',
-  'health.prescriptions.status.dispensed': 'صُرفت',
-  'health.prescriptions.status.completed': 'مكتملة',
-  'health.prescriptions.status.discontinued': 'أُوقفت',
-  'health.prescriptions.status.expired': 'منتهية الصلاحية',
 
   'validation.password.length': 'استخدم {count} أحرف على الأقل',
   'validation.password.lower': 'أضف حرفًا لاتينيًا صغيرًا',

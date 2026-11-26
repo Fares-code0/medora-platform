@@ -15,7 +15,7 @@ import {
 } from '@/components';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
 import type { IconName } from '@/components/Icon';
-import { AiCapabilityCard } from '@/features/ai/components/AiCapabilityCard';
+import { AiModeCard } from '@/features/ai/components/AiModeCard';
 import { useAppointments } from '@/features/appointments/hooks';
 import { useIdentity } from '@/features/auth/SessionProvider';
 import { LinkRecordBanner } from '@/features/patient-link/components/LinkRecordBanner';
@@ -274,19 +274,19 @@ export function HomeScreen() {
       <Announcements />
 
       {/*
-        Last of the cards, and below the announcement for the same reason
-        the announcement is below the appointment: a capability that is
-        not connected to anything does not outrank one that is.
-
-        Marked on its face, so the answer arrives before the tap rather
-        than after it. `AiCapabilityCard` carries why a navigating card
-        beats an inert one here.
+        Last of the cards: the assistants are an extra, and do not outrank
+        anything that shows the patient their own care. It opens the
+        assistant's front page, which offers the two assistants
+        separately; whether either is switched on is the server's answer
+        (503 while no provider is configured), given where a question is
+        asked rather than guessed here.
       */}
-      <AiCapabilityCard
+      <AiModeCard
         testID="home-assistant-card"
         icon="cpu"
         title={t('ai.home.title')}
         body={t('ai.home.entry')}
+        hint={t('ai.home.entry.hint')}
         onPress={() =>
           navigation.navigate('Tabs', { screen: 'HomeTab', params: { screen: 'AiHome' } })
         }

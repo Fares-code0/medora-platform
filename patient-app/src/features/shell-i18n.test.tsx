@@ -9,8 +9,6 @@ import { renderWithProviders } from '@/test/render';
 import { UpgradeRequiredScreen } from './app-version/UpgradeGate';
 import { SessionProvider } from './auth/SessionProvider';
 import { createTokenStorage } from './auth/storage';
-import { LabResultsScreen } from './health/screens/LabResultsScreen';
-import { healthService } from './health/service';
 import { NotificationsScreen } from './notifications/screens/NotificationsScreen';
 import { notificationService } from './notifications/service';
 import { ProfileScreen } from './profile/screens/ProfileScreen';
@@ -227,27 +225,5 @@ describe('The forced-upgrade wall, in Arabic (W-06)', () => {
         "If you need urgent help, call your local emergency number from your phone's dialler.",
       ),
     ).toBeTruthy();
-  });
-});
-
-describe('Lab results, in Arabic (J-06)', () => {
-  it('translates the row a patient reads a number off', async () => {
-    jest.spyOn(healthService, 'listLabOrders').mockResolvedValue([
-      {
-        id: 'LO-1',
-        panelName: 'Lipid panel',
-        orderedOn: '2026-02-03T09:00:00.000Z',
-        status: 'completed',
-        release: 'released',
-        resultCount: 1,
-      },
-    ]);
-
-    renderWithProviders(<LabResultsScreen />, { locale: 'ar' });
-
-    // The collapsed card already read the catalogue; the expanded one
-    // duplicated the same line in English. This is the shared key.
-    await waitFor(() => expect(screen.getByText(/طُلب في/)).toBeTruthy());
-    expect(screen.queryByText(/^Ordered /)).toBeNull();
   });
 });

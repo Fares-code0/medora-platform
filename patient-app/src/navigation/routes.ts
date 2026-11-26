@@ -1,5 +1,7 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
+import type { AiMode } from '@/features/ai/model/types';
+
 /**
  * The route table.
  *
@@ -85,9 +87,14 @@ export type HomeStackParamList = {
    * something is behind them.
    */
   AiHome: undefined;
-  AiChat: undefined;
-  AiSymptoms: undefined;
-  AiImage: undefined;
+  /** One mode's conversations, and a way to start a new one. */
+  AiConversations: { mode: AiMode };
+  /**
+   * A conversation. `conversationId` absent = a new one, created on the
+   * first message so an abandoned screen leaves nothing behind. The mode
+   * is fixed for the life of a conversation.
+   */
+  AiChat: { mode: AiMode; conversationId?: string };
 };
 
 export type DiscoverStackParamList = {
@@ -134,22 +141,18 @@ export type MessagesStackParamList = {
 export type ProfileStackParamList = {
   ProfileRoot: undefined;
   EditProfile: undefined;
-  HealthRecords: undefined;
-  LabResults: undefined;
-  Prescriptions: undefined;
-  Documents: undefined;
-  /** Visit summaries — the patient projection, not the clinician's note (J-08). */
-  Visits: undefined;
   /**
-   * One visit summary.
-   *
-   * The id alone, unlike `Department`: there is a list query behind this
-   * screen (`useVisit` selects out of it), so a route arriving with only
-   * an id has everything it needs — and a visit that is not in the
-   * record is an answer this screen renders rather than a header it
-   * cannot fill.
+   * The patient-facing information hub (ADR-050). NOT the medical record:
+   * prescriptions, visit summaries, documents, allergies, conditions and
+   * history have no route — the owner decided a patient never sees them
+   * in the app (2026-11-26), and a route that renders nothing is still a
+   * path a future screen could be hung on.
    */
-  VisitDetail: { visitId: string };
+  HealthRecords: undefined;
+  /** Test status — never a result (ADR-031 is open). */
+  Tests: undefined;
+  /** The insurance on file; authorizations are "not available yet". */
+  Insurance: undefined;
   Notifications: undefined;
   /** How Medora reaches you, not what it has said (O-06). */
   NotificationPrefs: undefined;

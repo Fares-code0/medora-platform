@@ -1,29 +1,29 @@
-import { selectService, unavailableService } from '@/api/seam';
+import { selectService } from '@/api/seam';
 
 import { fixtureHealthService } from './fixtures/health-fixtures';
+import { httpHealthService } from './http-health-service';
 import type { HealthService } from './model/types';
 
 /**
- * Health records.
+ * The patient-facing information layer: test status and insurance on file.
  *
- * Blocked twice over: `GET /me/health/*` does not exist (BE-09, spanning
- * modules M10/M12/M13/M14, all unbuilt), and the results-release policy
- * is undecided (AD-5). The second is the more important of the two — an
- * endpoint could be written this week; deciding whether a patient sees an
- * unreviewed critical result needs a clinical owner.
+ * ── The record is not behind this seam, and is not coming ────────────
+ *
+ * This service used to be the port for the whole clinical record
+ * (allergies, conditions, medicines, history, prescriptions, visits,
+ * documents, lab results) and was blocked on BE-09 and the results-release
+ * policy (AD-5 / ADR-031). The owner's decision of 2026-11-26 settled the
+ * first half differently: **a patient never sees the full record, the
+ * physician's notes or the internal documentation.** Those methods were
+ * deleted, not left refusing — a refusing port reads as "built next
+ * sprint", and it is not.
+ *
+ * What is live: `listLabTests` (`GET /me/lab-orders`, status only) and
+ * `getInsurance` (`GET /me/insurance`). What still refuses by name:
+ * `listEmergencyContacts` (BE-09). Results stay unexposed until a release
+ * policy is approved (ADR-031, open).
  */
 export const healthService: HealthService = selectService({
   fixture: fixtureHealthService,
-  http: unavailableService<HealthService>('BE-09 / AD-5', 'capability.healthRecords', [
-    'listAllergies',
-    'listConditions',
-    'listMedications',
-    'listHistory',
-    'listLabOrders',
-    'getLabOrder',
-    'listPrescriptions',
-    'listVisits',
-    'listDocuments',
-    'listEmergencyContacts',
-  ]),
+  http: httpHealthService,
 });

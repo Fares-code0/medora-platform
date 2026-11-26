@@ -136,10 +136,8 @@ ordinary work.
   Emergency that stands in for K-04's classifier.
 - `src/features/ai/components/AiUnavailableNotice.tsx` — what a patient is told
   instead, on every assistant screen.
-- `src/features/ai/components/AiResultPlaceholder.tsx` — what stands where a
-  finding would go.
-- `src/features/ai/content/intake.ts` — the symptom vocabulary a patient picks
-  from to describe themselves.
+- `src/features/ai/components/AiEscalationCard.tsx` — how the server's
+  red-flag safety message is shown, with the route to Emergency.
 - The `ai.*` block of `src/i18n/messages/en.ts` and `ar.ts` — all of the above,
   in both languages. **The Arabic has not been read by a native speaker** and
   `messages/ar.ts` says so at the top; that caveat is inside this signature.
@@ -158,13 +156,13 @@ one is a test rather than a promise:
   (`features/ai/availability.ts`).
 - `features/ai/` contains no network call, no `@/api/` import, no `service.ts`,
   no persistence, and no client-side red-flag classifier
-  (`features/ai/ai-honesty.test.ts`).
+  (`features/ai/ai.test.tsx`).
 - No string long enough to read as a scripted reply is stored anywhere in the
   directory. An `assistant`-authored message exists only inside a test file.
 - The composer is not editable, and says why on the screen rather than only in
   an accessibility hint.
 - Every assistant screen renders the non-dismissible disclaimer **and** the
-  "no assistant is connected" notice (`features/ai/ai-screens.test.tsx`,
+  "no assistant is connected" notice (`features/ai/ai.test.tsx`,
   asserted by `it.each` so a fifth screen without one fails).
 
 AD-4 — whether a patient-facing assistant ships at all — remains the owner's
@@ -179,8 +177,8 @@ list and a new signature, not this one.
 **Artefacts**
 
 - `src/types/vocabularies.ts` — the `RELEASE_STATES` client vocabulary.
-- `src/features/health/components/ReleaseNotice.tsx` — how a withheld result is
-  rendered, and the contact route offered with it.
+- `src/features/health/screens/TestsScreen.tsx` — test status only; results are
+  not shown and the screen says they are shared by the care team once released.
 - `docs/PUBLIC_PROJECTIONS.md` — what a patient may see.
 
 **What holds until it is signed**
