@@ -33,8 +33,14 @@ import type {
 } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/database';
 
-/** Live rows only. Repeated as a constant so no read can forget it. */
-const LIVE = { deletedAt: null } as const;
+/**
+ * Live clinician rows only. Repeated as a constant so no read can forget it.
+ *
+ * `patientMode: null` (ADR-050): a patient's own assistant thread lives in
+ * the same table and is never listed, opened, edited, deleted or rated
+ * through the clinician routes, whoever asks.
+ */
+const LIVE = { deletedAt: null, patientMode: null } as const;
 
 /**
  * The shape of `ai_conversations.id`. A path parameter that is not one
@@ -304,7 +310,7 @@ export class AiConversationRepository {
         // Only an assistant turn can be rated: a thumb on the doctor's
         // own question is a rating of themselves.
         role: 'ASSISTANT',
-        conversation: { ownerId, deletedAt: null },
+        conversation: { ownerId, ...LIVE },
       },
       data: { feedback: rating },
     });

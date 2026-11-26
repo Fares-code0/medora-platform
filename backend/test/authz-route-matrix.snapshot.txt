@@ -15,6 +15,7 @@ DELETE /api/v1/administration/staff/:id                                   A.....
 DELETE /api/v1/ai/conversations/:conversationId                           .D.....  can:ai.use
 DELETE /api/v1/conversations/:conversationId/messages/:messageId          ADRLP..  can:messages.send
 DELETE /api/v1/files/:fileId                                              ADRLPTN  authenticated
+DELETE /api/v1/me/ai/conversations/:conversationId                        ADRLPTN  authenticated
 DELETE /api/v1/me/devices/:deviceId                                       ADRLPTN  authenticated
 DELETE /api/v1/me/incident-bookmarks/:bookmarkId                          A......  can:logs.view
 DELETE /api/v1/me/sessions/:sessionId                                     ADRLPTN  authenticated
@@ -90,6 +91,8 @@ GET /api/v1/me/2fa                                                        ADRLPT
 GET /api/v1/me/account                                                    ADRLPTN  authenticated
 GET /api/v1/me/activity                                                   ADRLPTN  authenticated
 GET /api/v1/me/ai-settings                                                .D.....  can:ai.use
+GET /api/v1/me/ai/conversations                                           ADRLPTN  authenticated
+GET /api/v1/me/ai/conversations/:conversationId                           ADRLPTN  authenticated
 GET /api/v1/me/appointments                                               ADRLPTN  authenticated
 GET /api/v1/me/appointments/:appointmentId                                ADRLPTN  authenticated
 GET /api/v1/me/availability                                               ADRLPTN  authenticated
@@ -268,6 +271,8 @@ POST /api/v1/me/2fa/enable                                                ADRLPT
 POST /api/v1/me/2fa/reenroll                                              ADRLPTN  authenticated
 POST /api/v1/me/2fa/reenroll/confirm                                      ADRLPTN  authenticated
 POST /api/v1/me/2fa/setup                                                 ADRLPTN  authenticated
+POST /api/v1/me/ai/conversations                                          ADRLPTN  authenticated
+POST /api/v1/me/ai/conversations/:conversationId/messages                 ADRLPTN  authenticated
 POST /api/v1/me/data-export                                               ADRLPTN  authenticated
 POST /api/v1/me/devices                                                   ADRLPTN  authenticated
 POST /api/v1/me/incident-bookmarks                                        A......  can:logs.view
