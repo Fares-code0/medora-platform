@@ -528,6 +528,52 @@ export const en = {
   'profile.signOut.confirmDetail':
     'You will need your password to sign back in. Emergency help stays available while you are signed out.',
 
+  // ── Eligibility: patients only (C-11) ─────────────────────────────
+  // Shown instead of the app when a non-patient account signs in. The
+  // session has already been ended; nothing here names the account.
+  'eligibility.navTitle': 'Patients only',
+  'eligibility.title': 'This app is for patients only',
+  'eligibility.body':
+    'You signed in with a Medora account that is not a patient account. The Medora patient app can only be used with a patient account.',
+  'eligibility.staffHint':
+    'If you work at a hospital or clinic, use the Medora web app your organisation provides.',
+  'eligibility.signedOut': 'For your security, this account has been signed out on this phone.',
+  'eligibility.signOut': 'Sign out',
+  'eligibility.signOut.hint': 'Returns to the sign-in screen',
+
+  // ── Linking your hospital record (ADR-048, staff-mediated) ────────
+  // Linking happens at the hospital desk after staff check an identity
+  // document. The app only shows a short-lived code; it never links.
+  'link.title': 'Link your hospital record',
+  'link.banner.title': 'Link your hospital record',
+  'link.banner.body':
+    'To see your appointments and records from a hospital, staff there need to link your account to your record. Meanwhile you can still find doctors, use Emergency help and the general assistant.',
+  'link.banner.action': 'How to link',
+  'link.banner.hint': 'Opens the steps and your linking code',
+  'link.intro':
+    'Linking is done in person by hospital staff, so that nobody else can connect your account to your medical record.',
+  'link.steps.heading': 'How it works',
+  'link.step.1': 'Go to the reception or patient services desk at your hospital.',
+  'link.step.2':
+    'Bring an identity document: national ID, passport, residence permit or driving licence.',
+  'link.step.3': 'Get a linking code below and ask the staff member to link your account with it.',
+  'link.code.heading': 'Your linking code',
+  'link.code.generate': 'Get a linking code',
+  'link.code.regenerate': 'Get a new code',
+  'link.code.regenerate.hint': 'The previous code stops working',
+  'link.code.label': 'Linking code: {code}',
+  'link.code.expiresIn': 'Expires in {time}',
+  'link.code.expired': 'This code has expired. Get a new one when you are at the desk.',
+  // `{duration}` is `formatMinutes`, as elsewhere.
+  'link.code.announce': 'Linking code ready: {code}. It expires in {duration}.',
+  'link.code.showStaff':
+    'Show this code only to hospital staff at the desk. Do not send it to anyone by phone or message.',
+  'link.code.error': 'A code could not be issued. Check your connection and try again.',
+  'link.code.rateLimited': 'Too many codes were requested. Wait a few minutes, then try again.',
+  'link.linked.title': 'Your account is linked',
+  'link.linked.body': 'Your account is linked to the hospital record of {name}.',
+  'link.profile.linkedAs': 'Hospital record: {name}',
+
   // ── Privacy requests (P-09, P-10) ─────────────────────────────────
   'privacy.title': 'Your data',
   'privacy.requestedOn': 'Requested on {date}',

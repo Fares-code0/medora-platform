@@ -82,6 +82,7 @@ const SIGNED_IN: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-2' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Amina Yusuf',
     email: 'amina@example.com',
     emailVerified: true,

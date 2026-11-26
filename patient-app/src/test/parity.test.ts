@@ -386,6 +386,10 @@ describe('the endpoint layer names only real routes (V-02)', () => {
       'auth.ts',
       'doctors.ts',
       'notifications.ts',
+      // ADR-048: `GET /me/patient-link` (also the C-11 eligibility probe)
+      // and `POST /me/patient-link/code`. The staff half of linking is a
+      // clinician route and has no path string here.
+      'patient-link.ts',
       'profile.ts',
       'sessions.ts',
     ]);

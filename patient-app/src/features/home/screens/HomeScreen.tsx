@@ -18,6 +18,7 @@ import type { IconName } from '@/components/Icon';
 import { AiCapabilityCard } from '@/features/ai/components/AiCapabilityCard';
 import { useAppointments } from '@/features/appointments/hooks';
 import { useIdentity } from '@/features/auth/SessionProvider';
+import { LinkRecordBanner } from '@/features/patient-link/components/LinkRecordBanner';
 import { useUnlinkedEmptyState } from '@/features/profile/useRecordLink';
 import { useT, type MessageKey, useDateFormat } from '@/i18n';
 import type { RootStackParamList } from '@/navigation/routes';
@@ -160,6 +161,13 @@ export function HomeScreen() {
           <Icon name="forward" size={20} color="error" />
         </View>
       </Card>
+
+      {/* ADR-048: non-blocking, and only once the server says "not linked". */}
+      <LinkRecordBanner
+        onLink={() =>
+          navigation.navigate('Tabs', { screen: 'ProfileTab', params: { screen: 'LinkRecord' } })
+        }
+      />
 
       <Section
         title={t('home.nextAppointment')}

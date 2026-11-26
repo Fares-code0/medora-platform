@@ -135,6 +135,7 @@ repeating a count that goes stale the next time an endpoint lands.
 | `home` | `unavailableService` | BE-10 |
 | `messages` | `unavailableService` | AD-1 / BE-13 |
 | `notifications` | `httpNotificationService` | — |
+| `patient-link` | `httpPatientLinkService` | — |
 | `profile` | `httpProfileService` | — |
 
 <!-- seam-table:end -->
@@ -162,10 +163,10 @@ Two of those rows carry a caveat the single word "live" would hide:
 **There is no invented path string anywhere in this tree**, and
 `src/test/parity.test.ts` asserts it module by module: each file in
 `api/endpoints/` may name only the routes its backing controller actually
-exposes, and the directory listing itself is pinned so a seventh module cannot
+exposes, and the directory listing itself is pinned so a ninth module cannot
 appear without that test being updated deliberately.
 
-The seven modules and what backs each:
+The eight modules and what backs each:
 
 | Module | Controller | Checklist |
 |---|---|---|
@@ -174,6 +175,7 @@ The seven modules and what backs each:
 | `doctors.ts` | `patient-doctor.controller.ts` | G-01…G-08 |
 | `appointments.ts` | `patient-appointment.controller.ts` (reads only) | I-01, I-02, I-06 |
 | `notifications.ts` | `notification.controller.ts` | O-01, O-02 |
+| `patient-link.ts` | the patient-link controller (ADR-048: `GET /me/patient-link`, `POST /me/patient-link/code`) | C-11, RA-030.1 |
 | `profile.ts` | `self-profile.controller.ts` | P-01, P-02 |
 | `sessions.ts` | `account-security.controller.ts` (two routes of eight) | P-06 |
 

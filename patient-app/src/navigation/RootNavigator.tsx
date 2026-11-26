@@ -7,9 +7,12 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { BookingFlow } from '@/features/appointments/booking/BookingFlow';
 import { useSession } from '@/features/auth/SessionProvider';
 import { EmergencyScreen } from '@/features/emergency/screens/EmergencyScreen';
+import { PatientLinkProbe } from '@/features/patient-link/components/PatientLinkProbe';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
+
+import { AccessDeniedStack } from './AccessDeniedStack';
 import { AppTabs } from './AppTabs';
 import { AuthStack } from './AuthStack';
 import type { RootStackParamList } from './routes';
@@ -51,7 +54,10 @@ function EmergencyModal({ navigation }: NativeStackScreenProps<RootStackParamLis
  * - **unconfirmed** — `SessionCheckStack`: a stored sign-in the server
  *   could not be reached to confirm. No tabs (there is no session), no
  *   sign-in form (the patient was not signed out). Contains Emergency.
- * - **authenticated** — `AppTabs`, plus Emergency and Booking as modals.
+ * - **unauthenticated, `ineligible`** — `AccessDeniedStack`: a non-patient
+ *   account (C-11). No patient screen is mounted. Contains Emergency.
+ * - **authenticated** — `AppTabs`, plus Emergency and Booking as modals,
+ *   and the eligibility probe (`PatientLinkProbe`) beside them.
  *
  * `Emergency` is registered in BOTH stacks on purpose. It is not a
  * duplicate to be refactored away: the whole point is that it is
@@ -75,6 +81,10 @@ export function RootNavigator() {
   }
 
   if (state.status === 'unauthenticated') {
+    // C-11: a non-patient account. Its session is already over; this is
+    // why, with Emergency still a route. Never the sign-in form, which
+    // would read as a wrong password.
+    if (state.reason === 'ineligible') return <AccessDeniedStack />;
     return <AuthStack />;
   }
 
@@ -85,35 +95,38 @@ export function RootNavigator() {
   }
 
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: theme.colors.background },
-        headerTintColor: theme.colors.textPrimary,
-        headerShadowVisible: false,
-        contentStyle: { backgroundColor: theme.colors.background },
-      }}
-    >
-      <Stack.Screen name="Tabs" component={AppTabs} options={{ headerShown: false }} />
-      <Stack.Screen
-        name="Emergency"
-        component={EmergencyModal}
-        options={{
-          presentation: 'modal',
-          title: t('emergency.short'),
-          headerTintColor: theme.colors.error,
+    <>
+      <PatientLinkProbe />
+      <Stack.Navigator
+        screenOptions={{
+          headerStyle: { backgroundColor: theme.colors.background },
+          headerTintColor: theme.colors.textPrimary,
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: theme.colors.background },
         }}
-      />
-      <Stack.Screen
-        name="Booking"
-        component={BookingFlow}
-        options={{
-          // Full-screen, so no tab bar competes for the thumb during a
-          // five-step task (audit §13).
-          presentation: 'fullScreenModal',
-          headerShown: false,
-        }}
-      />
-    </Stack.Navigator>
+      >
+        <Stack.Screen name="Tabs" component={AppTabs} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="Emergency"
+          component={EmergencyModal}
+          options={{
+            presentation: 'modal',
+            title: t('emergency.short'),
+            headerTintColor: theme.colors.error,
+          }}
+        />
+        <Stack.Screen
+          name="Booking"
+          component={BookingFlow}
+          options={{
+            // Full-screen, so no tab bar competes for the thumb during a
+            // five-step task (audit §13).
+            presentation: 'fullScreenModal',
+            headerShown: false,
+          }}
+        />
+      </Stack.Navigator>
+    </>
   );
 }
 

@@ -25,6 +25,7 @@ interface WireSession {
       readonly firstName?: string | undefined;
       readonly lastName?: string | undefined;
       readonly emailVerified?: boolean | undefined;
+      readonly role?: string | undefined;
     };
   };
 }
@@ -37,6 +38,8 @@ function toIdentity(user: WireSession['data']['user']): AuthenticatedIdentity {
     displayName: name.length > 0 ? name : (user.email.split('@')[0] ?? 'there'),
     email: user.email,
     emailVerified: user.emailVerified ?? false,
+    // Absent is `null`, never a default: the gate refuses an unnamed role.
+    role: user.role ?? null,
   };
 }
 
@@ -75,8 +78,8 @@ export const httpAuthService: AuthService = {
     return toSignInResult(await authEndpoints.refresh({ refreshToken }));
   },
 
-  async logout() {
-    await authEndpoints.logout();
+  async logout(options) {
+    await authEndpoints.logout(options?.skipRefresh === true ? { skipRefresh: true } : {});
   },
 
   async forgotPassword(email) {
