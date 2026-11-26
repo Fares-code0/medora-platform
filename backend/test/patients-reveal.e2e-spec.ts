@@ -359,6 +359,37 @@ describe('AZ-04 — a custom role derived from doctor reveals only within reach'
   });
 });
 
+describe('AZ-06 — a refused patient reach is on the ledger (checklist B5)', () => {
+  const deniedBy = (actorId: string, entityId: string) =>
+    harness.prisma.auditEvent.findMany({
+      where: { actorId, eventType: 'patient_scope.denied', target: `patient:${entityId}` },
+      select: { category: true, severity: true, summary: true, target: true },
+    });
+
+  it('records a refusal of another hospital’s chart, behind the same 404 an unknown id gets', async () => {
+    const foreign = await request(harness.server).get(`/api/v1/patients/${patientPublicId}`).set(as(strangerToken));
+    const unknown = await request(harness.server).get('/api/v1/patients/PT-000000').set(as(strangerToken));
+
+    expect(foreign.status).toBe(404);
+    expect(unknown.status).toBe(404);
+    expect(errorBody(foreign).message).toBe(errorBody(unknown).message);
+
+    const rows = await deniedBy(strangerUserId, patientPublicId);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0]).toMatchObject({ category: 'SECURITY', severity: 'WARNING' });
+    // Identifiers only: nothing from the chart reaches the ledger.
+    expect(JSON.stringify(rows)).not.toContain('Test Patient');
+    // An id that names no chart is refused by the lookup before any scope
+    // decision is made; the caller cannot tell the two 404s apart.
+  });
+
+  it('records nothing for a reach that holds', async () => {
+    const response = await request(harness.server).get(`/api/v1/patients/${patientPublicId}`).set(as(doctorToken));
+    expect(response.status).toBe(200);
+    expect(await deniedBy(doctorUserId, patientPublicId)).toHaveLength(0);
+  });
+});
+
 describe('M7.3 — the justification', () => {
   it.each([
     ['no body', {}],
