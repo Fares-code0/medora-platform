@@ -1,3 +1,5 @@
+import type { ComponentProps } from 'react';
+
 import { HeaderHeightContext } from '@react-navigation/elements';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import {
@@ -140,7 +142,9 @@ describe('keyboard avoidance offsets', () => {
     withPlatform('android', () => {
       const { UNSAFE_getByType } = renderWithProviders(
         <HeaderHeightContext.Provider value={56}>
-          <AiChatScreen />
+          <AiChatScreen
+            {...({ route: { params: { mode: 'general' } } } as unknown as ComponentProps<typeof AiChatScreen>)}
+          />
         </HeaderHeightContext.Provider>,
       );
       const kav = UNSAFE_getByType(KeyboardAvoidingView);

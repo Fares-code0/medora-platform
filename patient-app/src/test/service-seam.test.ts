@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { httpAiService } from '@/features/ai/http-ai-service';
 import { httpAppointmentService } from '@/features/appointments/http-appointment-service';
 import { httpAuthService } from '@/features/auth/http-auth-service';
 import { httpDoctorService } from '@/features/doctors/http-doctor-service';
+import { httpHealthService } from '@/features/health/http-health-service';
 import { httpNotificationService } from '@/features/notifications/http-notification-service';
 import { httpProfileService } from '@/features/profile/http-profile-service';
 
@@ -64,6 +66,8 @@ const IMPLEMENTATIONS: Record<string, object> = {
   appointments: httpAppointmentService,
   auth: httpAuthService,
   doctors: httpDoctorService,
+  health: httpHealthService,
+  ai: httpAiService,
   notifications: httpNotificationService,
   profile: httpProfileService,
 };
@@ -152,6 +156,7 @@ describe('no feature can serve a patient invented data', () => {
     // A guard that quietly inspects nothing is worse than none: this is
     // the assertion that the scan above actually found the features.
     expect(SEAMS.map((seam) => seam.feature)).toEqual([
+      'ai',
       'appointments',
       'auth',
       'clinic',

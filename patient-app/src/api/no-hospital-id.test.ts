@@ -177,7 +177,11 @@ describe('the endpoint sources', () => {
     // Comments are stripped: prose may explain why there is no selector.
     const code = readFileSync(join(dir, file), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      // A RESPONSE field the server returns (`hospital: { id, name }` on a
+      // lab order) is read, never sent: only its schema declaration is
+      // exempt, and only in the shape `hospital: <name>Schema`.
+      .replace(/^\s*hospital: \w+Schema(\.nullable\(\))?,$/gm, '');
     const offenders = code.match(
       /\b(hospital|tenant|facility)[A-Za-z_]*\b|['"`]x-(hospital|tenant|facility|clinic)[^'"`]*['"`]|\bclinic(Id|_id)\b/gi,
     );

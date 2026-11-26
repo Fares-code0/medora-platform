@@ -309,24 +309,17 @@ describe('item 2 — AI disclaimers (K-03, AD-4)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('accepts no clinical input — the composer is not editable', () => {
+  it('takes input only through the composer, capped at the server limit', () => {
     if (isSigned('AI disclaimers')) return;
 
-    // A patient who types out their symptoms has told the app
-    // something, and an app that takes that and does nothing with it
-    // has lied twice. Every mount of the composer passes a state the
-    // component renders read-only.
-    const mounts = sourcesUnder(path.join(SRC, 'features', 'ai'), /\.tsx$/).filter(({ source }) =>
-      /<AiComposer\b/.test(source),
+    // The composer is the one input, text only (no attachment), and it
+    // carries the server's 2000-character cap. What a patient types is
+    // sent to the server's assistant, never stored on the device.
+    const composer = sourcesUnder(path.join(SRC, 'features', 'ai', 'components'), /\.tsx$/).find(
+      ({ file }) => file.endsWith('AiComposer.tsx'),
     );
-
-    expect(mounts.length).toBeGreaterThan(0);
-    for (const { file, source } of mounts) {
-      expect({ file, unavailable: /state=\{?["']?(turnState|unavailable)/.test(source) }).toEqual({
-        file,
-        unavailable: true,
-      });
-    }
+    expect(composer?.source).toContain('maxLength={AI_MESSAGE_MAX_LENGTH}');
+    expect(composer?.source).not.toMatch(/onAttach|paperclip/);
   });
 
   it('frames every assistant screen, so none can be read without the disclaimer', () => {
@@ -336,11 +329,14 @@ describe('item 2 — AI disclaimers (K-03, AD-4)', () => {
 
     expect(screens.length).toBeGreaterThan(0);
     for (const { file, source } of screens) {
-      expect({ file, framed: /<AiDisclaimer\s*\/>/.test(source) }).toEqual({ file, framed: true });
-      expect({ file, honest: /<AiUnavailableNotice\b/.test(source) }).toEqual({
-        file,
-        honest: true,
-      });
+      expect({ file, framed: /<AiDisclaimer\b/.test(source) }).toEqual({ file, framed: true });
+      // Only the screens that ask the server a question can meet its 503.
+      if (/AiChatScreen|AiConversationsScreen/.test(file)) {
+        expect({ file, honest: /<AiUnavailableNotice\b/.test(source) }).toEqual({
+          file,
+          honest: true,
+        });
+      }
     }
   });
 
@@ -354,6 +350,9 @@ describe('item 2 — AI disclaimers (K-03, AD-4)', () => {
     const ALLOWED = [
       path.join('features', 'home', 'screens', 'HomeScreen.tsx'),
       path.join('navigation', 'AppTabs.tsx'),
+      // The route table names the screens' param type; the registry mounts them.
+      path.join('navigation', 'routes.ts'),
+      path.join('test', 'screens.tsx'),
     ];
 
     const offenders = sourcesUnder(SRC, /\.tsx?$/)

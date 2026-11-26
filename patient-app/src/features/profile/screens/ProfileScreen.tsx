@@ -78,22 +78,17 @@ export function ProfileScreen({ navigation }: Props) {
             />
             <Divider />
             <ListItem
-              title={t('profile.labResults')}
+              title={t('profile.tests')}
               icon="lab"
               testID="profile-to-labs"
-              onPress={() => navigation.navigate('LabResults')}
+              onPress={() => navigation.navigate('Tests')}
             />
             <Divider />
             <ListItem
-              title={t('profile.prescriptions')}
-              icon="pill"
-              onPress={() => navigation.navigate('Prescriptions')}
-            />
-            <Divider />
-            <ListItem
-              title={t('profile.documents')}
-              icon="folder"
-              onPress={() => navigation.navigate('Documents')}
+              title={t('profile.insurance')}
+              icon="shield"
+              testID="profile-to-insurance"
+              onPress={() => navigation.navigate('Insurance')}
             />
           </View>
         </Card>

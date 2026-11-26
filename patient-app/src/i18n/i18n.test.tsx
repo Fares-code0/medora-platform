@@ -309,11 +309,6 @@ describe('the catalogues', () => {
     'support.urgent.',
     'upgrade.emergency',
     'messages.urgencyNotice',
-    'health.allergy.severity.',
-    'health.medication.status.',
-    'health.history.kind.',
-    'health.labs.flag.',
-    'health.prescriptions.status.',
   ];
 
   const inClinicalReview = (key: string) =>
@@ -326,13 +321,7 @@ describe('the catalogues', () => {
     'ai.disclaimer.body': 'disclaimer: says Medora cannot diagnose',
     'ai.safety.notADoctor.body': 'disclaimer: says Medora cannot diagnose',
     // The intake's own name, on the screen and in the navigator.
-    'ai.capability.symptoms.title': 'the intake screen’s title',
-    'ai.intake.title': 'the intake screen’s title',
-    'nav.title.assistantSymptoms': 'the intake screen’s navigator title',
-    'ai.home.scope.body': 'names the intake among the four K-01 contexts',
-    // The intake vocabulary. A patient's own description of themselves,
-    // read by nothing (`features/ai/content/intake.ts`).
-    'ai.symptom.chestPain': 'intake vocabulary (K-01)',
+    'ai.disclaimer.personal': 'disclaimer: says the care assistant gives no diagnosis',
   };
 
   it('carries no clinical content outside the keys named above', () => {

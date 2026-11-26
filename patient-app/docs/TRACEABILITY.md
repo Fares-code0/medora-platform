@@ -122,20 +122,20 @@ names the dependency — it does not invent a plausible path.
 
 ---
 
-## Health records
+## Health information (patient-facing layer — ADR-050)
 
-> Gated by **AD-5**. Every record carries a server-supplied `ReleaseState` and
-> `ReleaseNotice` renders the withheld cases honestly — never a blank, never an
-> error the patient could retry past.
+> The patient never sees the full medical record, physician notes or
+> unrestricted history (owner decision, 2026-11-26). Results stay unexposed
+> until the ADR-031 release policy is approved. Allergies, conditions,
+> medicines, history, prescriptions, visit summaries and documents have **no
+> screen, route or deep link**; `HealthRecordsScreen` says so in words.
 
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
-| `HealthRecordsScreen` | `listAllergies` · `listConditions` · `listMedications` · `listHistory` | `GET /me/health/*` | patients (M10) | `patient_allergies`, `patient_chronic_conditions`, `patient_medications`, `patient_medical_history` | 🟡 **BE-09** |
-| `LabResultsScreen` | `listLabOrders` · `getLabOrder` | `GET /me/health/labs` | labs (M14) | `lab_orders`, `lab_results` | 🟡 **BE-09 + AD-5** |
-| `PrescriptionsScreen` | `listPrescriptions` | `GET /me/health/prescriptions` | pharmacy (M13) | `prescriptions` | 🟡 **BE-09** — read-only, permanently |
-| `DocumentsScreen` | `listDocuments` | `GET /me/health/documents` | files (M25) | `patient_documents`, `files` | 🔴 **BE-09 + BE-15** — no object storage exists |
-| `VisitsScreen` | `listVisits` | `GET /me/health/visits` | medical-records (M12) | `medical_records` | 🟡 **BE-09 + AD-5** — the patient projection, never the clinician's note |
-| `VisitDetailScreen` | `listVisits` | same | medical-records (M12) | `medical_records` | 🟡 **BE-09 + AD-5** — **no by-id route.** The contract has the list and nothing else, so `useVisit` selects out of the same query rather than naming a route that does not exist |
+| `HealthRecordsScreen` (hub) | — | — | — | — | ✅ links to Tests, Insurance and the Appointments tab; states that the record is available from the care team |
+| `TestsScreen` | `listLabTests` | `GET /me/lab-orders` | labs | `lab_orders` (status only — no result, flag, indication or reviewer) | ✅ client built; backend route pending in this worktree. `results.available: false` is rendered as "shared by your care team once released" |
+| `InsuranceScreen` | `getInsurance` | `GET /me/insurance` | insurance | `patient_insurance` | ✅ client built; backend route pending. Authorizations: honest "not available yet" (ADR-039 item 5) |
+| Emergency contacts (on `EmergencyScreen`) | `listEmergencyContacts` | — | patients | `patient_emergency_contacts` | 🟡 **BE-09** — refuses by name |
 
 ---
 
@@ -207,30 +207,23 @@ bot built on it would be the most dangerous thing this project could ship. Phase
 stays closed until a provider, a server-side red-flag classifier, an output filter
 and a **named clinical owner** exist.
 
-What changed on 2026-09-14 is that the interface was built ahead of them, so that
-what is waiting on AD-4 is the clinical and backend work rather than a screen
-nobody has drawn. The Endpoint column below is the point of this table: **every row
-is `—`**. There is no `features/ai/service.ts`, no adapter behind `api/seam.ts` and
-no module in `api/endpoints/` — a seam is a promise that something can be plugged
-in, and nothing can be. `features/ai/ai-honesty.test.ts` fails on a `fetch`, an
-`@/api/` import, a storage call, a client-side classifier, or a string long enough
-to read as a scripted reply.
+**Updated 2026-11-26 (ADR-050).** The assistant is now two separate experiences
+over real routes — "Health assistant" (`general`, given no patient data) and "My
+care assistant" (`personal`, grounded server-side in appointments, test status
+and insurance; never results or records; needs a linked account). The server
+answers `503 service_unavailable` until a provider is configured and the screens
+render that as "not available yet". The symptom-checker and image screens were
+removed. `features/ai/ai.test.tsx` fails on a network call outside the service
+layer, a storage call, client-side red-flag matching, or a string long enough to
+read as a scripted reply.
 
 | Screen / component | Source | Endpoint | State |
 |---|---|---|---|
-| `AiHomeScreen` | `availability.ts` (**constant**) | — | 🟨 renders the unavailable state |
-| `AiChatScreen` | — | — | 🟨 empty transcript, disabled composer. **No seeded greeting** |
-| `AiSymptomsScreen` | `content/intake.ts` (**bundled**) | — | 🟨 the three-step form works; the result step is a placeholder |
-| `AiImageScreen` | — | — | 🟨 picker disabled; EXIF and scan rules stated ahead of the code |
-| `AiDisclaimer` (K-03) | catalogue | — | ✅ non-dismissible, outside the scroll, on all four screens |
-| `AiSafetyCard` | catalogue | — | ✅ unconditional Emergency route; never dials |
-| `AiUnavailableNotice` | `availability.ts` | — | ✅ names AD-4 / BE-14 (and BE-15 on the image screen) |
-| `AiMessageBubble`, `AiTypingIndicator` | props | — | 🟨 drawn and tested; **no screen can produce their input** |
-| `AiComposer` | props | — | 🟨 not editable; states the reason on screen |
-| `AiResultPlaceholder` | props | — | ✅ says nothing read the input and nothing was sent |
-| `AiImagePicker` | props | — | 🟨 four states tested; `empty` is the only one reachable |
-| Assistant replies | — | **BE-14** | 🔴 no provider, no endpoint, no ADR |
-| Red-flag classification | — | **BE-14** | 🔴 K-04 — **server-side by requirement**. Deliberately absent from this tree |
-| Conversation history | — | **BE-14** | 🔴 K-07 — server-persisted. Local storage forbidden and asserted absent |
-| Image upload / scan | — | **BE-15** | 🔴 no object storage, no scanner, no files service (M25) |
+| `AiHomeScreen` | — | — | ✅ two entry points, general disclaimer, safety card |
+| `AiConversationsScreen` | `aiService.listConversations` / `deleteConversation` | `GET`/`DELETE /me/ai/conversations` | ✅ per mode; 409 → link notice, 503 → unavailable notice |
+| `AiChatScreen` | `aiService.createConversation` / `sendMessage` | `POST /me/ai/conversations`, `POST …/{id}/messages` (SSE) | ✅ client built; backend pending. One turn at a time, cancelled on unmount, 2000 chars |
+| `AiDisclaimer` (K-03) | catalogue | — | ✅ non-dismissible, outside the scroll; text differs by mode |
+| `AiEscalationCard` | server message | — | ✅ renders the server's red-flag message with an Emergency button |
+| `AiUnavailableNotice` | 503 | — | ✅ honest "not available yet" |
+| Red-flag classification | server | — | ✅ server-side only; absent from this tree and asserted so |
 | Image findings | — | **BE-14 + L-04** | 🔴 needs a vision model and a named clinical owner's sign-off |

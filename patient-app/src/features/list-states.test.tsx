@@ -12,10 +12,8 @@ import { ClinicScreen } from './clinic/screens/ClinicScreen';
 import { clinicService } from './clinic/service';
 import { DiscoverScreen } from './doctors/screens/DiscoverScreen';
 import { doctorService } from './doctors/service';
-import { DocumentsScreen } from './health/screens/DocumentsScreen';
-import { HealthRecordsScreen } from './health/screens/HealthRecordsScreen';
-import { LabResultsScreen } from './health/screens/LabResultsScreen';
-import { PrescriptionsScreen } from './health/screens/PrescriptionsScreen';
+import { InsuranceScreen } from './health/screens/InsuranceScreen';
+import { TestsScreen } from './health/screens/TestsScreen';
 import { healthService } from './health/service';
 import { MessagesScreen } from './messages/screens/MessagesScreen';
 import { messagingService } from './messages/service';
@@ -155,33 +153,16 @@ const LISTS: readonly ListCase[] = [
     support: [healthy(doctorService, 'listSpecialties', [])],
   },
   {
-    feature: 'Health records — allergies',
-    boundary: 'health-allergies',
-    Screen: HealthRecordsScreen as ComponentType<never>,
-    subject: responder(healthService, 'listAllergies', []),
-    support: [
-      healthy(healthService, 'listConditions', []),
-      healthy(healthService, 'listMedications', []),
-      healthy(healthService, 'listHistory', []),
-    ],
+    feature: 'Tests (status only)',
+    boundary: 'tests-list',
+    Screen: TestsScreen as ComponentType<never>,
+    subject: responder(healthService, 'listLabTests', emptyPage),
   },
   {
-    feature: 'Lab results',
-    boundary: 'lab-orders',
-    Screen: LabResultsScreen as ComponentType<never>,
-    subject: responder(healthService, 'listLabOrders', []),
-  },
-  {
-    feature: 'Prescriptions',
-    boundary: 'prescriptions-list',
-    Screen: PrescriptionsScreen as ComponentType<never>,
-    subject: responder(healthService, 'listPrescriptions', []),
-  },
-  {
-    feature: 'Documents',
-    boundary: 'documents-list',
-    Screen: DocumentsScreen as ComponentType<never>,
-    subject: responder(healthService, 'listDocuments', []),
+    feature: 'Insurance on file',
+    boundary: 'insurance-on-file',
+    Screen: InsuranceScreen as ComponentType<never>,
+    subject: responder(healthService, 'getInsurance', { insurance: null }),
   },
   {
     feature: 'Messages',
@@ -294,7 +275,7 @@ describe('the register itself', () => {
     // arriving and nobody adding a row. The count is asserted so that
     // adding a list without adding a row is a decision someone makes on
     // purpose, in this file, rather than an omission.
-    expect(LISTS).toHaveLength(10);
+    expect(LISTS).toHaveLength(8);
     expect(new Set(LISTS.map((listCase) => listCase.boundary)).size).toBe(LISTS.length);
   });
 });

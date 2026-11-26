@@ -421,11 +421,13 @@ describe('where Home sends a patient (F-03, F-04, F-06)', () => {
  * have to stay true of whatever the card leads to.
  */
 describe('the assistant entry point is honest about itself (F-05, audit R-5)', () => {
-  it('marks the card "not connected yet" before anybody taps it', async () => {
+  it('offers the assistants without claiming one is switched on', async () => {
+    // Whether a provider is configured is the server's answer (503), given
+    // where a question is asked; Home must not guess it either way.
     const { getByTestId, findByText } = await renderHome();
 
     expect(getByTestId('home-assistant-card')).toBeTruthy();
-    expect(await findByText(/not connected yet/i)).toBeTruthy();
+    expect(await findByText(/two assistants|general health question/i)).toBeTruthy();
   });
 
   it('promises nothing the assistant cannot do', async () => {

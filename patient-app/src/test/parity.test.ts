@@ -386,6 +386,11 @@ describe('the endpoint layer names only real routes (V-02)', () => {
       'auth.ts',
       'doctors.ts',
       'notifications.ts',
+      // The patient-facing information layer and the patient assistant
+      // (ADR-050). Their backend controllers land in the parallel
+      // backend work and are listed in `PENDING_BACKEND_ROUTES` below.
+      'patient-ai.ts',
+      'patient-info.ts',
       'profile.ts',
       'sessions.ts',
     ]);
@@ -584,6 +589,61 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     expect(controller).toContain("@Post('read-all')");
     expect(controller).toContain("@Post(':notificationId/read')");
     expect(controller).toContain("@Post(':notificationId/unread')");
+  });
+
+  /**
+   * Routes this client calls that the backend has not merged into this
+   * worktree yet (ADR-050, built in parallel to CONTRACT §4/§6). Each is
+   * asserted against the backend source the moment its path appears there;
+   * until then it is allow-listed BY NAME here. An entry is removed when
+   * the controller lands — the list is not a way to skip the check, and a
+   * route absent from both the backend and this list fails.
+   */
+  const PENDING_BACKEND_ROUTES: readonly string[] = [
+    "'me/lab-orders'",
+    "'me/insurance'",
+    "'me/ai/conversations'",
+  ];
+
+  it('names the patient information and assistant routes the backend serves, or lists them as pending', () => {
+    if (!backendPresent) return;
+    const corpus: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/controller\.ts$/.test(entry.name)) corpus.push(fs.readFileSync(full, 'utf8'));
+      }
+    };
+    walk(path.join(BACKEND, 'src'));
+    const all = corpus.join('\n');
+
+    for (const route of ["'me/lab-orders'", "'me/insurance'", "'me/ai/conversations'"]) {
+      const served = all.includes(route);
+      if (!served) expect(PENDING_BACKEND_ROUTES).toContain(route);
+    }
+  });
+
+  it('the information adapter calls exactly the two read routes, GET only', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'patient-info.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const called = [...source.matchAll(/apiClient\.\w+<[^>]*>\(\s*[`']([^`'$]+)/g)].map((m) => m[1]);
+    expect(new Set(called)).toEqual(new Set(['me/lab-orders', 'me/insurance']));
+    expect(source).not.toMatch(/apiClient\.(post|put|patch|delete)/);
+  });
+
+  it('the assistant adapter stays under /me/ai/conversations and never the doctor tree', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'patient-ai.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const paths = [...source.matchAll(/(?:apiClient\.\w+(?:<[^>]*>)?|openStream)\(\s*[`']([^`'$]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(paths.length).toBeGreaterThan(0);
+    for (const called of paths) expect(called?.startsWith('me/ai/conversations')).toBe(true);
   });
 
   it('names the profile route the backend actually serves', () => {

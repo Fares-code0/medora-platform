@@ -87,7 +87,8 @@ const table: LinkingOptions<LinkableParamList> = {
             screens: {
               ProfileRoot: 'profile',
               HealthRecords: 'records',
-              LabResults: 'records/labs',
+              Tests: 'records/labs',
+              Insurance: 'records/insurance',
               Notifications: 'notifications',
             },
           },

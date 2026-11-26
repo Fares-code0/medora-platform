@@ -104,9 +104,9 @@ Many of the endpoints this app needs still do not exist. Rather than mock them
 inside screens, each feature has a port and two adapters:
 
 ```ts
-export const healthService: HealthService = selectService({
-  fixture: fixtureHealthService,
-  http: unavailableService<HealthService>('BE-09 / AD-5', 'Your health records', [...]),
+export const messagingService: MessagingService = selectService({
+  fixture: fixtureMessagingService,
+  http: unavailableService<MessagingService>('AD-1 / BE-13', 'capability.messages', [...]),
 });
 ```
 
@@ -126,12 +126,13 @@ repeating a count that goes stale the next time an endpoint lands.
 
 | Feature | HTTP adapter | Blocked on |
 |---|---|---|
+| `ai` | `httpAiService` | — |
 | `appointments` | `httpAppointmentService` | — |
 | `auth` | `httpAuthService` | — |
 | `clinic` | `unavailableService` | BE-11 |
 | `doctors` | `httpDoctorService` | — |
 | `emergency` | `unconfigured` | BE-11 |
-| `health` | `unavailableService` | BE-09 / AD-5 |
+| `health` | `httpHealthService` | — |
 | `home` | `unavailableService` | BE-10 |
 | `messages` | `unavailableService` | AD-1 / BE-13 |
 | `notifications` | `httpNotificationService` | — |
@@ -148,6 +149,26 @@ Two of those rows carry a caveat the single word "live" would hide:
   The four write routes are blocked on ADR-033, which is a policy decision
   rather than an unbuilt endpoint, and no client-side slot arithmetic stands in
   for it.
+- **`health`** is the patient-facing information layer only (ADR-050): test
+  **status** (`GET /me/lab-orders`) and the insurance on file
+  (`GET /me/insurance`). It is live in those two methods and refuses by name in
+  `listEmergencyContacts` (BE-09). The medical record, physician notes,
+  prescriptions, visit summaries, documents and lab **results** are not behind
+  the seam at all — a patient never sees them in the app (owner decision,
+  2026-11-26), and results stay unexposed until the ADR-031 release policy is
+  approved. Their screens, routes and fixtures were deleted, not left refusing.
+- **`ai`** is the patient assistant: two separate experiences, "Health
+  assistant" (`general`, given no patient data) and "My care assistant"
+  (`personal`, grounded server-side in appointments, test status and insurance
+  — never results or records), over `/me/ai/conversations`. The reply is
+  `text/event-stream`, read over `expo/fetch` streaming by
+  `ApiClient.openStream`; where the runtime exposes no readable body the whole
+  text is read after completion and parsed the same way. The server answers 503
+  until a provider is configured, which the screens render as "not available
+  yet"; the mock-build fixture refuses with the same 503 and **never scripts a
+  reply**.
+- **`messages`** stays blocked (owner decision): `unavailableService` in a
+  production build, fixture threads in mock builds only.
 - **`emergency`** is not `unavailableService` but `unconfigured` — the screen
   works entirely offline from bundled content, and it is only the
   operator-supplied numbers that are absent. It says so rather than showing a
@@ -162,10 +183,10 @@ Two of those rows carry a caveat the single word "live" would hide:
 **There is no invented path string anywhere in this tree**, and
 `src/test/parity.test.ts` asserts it module by module: each file in
 `api/endpoints/` may name only the routes its backing controller actually
-exposes, and the directory listing itself is pinned so a seventh module cannot
+exposes, and the directory listing itself is pinned so a ninth module cannot
 appear without that test being updated deliberately.
 
-The seven modules and what backs each:
+The nine modules and what backs each:
 
 | Module | Controller | Checklist |
 |---|---|---|
@@ -175,6 +196,8 @@ The seven modules and what backs each:
 | `appointments.ts` | `patient-appointment.controller.ts` (reads only) | I-01, I-02, I-06 |
 | `notifications.ts` | `notification.controller.ts` | O-01, O-02 |
 | `profile.ts` | `self-profile.controller.ts` | P-01, P-02 |
+| `patient-info.ts` | patient information controller (CONTRACT §4; pending in this worktree) | ADR-050 |
+| `patient-ai.ts` | patient assistant controller (CONTRACT §6; pending in this worktree) | ADR-050 |
 | `sessions.ts` | `account-security.controller.ts` (two routes of eight) | P-06 |
 
 Two rows there moved when the backend did, and neither changed a line of this
