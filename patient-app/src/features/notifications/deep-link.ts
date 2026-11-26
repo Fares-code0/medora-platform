@@ -74,6 +74,9 @@ export function notificationTarget(deepLink: string | null): NotificationTarget 
   // which names the destination.
   if (segments.length !== 2) return null;
   const [destination, id] = segments;
+  if (destination === 'records' && id === 'labs') {
+    return ['Tabs', { screen: 'ProfileTab', params: { screen: 'Tests' } }];
+  }
   if (destination !== 'appointments' || id === undefined) return null;
 
   return [
