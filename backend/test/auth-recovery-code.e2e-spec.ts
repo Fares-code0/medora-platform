@@ -193,7 +193,16 @@ describe('POST /auth/otp/recovery (R1)', () => {
     statuses.push((await redeem(otpToken, codes[0]!)).status);
 
     expect(statuses).toEqual([401, 401, 429, 401]);
-    // …and that valid code was not consumed by the refusal.
+    // AUTH-07: the guesses spent the account's budget too, so a fresh
+    // challenge does not reset it — the account is locked out…
+    const relogin = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD });
+    expect(relogin.status).toBe(429);
+    // …and once the lock has run out, that valid code was not consumed by
+    // the refusal.
+    await harness.prisma.userCredential.updateMany({
+      where: { user: { email } },
+      data: { lockedUntil: new Date(Date.now() - 1_000) },
+    });
     expect((await redeem(await challengeFor(email), codes[0]!)).status).toBe(200);
   });
 
