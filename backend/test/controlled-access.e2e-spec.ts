@@ -197,8 +197,8 @@ describe('Exceptional Access (Break-Glass)', () => {
     const allergies = await readGrant(doctorB, grant.id, 'allergies');
     expect(JSON.stringify(allergies.body)).toContain('Penicillin');
 
-    // Outside the granted categories.
-    expect((await readGrant(doctorB, grant.id, 'prescriptions')).status).toBe(403);
+    // Outside the granted categories: answered as unknown (N-3, N-26).
+    expect((await readGrant(doctorB, grant.id, 'prescriptions')).status).toBe(404);
     // No impersonation: another user cannot read under it.
     expect((await readGrant(doctorA, grant.id, 'identity')).status).toBe(404);
 
@@ -215,16 +215,17 @@ describe('Exceptional Access (Break-Glass)', () => {
     expect(
       (await request(harness.server).post(`/api/v1/exceptional-access/${grant.id}/revoke`).set(as(doctorB))).status,
     ).toBe(200);
-    expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(403);
+    // N-27: after revocation the next request is a 404.
+    expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(404);
   });
 
-  it('expires: a grant past its window reads nothing', async () => {
+  it('expires: a grant past its window reads nothing (BG4: 404)', async () => {
     const grant = await approvedGrant(doctorB);
     await harness.prisma.exceptionalAccessGrant.update({
       where: { id: grant.id },
       data: { startsAt: new Date(Date.now() - 120_000), expiresAt: new Date(Date.now() - 1_000) },
     });
-    expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(403);
+    expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(404);
   });
 
   it('always waits for an independent approver — even where the hospital once waived it (F-11)', async () => {
@@ -233,7 +234,7 @@ describe('Exceptional Access (Break-Glass)', () => {
     try {
       const grant = dataOf<{ id: string; status: string }>(await breakGlass(doctorB, {}));
       expect(grant.status).toBe('PENDING');
-      expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(403);
+      expect((await readGrant(doctorB, grant.id, 'identity')).status).toBe(404);
 
       // Only hospital A's own Hospital Admin decides: not the requester, not
       // a Platform Admin.
@@ -267,7 +268,7 @@ describe('Exceptional Access (Break-Glass)', () => {
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     const grant = dataOf<{ id: string; status: string }>(created);
     expect(grant.status).toBe('PENDING');
-    expect((await readGrant(platformAdmin, grant.id, 'identity')).status).toBe(403);
+    expect((await readGrant(platformAdmin, grant.id, 'identity')).status).toBe(404);
   });
 
   it('the database refuses an active grant with no approver (F-11)', async () => {
@@ -335,7 +336,7 @@ describe('cross-hospital information requests', () => {
     const shared = (token: string, item: string) =>
       request(harness.server).get(`/api/v1/information-requests/${id}/shared?category=${item}`).set(as(token));
 
-    expect((await shared(doctorB, 'allergies')).status).toBe(403);
+    expect((await shared(doctorB, 'allergies')).status).toBe(404);
 
     // Only the owning hospital's Hospital Admin: never the requester or a
     // Platform Admin.
@@ -350,7 +351,7 @@ describe('cross-hospital information requests', () => {
     expect(allergies.status).toBe(200);
     expect(JSON.stringify(allergies.body)).toContain('Penicillin');
     // Requested but not approved.
-    expect((await shared(doctorB, 'labs')).status).toBe(403);
+    expect((await shared(doctorB, 'labs')).status).toBe(404);
     // Not the requester.
     expect((await shared(doctorA, 'allergies')).status).toBe(404);
     await expect(
@@ -360,7 +361,7 @@ describe('cross-hospital information requests', () => {
     expect(
       (await request(harness.server).post(`/api/v1/information-requests/${id}/revoke`).set(as(doctorB))).status,
     ).toBe(200);
-    expect((await shared(doctorB, 'allergies')).status).toBe(403);
+    expect((await shared(doctorB, 'allergies')).status).toBe(404);
   });
 
   it('never gives an administrator PHI through a request it made', async () => {

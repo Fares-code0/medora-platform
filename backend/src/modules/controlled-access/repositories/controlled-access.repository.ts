@@ -10,8 +10,12 @@
 
 import { Injectable } from '@nestjs/common';
 
+import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../shared/database';
 import type { DataCategory } from '../dto/controlled-access.schema';
+
+/** The transaction a lifecycle change and its audit row share (XH-09). */
+export type Tx = Prisma.TransactionClient;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -46,6 +50,28 @@ export interface RequestRow {
   readonly revokedAt: Date | null;
 }
 
+/** A list row: the view's fields plus who asked and when (XH-05). */
+export interface GrantListRow extends GrantRow {
+  readonly createdAt: Date;
+  readonly decidedAt: Date | null;
+  readonly requester: { readonly id: string; readonly displayName: string };
+}
+
+export interface RequestListRow extends RequestRow {
+  readonly createdAt: Date;
+  readonly decidedAt: Date | null;
+  readonly requester: { readonly id: string; readonly displayName: string };
+}
+
+export interface Page<T> {
+  readonly rows: readonly T[];
+  readonly totalItems: number;
+}
+
+/** Which slice of the target hospital's grants an admin queue shows. */
+export type GrantQueue = 'pending' | 'active' | 'review';
+export type RequestQueue = 'pending' | 'approved';
+
 const GRANT_SELECT = {
   id: true,
   kind: true,
@@ -77,9 +103,24 @@ const REQUEST_SELECT = {
   revokedAt: true,
 } as const;
 
+const LIST_EXTRA = {
+  createdAt: true,
+  decidedAt: true,
+  requester: { select: { id: true, displayName: true } },
+} as const;
+
 @Injectable()
 export class ControlledAccessRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Runs a lifecycle change and its audit row in one transaction (XH-09):
+   * the throwing audit writer rolls the change back if the row cannot be
+   * written, so no grant changes state unrecorded.
+   */
+  transaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(work);
+  }
 
   /** The patient's record at `hospitalId` (the scope a grant can name). */
   async recordAt(
@@ -111,7 +152,7 @@ export class ControlledAccessRepository {
         };
   }
 
-  async createGrant(data: {
+  async createGrant(tx: Tx, data: {
     kind: string;
     requesterUserId: string;
     hospitalId: string;
@@ -125,7 +166,7 @@ export class ControlledAccessRepository {
     active: boolean;
   }): Promise<GrantRow> {
     const now = new Date();
-    return this.prisma.db.exceptionalAccessGrant.create({
+    return tx.exceptionalAccessGrant.create({
       data: {
         kind: data.kind,
         requesterUserId: data.requesterUserId,
@@ -151,46 +192,52 @@ export class ControlledAccessRepository {
     return this.prisma.db.exceptionalAccessGrant.findUnique({ where: { id }, select: GRANT_SELECT });
   }
 
-  /** PENDING → ACTIVE|REJECTED, conditionally, so two deciders cannot both win. */
+  /**
+   * PENDING → ACTIVE|REJECTED, conditionally, so two deciders cannot both
+   * win. An approval carries its window and the categories the approver
+   * kept (XH-01: a subset of those requested, already checked by the
+   * service; the `categories` column then holds the approved set, which is
+   * what every read checks).
+   */
   async decideGrant(
+    tx: Tx,
     grant: GrantRow,
     approverUserId: string,
-    approve: boolean,
+    approval: { startsAt: Date; expiresAt: Date; categories: string[] } | null,
     note: string | undefined,
   ): Promise<boolean> {
-    const now = new Date();
-    const result = await this.prisma.db.exceptionalAccessGrant.updateMany({
+    const result = await tx.exceptionalAccessGrant.updateMany({
       where: { id: grant.id, status: 'PENDING' },
       data: {
-        status: approve ? 'ACTIVE' : 'REJECTED',
+        status: approval !== null ? 'ACTIVE' : 'REJECTED',
         approverUserId,
-        decidedAt: now,
+        decidedAt: approval?.startsAt ?? new Date(),
         decisionNote: note ?? null,
-        ...(approve
-          ? { startsAt: now, expiresAt: new Date(now.getTime() + grant.durationMinutes * 60_000) }
+        ...(approval !== null
+          ? { startsAt: approval.startsAt, expiresAt: approval.expiresAt, categories: approval.categories }
           : {}),
       },
     });
     return result.count === 1;
   }
 
-  async revokeGrant(id: string, actorId: string): Promise<boolean> {
-    const result = await this.prisma.db.exceptionalAccessGrant.updateMany({
+  async revokeGrant(tx: Tx, id: string, actorId: string): Promise<boolean> {
+    const result = await tx.exceptionalAccessGrant.updateMany({
       where: { id, status: { in: ['PENDING', 'ACTIVE'] }, revokedAt: null },
       data: { status: 'REVOKED', revokedAt: new Date(), revokedBy: actorId },
     });
     return result.count === 1;
   }
 
-  async reviewGrant(id: string, reviewerId: string, outcome: string): Promise<boolean> {
-    const result = await this.prisma.db.exceptionalAccessGrant.updateMany({
+  async reviewGrant(tx: Tx, id: string, reviewerId: string, outcome: string): Promise<boolean> {
+    const result = await tx.exceptionalAccessGrant.updateMany({
       where: { id, kind: 'EMERGENCY', reviewedAt: null },
       data: { reviewedBy: reviewerId, reviewedAt: new Date(), reviewOutcome: outcome },
     });
     return result.count === 1;
   }
 
-  async createRequest(data: {
+  async createRequest(tx: Tx, data: {
     requesterUserId: string;
     requesterHospitalId: string | null;
     targetHospitalId: string;
@@ -199,7 +246,7 @@ export class ControlledAccessRepository {
     items: string[];
     reason: string;
   }): Promise<RequestRow> {
-    return this.prisma.db.informationRequest.create({
+    return tx.informationRequest.create({
       data: {
         requesterUserId: data.requesterUserId,
         requesterHospitalId: data.requesterHospitalId,
@@ -219,12 +266,13 @@ export class ControlledAccessRepository {
   }
 
   async decideRequest(
+    tx: Tx,
     id: string,
     deciderId: string,
     approved: { items: string[]; expiresAt: Date } | null,
     note: string | undefined,
   ): Promise<boolean> {
-    const result = await this.prisma.db.informationRequest.updateMany({
+    const result = await tx.informationRequest.updateMany({
       where: { id, status: 'PENDING' },
       data: {
         status: approved === null ? 'REJECTED' : 'APPROVED',
@@ -237,12 +285,108 @@ export class ControlledAccessRepository {
     return result.count === 1;
   }
 
-  async revokeRequest(id: string): Promise<boolean> {
-    const result = await this.prisma.db.informationRequest.updateMany({
+  async revokeRequest(tx: Tx, id: string): Promise<boolean> {
+    const result = await tx.informationRequest.updateMany({
       where: { id, status: { in: ['PENDING', 'APPROVED'] }, revokedAt: null },
       data: { status: 'REVOKED', revokedAt: new Date() },
     });
     return result.count === 1;
+  }
+
+  // ── lists (XH-05) ─────────────────────────────────────────────────────
+  //
+  // Metadata only: the same fields the decision routes already return, plus
+  // the requester's id and display name and the times. Never the patient,
+  // the reason text or any clinical row. Each list is keyed on one
+  // dimension the tenant policies already expose to the caller: their own
+  // `requester_user_id`, or the admin's own hospital.
+
+  /** The caller's own grants, every status, newest first. */
+  async grantsRequestedBy(
+    userId: string,
+    paging: { skip: number; take: number },
+  ): Promise<Page<GrantListRow>> {
+    const where = { requesterUserId: userId };
+    const [rows, totalItems] = await Promise.all([
+      this.prisma.db.exceptionalAccessGrant.findMany({
+        where,
+        select: { ...GRANT_SELECT, ...LIST_EXTRA },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        ...paging,
+      }),
+      this.prisma.db.exceptionalAccessGrant.count({ where }),
+    ]);
+    return { rows, totalItems };
+  }
+
+  /** The caller's own information requests, every status, newest first. */
+  async requestsMadeBy(
+    userId: string,
+    paging: { skip: number; take: number },
+  ): Promise<Page<RequestListRow>> {
+    const where = { requesterUserId: userId };
+    const [rows, totalItems] = await Promise.all([
+      this.prisma.db.informationRequest.findMany({
+        where,
+        select: { ...REQUEST_SELECT, ...LIST_EXTRA },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        ...paging,
+      }),
+      this.prisma.db.informationRequest.count({ where }),
+    ]);
+    return { rows, totalItems };
+  }
+
+  /**
+   * One hospital's grant queue: `pending` (EXCEPTIONAL awaiting a decision),
+   * `active` (live now: ACTIVE, unrevoked, inside the window), `review`
+   * (Emergency Overrides not yet reviewed, BG3), oldest first.
+   */
+  async grantQueue(
+    hospitalId: string,
+    queue: GrantQueue,
+    paging: { skip: number; take: number },
+  ): Promise<Page<GrantListRow>> {
+    const now = new Date();
+    const where =
+      queue === 'pending'
+        ? { hospitalId, status: 'PENDING' }
+        : queue === 'active'
+          ? { hospitalId, status: 'ACTIVE', revokedAt: null, startsAt: { lte: now }, expiresAt: { gt: now } }
+          : { hospitalId, kind: 'EMERGENCY', reviewedAt: null };
+    const [rows, totalItems] = await Promise.all([
+      this.prisma.db.exceptionalAccessGrant.findMany({
+        where,
+        select: { ...GRANT_SELECT, ...LIST_EXTRA },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        ...paging,
+      }),
+      this.prisma.db.exceptionalAccessGrant.count({ where }),
+    ]);
+    return { rows, totalItems };
+  }
+
+  /** One hospital's information-request queue: `pending`, or `approved` and live. */
+  async requestQueue(
+    hospitalId: string,
+    queue: RequestQueue,
+    paging: { skip: number; take: number },
+  ): Promise<Page<RequestListRow>> {
+    const now = new Date();
+    const where =
+      queue === 'pending'
+        ? { targetHospitalId: hospitalId, status: 'PENDING' }
+        : { targetHospitalId: hospitalId, status: 'APPROVED', revokedAt: null, shareExpiresAt: { gt: now } };
+    const [rows, totalItems] = await Promise.all([
+      this.prisma.db.informationRequest.findMany({
+        where,
+        select: { ...REQUEST_SELECT, ...LIST_EXTRA },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        ...paging,
+      }),
+      this.prisma.db.informationRequest.count({ where }),
+    ]);
+    return { rows, totalItems };
   }
 
   /** Hospital Admin user ids of a hospital (the people an override notifies). */

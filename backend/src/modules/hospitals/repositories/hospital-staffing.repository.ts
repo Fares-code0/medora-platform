@@ -56,6 +56,19 @@ export interface AffiliationRow {
   readonly userId: string | null;
 }
 
+/**
+ * The controlled access a staffing change ended (audit XH-03): the
+ * requester's grants and information requests revoked in the same
+ * transaction, with the hospital each one targeted (for its audit row).
+ */
+export interface RevokedControlledAccess {
+  readonly grants: readonly { readonly id: string; readonly hospitalId: string }[];
+  readonly requests: readonly { readonly id: string; readonly hospitalId: string }[];
+}
+
+/** Writes the revocations' audit rows on the staffing transaction. */
+export type RevocationAudit = (tx: Tx, revoked: RevokedControlledAccess) => Promise<void>;
+
 export interface AdminUserRow {
   readonly id: string;
   readonly publicId: string;
@@ -171,8 +184,18 @@ export class HospitalStaffingRepository {
     });
   }
 
-  /** Ends the employment, its role assignments, and every session. */
-  async endEmployment(employment: EmploymentRow): Promise<number> {
+  /**
+   * Ends the employment, its role assignments, every session, and the
+   * doctor's open controlled access (grants and information requests,
+   * OD-12: "grants … requested under that employment become unusable", no
+   * grace period). `audit` writes the revocations' rows on this
+   * transaction, so they commit together or not at all.
+   */
+  async endEmployment(
+    employment: EmploymentRow,
+    actorId: string,
+    audit: RevocationAudit,
+  ): Promise<{ sessionsRevoked: number; revoked: RevokedControlledAccess }> {
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
       await tx.doctorEmployment.update({ where: { id: employment.id }, data: { endedAt: now } });
@@ -181,8 +204,9 @@ export class HospitalStaffingRepository {
         data: { revokedAt: now },
       });
       await endCareAt(tx, employment, now);
+      const revoked = await revokeControlledAccess(tx, employment.userId, actorId, now, audit);
       await bump(tx, employment.userId);
-      return revokeSessions(tx, employment.userId, now);
+      return { sessionsRevoked: await revokeSessions(tx, employment.userId, now), revoked };
     });
   }
 
@@ -191,7 +215,9 @@ export class HospitalStaffingRepository {
     from: EmploymentRow;
     toHospitalId: string;
     departmentId: string | undefined;
-  }): Promise<{ employmentId: string; sessionsRevoked: number }> {
+    actorId: string;
+    audit: RevocationAudit;
+  }): Promise<{ employmentId: string; sessionsRevoked: number; revoked: RevokedControlledAccess }> {
     return this.prisma.$transaction(async (tx) => {
       const now = new Date();
       await tx.doctorEmployment.update({ where: { id: input.from.id }, data: { endedAt: now } });
@@ -200,6 +226,9 @@ export class HospitalStaffingRepository {
         data: { revokedAt: now },
       });
       await endCareAt(tx, input.from, now);
+      // Access approved for the care at the hospital being left does not
+      // follow the doctor to the new one (OD-12, A3; audit XH-03).
+      const revoked = await revokeControlledAccess(tx, input.from.userId, input.actorId, now, input.audit);
       const created = await tx.doctorEmployment.create({
         data: {
           doctorId: input.from.doctorId,
@@ -210,7 +239,7 @@ export class HospitalStaffingRepository {
       });
       await bump(tx, input.from.userId);
       const sessionsRevoked = await revokeSessions(tx, input.from.userId, now);
-      return { employmentId: created.id, sessionsRevoked };
+      return { employmentId: created.id, sessionsRevoked, revoked };
     });
   }
 
@@ -421,6 +450,62 @@ async function endCareAt(
     },
     data: { revokedAt: now },
   });
+}
+
+/**
+ * Revokes every open grant (PENDING / ACTIVE) and information request
+ * (PENDING / APPROVED) the user requested, with the same column effect as
+ * the requester's own revoke routes (`ControlledAccessRepository.revokeGrant`
+ * / `revokeRequest`), and writes their audit rows on `tx` (audit XH-03).
+ *
+ * ## Why these statements run under `system` scope
+ *
+ * The staffing transaction runs under the caller's tenant context: a
+ * Hospital Admin's own hospital, or `platform` for a transfer. The rows
+ * revoked here target *other* hospitals (that is what makes them
+ * cross-hospital), and the `exceptional_access_grants_tenant` /
+ * `information_requests_tenant` policies expose them only to `system`, to
+ * the requester, or to the target hospital — so under the caller's scope
+ * the UPDATE would silently match nothing and the access would survive.
+ * The revocation is a trusted consequence of a staffing change the service
+ * has already authorized, keyed only on the departing user's id, and it
+ * only *narrows* access; so `app.scope` is switched to `system`
+ * transaction-locally for these statements alone (the same elevation
+ * `runAsSystem` gives a reviewed lookup) and restored before the
+ * transaction continues. On an error the transaction rolls back, and the
+ * transaction-local setting with it.
+ */
+async function revokeControlledAccess(
+  tx: Tx,
+  userId: string,
+  actorId: string,
+  now: Date,
+  audit: RevocationAudit,
+): Promise<RevokedControlledAccess> {
+  const [previous] = await tx.$queryRaw<{ scope: string | null }[]>`
+    SELECT current_setting('app.scope', true) AS scope`;
+  await tx.$executeRaw`SELECT set_config('app.scope', 'system', true)`;
+
+  const grants = await tx.exceptionalAccessGrant.updateManyAndReturn({
+    where: { requesterUserId: userId, status: { in: ['PENDING', 'ACTIVE'] }, revokedAt: null },
+    data: { status: 'REVOKED', revokedAt: now, revokedBy: actorId },
+    select: { id: true, hospitalId: true },
+  });
+  const requests = await tx.informationRequest.updateManyAndReturn({
+    where: { requesterUserId: userId, status: { in: ['PENDING', 'APPROVED'] }, revokedAt: null },
+    data: { status: 'REVOKED', revokedAt: now },
+    select: { id: true, targetHospitalId: true },
+  });
+  const revoked: RevokedControlledAccess = {
+    grants,
+    requests: requests.map((row) => ({ id: row.id, hospitalId: row.targetHospitalId })),
+  };
+  // Each row is attributed to the hospital it targeted, which the caller's
+  // own scope could not append either (`audit_attribution_allowed`).
+  await audit(tx, revoked);
+
+  await tx.$executeRaw`SELECT set_config('app.scope', ${previous?.scope ?? ''}, true)`;
+  return revoked;
 }
 
 async function bump(tx: Tx, userId: string): Promise<void> {

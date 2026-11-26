@@ -22,7 +22,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
+import { AUDIT_DISPATCHER, type AuditDispatcher, MandatoryAuditWriter } from '../../../shared/audit';
 import { AdminScopeService, PermissionResolver } from '../../../shared/authz';
 import { isLastPlatformAdminViolation, isUniqueViolation } from '../../../shared/database';
 import type {
@@ -32,7 +32,10 @@ import type {
   StartEmploymentInput,
   TransferInput,
 } from '../dto/hospital-staffing.schema';
-import { HospitalStaffingRepository } from '../repositories/hospital-staffing.repository';
+import {
+  HospitalStaffingRepository,
+  type RevocationAudit,
+} from '../repositories/hospital-staffing.repository';
 
 export interface StaffingResult {
   readonly id: string;
@@ -59,6 +62,8 @@ export class HospitalStaffingService {
     private readonly scopes: AdminScopeService,
     private readonly permissions: PermissionResolver,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
+    /** Grant-lifecycle rows, written on the staffing transaction (XH-03, XH-09). */
+    private readonly lifecycleAudit: MandatoryAuditWriter,
   ) {}
 
   async startEmployment(
@@ -137,7 +142,11 @@ export class HospitalStaffingService {
     }
     if (employment.endedAt !== null) throw AppException.conflict('The employment has already ended');
 
-    const sessionsRevoked = await this.staffing.endEmployment(employment);
+    const { sessionsRevoked, revoked } = await this.staffing.endEmployment(
+      employment,
+      actor.id,
+      this.revocationAudit(actor, employment.userId, 'employment_ended'),
+    );
     await this.permissions.forget(employment.userId);
     await this.record(actor, 'hospital.doctor_employment_ended', hospitalId, 'doctor_employment', employment.id, {
       affectedUserId: employment.userId,
@@ -146,6 +155,8 @@ export class HospitalStaffingService {
       next: 'none',
       reason: input.reason,
       sessionsRevoked,
+      grantsRevoked: revoked.grants.length,
+      informationRequestsRevoked: revoked.requests.length,
     });
     return { id: employment.id, hospitalId, sessionsRevoked };
   }
@@ -166,7 +177,13 @@ export class HospitalStaffingService {
     }
 
     const result = await this.unique(() =>
-      this.staffing.transfer({ from, toHospitalId: input.toHospitalId, departmentId: input.departmentId }),
+      this.staffing.transfer({
+        from,
+        toHospitalId: input.toHospitalId,
+        departmentId: input.departmentId,
+        actorId: actor.id,
+        audit: this.revocationAudit(actor, from.userId, 'employment_transferred'),
+      }),
     );
     await this.permissions.forget(from.userId);
     await this.record(actor, 'hospital.doctor_transferred', input.toHospitalId, 'doctor', doctorId, {
@@ -177,6 +194,8 @@ export class HospitalStaffingService {
       startedEmploymentId: result.employmentId,
       reason: input.reason,
       sessionsRevoked: result.sessionsRevoked,
+      grantsRevoked: result.revoked.grants.length,
+      informationRequestsRevoked: result.revoked.requests.length,
     });
     return { id: result.employmentId, hospitalId: input.toHospitalId, sessionsRevoked: result.sessionsRevoked };
   }
@@ -395,6 +414,42 @@ export class HospitalStaffingService {
       if (isUniqueViolation(error)) throw AppException.conflict('A conflicting active row already exists');
       throw error;
     }
+  }
+
+  /**
+   * One `…revoke` row per grant and request a staffing change ended, in the
+   * same vocabulary as the requester's own revoke routes, with the cause
+   * (audit XH-03). Written through the throwing writer on the staffing
+   * transaction: an unrecorded revocation rolls the change back (XH-09).
+   */
+  private revocationAudit(
+    actor: AuthenticatedUser,
+    affectedUserId: string,
+    cause: 'employment_ended' | 'employment_transferred',
+  ): RevocationAudit {
+    const by = { userId: actor.id, role: actor.role, sessionId: actor.sessionId };
+    return async (tx, revoked) => {
+      for (const grant of revoked.grants) {
+        await this.lifecycleAudit.recordIn(tx, {
+          action: 'exceptional_access.revoke',
+          actor: by,
+          entityType: 'exceptional_access_grant',
+          entityId: grant.id,
+          hospitalId: grant.hospitalId,
+          metadata: { reason: cause, affectedUserId },
+        });
+      }
+      for (const request of revoked.requests) {
+        await this.lifecycleAudit.recordIn(tx, {
+          action: 'information_request.revoke',
+          actor: by,
+          entityType: 'information_request',
+          entityId: request.id,
+          hospitalId: request.hospitalId,
+          metadata: { reason: cause, affectedUserId },
+        });
+      }
+    };
   }
 
   private async record(

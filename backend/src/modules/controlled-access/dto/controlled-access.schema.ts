@@ -28,6 +28,41 @@ export type RequestExceptionalAccessInput = z.infer<typeof requestExceptionalAcc
 export const decisionSchema = z.object({ note: z.string().trim().max(1000).optional() });
 export type DecisionInput = z.infer<typeof decisionSchema>;
 
+/**
+ * An approver may only narrow (XH-01, D1): keep a subset of the requested
+ * categories, and end the window earlier than the requested duration. Both
+ * optional; omitted, the request is approved as asked. The service checks
+ * subset and bound against the grant.
+ */
+const endsAt = z
+  .string()
+  .datetime({ offset: true })
+  .transform((value) => new Date(value));
+
+export const approveExceptionalAccessSchema = decisionSchema.extend({
+  categories: categories.optional(),
+  endsAt: endsAt.optional(),
+});
+export type ApproveExceptionalAccessInput = z.infer<typeof approveExceptionalAccessSchema>;
+
+/** API §0's common list parameters: `page` 1-based, `pageSize` default 20, max 100. */
+export const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListQuery = z.infer<typeof listQuerySchema>;
+
+/** The target Hospital Admin's grant queue (XH-05; BG3 `review`). */
+export const grantQueueQuerySchema = listQuerySchema.extend({
+  view: z.enum(['pending', 'active', 'review']).default('pending'),
+});
+export type GrantQueueQuery = z.infer<typeof grantQueueQuerySchema>;
+
+export const requestQueueQuerySchema = listQuerySchema.extend({
+  view: z.enum(['pending', 'approved']).default('pending'),
+});
+export type RequestQueueQuery = z.infer<typeof requestQueueQuerySchema>;
+
 export const reviewSchema = z.object({
   outcome: z.enum(['JUSTIFIED', 'UNJUSTIFIED']),
   note: z.string().trim().max(1000).optional(),
@@ -49,6 +84,8 @@ export const approveInformationRequestSchema = z.object({
   approvedItems: categories,
   /** Time-bound sharing (§2.12): at most 30 days. */
   shareDays: z.number().int().min(1).max(30).default(7),
+  /** Optional earlier end inside `shareDays` (XH-01: narrowing only). */
+  endsAt: endsAt.optional(),
   note: z.string().trim().max(1000).optional(),
 });
 export type ApproveInformationRequestInput = z.infer<typeof approveInformationRequestSchema>;
