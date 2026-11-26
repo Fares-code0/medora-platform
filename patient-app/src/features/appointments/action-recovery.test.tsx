@@ -8,7 +8,7 @@ import type { AppointmentDetail } from './model/types';
 import { appointmentService } from './service';
 
 /**
- * What happens after the button — checklist I-05, I-08, I-09, I-10.
+ * What happens after the cancel button — checklist I-05, I-08.
  *
  * `appointments.test.tsx` covers which buttons render, which is the
  * `availableActions` rule and the more important half. It stops at the
@@ -32,7 +32,7 @@ afterEach(() => {
   for (const spy of installed.splice(0)) spy.mockRestore();
 });
 
-function stub<K extends 'cancel' | 'requestReschedule' | 'acceptProposal'>(method: K) {
+function stub<K extends 'cancel'>(method: K) {
   const spy = jest.spyOn(appointmentService, method);
   installed.push(spy);
   return spy;
@@ -65,42 +65,84 @@ function detail(overrides: Partial<AppointmentDetail> = {}): AppointmentDetail {
     notes: null,
     cancelledReason: null,
     clinicTimezone: 'Asia/Amman',
+    hospital: { id: 'HOS-1', name: 'Medora Clinic' },
     availableActions: ['cancel', 'reschedule'],
-    proposedSlots: [],
+    pendingRescheduleRequest: null,
     events: [],
     ...overrides,
   };
 }
 
-function render(appointment: AppointmentDetail = detail()) {
-  return renderWithProviders(<AppointmentActions appointment={appointment} />);
+function render(appointment: AppointmentDetail = detail(), onAskReschedule = jest.fn()) {
+  return renderWithProviders(
+    <AppointmentActions appointment={appointment} onAskReschedule={onAskReschedule} />,
+  );
 }
 
-/** Open the cancel sheet and type a reason into it. */
-async function openCancel(view: ReturnType<typeof render>, reason: string) {
+/** Open the cancel sheet, pick a reason code and (optionally) type a note. */
+async function openCancel(
+  view: ReturnType<typeof render>,
+  code = 'schedule_conflict',
+  note?: string,
+) {
   fireEvent.press(view.getByTestId('appointment-cancel'));
   await waitFor(() => expect(view.getByTestId('appointment-cancel-confirm')).toBeTruthy());
-  fireEvent.changeText(view.getByTestId('appointment-cancel-reason'), reason);
+  fireEvent.press(view.getByTestId(`cancel-reason-${code}`));
+  if (note !== undefined) fireEvent.changeText(view.getByTestId('appointment-cancel-note'), note);
 }
 
 describe('cancelling (I-08)', () => {
-  it('sends the trimmed reason, because the server CHECK requires one', async () => {
+  it('sends the chosen reason CODE, and the trimmed note when there is one', async () => {
     const cancel = stub('cancel').mockResolvedValue(undefined as never);
     const view = render();
 
-    await openCancel(view, '  I am away that week  ');
+    await openCancel(view, 'transport', '  Cannot get a lift  ');
     await act(async () => {
       fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
     });
 
-    expect(cancel).toHaveBeenCalledWith('APT-1', 'I am away that week');
+    expect(cancel).toHaveBeenCalledWith('APT-1', {
+      reasonCode: 'transport',
+      note: 'Cannot get a lift',
+    });
+  });
+
+  it('omits the note when none was typed', async () => {
+    const cancel = stub('cancel').mockResolvedValue(undefined as never);
+    const view = render();
+
+    await openCancel(view, 'feeling_better');
+    await act(async () => {
+      fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
+    });
+
+    expect(cancel).toHaveBeenCalledWith('APT-1', { reasonCode: 'feeling_better' });
+  });
+
+  it('offers exactly the six reasons the server accepts, in words', async () => {
+    const view = render();
+    fireEvent.press(view.getByTestId('appointment-cancel'));
+    await waitFor(() => expect(view.getByTestId('appointment-cancel-confirm')).toBeTruthy());
+
+    for (const code of [
+      'schedule_conflict',
+      'feeling_better',
+      'booked_elsewhere',
+      'transport',
+      'cost',
+      'other',
+    ]) {
+      expect(view.getByTestId(`cancel-reason-${code}`).props.accessibilityRole).toBe('radio');
+    }
+    expect(view.getByText('I am feeling better')).toBeTruthy();
+    expect(view.queryByText(/schedule_conflict/)).toBeNull();
   });
 
   it('closes the sheet and confirms it once the write lands', async () => {
     stub('cancel').mockResolvedValue(undefined as never);
     const view = render();
 
-    await openCancel(view, 'I am away that week');
+    await openCancel(view);
     await act(async () => {
       fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
     });
@@ -108,35 +150,38 @@ describe('cancelling (I-08)', () => {
     expect(await view.findByText('Appointment cancelled')).toBeTruthy();
   });
 
-  it('keeps the sheet open and the reason typed when it loses a race (I-05)', async () => {
-    // The 409 the header promises to survive: somebody at the clinic
-    // moved this while the sheet was open. The patient did not cause it
-    // and cannot see it, so it must not cost them their paragraph.
+  it('keeps the sheet open, the reason and the note when it loses a race (I-05)', async () => {
+    // Somebody at the clinic moved this while the sheet was open. The
+    // patient did not cause it and cannot see it, so it must not cost
+    // them what they chose and wrote — and the server's own sentence says
+    // what happened.
     stub('cancel').mockRejectedValue(
       conflict('This appointment was already cancelled by the clinic.'),
     );
     const view = render();
 
-    await openCancel(view, 'I am away that week');
+    await openCancel(view, 'cost', 'Too expensive this month');
     await act(async () => {
       fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
     });
 
     await waitFor(() => expect(view.getByText(/already cancelled by the clinic/i)).toBeTruthy());
     expect(view.getByTestId('appointment-cancel-sheet')).toBeTruthy();
-    expect(view.getByTestId('appointment-cancel-reason').props.value).toBe('I am away that week');
+    expect(view.getByTestId('appointment-cancel-note').props.value).toBe(
+      'Too expensive this month',
+    );
+    expect(view.getByTestId('cancel-reason-cost').props.accessibilityState.selected).toBe(true);
   });
 
   it('says something plain when the failure is not a race', async () => {
-    // Only a 409 carries a `detail` worth reading — it describes a change
-    // to this patient's own appointment. Nothing else surfaces server
-    // text into the form.
+    // Only a 409 / insurance 422 carries a `detail` worth reading.
+    // Nothing else surfaces server text into the form.
     stub('cancel').mockRejectedValue(
       Object.assign(new Error('API error: server'), { kind: 'server' as const, ref: 'REQ-1' }),
     );
     const view = render();
 
-    await openCancel(view, 'I am away that week');
+    await openCancel(view);
     await act(async () => {
       fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
     });
@@ -145,134 +190,85 @@ describe('cancelling (I-08)', () => {
     expect(view.queryByText(/REQ-1/)).toBeNull();
   });
 
+  it('says the connection failed, and offers the same button again — without signing out', async () => {
+    stub('cancel').mockRejectedValue(
+      Object.assign(new Error('API error: network'), { kind: 'network' as const }),
+    );
+    const view = render();
+
+    await openCancel(view);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
+    });
+
+    await waitFor(() => expect(view.getByText(/could not be reached/i)).toBeTruthy());
+    expect(view.getByTestId('appointment-cancel-confirm').props.accessibilityState.disabled).toBe(
+      false,
+    );
+  });
+
+  it('will not submit without a reason, and ignores a second press while sending', async () => {
+    let resolve: (value: undefined) => void = () => undefined;
+    const cancel = stub('cancel').mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }) as never,
+    );
+    const view = render();
+
+    fireEvent.press(view.getByTestId('appointment-cancel'));
+    await waitFor(() => expect(view.getByTestId('appointment-cancel-confirm')).toBeTruthy());
+    expect(view.getByTestId('appointment-cancel-confirm').props.accessibilityState.disabled).toBe(
+      true,
+    );
+
+    fireEvent.press(view.getByTestId('cancel-reason-other'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
+    });
+    await act(async () => {
+      fireEvent.press(view.getByTestId('appointment-cancel-confirm'));
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('appointment-cancel-confirm').props.accessibilityState.busy).toBe(true);
+
+    await act(async () => {
+      resolve(undefined);
+    });
+  });
+
   it('lets the patient back out without cancelling anything', async () => {
     const cancel = stub('cancel');
     const view = render();
 
-    await openCancel(view, 'I am away that week');
+    await openCancel(view);
     fireEvent.press(view.getByText('Keep it'));
 
     expect(cancel).not.toHaveBeenCalled();
   });
-});
 
-describe('asking to reschedule (I-09)', () => {
-  it('sends the reason and confirms that the clinic has it', async () => {
-    const request = stub('requestReschedule').mockResolvedValue(undefined as never);
+  it('keeps the chosen reason while the sheet is closed and reopened', async () => {
     const view = render();
 
-    fireEvent.press(view.getByTestId('appointment-reschedule'));
-    await waitFor(() => expect(view.getByTestId('appointment-reschedule-confirm')).toBeTruthy());
-    fireEvent.changeText(view.getByTestId('appointment-reschedule-reason'), 'Work travel');
-    await act(async () => {
-      fireEvent.press(view.getByTestId('appointment-reschedule-confirm'));
-    });
-
-    expect(request).toHaveBeenCalledWith('APT-1', 'Work travel');
-    // The wording matters: the request is not the reschedule. The current
-    // appointment stays booked until the patient accepts a new time.
-    expect(await view.findByText(/has your reschedule request/i)).toBeTruthy();
-  });
-
-  it('keeps the sheet open and the reason typed on a 409', async () => {
-    stub('requestReschedule').mockRejectedValue(conflict('The clinic has already moved this.'));
-    const view = render();
-
-    fireEvent.press(view.getByTestId('appointment-reschedule'));
-    await waitFor(() => expect(view.getByTestId('appointment-reschedule-confirm')).toBeTruthy());
-    fireEvent.changeText(view.getByTestId('appointment-reschedule-reason'), 'Work travel');
-    await act(async () => {
-      fireEvent.press(view.getByTestId('appointment-reschedule-confirm'));
-    });
-
-    await waitFor(() => expect(view.getByText(/already moved this/i)).toBeTruthy());
-    expect(view.getByTestId('appointment-reschedule-reason').props.value).toBe('Work travel');
-  });
-
-  it('will not send an empty reason', async () => {
-    const request = stub('requestReschedule');
-    const view = render();
-
-    fireEvent.press(view.getByTestId('appointment-reschedule'));
-    await waitFor(() => expect(view.getByTestId('appointment-reschedule-confirm')).toBeTruthy());
-
-    expect(
-      view.getByTestId('appointment-reschedule-confirm').props.accessibilityState.disabled,
-    ).toBe(true);
-    expect(request).not.toHaveBeenCalled();
-  });
-});
-
-describe('the two sheets do not share a box', () => {
-  it('keeps a cancellation reason out of the reschedule form', async () => {
-    // Two different questions — "the clinic needs a reason" and "why do
-    // you need to move it?" — must not share one buffer, or a patient who
-    // backs out of cancelling finds their cancellation reason waiting in
-    // the reschedule box, ready to be sent as the wrong thing.
-    const view = render();
-
-    await openCancel(view, 'I want to cancel entirely');
-    fireEvent.press(view.getByText('Keep it'));
-
-    fireEvent.press(view.getByTestId('appointment-reschedule'));
-    await waitFor(() => expect(view.getByTestId('appointment-reschedule-reason')).toBeTruthy());
-
-    expect(view.getByTestId('appointment-reschedule-reason').props.value).toBe('');
-  });
-
-  it('keeps each reason while its own sheet is closed and reopened', async () => {
-    const view = render();
-
-    await openCancel(view, 'I am away that week');
+    await openCancel(view, 'booked_elsewhere');
     fireEvent.press(view.getByText('Keep it'));
     fireEvent.press(view.getByTestId('appointment-cancel'));
 
     await waitFor(() =>
-      expect(view.getByTestId('appointment-cancel-reason').props.value).toBe('I am away that week'),
+      expect(
+        view.getByTestId('cancel-reason-booked_elsewhere').props.accessibilityState.selected,
+      ).toBe(true),
     );
   });
 });
 
-describe('responding to proposed slots (I-10)', () => {
-  const withProposals = detail({
-    status: 'awaiting-patient',
-    availableActions: ['confirm', 'cancel'],
-    proposedSlots: [
-      { id: 'PS-1', startsAt: '2026-10-05T09:00:00.000Z', durationMin: 30 },
-      { id: 'PS-2', startsAt: '2026-10-06T15:30:00.000Z', durationMin: 30 },
-    ],
-  });
+describe('asking to reschedule', () => {
+  it('hands off to the request screen — it sends nothing from here', () => {
+    const onAsk = jest.fn();
+    const view = render(detail(), onAsk);
 
-  it('confirms the slot the patient chose, by id', async () => {
-    const accept = stub('acceptProposal').mockResolvedValue(undefined as never);
-    const view = render(withProposals);
+    fireEvent.press(view.getByTestId('appointment-reschedule'));
 
-    await act(async () => {
-      fireEvent.press(view.getByTestId('appointment-proposal-PS-2'));
-    });
-
-    expect(accept).toHaveBeenCalledWith('APT-1', 'PS-2');
-    expect(await view.findByText('Appointment confirmed')).toBeTruthy();
-  });
-
-  it('says who took the slot when the patient loses the race for it', async () => {
-    // The slot went while the screen was open. A generic "that didn't
-    // work" here would leave the patient tapping the same dead slot.
-    stub('acceptProposal').mockRejectedValue(conflict('That time was taken a moment ago.'));
-    const view = render(withProposals);
-
-    await act(async () => {
-      fireEvent.press(view.getByTestId('appointment-proposal-PS-1'));
-    });
-
-    expect(await view.findByText(/taken a moment ago/i)).toBeTruthy();
-  });
-
-  it('renders no proposal card when the server did not offer `confirm`', async () => {
-    // The slots and the permission to take one are two different facts,
-    // and the client renders neither from `status`.
-    const view = render({ ...withProposals, availableActions: ['cancel'] });
-
-    expect(view.queryByTestId('appointment-proposals')).toBeNull();
+    expect(onAsk).toHaveBeenCalledTimes(1);
   });
 });

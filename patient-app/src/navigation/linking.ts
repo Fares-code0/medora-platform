@@ -72,6 +72,8 @@ const table: LinkingOptions<LinkableParamList> = {
               DiscoverRoot: 'doctors',
               DoctorProfile: 'doctors/:doctorId',
               Clinic: 'clinic',
+              Hospitals: 'hospitals',
+              Hospital: 'hospitals/:hospitalId',
             },
           },
           AppointmentsTab: {

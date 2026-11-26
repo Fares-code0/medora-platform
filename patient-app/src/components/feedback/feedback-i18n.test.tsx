@@ -83,15 +83,15 @@ describe('ErrorState reads the catalogue', () => {
 
   it('interpolates the capability an unbuilt endpoint names', () => {
     const { getByText, queryByText } = renderWithProviders(
-      <ErrorState error={new EndpointNotImplementedError('BE-05', 'capability.booking')} />,
+      <ErrorState error={new EndpointNotImplementedError('BE-05', 'capability.messages')} />,
     );
 
     // The capability reaches `ErrorState` as a catalogue key and is
     // resolved before interpolation, so a patient reads words rather than
-    // `capability.booking`.
+    // `capability.messages`.
     expect(
       getByText(
-        en['state.error.unavailable.body'].replace('{capability}', en['capability.booking']),
+        en['state.error.unavailable.body'].replace('{capability}', en['capability.messages']),
       ),
     ).toBeTruthy();
     expect(queryByText(/capability\./)).toBeNull();

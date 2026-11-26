@@ -21,6 +21,9 @@ import type {
  * refuses to build production with mocks enabled.
  */
 
+/** The one development hospital. Hospital fixtures reuse this id. */
+export const MEDORA_HOSPITAL = { id: 'HOS-1', name: 'Medora Clinic' } as const;
+
 const DOCTORS: readonly PatientSafeDoctor[] = [
   {
     id: 'DR-1001',
@@ -35,7 +38,7 @@ const DOCTORS: readonly PatientSafeDoctor[] = [
       'Consultant cardiologist with an interest in preventative care and heart-rhythm disorders.',
     education: ['MBBS, University of Jordan', 'MRCP (UK)'],
     ratingAvg: 4.8,
-    hospital: 'Medora Clinic',
+    hospital: MEDORA_HOSPITAL,
     officeLocation: 'Level 3, Room 12',
   },
   {
@@ -50,7 +53,7 @@ const DOCTORS: readonly PatientSafeDoctor[] = [
     biography: 'Dermatologist working across general skin health and chronic skin conditions.',
     education: ['MD, Cairo University'],
     ratingAvg: 4.6,
-    hospital: 'Medora Clinic',
+    hospital: MEDORA_HOSPITAL,
     officeLocation: 'Level 2, Room 4',
   },
   {
@@ -65,7 +68,7 @@ const DOCTORS: readonly PatientSafeDoctor[] = [
     biography: 'Family doctor seeing adults and children for everyday health concerns.',
     education: ['MD, Hacettepe University'],
     ratingAvg: 4.9,
-    hospital: 'Medora Clinic',
+    hospital: MEDORA_HOSPITAL,
     officeLocation: 'Level 1, Room 8',
   },
   {
@@ -80,7 +83,7 @@ const DOCTORS: readonly PatientSafeDoctor[] = [
     biography: 'Orthopaedic surgeon focusing on knee and shoulder injuries.',
     education: ['MBChB, University of Ghana', 'FRCS (Tr & Orth)'],
     ratingAvg: 4.5,
-    hospital: 'Medora Clinic',
+    hospital: MEDORA_HOSPITAL,
     officeLocation: 'Level 3, Room 2',
   },
   {
@@ -95,7 +98,7 @@ const DOCTORS: readonly PatientSafeDoctor[] = [
     biography: 'Paediatrician seeing newborns through to adolescents.',
     education: ['MBBCh, Alexandria University'],
     ratingAvg: 4.7,
-    hospital: 'Medora Clinic',
+    hospital: MEDORA_HOSPITAL,
     officeLocation: 'Level 1, Room 2',
   },
 ];
@@ -130,7 +133,8 @@ function matches(doctor: PatientSafeDoctor, params: DoctorSearchParams): boolean
   const byDepartment =
     params.departmentId === undefined ||
     DEPARTMENTS.find((item) => item.id === params.departmentId)?.name === doctor.departmentName;
-  return byQuery && bySpecialty && byDepartment;
+  const byHospital = params.hospitalId === undefined || doctor.hospital?.id === params.hospitalId;
+  return byQuery && bySpecialty && byDepartment && byHospital;
 }
 
 export const fixtureDoctorService: DoctorService = {

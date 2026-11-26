@@ -3,9 +3,10 @@ import {
   type WireAppointmentDetail,
   type WireAppointmentEvent,
   type WireAppointmentSummary,
+  type WireRescheduleRequest,
+  type WireSlot,
+  type WireVisitType,
 } from '@/api/endpoints/appointments';
-import { EndpointNotImplementedError } from '@/api/seam';
-import type { MessageKey } from '@/i18n';
 
 import type {
   Appointment,
@@ -14,30 +15,26 @@ import type {
   AppointmentPage,
   AppointmentService,
   BookableSlot,
+  RescheduleRequest,
+  VisitType,
 } from './model/types';
 
 /**
- * The HTTP adapter for appointments — checklist I-01, I-02, I-06.
+ * The HTTP adapter for appointments — checklist I-01…I-06.
  *
- * ── Reads are live; every write refuses, by name ─────────────────────
+ * ── Everything is live ───────────────────────────────────────────────
  *
- * `GET /me/appointments` and `/me/appointments/{id}` are served today.
- * `listSlots`, `book`, `cancel`, `requestReschedule` and `acceptProposal`
- * are **blocked on ADR-033**, which is written up and awaiting a
- * product/clinical owner. Each rejects with `EndpointNotImplementedError`
- * naming ADR-033 rather than calling a path that does not exist.
+ * Reads, slots, visit types, booking, cancellation and the reschedule
+ * request workflow all call the routes in `api/endpoints/appointments.ts`
+ * (patient-app end-to-end contract §3). The ADR-033 refusals this adapter
+ * used to carry are gone: the owner decided cancellation and the
+ * request-based reschedule, and the server computes `availableActions`.
  *
- * This is the same partial shape the doctor adapter takes, and for a
- * sharper reason: the appointment writes are not merely unbuilt. ADR-001
- * says which statuses may follow which and **not who may make a
- * transition**. A client that guessed would be putting clinical-operations
- * policy in a mobile app.
+ * ── The client still never decides ───────────────────────────────────
  *
- * ── What is deliberately NOT mapped ──────────────────────────────────
- *
- * `availableActions` and `proposedSlots` are left `undefined`, not `[]`.
- * See `model/types.ts` — `[]` asserts "no action is available", which is
- * a statement about policy that nobody has made.
+ * `availableActions` is mapped straight from the payload and nothing here
+ * derives an action from `status`. A reschedule is a REQUEST — the
+ * appointment keeps its time until the hospital approves.
  *
  * ── The one place a device clock is used, and what it costs ──────────
  *
@@ -45,27 +42,18 @@ import type {
  * against its own clock — correct, and immune to a wrong device clock.
  *
  * `list('past')` has no such shorthand: `upcoming=false` is accepted by
- * the query schema but the service only acts on `true`
- * (`patient-appointment.service.ts` — `from: query.from ?? (upcoming ===
- * true ? new Date() : undefined)`), so there is no server-side "before
- * now". The adapter therefore sends `to=<device now>`, using a parameter
- * the contract defines rather than inventing one.
+ * the query schema but the service only acts on `true`, so there is no
+ * server-side "before now". The adapter therefore sends `to=<device
+ * now>`, using a parameter the contract defines rather than inventing
+ * one. A device whose clock is wrong partitions Upcoming and Past at the
+ * wrong instant; nothing else drifts — every timestamp still renders from
+ * the server's value and the clinic's timezone. Closing it needs one line
+ * in the backend service (`upcoming === false` → `to: new Date()`).
  *
  * ── Pages ───────────────────────────────────────────────────────────
  *
  * `page` is passed through and `hasMore` is derived from the server's
- * `page`/`totalPages`. Before this the adapter asked for page one and
- * returned `items` alone, so a patient with a longer history than one
- * page could not reach the rest of it and nothing said so — the silent
- * half of the same gap G-02 closed for doctor search.
- *
- * The cost is stated rather than hidden: a device whose clock is wrong
- * partitions Upcoming and Past at the wrong instant. Nothing else drifts
- * — every timestamp still renders from the server's value and the
- * clinic's timezone. Closing it needs one line in the backend service
- * (`upcoming === false` → `to: new Date()`), which is a backend change
- * and not this branch's to make. Recorded as a cross-branch dependency
- * in the checklist row.
+ * `page`/`totalPages`.
  */
 
 function toEvent(wire: WireAppointmentEvent, index: number): AppointmentEvent {
@@ -96,6 +84,26 @@ function toAppointment(wire: WireAppointmentSummary, clinicTimezone: string | nu
     cancelledReason: null,
     // The list sends one zone for the page; the detail sends its own.
     clinicTimezone,
+    hospital: wire.hospital ?? null,
+    // The server's own list, passed through. Never derived from `status`.
+    availableActions: wire.availableActions,
+  };
+}
+
+function toRescheduleRequest(wire: WireRescheduleRequest): RescheduleRequest {
+  return {
+    id: wire.id,
+    appointmentId: wire.appointmentId,
+    status: wire.status,
+    requestedSlot: {
+      id: wire.requestedSlot.id,
+      startsAt: wire.requestedSlot.startsAt,
+      durationMin: wire.requestedSlot.durationMin,
+    },
+    note: wire.note,
+    decisionReason: wire.decisionReason,
+    createdAt: wire.createdAt,
+    decidedAt: wire.decidedAt,
   };
 }
 
@@ -105,12 +113,24 @@ function toDetail(wire: WireAppointmentDetail): AppointmentDetail {
     notes: wire.notes,
     cancelledReason: wire.cancelledReason,
     events: wire.events.map(toEvent),
+    pendingRescheduleRequest:
+      wire.pendingRescheduleRequest === null || wire.pendingRescheduleRequest === undefined
+        ? null
+        : toRescheduleRequest(wire.pendingRescheduleRequest),
   };
 }
 
-/** Every write route below is ADR-033's, and none of them exists. */
-function blocked<T>(capability: MessageKey): Promise<T> {
-  return Promise.reject(new EndpointNotImplementedError('ADR-033', capability));
+function toSlot(wire: WireSlot): BookableSlot {
+  return {
+    id: wire.id,
+    startsAt: wire.startsAt,
+    durationMin: wire.durationMin,
+    hospital: wire.hospital,
+  };
+}
+
+function toVisitType(wire: WireVisitType): VisitType {
+  return { id: wire.id, name: wire.name, durationMin: wire.durationMin };
 }
 
 export const httpAppointmentService: AppointmentService = {
@@ -139,23 +159,58 @@ export const httpAppointmentService: AppointmentService = {
     return toDetail(response.data);
   },
 
-  listSlots(): Promise<readonly BookableSlot[]> {
-    return blocked('capability.slots');
+  async listSlots(doctorId, fromIso, toIso): Promise<readonly BookableSlot[]> {
+    const response = await appointmentEndpoints.slots(doctorId, fromIso, toIso);
+    return response.data.map(toSlot);
   },
 
-  book(): Promise<Appointment> {
-    return blocked('capability.booking');
+  async listVisitTypes(): Promise<readonly VisitType[]> {
+    const response = await appointmentEndpoints.visitTypes();
+    return response.data.map(toVisitType);
   },
 
-  cancel(): Promise<Appointment> {
-    return blocked('capability.cancel');
+  async book(request, idempotencyKey): Promise<AppointmentDetail> {
+    const response = await appointmentEndpoints.book(
+      {
+        slotId: request.slotId,
+        reason: request.reason,
+        // Omitted rather than sent empty or null: an absent field is "the
+        // patient chose nothing" and the server resolves its default.
+        ...(request.visitTypeId === undefined ? {} : { visitTypeId: request.visitTypeId }),
+        ...(request.notes === undefined ? {} : { notes: request.notes }),
+      },
+      idempotencyKey,
+    );
+    return toDetail(response.data);
   },
 
-  requestReschedule(): Promise<Appointment> {
-    return blocked('capability.reschedule');
+  async cancel(id, request): Promise<AppointmentDetail> {
+    const response = await appointmentEndpoints.cancel(id, {
+      reasonCode: request.reasonCode,
+      ...(request.note === undefined ? {} : { note: request.note }),
+    });
+    return toDetail(response.data);
   },
 
-  acceptProposal(): Promise<Appointment> {
-    return blocked('capability.acceptProposal');
+  async requestReschedule(id, submission, idempotencyKey): Promise<RescheduleRequest> {
+    const response = await appointmentEndpoints.requestReschedule(
+      id,
+      {
+        slotId: submission.slotId,
+        ...(submission.note === undefined ? {} : { note: submission.note }),
+      },
+      idempotencyKey,
+    );
+    return toRescheduleRequest(response.data);
+  },
+
+  async listRescheduleRequests(id): Promise<readonly RescheduleRequest[]> {
+    const response = await appointmentEndpoints.rescheduleRequests(id);
+    return response.data.map(toRescheduleRequest);
+  },
+
+  async withdrawRescheduleRequest(requestId): Promise<RescheduleRequest> {
+    const response = await appointmentEndpoints.withdrawRescheduleRequest(requestId);
+    return toRescheduleRequest(response.data);
   },
 };

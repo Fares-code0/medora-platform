@@ -2,6 +2,7 @@ import type { ComponentType, ReactElement } from 'react';
 
 import { AppointmentDetailScreen } from '@/features/appointments/screens/AppointmentDetailScreen';
 import { AppointmentsScreen } from '@/features/appointments/screens/AppointmentsScreen';
+import { RescheduleRequestScreen } from '@/features/appointments/screens/RescheduleRequestScreen';
 import type { AuthService, SignInResult } from '@/features/auth/model/types';
 import { ConsentScreen } from '@/features/auth/screens/ConsentScreen';
 import { SessionUnconfirmedScreen } from '@/features/auth/screens/SessionUnconfirmedScreen';
@@ -19,6 +20,8 @@ import { PrescriptionsScreen } from '@/features/health/screens/PrescriptionsScre
 import { VisitDetailScreen } from '@/features/health/screens/VisitDetailScreen';
 import { VisitsScreen } from '@/features/health/screens/VisitsScreen';
 import { HomeScreen } from '@/features/home/screens/HomeScreen';
+import { HospitalDetailScreen } from '@/features/hospitals/screens/HospitalDetailScreen';
+import { HospitalsScreen } from '@/features/hospitals/screens/HospitalsScreen';
 import { MessagesScreen } from '@/features/messages/screens/MessagesScreen';
 import { ThreadScreen } from '@/features/messages/screens/ThreadScreen';
 import { NotificationPrefsScreen } from '@/features/notifications/screens/NotificationPrefsScreen';
@@ -93,6 +96,9 @@ export const SCREENS: readonly HostedScreen[] = [
   ['Department', DepartmentScreen, { departmentId: 'DEP-1', departmentName: 'Cardiology' }],
   ['Appointments', AppointmentsScreen, {}],
   ['AppointmentDetail', AppointmentDetailScreen, { appointmentId: 'AP-1' }],
+  ['RescheduleRequest', RescheduleRequestScreen, { appointmentId: 'AP-1' }],
+  ['Hospitals', HospitalsScreen, {}],
+  ['Hospital', HospitalDetailScreen, { hospitalId: 'HOS-1' }],
   ['HealthRecords', HealthRecordsScreen, {}],
   ['LabResults', LabResultsScreen, {}],
   ['Prescriptions', PrescriptionsScreen, {}],

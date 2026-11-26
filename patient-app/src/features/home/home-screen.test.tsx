@@ -55,8 +55,8 @@ const NEXT: Appointment = {
   notes: null,
   cancelledReason: null,
   clinicTimezone: 'Asia/Amman',
-  // Deliberately absent, as the live payload leaves it: `undefined` is
-  // "the server has not said", and `[]` would be a claim about ADR-033.
+  hospital: null,
+  availableActions: [],
   doctor: {
     id: 'DR-1',
     fullName: 'Layla Hassan',

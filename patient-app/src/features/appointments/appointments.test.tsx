@@ -43,8 +43,9 @@ function detail(overrides: Partial<AppointmentDetail>): AppointmentDetail {
     notes: null,
     cancelledReason: null,
     clinicTimezone: 'Asia/Amman',
+    hospital: { id: 'HOS-1', name: 'Medora Clinic' },
     availableActions: [],
-    proposedSlots: [],
+    pendingRescheduleRequest: null,
     events: [],
     ...overrides,
   };
@@ -54,7 +55,10 @@ describe('actions come from the server, never from status', () => {
   it('renders nothing when the server offers nothing — whatever the status', () => {
     for (const status of APPOINTMENT_STATUSES) {
       const { queryByTestId, unmount } = renderWithProviders(
-        <AppointmentActions appointment={detail({ status, availableActions: [] })} />,
+        <AppointmentActions
+          appointment={detail({ status, availableActions: [] })}
+          onAskReschedule={jest.fn()}
+        />,
       );
       expect(queryByTestId('appointment-cancel')).toBeNull();
       expect(queryByTestId('appointment-reschedule')).toBeNull();
@@ -69,6 +73,7 @@ describe('actions come from the server, never from status', () => {
     const { getByTestId } = renderWithProviders(
       <AppointmentActions
         appointment={detail({ status: 'completed', availableActions: ['cancel'] })}
+        onAskReschedule={jest.fn()}
       />,
     );
     expect(getByTestId('appointment-cancel')).toBeTruthy();
@@ -78,6 +83,7 @@ describe('actions come from the server, never from status', () => {
     const offered = renderWithProviders(
       <AppointmentActions
         appointment={detail({ status: 'confirmed', availableActions: ['cancel', 'reschedule'] })}
+        onAskReschedule={jest.fn()}
       />,
     );
     expect(offered.getByTestId('appointment-reschedule')).toBeTruthy();
@@ -86,35 +92,31 @@ describe('actions come from the server, never from status', () => {
     const notOffered = renderWithProviders(
       <AppointmentActions
         appointment={detail({ status: 'confirmed', availableActions: ['cancel'] })}
+        onAskReschedule={jest.fn()}
       />,
     );
     expect(notOffered.queryByTestId('appointment-reschedule')).toBeNull();
   });
 
-  it('renders the clinic’s proposed slots for awaiting-patient', () => {
-    const { getByTestId } = renderWithProviders(
+  it('renders no confirm or proposal control — the server has no such action any more', () => {
+    const { queryByTestId } = renderWithProviders(
       <AppointmentActions
-        appointment={detail({
-          status: 'awaiting-patient',
-          availableActions: ['confirm', 'cancel'],
-          proposedSlots: [
-            { id: 'PS-1', startsAt: new Date().toISOString(), durationMin: 30 },
-            { id: 'PS-2', startsAt: new Date().toISOString(), durationMin: 30 },
-          ],
-        })}
+        appointment={detail({ status: 'awaiting-patient', availableActions: ['cancel'] })}
+        onAskReschedule={jest.fn()}
       />,
     );
 
-    expect(getByTestId('appointment-proposals')).toBeTruthy();
-    expect(getByTestId('appointment-proposal-PS-1')).toBeTruthy();
-    expect(getByTestId('appointment-proposal-PS-2')).toBeTruthy();
+    expect(queryByTestId('appointment-proposals')).toBeNull();
   });
 });
 
 describe('cancellation collects a reason (I-08)', () => {
-  it('will not submit without one — the server CHECK requires it', async () => {
+  it('will not submit without a reason code — the server requires one', async () => {
     const { getByTestId } = renderWithProviders(
-      <AppointmentActions appointment={detail({ availableActions: ['cancel'] })} />,
+      <AppointmentActions
+        appointment={detail({ availableActions: ['cancel'] })}
+        onAskReschedule={jest.fn()}
+      />,
     );
 
     fireEvent.press(getByTestId('appointment-cancel'));
@@ -124,7 +126,7 @@ describe('cancellation collects a reason (I-08)', () => {
 
     expect(getByTestId('appointment-cancel-confirm').props.accessibilityState.disabled).toBe(true);
 
-    fireEvent.changeText(getByTestId('appointment-cancel-reason'), 'I am away that week');
+    fireEvent.press(getByTestId('cancel-reason-schedule_conflict'));
     expect(getByTestId('appointment-cancel-confirm').props.accessibilityState.disabled).toBe(false);
   });
 });
@@ -174,14 +176,31 @@ describe('the fixture service', () => {
     // Two appointments, different statuses, different action sets — and
     // the fixture holds them as data, so a screen cannot start relying on
     // a derivation that the server does not guarantee.
-    expect(awaiting?.availableActions).toEqual(['confirm', 'cancel']);
+    expect(awaiting?.availableActions).toEqual(['cancel']);
     expect(pending?.availableActions).toEqual(['cancel']);
   });
 
-  it('surfaces a 409 when a proposed slot has gone', async () => {
-    await expect(
-      fixtureAppointmentService.acceptProposal('APT-2003', 'PS-GONE'),
-    ).rejects.toMatchObject({ kind: 'conflict' });
+  it('a reschedule request leaves the appointment where it is', async () => {
+    const before = await fixtureAppointmentService.getById('APT-2001');
+    const request = await fixtureAppointmentService.requestReschedule(
+      'APT-2001',
+      { slotId: 'SL-X', note: 'Travelling' },
+      'idem-2',
+    );
+    const after = await fixtureAppointmentService.getById('APT-2001');
+
+    expect(request.status).toBe('pending');
+    expect(after.startsAt).toBe(before.startsAt);
+    expect(after.status).toBe(before.status);
+    expect(after.pendingRescheduleRequest?.id).toBe(request.id);
+    // The server — here, the fixture standing in for it — stops offering a second ask.
+    expect(after.availableActions).not.toContain('reschedule');
+
+    const withdrawn = await fixtureAppointmentService.withdrawRescheduleRequest(request.id);
+    expect(withdrawn.status).toBe('withdrawn');
+    expect(
+      (await fixtureAppointmentService.getById('APT-2001')).pendingRescheduleRequest,
+    ).toBeNull();
   });
 
   it('returns slots rather than computing them from availability rules', async () => {

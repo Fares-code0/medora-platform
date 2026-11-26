@@ -81,8 +81,17 @@ export type HomeStackParamList = {
 };
 
 export type DiscoverStackParamList = {
-  DiscoverRoot: undefined;
+  /**
+   * `hospitalId` narrows the doctor list to one hospital — it arrives
+   * from the hospital's own screen. `hospitalName` travels with it for
+   * the filter chip, because the chip row (a first page of hospitals) may
+   * not contain it.
+   */
+  DiscoverRoot: { hospitalId?: string; hospitalName?: string } | undefined;
   DoctorProfile: { doctorId: string };
+  /** Hospitals a patient can book at (`GET /patient/hospitals`). */
+  Hospitals: undefined;
+  Hospital: { hospitalId: string; hospitalName?: string };
   Clinic: undefined;
   /**
    * The doctors in one department (H-05).
@@ -99,6 +108,12 @@ export type DiscoverStackParamList = {
 export type AppointmentsStackParamList = {
   AppointmentsRoot: undefined;
   AppointmentDetail: { appointmentId: string };
+  /**
+   * Ask the hospital to move an appointment to another of the same
+   * doctor's times. A REQUEST — the appointment stays where it is until
+   * the hospital approves.
+   */
+  RescheduleRequest: { appointmentId: string };
 };
 
 export type MessagesStackParamList = {
