@@ -104,9 +104,9 @@ Many of the endpoints this app needs still do not exist. Rather than mock them
 inside screens, each feature has a port and two adapters:
 
 ```ts
-export const messagingService: MessagingService = selectService({
-  fixture: fixtureMessagingService,
-  http: unavailableService<MessagingService>('AD-1 / BE-13', 'capability.messages', [...]),
+export const clinicService: ClinicService = selectService({
+  fixture: fixtureClinicService,
+  http: unavailableService<ClinicService>('BE-11', 'capability.clinic', [...]),
 });
 ```
 

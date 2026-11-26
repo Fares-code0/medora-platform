@@ -136,10 +136,10 @@ Every feature has a port, two adapters and one selection. A feature whose
 endpoint does not exist passes `unavailableService` as its HTTP adapter:
 
 ```ts
-// features/messages/service.ts
-export const messagingService: MessagingService = selectService({
-  fixture: fixtureMessagingService,
-  http: unavailableService<MessagingService>('AD-1 / BE-13', 'capability.messages', [...]),
+// features/clinic/service.ts
+export const clinicService: ClinicService = selectService({
+  fixture: fixtureClinicService,
+  http: unavailableService<ClinicService>('BE-11', 'capability.clinic', [...]),
 });
 ```
 
