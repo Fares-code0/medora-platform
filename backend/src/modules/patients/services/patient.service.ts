@@ -289,9 +289,14 @@ export class PatientService {
     publicId: string,
     input: RevealIdentityInput,
   ): Promise<RevealedIdentity> {
-    if (user.role === 'doctor') {
-      await this.scope.assertCanReach(principalOf(user), publicId);
-    }
+    // Fail closed, for every caller (AZ-04). No role reveals without
+    // reaching the patient: administrators never hold
+    // `patients.revealIdentity` (ADMIN_DENIED_PHI), and a custom role
+    // derived from `doctor` holds it but has a role code other than the
+    // literal `'doctor'`. Checking reach only `if (user.role === 'doctor')`
+    // let such a role reveal any patient on the platform wherever RLS is
+    // off. A caller without reach gets the same 404 a missing chart gives.
+    await this.scope.assertCanReach(principalOf(user), publicId);
 
     const revealedAt = new Date();
 

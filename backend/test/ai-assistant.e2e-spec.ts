@@ -433,6 +433,33 @@ describe('RM M16.3 verify — context binding is server-authoritative', () => {
     expect(await harness.prisma.aiConversation.count()).toBe(before);
   });
 
+  it('stamps a reference-bound thread with the hospital the patient was reached at (AI-02)', async () => {
+    // A labs/record/pharmacy thread is still a thread about this patient at
+    // this hospital. Before AI-02 the reference-bound path returned no
+    // chart, so the row carried no hospital: the runtime role's
+    // `ai_conversations` insert policy refused it, and on an owner
+    // connection it was unattributed PHI.
+    const order = await orderTest(harness, doctorToken, patient.id);
+
+    const created = await createThread(doctorToken, { mode: 'labs', patientId: patient.id, refId: order.id }, 201);
+    const threadId = dataOf<{ id: string }>(created).id;
+
+    const row = await harness.prisma.aiConversation.findUniqueOrThrow({
+      where: { id: threadId },
+      select: { hospitalId: true, hospitalMedicalRecordId: true, refPublicId: true },
+    });
+    const orderRow = await harness.prisma.labOrder.findFirstOrThrow({
+      where: { publicId: order.id },
+      select: { hospitalId: true },
+    });
+
+    expect(row.refPublicId).toBe(order.id);
+    expect(row.hospitalId).not.toBeNull();
+    expect(row.hospitalMedicalRecordId).not.toBeNull();
+    // The reach hospital is the one the bound entity belongs to.
+    expect(row.hospitalId).toBe(orderRow.hospitalId);
+  });
+
   it('refuses a refId belonging to another patient', async () => {
     // Without the patient clause on the entity query, binding another
     // chart's order under a chart the caller legitimately holds would

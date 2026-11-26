@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Secret, TOTP } from 'otpauth';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -280,6 +282,80 @@ describe('M7.3 — who may reveal', () => {
 
     expect(response.status).toBe(404);
     expect(await revealsBy(doctorUserId)).toHaveLength(before);
+  });
+});
+
+describe('AZ-04 — a custom role derived from doctor reveals only within reach', () => {
+  /**
+   * A custom role keeps its own code but inherits the doctor bundle,
+   * `patients.revealIdentity` included. The service used to check reach
+   * only for the literal role code `'doctor'`, so such a role revealed any
+   * patient on the platform on any connection without RLS.
+   */
+  const customRoles: string[] = [];
+  const holders: string[] = [];
+
+  afterAll(async () => {
+    // Holders go back to the system role first: `users.role_id` restricts.
+    const doctor = await harness.prisma.role.findUniqueOrThrow({ where: { code: 'doctor' }, select: { id: true } });
+    await harness.prisma.user.updateMany({ where: { id: { in: holders } }, data: { roleId: doctor.id } });
+    await harness.prisma.role.deleteMany({ where: { code: { in: customRoles } } });
+  });
+
+  async function customDoctorHolder(local: string, hospital: string): Promise<{ token: string; userId: string }> {
+    const hospitalId = await fixtureHospital(harness.prisma, hospital);
+    const base = await harness.prisma.role.findUniqueOrThrow({
+      where: { code: 'doctor' },
+      select: { id: true, permissions: { select: { permissionId: true } } },
+    });
+    // At most 20 characters: `audit_events.actor_role` is VARCHAR(20) while
+    // `POST /roles` accepts 30 (AZ-11, a Database dependency) — a longer code
+    // would make every fail-closed audit refuse this holder.
+    const code = `az04${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const role = await harness.prisma.role.create({
+      data: { code, label: `AZ-04 ${code}`, isSystem: false, baseRoleId: base.id, hospitalId },
+      select: { id: true },
+    });
+    customRoles.push(code);
+    // The doctor bundle, as `POST /roles` copies it.
+    await harness.prisma.rolePermission.createMany({
+      data: base.permissions.map(({ permissionId }) => ({ roleId: role.id, permissionId })),
+    });
+
+    const { userId } = await signUpDoctor(local, hospital);
+    holders.push(userId);
+    await harness.prisma.user.update({
+      where: { id: userId },
+      data: { roleId: role.id, authzVersion: { increment: 1 } },
+    });
+    const token = dataOf<{ accessToken: string }>(
+      await request(harness.server).post(LOGIN).send({ email: testEmail(local), password: PASSWORD, rememberMe: false }),
+    ).accessToken;
+    return { token, userId };
+  }
+
+  it('holds the doctor bundle, and still gets the 404 of a missing chart for a patient it does not reach', async () => {
+    // Clinical standing at hospital B; the patient's record is at hospital A.
+    const holder = await customDoctorHolder('az04-foreign', 'b');
+
+    // Not vacuous: the holder passes the capability gate (a doctor-only
+    // read answers, rather than 403).
+    const list = await request(harness.server).get('/api/v1/patients').set(as(holder.token));
+    expect(list.status, JSON.stringify(list.body)).toBe(200);
+
+    const response = await reveal(patientPublicId, holder.token);
+    expect(response.status, JSON.stringify(response.body)).toBe(404);
+    expect(JSON.stringify(response.body)).not.toContain('Test Patient');
+    expect(JSON.stringify(response.body)).not.toContain(`MRN-T${TAG}0`);
+    expect(await revealsBy(holder.userId)).toHaveLength(0);
+  });
+
+  it('gives the same 404 at the patient’s own hospital without a care reach, and files nothing', async () => {
+    const holder = await customDoctorHolder('az04-local', 'a');
+
+    const response = await reveal(patientPublicId, holder.token);
+    expect(response.status, JSON.stringify(response.body)).toBe(404);
+    expect(await revealsBy(holder.userId)).toHaveLength(0);
   });
 });
 

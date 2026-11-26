@@ -124,7 +124,11 @@ export class AiContextService {
       );
     }
 
-    return { mode: input.mode, patient, entity };
+    // The chart travels with the entity too (AI-02): a reference-bound
+    // thread is still a thread about this patient at this hospital, and is
+    // stamped with both — the `ai_conversations` insert policy refuses one
+    // that is not, and on an owner connection it would be unattributed PHI.
+    return { mode: input.mode, patient, entity, chart };
   }
 
   /**
