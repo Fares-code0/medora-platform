@@ -618,36 +618,33 @@ describe('the endpoint layer names only real routes (V-02)', () => {
   });
 
   /**
-   * Routes this client calls that the backend has not merged into this
-   * worktree yet (ADR-050, built in parallel to CONTRACT §4/§6). Each is
-   * asserted against the backend source the moment its path appears there;
-   * until then it is allow-listed BY NAME here. An entry is removed when
-   * the controller lands — the list is not a way to skip the check, and a
-   * route absent from both the backend and this list fails.
+   * The patient information layer, the patient assistant and the link
+   * probe (ADR-048, ADR-050) — each route this client calls is asserted
+   * against the controller decorators that serve it.
    */
-  const PENDING_BACKEND_ROUTES: readonly string[] = [
-    "'me/lab-orders'",
-    "'me/insurance'",
-    "'me/ai/conversations'",
-  ];
-
-  it('names the patient information and assistant routes the backend serves, or lists them as pending', () => {
+  it('names the patient information, linking and assistant routes the backend serves', () => {
     if (!backendPresent) return;
-    const corpus: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (/controller\.ts$/.test(entry.name)) corpus.push(fs.readFileSync(full, 'utf8'));
-      }
-    };
-    walk(path.join(BACKEND, 'src'));
-    const all = corpus.join('\n');
+    const read = (rel: string): string => fs.readFileSync(path.join(BACKEND, 'src', rel), 'utf8');
 
-    for (const route of ["'me/lab-orders'", "'me/insurance'", "'me/ai/conversations'"]) {
-      const served = all.includes(route);
-      if (!served) expect(PENDING_BACKEND_ROUTES).toContain(route);
-    }
+    const labs = read('modules/labs/controllers/patient-lab-status.controller.ts');
+    expect(labs).toContain("@Controller('me/lab-orders')");
+    expect(labs).toContain('@Get()');
+
+    const self = read('modules/patients/controllers/patient-self-link.controller.ts');
+    expect(self).toContain("@Controller('me')");
+    expect(self).toContain("@Get('insurance')");
+    expect(self).toContain("@Get('patient-link')");
+    expect(self).toContain("@Post('patient-link/code')");
+
+    const ai = read('modules/ai/controllers/patient-ai.controller.ts');
+    expect(ai).toContain("@Controller('me/ai/conversations')");
+    expect(ai).toContain("@Get(':conversationId')");
+    expect(ai).toContain("@Delete(':conversationId')");
+    expect(ai).toContain("@Post(':conversationId/messages')");
+
+    const hospitals = read('modules/hospitals/controllers/patient-hospital.controller.ts');
+    expect(hospitals).toContain("@Controller('patient/hospitals')");
+    expect(hospitals).toContain("@Get(':hospitalId')");
   });
 
   it('the information adapter calls exactly the two read routes, GET only', () => {
