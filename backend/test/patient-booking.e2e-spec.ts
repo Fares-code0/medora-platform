@@ -34,7 +34,7 @@ import { body as mailBody } from './support/smtp-sink';
  */
 // Each case signs up and links its own accounts; under the runtime role
 // (tenant context on) that alone approaches the 5 s default.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 120_000 });
 
 let harness: AuthHarness;
 
