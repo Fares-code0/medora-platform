@@ -7,14 +7,19 @@ import { DatabaseModule } from '../../shared/database';
 import { AiConversationController } from './controllers/ai-conversation.controller';
 import { AiMessageController } from './controllers/ai-message.controller';
 import { AiPromptController, AiUserSettingsController } from './controllers/ai-settings.controller';
+import { PatientAiController } from './controllers/patient-ai.controller';
 import { AiContextRepository } from './repositories/ai-context.repository';
 import { AiConversationRepository } from './repositories/ai-conversation.repository';
 import { AiSettingsRepository } from './repositories/ai-settings.repository';
+import { PatientAiContextRepository } from './repositories/patient-ai-context.repository';
+import { PatientAiConversationRepository } from './repositories/patient-ai-conversation.repository';
 import { AiContextService } from './services/ai-context.service';
 import { AiConversationService } from './services/ai-conversation.service';
 import { AiMessageService } from './services/ai-message.service';
 import { AiSettingsService } from './services/ai-settings.service';
 import { AiJobs } from './services/ai.jobs';
+import { PatientAiContextService } from './services/patient-ai-context.service';
+import { PatientAiService } from './services/patient-ai.service';
 
 /**
  * AI Assistant — API §11. M16.
@@ -64,6 +69,9 @@ import { AiJobs } from './services/ai.jobs';
     AiMessageController,
     AiPromptController,
     AiUserSettingsController,
+    // ADR-050 — the patient assistant: its own controller, services and
+    // repositories; patient-only, owner-only, separate prompts.
+    PatientAiController,
   ],
   providers: [
     AiConversationService,
@@ -74,6 +82,10 @@ import { AiJobs } from './services/ai.jobs';
     AiSettingsService,
     AiSettingsRepository,
     AiJobs,
+    PatientAiService,
+    PatientAiContextService,
+    PatientAiConversationRepository,
+    PatientAiContextRepository,
   ],
 })
 export class AiModule {}

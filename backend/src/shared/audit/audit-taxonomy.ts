@@ -86,6 +86,8 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // the coverage spec's first regex only matched two-segment actions and
   // let this one through to `system`.
   ai: 'user_action',
+  // ADR-050 — the patient assistant: `patient_ai.context.read`, thread create/delete.
+  patient_ai: 'user_action',
   doctor: 'user_action',
   patient: 'user_action',
   // `legacy_clinical_record.read` — the safety screen consulted a legacy
