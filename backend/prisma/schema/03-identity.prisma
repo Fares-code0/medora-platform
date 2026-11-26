@@ -125,6 +125,8 @@ model User {
   cancelledAppointments Appointment[]                  @relation("AppointmentCancelledBy")
   appointmentEvents    AppointmentEvent[]              @relation("AppointmentEventActor")
   proposedReschedules  AppointmentRescheduleProposal[] @relation("ProposalProposedBy")
+  requestedReschedules AppointmentRescheduleRequest[]  @relation("RescheduleRequestRequestedBy")
+  decidedReschedules   AppointmentRescheduleRequest[]  @relation("RescheduleRequestDecidedBy")
 
   recordedDiagnoses    RecordDiagnosis[]     @relation("DiagnosisRecordedBy")
   authoredRecordNotes  RecordNote[]          @relation("RecordNoteAuthor")

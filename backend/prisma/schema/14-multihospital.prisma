@@ -177,6 +177,7 @@ model PublishedSlot {
   hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Restrict)
   employment DoctorEmployment @relation(fields: [doctorEmploymentId, hospitalId], references: [id, hospitalId], onDelete: Restrict, map: "published_slots_employment_hospital_fkey")
   appointments Appointment[]
+  rescheduleRequests AppointmentRescheduleRequest[]
   @@unique([id, hospitalId, doctorEmploymentId], map: "published_slots_id_hospital_employment_key")
   @@index([hospitalId, startsAt], map: "published_slots_hospital_starts_idx")
   @@index([doctorEmploymentId, startsAt], map: "published_slots_employment_starts_idx")

@@ -222,6 +222,7 @@ Generated from a fresh `db:deploy` of 42 migrations (incl. `20261123130000_queue
 | `api_keys` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
 | `appointment_events` | Indirect | id | appointments | appointments, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
 | `appointment_reschedule_proposals` | Indirect | id | appointments | appointments, users | PHI | ALL: EXISTS parent row in context hospital (USING and WITH CHECK) | Yes |
+| `appointment_reschedule_requests` | Direct | id | hospital_id (= its appointment's) | appointments, published_slots, users | PHI | SELECT: parent appointment visible and same hospital; INSERT/UPDATE: parent clinically writable; DELETE: system only (migration 20261126100000, ADR-049) | Yes |
 | `appointments` | Direct | id | hospital_id | departments, doctor_employments, doctors, hospital_departments, hospital_medical_records, patients, published_slots, users, visit_types | PHI | ALL: hospital_id = context (USING and WITH CHECK); legacy NULL rows per #17 | Yes |
 | `audit_events` | Internal/system | id,occurred_at | hospital_id (nullable attribution) | — | Audit | INSERT from any scope, attribution checked (20261125091000); SELECT scoped by hospital (OD-07); no UPDATE/DELETE grant; partitions owner-only with RLS (20261125090000); retention only by the audit maintenance role (20261125100000, H1) | Yes |
 | `backups` | Internal/system | id | — | users | Secret | No hospital policy; per-user or system access | No |
