@@ -154,11 +154,11 @@ describe('GET /patient/hospitals/:id', () => {
       ['id', 'name', 'description', 'phone', 'clinics', 'locations', 'departments', 'specialties'].sort(),
     );
     expect(body['description']).toBeNull();
-    expect(body['clinics']).toEqual([{ id: expect.any(String), name: 'Cardiology Clinic' }]);
-    expect(body['departments']).toEqual([{ id: expect.any(String), name: 'Cardiology' }]);
+    expect(body['clinics']).toEqual([{ id: expect.any(String) as unknown, name: 'Cardiology Clinic' }]);
+    expect(body['departments']).toEqual([{ id: expect.any(String) as unknown, name: 'Cardiology' }]);
     expect(body['locations']).toEqual([
       {
-        id: expect.any(String),
+        id: expect.any(String) as unknown,
         name: 'Main Campus',
         addressLine: '1 Nile Street',
         city: 'Cairo',

@@ -264,7 +264,7 @@ describe('GET /me/insurance', () => {
     expect(response.status).toBe(200);
     const body = dataOf<{ insurance: Record<string, unknown>; authorizations: unknown }>(response);
     expect(body.insurance).toEqual({
-      providerName: expect.any(String),
+      providerName: expect.any(String) as unknown,
       plan: 'Gold',
       policyNumberLast4: '7665',
       validUntil: '2027-12-31',
