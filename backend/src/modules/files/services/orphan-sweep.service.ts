@@ -7,9 +7,9 @@
  * ## The sweep is here; the schedule is M30.2's
  *
  * This is the work a scheduled job does, written as a method something
- * can call. What is deliberately **not** here is the cron entry: M30.2
- * owns the scheduled-jobs registry and already lists "orphan cleanup"
- * among the schedules it registers. Building a second scheduler inside a
+ * can call. What is deliberately **not** here is the cron entry: the
+ * scheduled-jobs registry (M30.2) owns scheduling, and `files.jobs.ts`
+ * registers "orphan cleanup" with it. Building a second scheduler inside a
  * domain module is how periodic behaviour ends up running twice on two
  * instances and nowhere on a third — the exit gate for M30 is "all
  * periodic behaviour runs from the registry, none ad hoc", and an ad hoc

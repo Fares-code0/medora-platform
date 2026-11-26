@@ -15,8 +15,8 @@ import { OrphanSweepService } from './services/orphan-sweep.service';
  * the S3 adapter at M25.2; this module owns the `files` rows, the
  * per-kind rules, the scan gate and the scope decision.
  *
- * `OrphanSweepService` is exported so **M30.2**'s scheduled-job registry
- * can call it. It registers no timer of its own — see its header.
+ * `OrphanSweepService` is exported, and `FilesJobs` (**M30.2**'s
+ * registrations) calls it. It registers no timer of its own — see its header.
  */
 @Module({
   controllers: [FilesController],
