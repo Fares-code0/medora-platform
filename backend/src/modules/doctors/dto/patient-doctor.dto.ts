@@ -38,6 +38,11 @@ export interface PatientDoctorSummary {
   readonly languages: readonly string[];
   /** Null when no satisfaction survey has been recorded yet. */
   readonly ratingAvg: number | null;
+  /**
+   * The hospital of the doctor's active employment (contract §2) — the
+   * filtered hospital when `hospitalId` is given. Additive.
+   */
+  readonly hospital: { readonly id: string; readonly name: string } | null;
 }
 
 /** What a patient sees on a doctor's profile screen. */
