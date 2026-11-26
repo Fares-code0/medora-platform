@@ -47,8 +47,11 @@ export interface DoctorSearchCriteria {
   readonly pageSize: number;
 }
 
+/** A summary plus the internal employment id used to look up the next slot (never serialized). */
+export type SummaryWithEmployment = PatientDoctorSummary & { readonly employment: { readonly id: string; readonly timezone: string } | null };
+
 export interface DoctorPage {
-  readonly items: readonly PatientDoctorSummary[];
+  readonly items: readonly SummaryWithEmployment[];
   readonly totalItems: number;
 }
 
@@ -79,6 +82,13 @@ const SUMMARY_SELECT = {
   languages: true,
   ratingAvg: true,
   department: { select: { name: true } },
+  // DSC-05: the hospital dimension. One active employment per doctor (DB
+  // partial unique), so `take: 1` is exact; the same L6 predicate as above.
+  employments: {
+    where: { endedAt: null, hospital: { is: { status: 'ACTIVE', deletedAt: null } } },
+    select: { id: true, hospital: { select: { id: true, name: true, timezone: true } } },
+    take: 1,
+  },
 } as const;
 
 @Injectable()
@@ -124,7 +134,9 @@ export class PatientDoctorRepository {
    * the caller turns both into the same 404. A separate answer for the
    * second would confirm that a suspended practitioner exists.
    */
-  async findById(doctorId: string): Promise<PatientDoctorDetail | null> {
+  async findById(
+    doctorId: string,
+  ): Promise<(PatientDoctorDetail & SummaryWithEmployment) | null> {
     if (!UUID.test(doctorId)) return null;
 
     const row = await runAsSystem(
@@ -184,10 +196,22 @@ interface SummaryRow {
   readonly languages: string[];
   readonly ratingAvg: { toNumber(): number } | null;
   readonly department: { name: string } | null;
+  readonly employments: readonly {
+    id: string;
+    hospital: { id: string; name: string; timezone: string };
+  }[];
 }
 
-function toSummary(row: SummaryRow): PatientDoctorSummary {
+function toSummary(row: SummaryRow): SummaryWithEmployment {
+  const employment = row.employments[0];
+
   return {
+    employment:
+      employment === undefined
+        ? null
+        : { id: employment.id, timezone: employment.hospital.timezone },
+    hospital: employment === undefined ? null : { id: employment.hospital.id, name: employment.hospital.name },
+    nextAvailableSlot: null,
     id: row.id,
     fullName: row.fullName,
     title: row.title,

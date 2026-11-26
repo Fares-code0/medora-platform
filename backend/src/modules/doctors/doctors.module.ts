@@ -5,6 +5,9 @@ import { DatabaseModule } from '../../shared/database';
 import { AdminDoctorController } from './controllers/admin-doctor.controller';
 import { AvailabilityController } from './controllers/availability.controller';
 import { DoctorVerificationController } from './controllers/doctor-verification.controller';
+import { DiscoveryController } from './discovery/discovery.controller';
+import { DiscoveryRepository } from './discovery/discovery.repository';
+import { DiscoveryService } from './discovery/discovery.service';
 import { PatientDoctorController } from './controllers/patient-doctor.controller';
 import { AdminDoctorRepository } from './repositories/admin-doctor.repository';
 import { LicenseExpiryRepository } from './repositories/license-expiry.repository';
@@ -60,6 +63,7 @@ import { PatientDoctorService } from './services/patient-doctor.service';
   imports: [DatabaseModule],
   controllers: [
     PatientDoctorController,
+    DiscoveryController,
     AvailabilityController,
     AdminDoctorController,
     DoctorVerificationController,
@@ -67,6 +71,8 @@ import { PatientDoctorService } from './services/patient-doctor.service';
   providers: [
     PatientDoctorService,
     PatientDoctorRepository,
+    DiscoveryService,
+    DiscoveryRepository,
     AvailabilityService,
     AvailabilityRepository,
     AdminDoctorService,
