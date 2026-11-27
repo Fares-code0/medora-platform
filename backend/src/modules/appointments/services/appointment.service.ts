@@ -39,6 +39,7 @@ import { AppException } from '../../../common/errors/app.exception';
 import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { isUniqueViolation } from '../../../shared/database';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
 import type { AppointmentPriority, AppointmentStatus } from '../../../generated/prisma/enums';
 import {
@@ -70,6 +71,7 @@ import { assertSlotDateArrived, appointmentStatusMachine } from './appointment-s
 import { civilDate, civilMoment } from './clinic-calendar';
 import { CLINIC_TIMEZONE, type ClinicTimezoneSource } from './clinic-timezone';
 import { toDetailView, toView } from './appointment-projection';
+import { isSlotTriggerRefusal } from './patient-booking.service';
 import { SlotConflictChecker } from './slot-conflict.checker';
 
 export interface PaginatedAppointments {
@@ -359,6 +361,10 @@ export class AppointmentService {
       if (locked === null) throw notFound();
       appointmentStatusMachine.assert(locked.status, 'RESCHEDULED');
 
+      // R-01: the hospital and employment the move's slot must belong to.
+      const binding = await this.appointments.slotBinding(locked.id, tx);
+      if (binding === null) throw notFound();
+
       const durationMin = input.durationMin ?? locked.durationMin;
 
       await this.conflicts.assertBookable({
@@ -369,6 +375,26 @@ export class AppointmentService {
         excludeAppointmentId: locked.id,
         tx,
       });
+
+      // R-01: a published slot belongs to one time. Moving the
+      // appointment releases the slot it held (a patient may book it
+      // again) and, when the new time is exactly a free published slot of
+      // the same employment, takes that one — so it is no longer offered
+      // to patients. Any other time is a slot-less hospital appointment,
+      // as a doctor-created booking is, and as `reassignTo` leaves one.
+      const publishedSlotId =
+        binding.hospitalId === null || binding.doctorEmploymentId === null
+          ? null
+          : await this.appointments.freeSlotAt(
+              {
+                hospitalId: binding.hospitalId,
+                doctorEmploymentId: binding.doctorEmploymentId,
+                startsAt: input.dateTime,
+                durationMin,
+                appointmentId: locked.id,
+              },
+              tx,
+            );
 
       const moved = await this.appointments.transition(
         {
@@ -386,11 +412,24 @@ export class AppointmentService {
           },
           startsAt: input.dateTime,
           durationMin,
+          publishedSlotId,
         },
         tx,
       );
 
       return { result: moved, previous: locked };
+    }).catch((error: unknown) => {
+      // R-01: the database's own guards — the one-live-booking-per-slot
+      // index (23505) and the phase-21 slot/employment trigger (23514) —
+      // refused the move. Nothing was written (the transaction rolled
+      // back), so this is the new time being unavailable, not a 500.
+      if (isUniqueViolation(error) || isSlotTriggerRefusal(error)) {
+        throw AppException.conflict(
+          'The new time is no longer available for this doctor; choose another',
+          'slot_conflict',
+        );
+      }
+      throw error;
     });
 
     if (result === null) throw staleWrite();

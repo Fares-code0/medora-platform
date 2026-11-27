@@ -192,21 +192,32 @@ export class PatientAccountLinkService {
     const { hospitalId, patient } = await this.reachable(user, publicId);
     const now = new Date();
 
-    const outcome = await this.links.unlink({
-      patientId: patient.id,
-      actorId: user.id,
-      now,
-      audit: (tx) =>
-        this.ledger.recordWithin(tx, {
-          action: 'patient.account.unlink',
-          actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
-          entityType: 'patient',
-          entityId: patient.publicId,
-          hospitalId,
-          occurredAt: now,
-          metadata: { sessionsRevoked: true },
-        }),
-    });
+    // `system` scope for the transaction (R-04): it deletes the *account's*
+    // personal assistant threads, which RLS admits only to their owner or to
+    // `system` — never to the hospital admin calling. Reach was decided
+    // above under the caller's own scope; every statement inside is keyed on
+    // that record's id or the account id read from its locked row.
+    const outcome = await runAsSystem(() =>
+      this.links.unlink({
+        patientId: patient.id,
+        hospitalId,
+        actorId: user.id,
+        now,
+        audit: (tx, facts) =>
+          this.ledger.recordWithin(tx, {
+            action: 'patient.account.unlink',
+            actor: { userId: user.id, role: user.role, sessionId: user.sessionId },
+            entityType: 'patient',
+            entityId: patient.publicId,
+            hospitalId,
+            occurredAt: now,
+            metadata: {
+              sessionsRevoked: true,
+              personalAiThreadsDeleted: facts.personalAiThreadsDeleted,
+            },
+          }),
+      }),
+    );
 
     switch (outcome.kind) {
       case 'unlinked':

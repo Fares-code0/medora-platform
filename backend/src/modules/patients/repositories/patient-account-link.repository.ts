@@ -33,7 +33,12 @@ export type LinkOutcome =
   | { readonly kind: 'patient_gone' };
 
 export type UnlinkOutcome =
-  | { readonly kind: 'unlinked'; readonly unlinkedAt: Date; readonly sessionsRevoked: number }
+  | {
+      readonly kind: 'unlinked';
+      readonly unlinkedAt: Date;
+      readonly sessionsRevoked: number;
+      readonly personalAiThreadsDeleted: number;
+    }
   | { readonly kind: 'not_linked' }
   | { readonly kind: 'patient_gone' };
 
@@ -144,18 +149,44 @@ export class PatientAccountLinkRepository {
    * Unlinks the record and ends every session of the account it was linked
    * to, in one transaction — so the device that held the patient's data
    * loses its access with the link, not at the next token expiry.
+   *
+   * The same transaction hard-deletes the account's **personal** assistant
+   * threads (`patient_mode = 'personal'`, ADR-050) and their turns (audit
+   * R-04). A personal thread is owned by the account, not the record, and
+   * its turns were answered from the record being unlinked; kept, they
+   * would stay readable and be replayed to the model next to whichever
+   * record the account is linked to next. Soft-deleted threads go too —
+   * `deleted_at` hides a row from the API, not from the table. General
+   * threads stay: their prompt carries no record data by construction
+   * (`buildGeneralPatientPrompt` takes only a locale). If any delete fails,
+   * the unlink rolls back with it, so old context is never left servable
+   * behind a completed unlink.
+   *
+   * Must run under `system` scope (see the service): `ai_conversations`
+   * admits a DELETE only from its owner or `system`, and the caller here is
+   * the hospital admin, under whom the deletes would silently match nothing.
    */
   async unlink(input: {
     readonly patientId: string;
+    /** The caller's hospital, from `reachable()`; re-checked under the lock. */
+    readonly hospitalId: string;
     readonly actorId: string;
     readonly now: Date;
-    readonly audit: (tx: Prisma.TransactionClient) => Promise<void>;
+    readonly audit: (
+      tx: Prisma.TransactionClient,
+      facts: { readonly personalAiThreadsDeleted: number },
+    ) => Promise<void>;
   }): Promise<UnlinkOutcome> {
     return this.prisma.$transaction(async (tx) => {
+      // Reach is re-checked under the lock: the transaction runs under
+      // `system` scope (R-04), so the caller's RLS no longer narrows this
+      // select — the record must still be held by the caller's hospital.
       const patients = await tx.$queryRaw<{ user_id: string | null }[]>`
-        SELECT user_id FROM public.patients
-         WHERE id = ${input.patientId}::uuid AND deleted_at IS NULL
-         FOR UPDATE`;
+        SELECT p.user_id FROM public.patients p
+         WHERE p.id = ${input.patientId}::uuid AND p.deleted_at IS NULL
+           AND EXISTS (SELECT 1 FROM public.hospital_medical_records r
+                        WHERE r.patient_id = p.id AND r.hospital_id = ${input.hospitalId}::uuid)
+         FOR UPDATE OF p`;
       const patient = patients[0];
       if (patient === undefined) return { kind: 'patient_gone' };
       if (patient.user_id === null) return { kind: 'not_linked' };
@@ -171,9 +202,22 @@ export class PatientAccountLinkRepository {
       });
       await tx.user.update({ where: { id: userId }, data: { authzVersion: { increment: 1 } } });
       await tx.patientAccountLinkCode.deleteMany({ where: { userId, usedAt: null } });
-      await input.audit(tx);
 
-      return { kind: 'unlinked', unlinkedAt: input.now, sessionsRevoked: revoked.count };
+      // R-04. Turns first, explicitly, rather than relying on the
+      // `ai_messages` ON DELETE CASCADE alone: the intent reads in the code,
+      // and the delete is subject to the same RLS as the parent.
+      const personal = { ownerId: userId, patientMode: 'personal' } as const;
+      await tx.aiMessage.deleteMany({ where: { conversation: personal } });
+      const purged = await tx.aiConversation.deleteMany({ where: personal });
+
+      await input.audit(tx, { personalAiThreadsDeleted: purged.count });
+
+      return {
+        kind: 'unlinked',
+        unlinkedAt: input.now,
+        sessionsRevoked: revoked.count,
+        personalAiThreadsDeleted: purged.count,
+      };
     });
   }
 

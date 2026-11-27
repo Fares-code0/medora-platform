@@ -26,7 +26,7 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'shared/jobs/job-runner.service.ts': 'platform maintenance jobs (no request, no caller input)',
   'modules/patients/services/patient.service.ts': "the masked directory's reach, from the caller's tenant",
   'modules/patients/services/patient-account-link.service.ts':
-    "account linking's reach (ADR-048): the caller's own hospital, from their staffing",
+    "account linking's reach (ADR-048): the caller's own hospital, from their staffing; the unlink transaction (R-04), keyed on the reached record and its account, deletes the account's personal AI threads",
   'modules/hospitals/repositories/patient-hospital.repository.ts':
     'the patient-facing hospital directory: active hospitals and their organisational names only (no PHI)',
   'modules/appointments/repositories/patient-booking.repository.ts':

@@ -65,8 +65,11 @@ function appointmentNotFound(): AppException {
   return AppException.notFound('Appointment not found');
 }
 
-/** The phase-21 trigger's refusals, seen when a slot changed under us. */
-function isSlotTriggerRefusal(error: unknown): boolean {
+/**
+ * The phase-21 trigger's refusals, seen when a slot changed under us.
+ * Also read by the doctor reschedule (`AppointmentService.reschedule`, R-01).
+ */
+export function isSlotTriggerRefusal(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return (
     text.includes('appointments_published_slot_available_check') ||
