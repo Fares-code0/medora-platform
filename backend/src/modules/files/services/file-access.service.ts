@@ -62,12 +62,14 @@ const PUBLICLY_READABLE = new Set(['profile_photo', 'branding_asset']);
  * from a patient (upload is not role-gated per kind), so "the uploader,
  * always" would otherwise be a second road to a clinical-kind file.
  *
- * The database still admits the same rows through
- * `app_rls.file_of_current_patient`; redefining it is a migration awaiting
- * approval (docs/audits/PR-68-R02-PATIENT-FILE-ACCESS-DESIGN.md).
+ * The database enforces the same rule (migration
+ * 20261127120000_r02_patient_clinical_files_deny: `files_read` refuses a
+ * patient any clinical file, by kind or by link), and `FilesService.upload`
+ * refuses a patient these kinds outright
+ * (docs/audits/PR-68-R02-PATIENT-FILE-ACCESS-DESIGN.md §12).
  */
-const PATIENT_ROLE = 'patient';
-const CLINICAL_KINDS_DENIED_TO_PATIENTS = new Set([
+export const PATIENT_ROLE = 'patient';
+export const CLINICAL_KINDS_DENIED_TO_PATIENTS: ReadonlySet<string> = new Set([
   'patient_document',
   'record_attachment',
   'lab_attachment',

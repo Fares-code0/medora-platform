@@ -38,10 +38,10 @@ import { destroyLabFixtures, orderTest, seedDoctor, seedPatient } from './suppor
  * links through staff in production; `patient-lab-notifications` does the
  * same).
  *
- * The database layer (`app_rls.file_of_current_patient`) still admits these
- * rows to the linked patient; that redefinition awaits approval
- * (docs/audits/PR-68-R02-PATIENT-FILE-ACCESS-DESIGN.md). What is proved here
- * is the application gate every patient-reachable route passes through.
+ * What is proved here is the application gate every patient-reachable route
+ * passes through. The database layer (migration
+ * 20261127120000_r02_patient_clinical_files_deny) is proved separately, as
+ * the restricted runtime role, by rls-patient-clinical-files.e2e-spec.ts.
  */
 class InMemoryStorage implements FileStoragePort {
   readonly objects = new Map<string, Buffer>();
@@ -352,18 +352,36 @@ describe('R-02 — nor another patient’s', () => {
 
 describe('R-02 — the uploader shortcut does not reopen a clinical kind to a patient', () => {
   it.each(CLINICAL_KINDS)(
-    '%s uploaded by the patient themselves: accepted, then unreadable',
+    '%s uploaded by the patient themselves: refused before storage (422)',
     async (kind) => {
-      // `POST /files` is not role-gated per kind, so a patient can mint a
-      // clinical-kind row. Reading it back through "the uploader, always"
-      // would be a second road to the kind; it is closed.
-      const fileId = await uploadId(patientToken, kind, `self-${kind}.pdf`);
-      await markClean(fileId);
-
-      expect((await readFile(patientToken, fileId)).status).toBe(404);
-      expect((await downloadFile(patientToken, fileId)).status).toBe(404);
+      // A patient never holds a clinical-kind file, so none can be read back
+      // through "the uploader, always". The upload itself is refused: under
+      // the R-02 migration the database would refuse INSERT … RETURNING.
+      const before = await harness.prisma.file.count({ where: { kind, uploadedBy: patientUserId } });
+      const response = await upload(patientToken, kind, `self-${kind}.pdf`);
+      expect(response.status, JSON.stringify(response.body)).toBe(422);
+      expect(await harness.prisma.file.count({ where: { kind, uploadedBy: patientUserId } })).toBe(before);
     },
   );
+
+  it('still refuses a clinical-kind file the patient uploaded before the rule (no read-back)', async () => {
+    // A row minted before the upload refusal existed, written as the owner.
+    const row = await harness.prisma.file.create({
+      data: {
+        storageKey: `r02-legacy-${String(Date.now())}`,
+        originalName: `${NAME_PREFIX}legacy.pdf`,
+        mimeType: 'application/pdf',
+        sizeBytes: 1,
+        checksumSha256: '0'.repeat(64),
+        kind: 'lab_attachment',
+        uploadedBy: patientUserId,
+      },
+    });
+    await markClean(row.id);
+
+    expect((await readFile(patientToken, row.id)).status).toBe(404);
+    expect((await downloadFile(patientToken, row.id)).status).toBe(404);
+  });
 
   it('leaves a non-clinical kind the patient uploaded readable (profile photo)', async () => {
     const response = await upload(patientToken, 'profile_photo', 'portrait.png', 'image/png', PNG);
