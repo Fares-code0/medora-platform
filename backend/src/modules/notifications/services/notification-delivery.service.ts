@@ -223,14 +223,14 @@ export class NotificationDeliveryService {
       // `sent`: there is no provider between us and the feed, and the
       // `delivered_at IS NOT NULL ⟺ status = 'delivered'` CHECK is
       // satisfied because the row really has arrived.
-      await this.finish(delivery.id, 'delivered', null, null);
+      await this.finish(delivery, 'delivered', null, null);
 
       return 'sent';
     }
 
     if (delivery.channel === COLUMN_VALUE[NotificationChannel.EMAIL]) {
       if (delivery.email === null || delivery.email.length === 0) {
-        await this.finish(delivery.id, 'skipped', 'no-address', null);
+        await this.finish(delivery, 'skipped', 'no-address', null);
 
         return 'skipped';
       }
@@ -250,7 +250,7 @@ export class NotificationDeliveryService {
         // `delivered` needs a delivery report from the provider, and
         // `provider_ref` is stored here so that report can be matched
         // when a provider that sends one arrives.
-        await this.finish(delivery.id, 'sent', null, result.providerRef ?? null);
+        await this.finish(delivery, 'sent', null, result.providerRef ?? null);
 
         return 'sent';
       }
@@ -260,7 +260,7 @@ export class NotificationDeliveryService {
       // backoff up to the cap, then becomes terminal.
       const error = result.error ?? 'send-failed';
       if (delivery.attempts < DELIVERY_MAX_ATTEMPTS) {
-        await this.finish(delivery.id, 'pending', error, null);
+        await this.finish(delivery, 'pending', error, null);
         this.logger.warn(
           { deliveryId: delivery.id, attempts: delivery.attempts },
           'Email delivery failed; will retry',
@@ -269,7 +269,7 @@ export class NotificationDeliveryService {
         return 'retry';
       }
 
-      await this.finish(delivery.id, 'failed', error, null);
+      await this.finish(delivery, 'failed', error, null);
       this.logger.warn({ deliveryId: delivery.id }, 'Email delivery failed');
 
       return 'failed';
@@ -282,7 +282,7 @@ export class NotificationDeliveryService {
     // SMS and desktop: RM M19.5 calls these stubs, and the platform SMS
     // slice is where a provider arrives. Saying `no-provider` is the
     // honest record of a deployment state.
-    await this.finish(delivery.id, 'skipped', 'no-provider', null);
+    await this.finish(delivery, 'skipped', 'no-provider', null);
 
     return 'skipped';
   }
@@ -300,7 +300,7 @@ export class NotificationDeliveryService {
    */
   private async deliverPush(delivery: ClaimedDelivery): Promise<'sent' | 'failed' | 'skipped' | 'retry'> {
     if (!this.push.configured) {
-      await this.finish(delivery.id, 'skipped', 'no-provider', null);
+      await this.finish(delivery, 'skipped', 'no-provider', null);
       return 'skipped';
     }
 
@@ -315,7 +315,7 @@ export class NotificationDeliveryService {
     );
 
     if (targets.length === 0) {
-      await this.finish(delivery.id, 'skipped', 'no-device', null);
+      await this.finish(delivery, 'skipped', 'no-device', null);
       return 'skipped';
     }
 
@@ -323,7 +323,7 @@ export class NotificationDeliveryService {
     try {
       outcomes = await this.push.send(targets, { title: delivery.title, body: delivery.body });
     } catch {
-      await this.finish(delivery.id, 'failed', 'send-failed', null);
+      await this.finish(delivery, 'failed', 'send-failed', null);
       this.logger.warn({ deliveryId: delivery.id }, 'Push delivery failed');
       return 'failed';
     }
@@ -340,12 +340,12 @@ export class NotificationDeliveryService {
     if (accepted !== undefined) {
       // `sent`, not `delivered`, for the reason the email branch gives:
       // the provider accepted it, which is not a device receiving it.
-      await this.finish(delivery.id, 'sent', null, accepted.providerRef ?? null);
+      await this.finish(delivery, 'sent', null, accepted.providerRef ?? null);
       return 'sent';
     }
 
     await this.finish(
-      delivery.id,
+      delivery,
       'failed',
       invalid.length > 0 ? 'invalid-token' : 'send-failed',
       null,
@@ -360,15 +360,21 @@ export class NotificationDeliveryService {
    * timestamp on a `sent` row is rejected by the database, and that is
    * the right rule — a time on a row whose arrival was never confirmed
    * would be a delivery receipt for something nobody acknowledged.
+   *
+   * Records the outcome of *this* claim only. The claim stamps `sending` and
+   * increments `attempts`, so `(status = 'sending', attempts = claimed)` is
+   * a fencing token: a worker that outlived its lease, whose row was
+   * re-claimed by another worker, matches nothing here and cannot overwrite
+   * the newer claim's outcome.
    */
   private async finish(
-    id: string,
+    delivery: Pick<ClaimedDelivery, 'id' | 'attempts'>,
     status: 'delivered' | 'sent' | 'failed' | 'skipped' | 'pending',
     error: string | null,
     providerRef: string | null,
   ): Promise<void> {
-    await this.prisma.db.notificationDelivery.update({
-      where: { id },
+    const { count } = await this.prisma.db.notificationDelivery.updateMany({
+      where: { id: delivery.id, status: 'sending', attempts: delivery.attempts },
       data: {
         status,
         ...(status === 'delivered' ? { deliveredAt: new Date() } : {}),
@@ -376,5 +382,21 @@ export class NotificationDeliveryService {
         providerRef,
       },
     });
+    if (count === 1) return;
+
+    // Nothing matched. A row that still exists was re-claimed by a newer
+    // worker: its outcome wins, and this late one is dropped. A row that no
+    // longer exists keeps today's behaviour — `update` raises P2025 — which
+    // `push-delivery.e2e-spec.ts` pins as a known defect awaiting a decision;
+    // fencing does not decide it.
+    const current = await this.prisma.db.notificationDelivery.findUnique({
+      where: { id: delivery.id },
+      select: { id: true },
+    });
+    if (current === null) {
+      await this.prisma.db.notificationDelivery.update({ where: { id: delivery.id }, data: { status } });
+      return;
+    }
+    this.logger.warn({ deliveryId: delivery.id }, 'Delivery outcome dropped: the claim was superseded');
   }
 }

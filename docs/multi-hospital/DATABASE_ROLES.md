@@ -91,3 +91,37 @@ functions with a pinned `search_path = pg_catalog, public` and schema-qualified 
    the application), and schedule it (daily is enough).
 4. Re-run the template after any migration that adds an append-only table (the `REVOKE` must be repeated).
 5. Rollback: point `DATABASE_URL` back at the owner role — immediate, no data change.
+6. **Migration `20261127120000_r02_patient_clinical_files_deny` (R-02, PR-68): run the pre-apply checks
+   first.** As the owner role, with the tokens replaced, before `db:deploy` reaches this migration:
+
+   ```bash
+   sed -e 's/__RUNTIME_ROLE__/medora_app/g' -e 's/__OWNER_ROLE__/medora/g' \
+     backend/prisma/roles/r02-preapply-check.sql | psql "<owner connection>" -v ON_ERROR_STOP=1
+   ```
+
+   It is read-only and prints `R-02 pre-apply checks passed`. Any `R-02 check N failed` means **stop**: do
+   not deploy, and do not edit the check to pass. The checks are: exactly four permissive policies on
+   `files`; the runtime role an explicit EXECUTE grantee of `app_rls.file_in_my_conversation` with SELECT
+   on `files`, and PUBLIC not; the owner owning `files`, `users`, `roles` and the three clinical link tables,
+   none with FORCE RLS. The migration grants its helper to the runtime role itself, so no template re-run
+   is needed for it. Design: `docs/audits/PR-68-R02-PATIENT-FILE-ACCESS-DESIGN.md` §11–§12.
+7. **A failed migration: `prisma migrate resolve` before any retry.** Prisma does **not** wrap a
+   PostgreSQL migration in a transaction (verified in the R-02 design, §11.5). Migrations that change a
+   policy carry their own `BEGIN;` … `COMMIT;`, so a failure inside them leaves the database unchanged.
+   Prisma still records the migration as failed (`P3009`/`P3018`, `finished_at` NULL), and every later
+   `db:deploy` refuses to run until it is resolved:
+   1. Read the error, and find the failed row in `_prisma_migrations` (`finished_at IS NULL`).
+   2. Confirm the database is unchanged. For R-02: `files_read` still exists and still references
+      `file_of_current_patient`, and `app_rls.file_denied_to_patient` does not exist.
+   3. Mark it rolled back: `npx prisma migrate resolve --rolled-back <migration_name>` (as the owner role,
+      `DATABASE_URL` pointing at the owner).
+   4. Fix the cause (for R-02, re-run the pre-apply checks of step 6), then `db:deploy` again.
+
+   Use `--applied` **only** if the migration's changes are verifiably all present. Never use it to skip
+   a migration that did not complete. A migration *without* its own transaction that fails mid-way can
+   leave a partial state; repair it by hand to either the before or the after state first, then resolve.
+8. **Rolling back R-02.** `backend/prisma/rollbacks/20261127120000_r02_patient_clinical_files_deny.down.sql`
+   restores the previous `files_read` policy exactly and drops the helper. That reopens the database-level
+   patient read path, so it needs the same approval as the migration. Ship it as a **new** migration (a
+   later timestamp, same SQL) so that `_prisma_migrations` stays truthful. Never edit or delete the
+   applied R-02 migration.

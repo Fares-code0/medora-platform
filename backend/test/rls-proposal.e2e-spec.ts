@@ -48,7 +48,14 @@ if (
   );
 }
 
-const POST_PROPOSAL_TABLES = new Set(['exceptional_access_grants', 'information_requests']);
+// Tables created after this proposal, by later migrations that carry their own
+// enforced policies. `appointment_reschedule_requests`: migration
+// 20261126100000_patient_appointment_actions (ADR-049).
+const POST_PROPOSAL_TABLES = new Set([
+  'exceptional_access_grants',
+  'information_requests',
+  'appointment_reschedule_requests',
+]);
 
 const PROPOSAL = readFileSync(
   resolve(__dirname, '../prisma/rls-proposal/phase22-rls-proposal.sql'),
@@ -593,6 +600,17 @@ describe('proposed RLS policies (never applied; rolled back)', () => {
       expect(gaps).toEqual([]);
       expect(covered.rows).toHaveLength(required.length);
     });
+  });
+
+  it('leaves no excluded table unprotected: each post-proposal table has RLS and a policy as migrated', async () => {
+    // Outside the proposal: the migrated database itself. Excluding a table
+    // above is only sound if its own migration enforces it.
+    const enforced = await client.query<{ relname: string; enabled: boolean; policies: string }>(
+      "SELECT c.relname, c.relrowsecurity AS enabled, (SELECT count(*) FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname) AS policies FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY($1::text[]) ORDER BY 1",
+      [[...POST_PROPOSAL_TABLES]],
+    );
+    expect(enforced.rows.map((r) => r.relname)).toEqual([...POST_PROPOSAL_TABLES].sort());
+    expect(enforced.rows.filter((r) => !r.enabled || Number(r.policies) === 0)).toEqual([]);
   });
 
   it('INSERT and DELETE: allowed in the own hospital, refused or no-op for another', async () => {

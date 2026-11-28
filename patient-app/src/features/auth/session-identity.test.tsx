@@ -39,6 +39,7 @@ const ACCOUNT_A: SignInResult = {
   tokens: { accessToken: 'access-a', refreshToken: 'refresh-a' },
   identity: {
     subjectId: 'subject-a',
+    role: 'patient',
     displayName: 'Sara',
     email: 'a@example.com',
     emailVerified: true,
@@ -54,6 +55,7 @@ const ACCOUNT_B: SignInResult = {
   tokens: { accessToken: 'access-b', refreshToken: 'refresh-b' },
   identity: {
     subjectId: 'subject-b',
+    role: 'patient',
     displayName: 'Omar',
     email: 'b@example.com',
     emailVerified: true,

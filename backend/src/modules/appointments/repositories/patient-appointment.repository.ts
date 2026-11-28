@@ -44,6 +44,8 @@ const DOCTOR_SELECT = {
 } as const;
 
 const SUMMARY_SELECT = {
+  id: true,
+  hospitalId: true,
   publicId: true,
   startsAt: true,
   durationMin: true,
@@ -133,6 +135,9 @@ export class PatientAppointmentRepository {
 }
 
 export interface SummaryRow {
+  /** Internal; never projected — used to join reschedule requests. */
+  readonly id: string;
+  readonly hospitalId: string | null;
   readonly publicId: string;
   readonly startsAt: Date;
   readonly durationMin: number;

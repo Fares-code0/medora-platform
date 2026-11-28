@@ -26,10 +26,9 @@ import { body as mailBody } from './support/smtp-sink';
  * see, address or count patient B's appointments, and the response must
  * not tell the difference between "not yours" and "does not exist".
  *
- * The write routes (book, cancel, confirm, slots) are deliberately not
- * implemented — each needs a policy no source states — so there is
- * nothing here to test for them, and their absence is asserted rather
- * than assumed.
+ * The write routes (book, cancel, reschedule requests, slots) arrived with
+ * ADR-049 and are tested in `patient-booking.e2e-spec.ts`; `confirm`
+ * (ADR-033 Q3) is still absent, and that absence is asserted below.
  */
 let harness: AuthHarness;
 
@@ -444,27 +443,29 @@ describe('GET /me/appointments/:id', () => {
   });
 });
 
-describe('the write routes are absent, not half-built', () => {
-  it('does not expose cancel or confirm', async () => {
-    // Each needs a policy no source states (ADR-033). Their absence is
-    // asserted so that adding one is a deliberate act with a decision
-    // behind it, rather than something that appears by accident.
-    // `POST /me/appointments` (booking a published slot, DR-10/DR-11) now
-    // exists and is covered by `patient-booking.e2e-spec.ts`.
+describe('the patient write routes (ADR-049)', () => {
+  it('exposes booking and cancel, and still not confirm', async () => {
+    // Booking and cancellation arrived with ADR-049 and are covered by
+    // `patient-booking.e2e-spec.ts`; an empty body is refused as
+    // invalid, not answered as a missing route. Re-confirming a clinic
+    // proposal (ADR-033 Q3) is still undecided, so that route stays absent.
     const session = await signUp('sara');
     const pt = await linkTo(session, 0);
     const apt = await seedAppointment(pt, new Date('2026-10-01T09:00:00Z'));
 
-    for (const path of [
-      `${APPOINTMENTS}/${apt}/cancel`,
-      `${APPOINTMENTS}/${apt}/confirm`,
-    ]) {
+    for (const path of [APPOINTMENTS, `${APPOINTMENTS}/${apt}/cancel`]) {
       const response = await request(harness.server)
         .post(path)
         .set('Authorization', `Bearer ${session.token}`)
         .send({});
 
-      expect([403, 404], `POST ${path}`).toContain(response.status);
+      expect(response.status, `POST ${path}`).toBe(422);
     }
+
+    const confirm = await request(harness.server)
+      .post(`${APPOINTMENTS}/${apt}/confirm`)
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({});
+    expect([403, 404]).toContain(confirm.status);
   });
 });

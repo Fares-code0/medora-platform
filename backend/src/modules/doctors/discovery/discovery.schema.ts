@@ -57,17 +57,3 @@ export const discoverySearchSchema = z
 
 export type DiscoverySearchQuery = z.infer<typeof discoverySearchSchema>;
 
-export const hospitalListSchema = z
-  .object({
-    q: searchTerm.optional(),
-    specialtyId: z.string().uuid().optional(),
-    near: near.optional(),
-    sort: z.enum(['name', 'distance', 'nextAvailable']).optional(),
-    ...paging,
-  })
-  .refine((query) => query.sort !== 'distance' || query.near !== undefined, {
-    path: ['near'],
-    message: 'near is required when sort=distance',
-  });
-
-export type HospitalListQuery = z.infer<typeof hospitalListSchema>;

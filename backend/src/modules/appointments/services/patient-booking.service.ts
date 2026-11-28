@@ -1,275 +1,417 @@
 /**
- * `POST /me/appointments` — a patient books a doctor-published slot
- * (DR-10, DR-11, OD-08, OD-09, OD-14; `API_CONTRACT_CHANGES.md` §6 and
- * §10 `book_appointment`; audit SLT-03, SLT-04, SLT-05).
+ * The patient's appointment actions (ADR-049): booking a published slot,
+ * cancelling before the start, and the reschedule-request lifecycle.
  *
- * ## One transaction, the slot decides everything
+ * Every route resolves the patient from the session through
+ * `PatientSelfScopeService` — there is no patient parameter anywhere — and
+ * every row it touches is loaded through a WHERE that names that patient,
+ * so another patient's appointment and an unknown id are the same 404.
  *
- * Inside the doctor's schedule lock (BE-1, shared with the doctor's own
- * booking path so the two serialise) the slot row is locked `FOR UPDATE`
- * and re-read. The hospital, the doctor (through the slot's employment),
- * the time and the duration are the slot's; the body cannot carry them
- * (the schema is strict). In order:
- *
- * 1. the slot exists (else 404), is not withdrawn and still offerable
- *    (`409 slot_taken`, `detail: withdrawn`), starts in the future
- *    (`past`), and holds no live appointment and no overlapping booking
- *    or time off (`booked` / `withdrawn`);
- * 2. OD-14: an insured patient's provider is accepted at the slot's
- *    hospital on the slot's date, else `422 insurance_not_covered`; an
- *    uninsured patient is not checked;
- * 3. OD-09: the patient's Hospital Medical Record there is opened if this
- *    is the first interaction with that hospital;
- * 4. the appointment is inserted with `published_slot_id`.
- *
- * The partial unique index `appointments_one_active_booking_per_slot`,
- * the `appointments_no_overlap` exclusion and the insert trigger are the
- * final guards; a violation of any is the same `409 slot_taken`, so N
- * concurrent bookings of one slot yield exactly one success (DR-11).
- *
- * ## Why the transaction runs under `system` scope
- *
- * Under a `patient` tenant scope the organisational rows the booking must
- * read — `published_slots`, `doctor_employments`, `doctor_time_off`,
- * `hospital_insurance_coverage` (`org_visible`) — are invisible, and the
- * appointment insert trigger `validate_active_appointment_employment`
- * itself reads `doctor_employments` and `published_slots` `FOR UPDATE`
- * under the caller's policies, so the insert cannot succeed in that scope.
- * The booking transaction therefore runs under `runAsSystem`, reviewed:
- * every statement in it is keyed by the slot id or by the caller's own
- * `patients.id` (resolved from the session, never the body); it writes
- * only that patient's appointment, its event and that patient's record;
- * and the response is read afterwards through the patient's own scope
- * (`PatientAppointmentService.ownById`). No other patient's data is read
- * or returned.
- *
- * ## Status on creation
- *
- * `scheduled`. No source fixes the initial status of a patient booking of
- * a published slot; the slot is the doctor's own offer, so the booking is
- * not a request awaiting the doctor's answer (`pending`), and `scheduled`
- * is the initial status the doctor's own booking path uses (API §5.3).
- * The doctor is notified through the existing `appointment.created`
- * outbox topic, as on that path — recorded inside the booking
- * transaction (`publishWithin`), so it commits with the booking.
- *
- * ## Not here
- *
- * Patient cancel / reschedule / accept-proposal and `availableActions`
- * (ADR-033, unresolved), and booking-window / lead-time policy values
- * (OD-08 implementation policy, not yet set).
+ * Audit and outbox run after the commit, never inside it (API §5).
  */
 
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 
-import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { AppException } from '../../../common/errors/app.exception';
-import { ACTIVITY_RECORDER, type ActivityRecorder } from '../../../shared/activity';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
-import { PatientSelfScopeService, principalOf } from '../../../shared/authz';
-import { runAsSystem } from '../../../shared/database';
+import { PatientSelfScopeService, type Principal } from '../../../shared/authz';
+import { isUniqueViolation } from '../../../shared/database';
 import { OUTBOX, type OutboxPort } from '../../../shared/outbox';
-import { appointmentPriorityToWire, appointmentStatusToWire } from '../dto/appointment-enums';
-import type { PatientAppointmentDetail } from '../dto/patient-appointment.dto';
-import type { BookAppointmentInput } from '../dto/published-slot.schema';
-import { AppointmentRepository } from '../repositories/appointment.repository';
-import { PublishedSlotRepository } from '../repositories/published-slot.repository';
-
+import { appointmentStatusToWire } from '../dto/appointment-enums';
+import type {
+  PatientAppointmentDetail,
+  PatientSlotView,
+  PatientVisitTypeView,
+  RescheduleRequestView,
+} from '../dto/patient-appointment.dto';
+import type {
+  PatientBookInput,
+  PatientCancelInput,
+  PatientRescheduleRequestInput,
+  PatientSlotQuery,
+} from '../dto/patient-appointment.schema';
 import {
-  ACTIVE_EMPLOYMENT,
-  mentionsConstraint,
-  NO_OVERLAP,
-  ONE_BOOKING_PER_SLOT,
-  SLOT_AVAILABLE,
-} from './booking-errors';
-import { CLINIC_TIMEZONE, type ClinicTimezoneSource } from './clinic-timezone';
-import { PatientAppointmentService } from './patient-appointment.service';
-import { assertPatient } from './published-slot.service';
-import { SlotConflictChecker } from './slot-conflict.checker';
+  PatientBookingRepository,
+  SlotUnavailable,
+  type ActionAppointmentRow,
+  type RequestRow,
+  type SlotRow,
+} from '../repositories/patient-booking.repository';
 
-type SlotTakenReason = 'booked' | 'withdrawn' | 'past';
+import { PatientAppointmentService } from './patient-appointment.service';
+import { cancelRefusal, patientCancelledReason, rescheduleRefusal } from './patient-appointment.policy';
+import { toRequestView } from './reschedule-request.projection';
+
+const PATIENT_ROLE = 'patient';
+const DAY_MS = 86_400_000;
+const DEFAULT_SLOT_WINDOW_DAYS = 31;
+
+/** 403 `patient_only` — the routes exist for the patient audience alone. */
+export function assertPatient(principal: Principal): void {
+  if (principal.roleCode !== PATIENT_ROLE) {
+    throw AppException.forbidden('Only a patient account can use this route', 'patient_only');
+  }
+}
+
+function slotTaken(detail = 'The slot is no longer available; choose another'): AppException {
+  return AppException.conflict(detail, 'slot_taken');
+}
+
+function slotNotFound(): AppException {
+  return AppException.notFound('Slot not found');
+}
+
+function appointmentNotFound(): AppException {
+  return AppException.notFound('Appointment not found');
+}
+
+/**
+ * The phase-21 trigger's refusals, seen when a slot changed under us.
+ * Also read by the doctor reschedule (`AppointmentService.reschedule`, R-01).
+ */
+export function isSlotTriggerRefusal(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return (
+    text.includes('appointments_published_slot_available_check') ||
+    text.includes('appointments_active_employment_check') ||
+    text.includes('Appointment must use an available matching published slot') ||
+    text.includes('Hospital appointment requires an active matching doctor employment')
+  );
+}
 
 @Injectable()
 export class PatientBookingService {
   constructor(
-    private readonly slots: PublishedSlotRepository,
-    private readonly appointments: AppointmentRepository,
-    private readonly conflicts: SlotConflictChecker,
-    private readonly self: PatientSelfScopeService,
-    private readonly patientAppointments: PatientAppointmentService,
-    @Inject(CLINIC_TIMEZONE) private readonly timezone: ClinicTimezoneSource,
+    private readonly bookings: PatientBookingRepository,
+    private readonly scope: PatientSelfScopeService,
+    private readonly reads: PatientAppointmentService,
     @Inject(AUDIT_DISPATCHER) private readonly audit: AuditDispatcher,
-    @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
     @Inject(OUTBOX) private readonly outbox: OutboxPort,
   ) {}
 
-  async book(
-    user: AuthenticatedUser,
-    input: BookAppointmentInput,
-  ): Promise<PatientAppointmentDetail & { readonly clinicTimezone: string }> {
-    assertPatient(user);
-    const principal = principalOf(user);
+  // ── Reads ────────────────────────────────────────────────────────────
 
-    // KD-4 / RA-030.1: an account not yet linked to a patient identity
-    // cannot book — there is no one to book for.
-    const patientPublicId = await this.self.patientIdFor(principal);
-    const patientId =
-      patientPublicId === null ? null : await this.slots.patientUuid(patientPublicId);
-    if (patientPublicId === null || patientId === null) {
-      throw AppException.conflict(
-        'Link your account to your patient identity before booking',
-        'patient_identity_required',
-      );
-    }
+  /** `GET /patient/doctors/:doctorId/slots` — bookable published slots. */
+  async slots(principal: Principal, doctorId: string, query: PatientSlotQuery): Promise<PatientSlotView[]> {
+    assertPatient(principal);
+    const now = new Date();
+    const from = query.from !== undefined && query.from > now ? query.from : now;
+    const to = query.to ?? new Date(from.getTime() + DEFAULT_SLOT_WINDOW_DAYS * DAY_MS);
+    if (to <= from) return [];
 
-    const visitTypeId = await this.resolveVisitType(input.visitTypeId);
-
-    // Whose schedule lock to take. Read before the lock; the slot is
-    // re-read under it, and its employment cannot change (a Phase 21
-    // trigger forbids moving a slot between employments).
-    const doctorId = await runAsSystem(() => this.slots.slotDoctor(input.slotId));
-    if (doctorId === null) throw AppException.notFound('Slot not found');
-
-    const [departmentId, displayName, timeZone] = await Promise.all([
-      this.appointments.defaultDepartmentId(doctorId),
-      this.appointments.displayNameForUser(user.id),
-      this.timezone.current(),
-    ]);
-    const actorName = displayName ?? user.publicId;
-
-    const booked = await runAsSystem(() =>
-      this.conflicts.underScheduleLock([doctorId], async (tx) => {
-        const slot = await this.slots.lockSlotForBooking(input.slotId, tx);
-        if (slot === null) throw AppException.notFound('Slot not found');
-
-        if (slot.withdrawnAt !== null || !slot.offerable || slot.doctorId !== doctorId) {
-          throw slotTaken('withdrawn');
-        }
-        if (slot.startsAt.getTime() <= Date.now()) throw slotTaken('past');
-        if ((await this.slots.liveBookingOf(slot.id, tx)) !== null) throw slotTaken('booked');
-
-        const occupied = await this.conflicts.findOccupancy({
-          doctorId: slot.doctorId,
-          bufferMin: slot.bufferMin,
-          timeZone,
-          candidate: { startsAt: slot.startsAt, durationMin: slot.durationMinutes },
-          tx,
-        });
-        if (occupied !== null) {
-          throw slotTaken(occupied.rule === 'inside-time-off' ? 'withdrawn' : 'booked');
-        }
-
-        // OD-14: insured → validate coverage; uninsured → no check.
-        const providerId = await this.slots.activeInsuranceProvider(patientId, slot.startsAt, tx);
-        if (
-          providerId !== null &&
-          !(await this.slots.hospitalCovers(slot.hospitalId, providerId, slot.startsAt, tx))
-        ) {
-          throw new AppException(HttpStatus.UNPROCESSABLE_ENTITY, {
-            code: 'insurance_not_covered',
-            message: 'Your insurance is not accepted at this hospital',
-            detail: 'The hospital of this slot does not accept your active insurance provider',
-          });
-        }
-
-        // OD-09: the first real interaction opens the record there.
-        const record = await this.slots.ensureRecord(patientId, slot.hospitalId, tx);
-
-        const row = await this.slots.insertBooking(
-          {
-            publicId: await this.appointments.nextReference(tx),
-            slot,
-            patientId,
-            hospitalMedicalRecordId: record.id,
-            departmentId,
-            visitTypeId,
-            reason: input.reason,
-            notes: input.notes ?? null,
-            isNewPatient: record.created,
-            actorId: user.id,
-            actorName,
-          },
-          tx,
-        );
-
-        // The doctor's notification (`appointment.created`, audience
-        // doctor) commits with the booking or not at all (RM M19.1).
-        await this.outbox.publishWithin(tx, {
-          topic: 'appointment.created',
-          payload: {
-            appointmentId: row.publicId,
-            patientId: patientPublicId,
-            doctorId: slot.doctorId,
-            startsAt: row.startsAt.toISOString(),
-            status: appointmentStatusToWire(row.status),
-          },
-          dedupeKey: `appointment.created:${row.publicId}:${row.updatedAt.toISOString()}`,
-        });
-
-        return { row, slot, recordCreated: record.created };
-      }),
-    ).catch((error: unknown) => {
-      if (error instanceof AppException) throw error;
-      if (mentionsConstraint(error, [ONE_BOOKING_PER_SLOT, NO_OVERLAP])) throw slotTaken('booked');
-      if (mentionsConstraint(error, [SLOT_AVAILABLE, ACTIVE_EMPLOYMENT])) {
-        throw slotTaken('withdrawn');
-      }
-      throw error;
-    });
-
-    await this.audit.record({
-      action: 'appointment.book',
-      actor: { userId: user.id, role: user.role },
-      entityType: 'appointment',
-      entityId: booked.row.publicId,
-      hospitalId: booked.slot.hospitalId,
-      metadata: {
-        status: appointmentStatusToWire(booked.row.status),
-        priority: appointmentPriorityToWire(booked.row.priority as never),
-        channel: 'patient',
-        publishedSlotId: booked.slot.id,
-        medicalRecordOpened: booked.recordCreated,
-      },
-    });
-
-    await this.activity.record({
-      userId: user.id,
-      kind: 'profile',
-      summary: 'Booked an appointment',
-      detail: booked.row.publicId,
-    });
-
-    return this.patientAppointments.ownById(principal, booked.row.publicId);
+    const rows = await this.bookings.bookableSlots(doctorId, from, to);
+    return rows.map((row) => ({
+      id: row.id,
+      startsAt: row.startsAt.toISOString(),
+      durationMin: row.durationMin,
+      hospital: row.hospital,
+    }));
   }
 
-  /** `visitTypeId` when sent (must be active), else the first active one. */
-  private async resolveVisitType(visitTypeId: string | undefined): Promise<string> {
-    if (visitTypeId !== undefined) {
-      if (await this.slots.activeVisitType(visitTypeId)) return visitTypeId;
+  /** `GET /patient/visit-types` — the active catalogue. */
+  async visitTypes(principal: Principal): Promise<PatientVisitTypeView[]> {
+    assertPatient(principal);
+    return (await this.bookings.visitTypes()).map((row) => ({
+      id: row.id,
+      name: row.name,
+      durationMin: row.defaultDurationMin,
+    }));
+  }
+
+  // ── Booking ──────────────────────────────────────────────────────────
+
+  /** `POST /me/appointments` — book a published slot; starts `pending`. */
+  async book(
+    principal: Principal,
+    input: PatientBookInput,
+  ): Promise<PatientAppointmentDetail & { clinicTimezone: string }> {
+    const patientPublicId = await this.linkedPatient(principal);
+    const patient = await this.bookings.patient(patientPublicId, principal.userId);
+    if (patient === null) throw notLinked();
+
+    const slot = await this.bookings.slot(input.slotId);
+    // A withdrawn or unpublishable slot is not offered to anyone, so it is
+    // answered as absent rather than as taken.
+    if (slot === null || !slot.bookable || slot.withdrawn) throw slotNotFound();
+    if (slot.startsAt.getTime() <= Date.now()) throw slotTaken('The slot has already started');
+
+    const visitTypeId = await this.bookings.visitTypeId(input.visitTypeId);
+    if (visitTypeId === null) {
+      if (input.visitTypeId !== undefined) {
+        throw AppException.validation({ visitTypeId: ['Unknown or inactive visit type'] });
+      }
       throw AppException.validation(
-        { visitTypeId: ['Unknown visit type'] },
-        'The visit type is not one this clinic offers',
+        { visitTypeId: ['A visit type is required'] },
+        'No default visit type is configured; choose one',
+        'visit_type_required',
       );
     }
 
-    const fallback = await this.slots.defaultVisitTypeId();
-    if (fallback === null) {
-      throw new AppException(HttpStatus.SERVICE_UNAVAILABLE, {
-        message: 'Service unavailable',
-        code: 'service_unavailable',
-        detail: 'No visit type is configured',
+    // OD-14: an insured patient books only where the hospital covers the
+    // provider; an uninsured patient is not checked.
+    const covered = await this.bookings.insuranceCovered(patient.id, slot.hospitalId, startOfUtcDay(new Date()));
+    if (covered === false) {
+      throw new AppException(HttpStatus.UNPROCESSABLE_ENTITY, {
+        message: 'Your insurance is not accepted at this hospital',
+        code: 'insurance_not_covered',
+        detail: 'The hospital has no active coverage agreement with your insurance provider',
       });
     }
 
-    return fallback;
+    let booked: Awaited<ReturnType<PatientBookingRepository['book']>>;
+    try {
+      booked = await this.bookings.book({
+        slot,
+        patientId: patient.id,
+        userId: principal.userId,
+        actorName: patient.actorName,
+        visitTypeId,
+        reason: input.reason,
+        notes: input.notes === undefined || input.notes === '' ? null : input.notes,
+      });
+    } catch (error: unknown) {
+      throw this.bookingError(error);
+    }
+
+    await this.audit.record({
+      action: 'appointment.book',
+      actor: { userId: principal.userId, role: principal.roleCode },
+      entityType: 'appointment',
+      entityId: booked.publicId,
+      hospitalId: slot.hospitalId,
+      metadata: { status: 'pending', by: 'patient', hospitalRecordOpened: booked.hospitalCreated },
+    });
+    await this.outbox.publish({
+      topic: 'appointment.created',
+      payload: {
+        appointmentId: booked.publicId,
+        patientId: patientPublicId,
+        doctorId: slot.doctorId,
+        startsAt: slot.startsAt.toISOString(),
+        status: 'pending',
+      },
+      dedupeKey: `appointment.created:${booked.publicId}`,
+    });
+
+    return this.reads.ownById(principal, booked.publicId);
+  }
+
+  private bookingError(error: unknown): unknown {
+    if (error instanceof SlotUnavailable) {
+      return error.reason === 'withdrawn' || error.reason === 'unbookable'
+        ? slotNotFound()
+        : slotTaken(error.reason === 'started' ? 'The slot has already started' : undefined);
+    }
+    if (isUniqueViolation(error) || isSlotTriggerRefusal(error)) return slotTaken();
+    return error;
+  }
+
+  // ── Cancellation ──────────────────────────────────────────────────────
+
+  /** `POST /me/appointments/:id/cancel` — before `startsAt`, with a closed reason. */
+  async cancel(
+    principal: Principal,
+    appointmentId: string,
+    input: PatientCancelInput,
+  ): Promise<PatientAppointmentDetail & { clinicTimezone: string }> {
+    const patientPublicId = await this.linkedPatient(principal);
+    const appointment = await this.bookings.ownAppointment(patientPublicId, appointmentId);
+    if (appointment === null) throw appointmentNotFound();
+
+    const refusal = cancelRefusal(appointment, new Date());
+    if (refusal !== null) throw AppException.conflict(refusal);
+
+    const patient = await this.bookings.patient(patientPublicId, principal.userId);
+    const cancelledReason = patientCancelledReason(input.reasonCode, input.note);
+    const done = await this.bookings.cancel({
+      appointment,
+      userId: principal.userId,
+      actorName: patient?.actorName ?? 'Patient',
+      cancelledReason,
+      reasonCode: input.reasonCode,
+    });
+    if (!done) {
+      throw AppException.conflict(
+        'The appointment changed while this request was in flight; reload and try again',
+      );
+    }
+
+    await this.audit.record({
+      action: 'appointment.patient_cancel',
+      actor: { userId: principal.userId, role: principal.roleCode },
+      entityType: 'appointment',
+      entityId: appointment.publicId,
+      hospitalId: appointment.hospitalId,
+      metadata: {
+        from: appointmentStatusToWire(appointment.status),
+        status: 'cancelled',
+        reasonCode: input.reasonCode,
+      },
+    });
+    // The doctor is told; the patient who cancelled is not notified of their
+    // own act (contract §5) — hence a topic of its own, not `appointment.cancelled`.
+    await this.outbox.publish({
+      topic: 'appointment.cancelled_by_patient',
+      payload: {
+        appointmentId: appointment.publicId,
+        patientId: patientPublicId,
+        doctorId: appointment.doctorId,
+        startsAt: appointment.startsAt.toISOString(),
+        status: 'cancelled',
+      },
+      dedupeKey: `appointment.cancelled_by_patient:${appointment.publicId}`,
+    });
+
+    return this.reads.ownById(principal, appointment.publicId);
+  }
+
+  // ── Reschedule requests ───────────────────────────────────────────────
+
+  /** `POST /me/appointments/:id/reschedule-requests`. */
+  async requestReschedule(
+    principal: Principal,
+    appointmentId: string,
+    input: PatientRescheduleRequestInput,
+  ): Promise<RescheduleRequestView> {
+    const patientPublicId = await this.linkedPatient(principal);
+    const appointment = await this.bookings.ownAppointment(patientPublicId, appointmentId);
+    if (appointment === null) throw appointmentNotFound();
+
+    await this.bookings.supersedeStale({ appointmentIds: [appointment.id] });
+    const refusal = rescheduleRefusal(
+      {
+        status: appointment.status,
+        startsAt: appointment.startsAt,
+        hasHospital: appointment.hospitalId !== null && appointment.doctorEmploymentId !== null,
+        hasPendingRequest: await this.bookings.hasPendingRequest(appointment.id),
+      },
+      new Date(),
+    );
+    if (refusal !== null) {
+      throw AppException.conflict(
+        refusal,
+        refusal.includes('already pending') ? 'reschedule_request_pending' : 'conflict',
+      );
+    }
+
+    const slot = await this.bookings.slot(input.slotId);
+    if (slot === null || !slot.bookable || slot.withdrawn) throw slotNotFound();
+    assertSameBook(slot, appointment);
+    if (slot.id === appointment.publishedSlotId) {
+      throw AppException.validation({ slotId: ['This is the appointment’s current slot'] });
+    }
+    if (slot.startsAt.getTime() <= Date.now()) throw slotTaken('The slot has already started');
+    if (await this.bookings.slotHeld(slot.id, appointment.id)) throw slotTaken();
+
+    let created: RequestRow;
+    try {
+      created = await this.bookings.createRequest({
+        appointmentId: appointment.id,
+        hospitalId: slot.hospitalId,
+        doctorEmploymentId: slot.doctorEmploymentId,
+        slotId: slot.id,
+        userId: principal.userId,
+        note: input.note === undefined || input.note === '' ? null : input.note,
+      });
+    } catch (error: unknown) {
+      if (isUniqueViolation(error)) {
+        throw AppException.conflict(
+          'A reschedule request for this appointment is already pending',
+          'reschedule_request_pending',
+        );
+      }
+      throw error;
+    }
+
+    await this.audit.record({
+      action: 'appointment.reschedule_request',
+      actor: { userId: principal.userId, role: principal.roleCode },
+      entityType: 'appointment',
+      entityId: appointment.publicId,
+      hospitalId: appointment.hospitalId,
+      metadata: { requestId: created.id, status: 'pending' },
+    });
+    await this.outbox.publish({
+      topic: 'appointment.reschedule_request.created',
+      payload: {
+        appointmentId: appointment.publicId,
+        patientId: patientPublicId,
+        doctorId: appointment.doctorId,
+        requestId: created.id,
+      },
+      dedupeKey: `appointment.reschedule_request.created:${created.id}`,
+    });
+
+    return toRequestView(created, await this.bookings.slotTimings([created.requestedSlotId]));
+  }
+
+  /** `GET /me/appointments/:id/reschedule-requests` — newest first. */
+  async listRequests(principal: Principal, appointmentId: string): Promise<RescheduleRequestView[]> {
+    const patientPublicId = await this.linkedPatient(principal);
+    const appointment = await this.bookings.ownAppointment(patientPublicId, appointmentId);
+    if (appointment === null) throw appointmentNotFound();
+
+    await this.bookings.supersedeStale({ appointmentIds: [appointment.id] });
+    const rows = await this.bookings.requestsFor(appointment.id);
+    const slots = await this.bookings.slotTimings(rows.map((row) => row.requestedSlotId));
+    return rows.map((row) => toRequestView(row, slots));
+  }
+
+  /** `POST /me/reschedule-requests/:id/withdraw` — pending only. */
+  async withdraw(principal: Principal, requestId: string): Promise<RescheduleRequestView> {
+    const patientPublicId = await this.linkedPatient(principal);
+    const request = await this.bookings.ownRequest(patientPublicId, requestId);
+    if (request === null) throw AppException.notFound('Reschedule request not found');
+
+    await this.bookings.supersedeStale({ appointmentIds: [request.appointmentId] });
+    const withdrawn = await this.bookings.withdraw(request.id);
+    if (withdrawn === null) {
+      throw AppException.conflict('Only a pending reschedule request can be withdrawn');
+    }
+
+    await this.audit.record({
+      action: 'appointment.reschedule_request_withdraw',
+      actor: { userId: principal.userId, role: principal.roleCode },
+      entityType: 'appointment',
+      entityId: withdrawn.appointmentPublicId,
+      hospitalId: withdrawn.hospitalId,
+      metadata: { requestId: withdrawn.id, status: 'withdrawn' },
+    });
+
+    return toRequestView(withdrawn, await this.bookings.slotTimings([withdrawn.requestedSlotId]));
+  }
+
+  /**
+   * The caller's `PT-…` handle. A non-patient is 403 `patient_only`; an
+   * unlinked patient account is 409 `patient_not_linked`, so the app can
+   * show the linking screen.
+   */
+  private async linkedPatient(principal: Principal): Promise<string> {
+    assertPatient(principal);
+    const patientId = await this.scope.patientIdFor(principal);
+    if (patientId === null) throw notLinked();
+    return patientId;
   }
 }
 
-/**
- * `409 slot_taken` — contract §10 `book_appointment`: `detail` carries the
- * reason, one of `booked | withdrawn | past`, so the client can branch on
- * it and offer fresh slots.
- */
-function slotTaken(reason: SlotTakenReason): AppException {
-  return AppException.conflict(reason, 'slot_taken', 'The slot is no longer available');
+function notLinked(): AppException {
+  return AppException.conflict(
+    'This account is not yet linked to a patient record; link it at the hospital desk',
+    'patient_not_linked',
+  );
+}
+
+/** DISCOVERY_AND_BOOKING §6: a reschedule never moves across hospitals or doctors. */
+function assertSameBook(slot: SlotRow, appointment: ActionAppointmentRow): void {
+  if (slot.hospitalId !== appointment.hospitalId || slot.doctorEmploymentId !== appointment.doctorEmploymentId) {
+    throw AppException.validation(
+      { slotId: ['The slot must be with the same doctor at the same hospital'] },
+      'A reschedule cannot move to another doctor or hospital',
+      'slot_not_eligible',
+    );
+  }
+}
+
+function startOfUtcDay(instant: Date): Date {
+  return new Date(Date.UTC(instant.getUTCFullYear(), instant.getUTCMonth(), instant.getUTCDate()));
 }

@@ -5,31 +5,31 @@ import { StyleSheet, View } from 'react-native';
 
 import { OfflineBanner } from '@/components';
 import { AiChatScreen } from '@/features/ai/screens/AiChatScreen';
+import { AiConversationsScreen } from '@/features/ai/screens/AiConversationsScreen';
 import { AiHomeScreen } from '@/features/ai/screens/AiHomeScreen';
-import { AiImageScreen } from '@/features/ai/screens/AiImageScreen';
-import { AiSymptomsScreen } from '@/features/ai/screens/AiSymptomsScreen';
 import { DeprecationBanner } from '@/features/app-version/DeprecationBanner';
 import { AppointmentDetailScreen } from '@/features/appointments/screens/AppointmentDetailScreen';
 import { AppointmentsScreen } from '@/features/appointments/screens/AppointmentsScreen';
+import { RescheduleRequestScreen } from '@/features/appointments/screens/RescheduleRequestScreen';
 import { ConsentScreen } from '@/features/auth/screens/ConsentScreen';
 import { ClinicScreen } from '@/features/clinic/screens/ClinicScreen';
 import { DepartmentScreen } from '@/features/clinic/screens/DepartmentScreen';
 import { DiscoverScreen } from '@/features/doctors/screens/DiscoverScreen';
 import { DoctorProfileScreen } from '@/features/doctors/screens/DoctorProfileScreen';
 import { EmergencyHeaderButton } from '@/features/emergency/components/EmergencyHeaderButton';
-import { DocumentsScreen } from '@/features/health/screens/DocumentsScreen';
 import { HealthRecordsScreen } from '@/features/health/screens/HealthRecordsScreen';
-import { LabResultsScreen } from '@/features/health/screens/LabResultsScreen';
-import { PrescriptionsScreen } from '@/features/health/screens/PrescriptionsScreen';
-import { VisitDetailScreen } from '@/features/health/screens/VisitDetailScreen';
-import { VisitsScreen } from '@/features/health/screens/VisitsScreen';
+import { InsuranceScreen } from '@/features/health/screens/InsuranceScreen';
+import { TestsScreen } from '@/features/health/screens/TestsScreen';
 import { HomeScreen } from '@/features/home/screens/HomeScreen';
+import { HospitalDetailScreen } from '@/features/hospitals/screens/HospitalDetailScreen';
+import { HospitalsScreen } from '@/features/hospitals/screens/HospitalsScreen';
 import { MessagesScreen } from '@/features/messages/screens/MessagesScreen';
 import { ThreadScreen } from '@/features/messages/screens/ThreadScreen';
 import { NotificationPrefsScreen } from '@/features/notifications/screens/NotificationPrefsScreen';
 import { NotificationsScreen } from '@/features/notifications/screens/NotificationsScreen';
 import { formatUnreadBadge, unreadTabAnnouncement } from '@/features/notifications/unread';
 import { useUnreadCount } from '@/features/notifications/useUnreadCount';
+import { LinkRecordScreen } from '@/features/patient-link/screens/LinkRecordScreen';
 import { EditProfileScreen } from '@/features/profile/screens/EditProfileScreen';
 import { PreferencesScreen } from '@/features/profile/screens/PreferencesScreen';
 import { PrivacyScreen } from '@/features/profile/screens/PrivacyScreen';
@@ -87,8 +87,9 @@ function HomeNavigator() {
         The assistant lives here rather than in a sixth tab — five is the
         platform maximum before labels truncate at 375pt, and a surface
         that is not connected to anything must not displace one that is.
-        `features/ai/availability.ts` is why every one of these renders an
-        unavailable state.
+        Two entry points, never merged: the general health assistant and
+        the personal care assistant (ADR-050). The server answers 503
+        until a provider is configured, and every screen says so.
       */}
       <HomeStack.Screen
         name="AiHome"
@@ -96,19 +97,22 @@ function HomeNavigator() {
         options={{ title: t('nav.title.assistant') }}
       />
       <HomeStack.Screen
+        name="AiConversations"
+        component={AiConversationsScreen}
+        options={({ route }) => ({
+          title: t(
+            route.params.mode === 'personal' ? 'nav.title.assistantPersonal' : 'nav.title.assistantGeneral',
+          ),
+        })}
+      />
+      <HomeStack.Screen
         name="AiChat"
         component={AiChatScreen}
-        options={{ title: t('nav.title.assistantChat') }}
-      />
-      <HomeStack.Screen
-        name="AiSymptoms"
-        component={AiSymptomsScreen}
-        options={{ title: t('nav.title.assistantSymptoms') }}
-      />
-      <HomeStack.Screen
-        name="AiImage"
-        component={AiImageScreen}
-        options={{ title: t('nav.title.assistantImage') }}
+        options={({ route }) => ({
+          title: t(
+            route.params.mode === 'personal' ? 'nav.title.assistantPersonal' : 'nav.title.assistantGeneral',
+          ),
+        })}
       />
     </HomeStack.Navigator>
   );
@@ -129,6 +133,16 @@ function DiscoverNavigator() {
         name="DoctorProfile"
         component={DoctorProfileScreen}
         options={{ title: t('nav.title.doctor') }}
+      />
+      <DiscoverStack.Screen
+        name="Hospitals"
+        component={HospitalsScreen}
+        options={{ title: t('nav.title.hospitals') }}
+      />
+      <DiscoverStack.Screen
+        name="Hospital"
+        component={HospitalDetailScreen}
+        options={({ route }) => ({ title: route.params.hospitalName ?? t('nav.title.hospital') })}
       />
       <DiscoverStack.Screen
         name="Clinic"
@@ -165,6 +179,11 @@ function AppointmentsNavigator() {
         name="AppointmentDetail"
         component={AppointmentDetailScreen}
         options={{ title: t('nav.title.appointment') }}
+      />
+      <AppointmentsStack.Screen
+        name="RescheduleRequest"
+        component={RescheduleRequestScreen}
+        options={{ title: t('nav.title.rescheduleRequest') }}
       />
     </AppointmentsStack.Navigator>
   );
@@ -212,29 +231,14 @@ function ProfileNavigator() {
         options={{ title: t('nav.title.healthRecords') }}
       />
       <ProfileStack.Screen
-        name="LabResults"
-        component={LabResultsScreen}
-        options={{ title: t('nav.title.labResults') }}
+        name="Tests"
+        component={TestsScreen}
+        options={{ title: t('nav.title.tests') }}
       />
       <ProfileStack.Screen
-        name="Prescriptions"
-        component={PrescriptionsScreen}
-        options={{ title: t('nav.title.prescriptions') }}
-      />
-      <ProfileStack.Screen
-        name="Documents"
-        component={DocumentsScreen}
-        options={{ title: t('nav.title.documents') }}
-      />
-      <ProfileStack.Screen
-        name="Visits"
-        component={VisitsScreen}
-        options={{ title: t('nav.title.visits') }}
-      />
-      <ProfileStack.Screen
-        name="VisitDetail"
-        component={VisitDetailScreen}
-        options={{ title: t('nav.title.visit') }}
+        name="Insurance"
+        component={InsuranceScreen}
+        options={{ title: t('nav.title.insurance') }}
       />
       <ProfileStack.Screen
         name="Notifications"
@@ -270,6 +274,11 @@ function ProfileNavigator() {
         name="Support"
         component={SupportScreen}
         options={{ title: t('nav.title.help') }}
+      />
+      <ProfileStack.Screen
+        name="LinkRecord"
+        component={LinkRecordScreen}
+        options={{ title: t('link.title') }}
       />
     </ProfileStack.Navigator>
   );

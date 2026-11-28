@@ -20,8 +20,6 @@ import { ProfilePhotoUrls } from '../../../shared/files';
 import type {
   DiscoveryLocation,
   DiscoveryRow,
-  HospitalDetail,
-  HospitalListRow,
   InsuranceFlag,
   NextAvailableSlot,
 } from './discovery.dto';
@@ -32,7 +30,7 @@ import {
   type LocationRow,
   type SlotRow,
 } from './discovery.repository';
-import type { DiscoverySearchQuery, HospitalListQuery } from './discovery.schema';
+import type { DiscoverySearchQuery } from './discovery.schema';
 
 export interface Page<T> {
   readonly items: readonly T[];
@@ -133,134 +131,6 @@ export class DiscoveryService {
       rows.length,
     );
   }
-
-  async hospitals(user: AuthenticatedUser, query: HospitalListQuery): Promise<Page<HospitalListRow>> {
-    this.assertPatient(user);
-    const now = new Date();
-    const insurance = await this.insuranceFor(user, now);
-    const hospitals = await this.repository.candidateHospitals(query);
-
-    const [slots, covered] = await Promise.all([
-      this.repository.nextSlots(
-        hospitals.flatMap((hospital) => hospital.employmentIds),
-        now,
-      ),
-      insurance.providerId === null
-        ? Promise.resolve(new Set<string>())
-        : this.repository.coveredHospitals(
-            hospitals.map((hospital) => hospital.id),
-            insurance.providerId,
-            now,
-          ),
-    ]);
-
-    const rows = hospitals.map((hospital) => {
-      const locations = hospital.locations.map((location) => ({
-        id: location.id,
-        name: location.name,
-        distance: distanceTo(location, query.near),
-      }));
-      const nearest = locations.reduce<number | null>(
-        (best, entry) => (entry.distance !== null && (best === null || entry.distance < best) ? entry.distance : best),
-        null,
-      );
-      const earliest = hospital.employmentIds
-        .map((id) => slots.get(id))
-        .filter((slot): slot is SlotRow => slot !== undefined)
-        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || a.slotId.localeCompare(b.slotId))[0];
-
-      return {
-        sortDistance: nearest,
-        row: {
-          hospital: { id: hospital.id, name: hospital.name },
-          locations: locations.map((entry) => ({
-            id: entry.id,
-            name: entry.name,
-            distanceKm: entry.distance === null ? null : roundKm(entry.distance),
-          })),
-          specialties: [...hospital.specialties].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
-          distanceKm: nearest === null ? null : roundKm(nearest),
-          nextAvailableSlot: slotView(earliest, hospital.timezone),
-          insurance: flag(insurance, covered, hospital.id),
-        } satisfies HospitalListRow,
-      };
-    });
-
-    const sort = query.sort ?? (query.near === undefined ? 'name' : 'distance');
-    rows.sort((a, b) =>
-      compose(
-        coveredFirst(a.row.insurance, b.row.insurance),
-        sort === 'name'
-          ? 0
-          : sortKey(sort, a.sortDistance, b.sortDistance, a.row.nextAvailableSlot, b.row.nextAvailableSlot),
-        a.row.hospital.name.localeCompare(b.row.hospital.name),
-        a.row.hospital.id.localeCompare(b.row.hospital.id),
-      ),
-    );
-
-    return paged(
-      rows.slice((query.page - 1) * query.pageSize, query.page * query.pageSize).map((entry) => entry.row),
-      query,
-      rows.length,
-    );
-  }
-
-  async hospital(user: AuthenticatedUser, hospitalId: string): Promise<HospitalDetail> {
-    this.assertPatient(user);
-    const now = new Date();
-    const detail = await this.repository.hospitalDetail(hospitalId);
-
-    // Unknown, suspended, deleted and malformed ids are one answer.
-    if (detail === null) throw AppException.notFound('Hospital not found');
-
-    const insurance = await this.insuranceFor(user, now);
-    const covered =
-      insurance.providerId === null
-        ? new Set<string>()
-        : await this.repository.coveredHospitals([detail.id], insurance.providerId, now);
-
-    const specialties = new Map<string, string>();
-    for (const employment of detail.doctorEmployments) {
-      for (const link of employment.doctor.specialties) {
-        specialties.set(link.specialty.id, link.specialty.name);
-      }
-    }
-
-    const inForce = (c: { startsOn: Date | null; endsOn: Date | null }): boolean =>
-      (c.startsOn === null || c.startsOn <= now) && (c.endsOn === null || c.endsOn >= startOfDay(now));
-
-    return {
-      id: detail.id,
-      name: detail.name,
-      timezone: detail.timezone,
-      clinics: detail.clinics,
-      locations: detail.locations.map((location) => ({
-        id: location.id,
-        name: location.name,
-        addressLine1: location.addressLine1,
-        addressLine2: location.addressLine2,
-        city: location.city,
-        region: location.region,
-        postalCode: location.postalCode,
-        countryCode: location.countryCode,
-        latitude: location.latitude === null ? null : location.latitude.toNumber(),
-        longitude: location.longitude === null ? null : location.longitude.toNumber(),
-        timezone: location.timezone,
-      })),
-      departments: detail.departments,
-      specialties: [...specialties]
-        .map(([id, name]) => ({ id, name }))
-        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
-      acceptedInsurance: detail.insuranceCoverage
-        .filter(inForce)
-        .map((coverage) => ({ provider: coverage.provider.name, plan: coverage.planName })),
-      insurance: flag(insurance, covered, detail.id),
-    };
-  }
-}
-
-function startOfDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
 function flag(insurance: InsuranceContext, covered: ReadonlySet<string>, hospitalId: string): InsuranceFlag {

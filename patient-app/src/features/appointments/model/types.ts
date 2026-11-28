@@ -1,3 +1,7 @@
+import {
+  CANCEL_REASON_CODES,
+  type RESCHEDULE_REQUEST_STATUSES,
+} from '@/api/endpoints/appointments';
 import type { PagedResult } from '@/api/paged';
 import type { AppointmentPriority, AppointmentStatus } from '@/types/vocabularies';
 
@@ -21,8 +25,42 @@ import type { AppointmentPriority, AppointmentStatus } from '@/types/vocabularie
  * `appointments.test.tsx` asserts no action is derived from `status`.
  */
 
-/** What the server says this patient may do to this appointment, now. */
-export type AppointmentAction = 'cancel' | 'reschedule' | 'confirm';
+/**
+ * What the server says this patient may do to this appointment, now.
+ *
+ * `reschedule` means "may ASK" — it opens a request the hospital approves
+ * or rejects (ADR-033 Q2, R-B); it never moves the appointment itself.
+ */
+export type AppointmentAction = 'cancel' | 'reschedule';
+
+/** The closed list of cancellation reasons the server accepts. */
+export type CancelReasonCode = (typeof CANCEL_REASON_CODES)[number];
+export const CANCEL_REASONS = CANCEL_REASON_CODES;
+
+/** The hospital an appointment or a slot belongs to. */
+export interface AppointmentHospital {
+  readonly id: string;
+  readonly name: string;
+}
+
+export type RescheduleRequestStatus = (typeof RESCHEDULE_REQUEST_STATUSES)[number];
+
+export interface RescheduleRequest {
+  readonly id: string;
+  readonly appointmentId: string;
+  readonly status: RescheduleRequestStatus;
+  /** The time asked for. It is NOT held for the patient while pending. */
+  readonly requestedSlot: {
+    readonly id: string;
+    readonly startsAt: string;
+    readonly durationMin: number;
+  };
+  readonly note: string | null;
+  /** The hospital's own words when it rejected; null otherwise. */
+  readonly decisionReason: string | null;
+  readonly createdAt: string;
+  readonly decidedAt: string | null;
+}
 
 export interface AppointmentDoctorSummary {
   readonly id: string;
@@ -89,31 +127,16 @@ export interface Appointment {
    */
   readonly clinicTimezone: string | null;
   /**
-   * Server-provided. Never derived here — and **optional, because the
-   * live payload does not carry it yet**.
-   *
-   * The distinction is the whole point. `undefined` means *the server
-   * has not said*, which is the truth while ADR-033 is unanswered: the
-   * transition table in ADR-001 says which statuses may follow which and
-   * not who may make a transition, so no source in this repository
-   * states whether a patient may cancel. `[]` would mean *the server
-   * says no action is available* — a claim nobody has the authority to
-   * make, and one this client would then render as a missing cancel
-   * button with no explanation.
-   *
-   * An omitted field is a visible gap; a wrong one is a silent defect
-   * (contract §4). The field becomes required again when the routes it
-   * describes exist.
+   * The hospital the appointment is at. `null` where the server names
+   * none — never guessed from a department or a doctor.
    */
-  readonly availableActions?: readonly AppointmentAction[];
-  /** Up to 3 alternatives when the status is `awaiting-patient`. Absent for the same reason. */
-  readonly proposedSlots?: readonly ProposedSlot[];
-}
-
-export interface ProposedSlot {
-  readonly id: string;
-  readonly startsAt: string;
-  readonly durationMin: number;
+  readonly hospital: AppointmentHospital | null;
+  /**
+   * Server-provided and **never derived here**: the same rule the write
+   * routes enforce, computed on the server for every payload. `[]` is the
+   * server saying "nothing may be done now" and renders as no buttons.
+   */
+  readonly availableActions: readonly AppointmentAction[];
 }
 
 /** One row of `appointment_events`. Rendered as a timeline. */
@@ -140,6 +163,8 @@ export interface AppointmentEvent {
 
 export interface AppointmentDetail extends Appointment {
   readonly events: readonly AppointmentEvent[];
+  /** The one open reschedule request, if any. Detail only. */
+  readonly pendingRescheduleRequest: RescheduleRequest | null;
 }
 
 /**
@@ -156,14 +181,38 @@ export interface BookableSlot {
   readonly id: string;
   readonly startsAt: string;
   readonly durationMin: number;
+  readonly hospital: AppointmentHospital;
+}
+
+/** An entry of the optional visit-type select on the booking form. */
+export interface VisitType {
+  readonly id: string;
+  readonly name: string;
+  readonly durationMin: number | null;
 }
 
 export interface BookingRequest {
   readonly doctorId: string;
   readonly slotId: string;
+  /** For the fixture adapter's record; the server derives it from the slot. */
   readonly startsAt: string;
+  /** 3..300 characters. */
   readonly reason: string;
+  readonly visitTypeId?: string;
+  /** At most 1000 characters. */
   readonly notes?: string;
+}
+
+export interface CancelRequest {
+  readonly reasonCode: CancelReasonCode;
+  /** At most 200 characters. */
+  readonly note?: string;
+}
+
+export interface RescheduleSubmission {
+  readonly slotId: string;
+  /** At most 300 characters. */
+  readonly note?: string;
 }
 
 /**
@@ -184,11 +233,24 @@ export interface AppointmentService {
   getById(id: string): Promise<AppointmentDetail>;
   /** Returns slots the SERVER computed. Never a rule the client applies. */
   listSlots(doctorId: string, fromIso: string, toIso: string): Promise<readonly BookableSlot[]>;
-  /** Creates in status `pending`, for the clinic to approve. */
-  book(request: BookingRequest, idempotencyKey: string): Promise<Appointment>;
-  /** `cancelled_reason` is CHECK-required server-side, so it is required here. */
-  cancel(id: string, reason: string): Promise<Appointment>;
-  requestReschedule(id: string, reason: string): Promise<Appointment>;
-  /** Accepts one of the doctor's proposed slots. */
-  acceptProposal(id: string, slotId: string): Promise<Appointment>;
+  listVisitTypes(): Promise<readonly VisitType[]>;
+  /**
+   * Creates in status `pending`, for the hospital to approve. The key is
+   * the CALLER's: reuse it for a retry of the same attempt.
+   */
+  book(request: BookingRequest, idempotencyKey: string): Promise<AppointmentDetail>;
+  /** The reason is a code from a closed list; the server stores it. */
+  cancel(id: string, request: CancelRequest): Promise<AppointmentDetail>;
+  /**
+   * Asks for a new time. The appointment is unchanged until the hospital
+   * approves, and the requested slot is not reserved.
+   */
+  requestReschedule(
+    id: string,
+    submission: RescheduleSubmission,
+    idempotencyKey: string,
+  ): Promise<RescheduleRequest>;
+  /** Newest first. */
+  listRescheduleRequests(id: string): Promise<readonly RescheduleRequest[]>;
+  withdrawRescheduleRequest(requestId: string): Promise<RescheduleRequest>;
 }

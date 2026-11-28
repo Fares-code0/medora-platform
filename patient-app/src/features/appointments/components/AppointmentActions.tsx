@@ -1,15 +1,22 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { View } from 'react-native';
 
-import { Button, Card, Input, Text, useToast } from '@/components';
+import { announce } from '@/accessibility/a11y';
+import { Button, Input, Text, useToast } from '@/components';
 import { BottomSheet } from '@/components/layout/BottomSheet';
-import { useT, useDateFormat } from '@/i18n';
+import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
-import { isApiError } from '@/types/api';
 
-import { useAcceptProposal, useCancelAppointment, useRequestReschedule } from '../hooks';
-import type { AppointmentDetail } from '../model/types';
+import { classifyActionError, type ActionFailure } from '../errors';
+import { useCancelAppointment } from '../hooks';
+import type { AppointmentDetail, CancelReasonCode } from '../model/types';
+
+import { ActionFailureCard } from './ActionFailureCard';
+import { ReasonPicker } from './ReasonPicker';
+
+/** The server's limit on the optional cancellation note. */
+const CANCEL_NOTE_MAX = 200;
 
 /**
  * The actions on an appointment.
@@ -22,120 +29,68 @@ import type { AppointmentDetail } from '../model/types';
  * `appointments.test.tsx` asserts that an appointment with an empty
  * `availableActions` renders no action whatever its status.
  *
- * ── Losing the race ──────────────────────────────────────────────────
- * A 409 means somebody at the clinic changed this while the sheet was
- * open. The server's `detail` is shown, the sheet stays open, and the
- * patient's typed reason is not thrown away — which is what
- * "recovers without losing input" means in checklist I-05.
+ * ── Cancel ───────────────────────────────────────────────────────────
+ * A reason from the server's closed list is required, with an optional
+ * note. The sheet stays open on a failure, with what the patient chose
+ * and typed, and says what went wrong — a 409 shows the server's own
+ * `detail` and the appointment is refetched so the buttons follow the
+ * server's new answer.
+ *
+ * ── Reschedule ───────────────────────────────────────────────────────
+ * "Ask to reschedule" opens the request screen (`onAskReschedule`); it is
+ * a request, and nothing about the appointment changes until the hospital
+ * approves.
  */
-export function AppointmentActions({ appointment }: { appointment: AppointmentDetail }) {
+export function AppointmentActions({
+  appointment,
+  onAskReschedule,
+}: {
+  appointment: AppointmentDetail;
+  onAskReschedule: () => void;
+}) {
   const theme = useTheme();
-  const { formatDateTime } = useDateFormat();
   const t = useT();
   const toast = useToast();
 
   const [cancelOpen, setCancelOpen] = useState(false);
-  const [rescheduleOpen, setRescheduleOpen] = useState(false);
-  /**
-   * One box per sheet, deliberately.
-   *
-   * They were a single `reason` until a test asked what happens when a
-   * patient opens Cancel, types "I want to cancel entirely", backs out
-   * with Keep it, and then asks to reschedule: their cancellation reason
-   * was waiting in the reschedule box, ready to be sent as the answer to
-   * a different question. "The clinic needs a reason" and "why do you
-   * need to move it?" are not the same question and do not share a
-   * buffer.
-   */
-  const [cancelReason, setCancelReason] = useState('');
-  const [rescheduleReason, setRescheduleReason] = useState('');
-  const [failure, setFailure] = useState<string | null>(null);
-
+  const [reasonCode, setReasonCode] = useState<CancelReasonCode | null>(null);
+  const [note, setNote] = useState('');
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
   const cancel = useCancelAppointment(appointment.id);
-  const reschedule = useRequestReschedule(appointment.id);
-  const accept = useAcceptProposal(appointment.id);
+  /** A second press before the first settles must not send a second request. */
+  const inFlight = useRef(false);
 
-  /**
-   * `availableActions` is optional on the port: `undefined` means the
-   * server has not said which actions are permitted, which is the truth
-   * while ADR-033 is unanswered. Rendering nothing is the same OUTCOME as
-   * an empty array and a different CLAIM — the app is not asserting that
-   * no action exists, it is declining to guess.
-   */
-  const offered = appointment.availableActions ?? [];
-  const proposals = appointment.proposedSlots ?? [];
-
-  const can = (action: 'cancel' | 'reschedule' | 'confirm') => offered.includes(action);
-
-  // A 409's `detail` is the server's own sentence about what changed and
-  // is shown as sent; anything else gets this app's words.
-  const describeFailure = (error: unknown): string =>
-    isApiError(error) && error.kind === 'conflict' ? error.detail : t('appointment.action.failed');
+  const offered = appointment.availableActions;
+  const can = (action: 'cancel' | 'reschedule') => offered.includes(action);
 
   const submitCancel = async () => {
+    if (reasonCode === null || inFlight.current) return;
+    inFlight.current = true;
     setFailure(null);
     try {
-      await cancel.mutateAsync(cancelReason.trim());
+      const trimmed = note.trim();
+      await cancel.mutateAsync({
+        reasonCode,
+        ...(trimmed === '' ? {} : { note: trimmed }),
+      });
       setCancelOpen(false);
-      setCancelReason('');
+      setReasonCode(null);
+      setNote('');
       toast.show(t('appointment.cancel.done'), 'success');
+      announce(t('appointment.cancel.done'));
     } catch (error) {
-      setFailure(describeFailure(error));
+      const classified = classifyActionError(error);
+      setFailure(classified);
+      announce(t(classified.messageKey));
+    } finally {
+      inFlight.current = false;
     }
   };
 
-  const submitReschedule = async () => {
-    setFailure(null);
-    try {
-      await reschedule.mutateAsync(rescheduleReason.trim());
-      setRescheduleOpen(false);
-      setRescheduleReason('');
-      toast.show(t('appointment.reschedule.done'), 'success');
-    } catch (error) {
-      setFailure(describeFailure(error));
-    }
-  };
-
-  const submitProposal = async (slotId: string) => {
-    try {
-      await accept.mutateAsync(slotId);
-      toast.show(t('appointment.confirmed'), 'success');
-    } catch (error) {
-      toast.show(describeFailure(error), 'error');
-    }
-  };
-
-  if (offered.length === 0 && proposals.length === 0) {
-    return null;
-  }
+  if (offered.length === 0) return null;
 
   return (
     <View style={{ rowGap: theme.space[3] }}>
-      {/* `awaiting-patient`: the clinic proposed up to three alternatives. */}
-      {can('confirm') && proposals.length > 0 ? (
-        <Card tone="warning" testID="appointment-proposals">
-          <Text variant="h3" color="warning">
-            {t('appointment.proposals.title')}
-          </Text>
-          <Text variant="bodySm" color="textSecondary">
-            {t('appointment.proposals.body')}
-          </Text>
-          <View style={{ rowGap: theme.space[2], marginTop: theme.space[2] }}>
-            {proposals.map((slot) => (
-              <Button
-                key={slot.id}
-                testID={`appointment-proposal-${slot.id}`}
-                label={formatDateTime(slot.startsAt)}
-                tone="secondary"
-                fullWidth
-                loading={accept.isPending}
-                onPress={() => void submitProposal(slot.id)}
-              />
-            ))}
-          </View>
-        </Card>
-      ) : null}
-
       {can('reschedule') ? (
         <Button
           label={t('appointment.action.reschedule')}
@@ -143,10 +98,7 @@ export function AppointmentActions({ appointment }: { appointment: AppointmentDe
           icon="refresh"
           fullWidth
           testID="appointment-reschedule"
-          onPress={() => {
-            setFailure(null);
-            setRescheduleOpen(true);
-          }}
+          onPress={onAskReschedule}
         />
       ) : null}
 
@@ -173,23 +125,23 @@ export function AppointmentActions({ appointment }: { appointment: AppointmentDe
         <Text variant="bodySm" color="textSecondary">
           {t('appointment.cancel.body')}
         </Text>
-        {/* `cancelled_reason` is CHECK-required server-side when the
-            status is `cancelled`, so the client must collect it. */}
+        <ReasonPicker value={reasonCode} onChange={setReasonCode} disabled={cancel.isPending} />
         <Input
-          label={t('appointment.reason')}
-          testID="appointment-cancel-reason"
-          value={cancelReason}
-          onChangeText={setCancelReason}
+          label={t('appointment.cancel.noteLabel')}
+          testID="appointment-cancel-note"
+          value={note}
+          onChangeText={(value) => setNote(value.slice(0, CANCEL_NOTE_MAX))}
           multiline
-          required
-          {...(failure === null ? {} : { error: failure })}
+          disabled={cancel.isPending}
+          hint={t('appointment.cancel.noteHint', { used: note.length, max: CANCEL_NOTE_MAX })}
         />
+        {failure === null ? null : <ActionFailureCard failure={failure} testID="cancel-failure" />}
         <Button
           label={t('appointment.action.cancel')}
           tone="destructive"
           size="lg"
           fullWidth
-          disabled={cancelReason.trim().length === 0}
+          disabled={reasonCode === null}
           loading={cancel.isPending}
           testID="appointment-cancel-confirm"
           onPress={() => void submitCancel()}
@@ -199,36 +151,8 @@ export function AppointmentActions({ appointment }: { appointment: AppointmentDe
           tone="secondary"
           size="lg"
           fullWidth
+          disabled={cancel.isPending}
           onPress={() => setCancelOpen(false)}
-        />
-      </BottomSheet>
-
-      <BottomSheet
-        visible={rescheduleOpen}
-        onClose={() => setRescheduleOpen(false)}
-        title={t('appointment.action.reschedule')}
-        testID="appointment-reschedule-sheet"
-      >
-        <Text variant="bodySm" color="textSecondary">
-          {t('appointment.reschedule.body')}
-        </Text>
-        <Input
-          label={t('appointment.reschedule.reason')}
-          testID="appointment-reschedule-reason"
-          value={rescheduleReason}
-          onChangeText={setRescheduleReason}
-          multiline
-          required
-          {...(failure === null ? {} : { error: failure })}
-        />
-        <Button
-          label={t('appointment.reschedule.send')}
-          size="lg"
-          fullWidth
-          disabled={rescheduleReason.trim().length === 0}
-          loading={reschedule.isPending}
-          testID="appointment-reschedule-confirm"
-          onPress={() => void submitReschedule()}
         />
       </BottomSheet>
     </View>

@@ -1,64 +1,46 @@
 /**
- * The assistant's vocabulary and view-model types — checklist K-01, and
- * the presentation half of K-02 … K-04 and L-01 … L-03.
+ * The patient assistant's vocabulary — two experiences, one transport.
  *
- * ── Read this before adding anything to this directory ──────────────
+ * ── Two modes, and they are different products ───────────────────────
  *
- * **There is no AI in this application and these types do not imply
- * one.** They describe what the assistant screens *render*, not what
- * produces it. Nothing here is a port, a DTO or a request body: there is
- * deliberately no `features/ai/service.ts`, no adapter behind
- * `api/seam.ts` and no entry in `api/endpoints/`, because a seam is a
- * promise that something can be plugged in and nothing can be plugged in
- * yet. `availability.ts` is where that is stated once and enforced.
+ * - **`general`** — "Health assistant". General health information. It is
+ *   given NO patient data, by the server, in any turn.
+ * - **`personal`** — "My care assistant". Grounded in what the app
+ *   already shows the patient: their appointments, the status of their
+ *   tests, and the insurance on file. **Not** their results and **not**
+ *   their medical record — neither is exposed to anyone through this app
+ *   (ADR-050, ADR-031). It needs a linked account.
  *
- * The Phase K gate (audit AD-4, R-5) is unchanged and unmet. A
- * patient-facing symptom assistant needs a real model provider, a
- * server-side red-flag classifier that routes an emergency description to
- * Phase N *before* generating a word, an output filter that forbids
- * diagnosis and dosage, an audit trail over every exchange, and a named
- * clinical owner who signs the prompt and the refusal set. None of those
- * exists. The doctor-side assistant in `frontend/` is a canned-response
- * generator writing to `localStorage`, and pointing this tree at it would
- * be the single most dangerous thing this project could ship.
+ * The mode is chosen by the entry point the patient taps, is fixed when
+ * the conversation is created, and is never inferred from what they type.
+ * This client sends no patient data of its own in either mode; what the
+ * personal assistant is grounded in is assembled and audited server-side.
  *
- * What exists is the **interface**, designed, accessible, translated and
- * tested, so that the work waiting on AD-4 is the clinical and backend
- * work rather than a screen nobody has drawn. Every message type below
- * is rendered from props by a pure component in `components/`, exercised
- * directly by `ai-states.test.tsx`. None of them is ever constructed from
- * a hardcoded script and shown to a patient as if a model had produced
- * it — `ai-honesty.test.ts` is the assertion that keeps that true.
+ * ── What this client does NOT do ─────────────────────────────────────
+ *
+ * It does not classify symptoms, detect emergencies, script a reply or
+ * keep a transcript on the device. Red-flag detection runs on the server
+ * BEFORE the model and answers with a fixed escalation message; the
+ * client renders what it is given and puts the Emergency screen one tap
+ * away. `ai-honesty.test.ts` holds those lines.
  */
 
-/**
- * The patient-facing contexts — K-01.
- *
- * Four, and explicitly **not** the clinician modes (`record`, `labs`,
- * `pharmacy`). The clinician modes read a chart and reason about it; a
- * patient-facing assistant that did the same would be giving a diagnosis
- * with a disclaimer stapled to it. The split is the whole content of
- * K-01 and it belongs in a decision record before any of it is wired.
- *
- * - `navigation` — "I need a cardiologist" → the specialty → Phase G.
- * - `symptom` — structured intake, which routes to care, never to a name
- *   for the problem.
- * - `appointment` — help reaching the real Phase I booking flow.
- * - `medication-info` — what a medicine *is*. Never a dose, never a
- *   change to one.
- */
-export const AI_CONTEXTS = ['navigation', 'symptom', 'appointment', 'medication-info'] as const;
+export const AI_MODES = ['general', 'personal'] as const;
+export type AiMode = (typeof AI_MODES)[number];
 
-export type AiContext = (typeof AI_CONTEXTS)[number];
-
-/**
- * Who said it.
- *
- * A union of two, because a bubble must be attributable at a glance and
- * by a screen reader — never by alignment or colour alone (WCAG 1.4.1).
- * `AiMessageBubble` renders the author as text for that reason.
- */
+/** Who said it. Rendered as text, never by alignment or colour alone (WCAG 1.4.1). */
 export type AiAuthor = 'patient' | 'assistant';
+
+/** The longest message the server accepts. The composer enforces it. */
+export const AI_MESSAGE_MAX_LENGTH = 2000;
+
+export interface AiConversationSummary {
+  readonly id: string;
+  readonly mode: AiMode;
+  readonly title: string | null;
+  /** ISO-8601 instant. */
+  readonly createdAt: string;
+}
 
 /** One rendered turn. */
 export interface AiMessage {
@@ -67,60 +49,47 @@ export interface AiMessage {
   readonly body: string;
   /** ISO-8601 instant. Formatted by `utils/datetime`, never computed here. */
   readonly at: string;
+  /**
+   * The SERVER's red-flag pre-check fired and this is its fixed
+   * escalation message, not model output. Rendered prominently with the
+   * Emergency route attached.
+   */
+  readonly escalated?: boolean;
+}
+
+export interface AiConversation extends AiConversationSummary {
+  readonly messages: readonly AiMessage[];
+}
+
+/** One frame of a reply, as the port yields it. */
+export type AiTurnEvent =
+  | { readonly type: 'delta'; readonly text: string }
+  | { readonly type: 'escalation'; readonly text: string }
+  | {
+      readonly type: 'done';
+      readonly messageId: string | null;
+      readonly status: string;
+      readonly error: string | null;
+      readonly escalated: boolean;
+    };
+
+export interface AiService {
+  createConversation(mode: AiMode): Promise<AiConversationSummary>;
+  listConversations(): Promise<readonly AiConversationSummary[]>;
+  getConversation(id: string): Promise<AiConversation>;
+  deleteConversation(id: string): Promise<void>;
+  /** Yields the reply as it arrives; rejects before the first yield on a refusal. */
+  sendMessage(conversationId: string, content: string, signal?: AbortSignal): AsyncIterable<AiTurnEvent>;
 }
 
 /**
  * What the composer and the transcript are doing.
  *
- * `unavailable` is not an error state and is deliberately first: it is
- * the state every assistant screen is in today, and treating it as the
- * failure branch of a working feature is how a "coming soon" screen ends
- * up looking like a bug.
- *
- * - `unavailable` — no assistant is connected. The shipped state.
- * - `idle` — a connected assistant, waiting for the patient.
- * - `sending` — the turn has left the composer.
+ * - `idle` — waiting for the patient.
+ * - `sending` — the turn has left the composer; nothing has come back.
  * - `responding` — a reply is arriving. What the typing indicator draws.
  * - `failed` — the turn did not complete and can be retried.
+ * - `unavailable` — the server answered 503: no assistant is configured.
+ *   Not an error to retry past, and deliberately its own state.
  */
-export type AiTurnState = 'unavailable' | 'idle' | 'sending' | 'responding' | 'failed';
-
-/**
- * One symptom a patient can select — the intake vocabulary.
- *
- * A flat list of plain-language descriptions with stable ids. It is a
- * **form**, not a classifier: nothing in this tree reads a selection and
- * concludes anything from it, and `SymptomPicker` is as much an
- * inference engine as a checkbox is.
- *
- * The list itself is bundled content (`content/intake.ts`) and carries
- * the same W-10 sign-off requirement as the emergency guidance does.
- */
-export interface SymptomOption {
-  readonly id: string;
-  /** Message key, so the option is shown in the patient's language. */
-  readonly labelKey: string;
-  /** Grouping for the picker's sections. */
-  readonly group: 'general' | 'head' | 'chest' | 'abdomen' | 'skin' | 'mood';
-}
-
-/** How far through the intake the patient is. */
-export interface IntakeProgress {
-  /** 1-based, for display. */
-  readonly step: number;
-  readonly total: number;
-}
-
-/**
- * An image the patient has chosen but not sent — L-01.
- *
- * `uri` is a local file reference from the OS picker and never leaves
- * the device: there is no upload, no object storage and no malware
- * scanner behind it (BE-15). The type exists so the preview, the remove
- * control and the disabled send state can be drawn and tested.
- */
-export interface ImageDraft {
-  readonly id: string;
-  readonly uri: string;
-  readonly fileName?: string;
-}
+export type AiTurnState = 'idle' | 'sending' | 'responding' | 'failed' | 'unavailable';

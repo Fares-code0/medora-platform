@@ -63,27 +63,3 @@ export const publishedSlotListSchema = z
 
 export type PublishedSlotListQuery = z.infer<typeof publishedSlotListSchema>;
 
-/** `GET /patient/doctors/:doctorId/slots?from&to`. */
-export const bookableSlotQuerySchema = z
-  .object(window)
-  .refine(fromNotAfterTo, { message: '`from` must not be after `to`', path: ['from'] });
-
-export type BookableSlotQuery = z.infer<typeof bookableSlotQuerySchema>;
-
-/**
- * `POST /me/appointments` — `{ slotId, reason, visitTypeId?, notes? }`.
- *
- * `reason` is required, as in the contract and as `appointments.reason`
- * is NOT NULL. Hospital, doctor, time and duration are not fields: they
- * come from the slot.
- */
-export const bookAppointmentSchema = z
-  .object({
-    slotId: z.string().uuid(),
-    reason: z.string().trim().min(1).max(300),
-    visitTypeId: z.string().uuid().optional(),
-    notes: z.string().trim().max(2000).optional(),
-  })
-  .strict();
-
-export type BookAppointmentInput = z.infer<typeof bookAppointmentSchema>;

@@ -30,16 +30,11 @@ import { randomUUID } from 'node:crypto';
 
 import { Injectable, Logger } from '@nestjs/common';
 
-
 import { BADGE_COUNTS, CacheService } from '../../../shared/cache';
 import { PrismaService } from '../../../shared/database';
 import { DomainEventRepository, type ClaimedEvent } from '../repositories/domain-event.repository';
 import { NotificationRecipientRepository } from '../repositories/notification-recipient.repository';
-import {
-  DEFAULT_PREFERENCES,
-  selectChannels,
-  type ChannelPreferences,
-} from './channel-selection';
+import { DEFAULT_PREFERENCES, selectChannels, type ChannelPreferences } from './channel-selection';
 import { isPinned, NOTIFICATION_RULES, type NotificationRule } from './notification-rules';
 
 /** What one event produced, for the operator log and for tests. */
@@ -215,10 +210,7 @@ export class NotificationDispatchService {
    * Duplicates are collapsed by `userId`: a doctor who is somehow also
    * the patient on an appointment gets one notification, not two.
    */
-  private async resolve(
-    event: ClaimedEvent,
-    rule: NotificationRule,
-  ): Promise<readonly Target[]> {
+  private async resolve(event: ClaimedEvent, rule: NotificationRule): Promise<readonly Target[]> {
     const byUser = new Map<string, Target>();
     const payload = event.payload;
 
@@ -248,6 +240,21 @@ export class NotificationDispatchService {
       const order = await this.recipients.labOrderTarget(labOrderPublicId);
 
       if (order === null) return [];
+
+      // ADR-050: a patient is told only that a test changed status — the
+      // rule's title is fixed and the body carries the order handle alone.
+      if (audience === 'patient') {
+        if (order.patientUserId === null) return [];
+
+        return [
+          {
+            userId: order.patientUserId,
+            patientId: order.patientId,
+            labOrderId: order.labOrderId,
+            appointmentId: null,
+          },
+        ];
+      }
       if (audience !== 'doctor') return [];
 
       return [

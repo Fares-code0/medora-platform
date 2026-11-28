@@ -82,6 +82,7 @@ const SIGNED_IN: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-2' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Amina Yusuf',
     email: 'amina@example.com',
     emailVerified: true,
@@ -252,7 +253,8 @@ describe('the section list (P-02)', () => {
 
   it.each([
     ['profile-to-records', 'HealthRecords'],
-    ['profile-to-labs', 'LabResults'],
+    ['profile-to-labs', 'Tests'],
+    ['profile-to-insurance', 'Insurance'],
     ['profile-to-edit', 'EditProfile'],
     ['profile-to-notifications', 'Notifications'],
     ['profile-to-preferences', 'Preferences'],

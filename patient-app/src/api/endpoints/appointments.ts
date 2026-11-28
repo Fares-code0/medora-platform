@@ -6,33 +6,35 @@ import { APPOINTMENT_PRIORITIES, APPOINTMENT_STATUSES } from '@/types/vocabulari
 import { apiClient } from '../client';
 
 /**
- * The HTTP appointment adapter — READS ONLY.
+ * The HTTP appointment adapter — reads, booking, cancellation and the
+ * reschedule REQUEST workflow.
  *
- * ── Two routes exist; four do not ────────────────────────────────────
+ * ── The routes (patient-app end-to-end contract §2, §3) ──────────────
  *
- * Transcribed from `patient-appointment.controller.ts` and specified in
- * `PATIENT_MOBILE_API_CONTRACT.md` §4:
+ *   GET  /me/appointments                          list
+ *   GET  /me/appointments/{id}                     detail
+ *   GET  /patient/doctors/{doctorId}/slots         published, unbooked, future slots
+ *   GET  /patient/visit-types                      the booking form's optional select
+ *   POST /me/appointments                          book (Idempotency-Key)
+ *   POST /me/appointments/{id}/cancel              cancel with a closed-list reason code
+ *   POST /me/appointments/{id}/reschedule-requests request a new time (Idempotency-Key)
+ *   GET  /me/appointments/{id}/reschedule-requests history, newest first
+ *   POST /me/reschedule-requests/{id}/withdraw     withdraw a pending request
  *
- *   GET /me/appointments           P4.1  ✅ LIVE
- *   GET /me/appointments/{id}      P4.2  ✅ LIVE
+ * ── Rescheduling is a request, not a move (ADR-033 Q2 = R-B) ─────────
  *
- * `POST /me/appointments`, `/{id}/cancel`, `/{id}/confirm` and
- * `GET /patient/doctors/{id}/slots` are P4.3–P4.6 and are **blocked on
- * ADR-033**, which is proposed and awaiting a product/clinical owner.
- * They are not unbuilt-because-unprioritised: ADR-001's transition table
- * says which statuses may follow which and **not who may make a
- * transition**, and that gap is the blocker. There is therefore no path
- * string for any of them in this file.
+ * The original appointment stays booked until the hospital approves, and
+ * the requested slot is NOT held. Nothing in this file moves an
+ * appointment; `reschedule-requests` creates a row staff then approve or
+ * reject.
  *
- * ── `availableActions` is absent, and that is the contract ───────────
+ * ── `availableActions` is the server's, and required ─────────────────
  *
- * Contract §4 states it deliberately: shipping `availableActions: []`
- * would assert "no action is available", which is a claim nobody has the
- * authority to make yet, and the app would show a patient no cancel
- * button on the strength of it. An omitted field is a visible gap; a
- * wrong one is a silent defect. So neither this schema nor the mapper
- * invents the field — `model/types.ts` makes it optional for exactly
- * this reason.
+ * Every appointment payload carries `availableActions`, computed by the
+ * same rule the write routes enforce. It is required here: a payload
+ * without it fails at the seam instead of rendering no buttons on the
+ * strength of an absence. Policy is never derived from `status` in the
+ * client.
  *
  * ── Timezones ────────────────────────────────────────────────────────
  *
@@ -59,6 +61,43 @@ const doctorSchema = z.object({
  * caught whether it reaches this client through the wire or through a
  * schema edit.
  */
+/** The hospital an appointment or slot belongs to. Absent hospital → null, never invented. */
+const hospitalRefSchema = z.object({ id: z.string().min(1), name: z.string().min(1) });
+
+export const APPOINTMENT_ACTIONS = ['cancel', 'reschedule'] as const;
+export const CANCEL_REASON_CODES = [
+  'schedule_conflict',
+  'feeling_better',
+  'booked_elsewhere',
+  'transport',
+  'cost',
+  'other',
+] as const;
+export const RESCHEDULE_REQUEST_STATUSES = [
+  'pending',
+  'approved',
+  'rejected',
+  'withdrawn',
+  'superseded',
+] as const;
+
+const requestedSlotSchema = z.object({
+  id: z.string().min(1),
+  startsAt: z.string().min(1),
+  durationMin: z.number(),
+});
+
+const rescheduleRequestSchema = z.object({
+  id: z.string().min(1),
+  appointmentId: z.string().min(1),
+  status: z.enum(RESCHEDULE_REQUEST_STATUSES),
+  requestedSlot: requestedSlotSchema,
+  note: z.string().nullable(),
+  decisionReason: z.string().nullable(),
+  createdAt: z.string().min(1),
+  decidedAt: z.string().nullable(),
+});
+
 const summarySchema = z.object({
   id: z.string().min(1),
   startsAt: z.string().min(1),
@@ -71,6 +110,8 @@ const summarySchema = z.object({
   visitType: z.string(),
   departmentName: z.string().nullable(),
   doctor: doctorSchema,
+  hospital: hospitalRefSchema.nullish(),
+  availableActions: z.array(z.enum(APPOINTMENT_ACTIONS)),
 });
 
 /**
@@ -93,6 +134,7 @@ const detailSchema = summarySchema.extend({
   notes: z.string().nullable(),
   cancelledReason: z.string().nullable(),
   clinicTimezone: z.string().min(1),
+  pendingRescheduleRequest: rescheduleRequestSchema.nullish(),
   events: z.array(eventSchema),
 });
 
@@ -100,6 +142,46 @@ const listResponseSchema = envelopeSchema(
   paginatedSchema(summarySchema).extend({ clinicTimezone: z.string().min(1) }),
 );
 const detailResponseSchema = envelopeSchema(detailSchema);
+
+const slotSchema = z.object({
+  id: z.string().min(1),
+  startsAt: z.string().min(1),
+  durationMin: z.number(),
+  hospital: hospitalRefSchema,
+});
+const slotsResponseSchema = envelopeSchema(z.array(slotSchema));
+
+const visitTypeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  durationMin: z.number().nullable(),
+});
+const visitTypesResponseSchema = envelopeSchema(z.array(visitTypeSchema));
+
+const rescheduleRequestResponseSchema = envelopeSchema(rescheduleRequestSchema);
+const rescheduleRequestsResponseSchema = envelopeSchema(z.array(rescheduleRequestSchema));
+
+export type WireSlot = z.infer<typeof slotSchema>;
+export type WireVisitType = z.infer<typeof visitTypeSchema>;
+export type WireRescheduleRequest = z.infer<typeof rescheduleRequestSchema>;
+export type CancelReasonCode = (typeof CANCEL_REASON_CODES)[number];
+
+export interface BookBody {
+  readonly slotId: string;
+  readonly reason: string;
+  readonly visitTypeId?: string | undefined;
+  readonly notes?: string | undefined;
+}
+
+export interface CancelBody {
+  readonly reasonCode: CancelReasonCode;
+  readonly note?: string | undefined;
+}
+
+export interface RescheduleRequestBody {
+  readonly slotId: string;
+  readonly note?: string | undefined;
+}
 
 export type WireAppointmentSummary = z.infer<typeof summarySchema>;
 export type WireAppointmentDetail = z.infer<typeof detailSchema>;
@@ -144,5 +226,79 @@ export const appointmentEndpoints = {
       `me/appointments/${encodeURIComponent(appointmentId)}`,
     );
     return parseResponse('GET /me/appointments/{id}', detailResponseSchema, raw);
+  },
+
+  /**
+   * Published, unbooked, future slots for one doctor. The window is at
+   * most 31 days (the server rejects a wider one with 422).
+   */
+  async slots(doctorId: string, from: string, to: string, signal?: AbortSignal) {
+    const raw = await apiClient.get<unknown>(
+      `patient/doctors/${encodeURIComponent(doctorId)}/slots`,
+      { params: { from, to }, ...(signal ? { signal } : {}) },
+    );
+    return parseResponse('GET /patient/doctors/{id}/slots', slotsResponseSchema, raw);
+  },
+
+  async visitTypes(signal?: AbortSignal) {
+    const raw = await apiClient.get<unknown>('patient/visit-types', signal ? { signal } : {});
+    return parseResponse('GET /patient/visit-types', visitTypesResponseSchema, raw);
+  },
+
+  /**
+   * `Idempotency-Key` is required by the server: the caller owns the key
+   * and reuses it for a retry of the same attempt, so a lost response
+   * cannot become two appointments.
+   */
+  async book(body: BookBody, idempotencyKey: string) {
+    const raw = await apiClient.post<unknown>('me/appointments', body, { idempotencyKey });
+    return parseResponse('POST /me/appointments', detailResponseSchema, raw);
+  },
+
+  async cancel(appointmentId: string, body: CancelBody) {
+    const raw = await apiClient.post<unknown>(
+      `me/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+      body,
+    );
+    return parseResponse('POST /me/appointments/{id}/cancel', detailResponseSchema, raw);
+  },
+
+  async requestReschedule(
+    appointmentId: string,
+    body: RescheduleRequestBody,
+    idempotencyKey: string,
+  ) {
+    const raw = await apiClient.post<unknown>(
+      `me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests`,
+      body,
+      { idempotencyKey },
+    );
+    return parseResponse(
+      'POST /me/appointments/{id}/reschedule-requests',
+      rescheduleRequestResponseSchema,
+      raw,
+    );
+  },
+
+  async rescheduleRequests(appointmentId: string) {
+    const raw = await apiClient.get<unknown>(
+      `me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests`,
+    );
+    return parseResponse(
+      'GET /me/appointments/{id}/reschedule-requests',
+      rescheduleRequestsResponseSchema,
+      raw,
+    );
+  },
+
+  async withdrawRescheduleRequest(requestId: string) {
+    const raw = await apiClient.post<unknown>(
+      `me/reschedule-requests/${encodeURIComponent(requestId)}/withdraw`,
+    );
+    return parseResponse(
+      'POST /me/reschedule-requests/{id}/withdraw',
+      rescheduleRequestResponseSchema,
+      raw,
+    );
   },
 };

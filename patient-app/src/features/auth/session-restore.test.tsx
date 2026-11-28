@@ -44,6 +44,7 @@ const SIGNED_IN: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-2' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Sara Ahmed',
     email: 'sara@example.com',
     emailVerified: true,
@@ -511,7 +512,7 @@ describe("a mid-session refresh, on the backend's own 401 (H1)", () => {
                 data: {
                   accessToken: 'access-1',
                   refreshToken: 'refresh-2',
-                  user: { id: 'u-1', email: 'sara@example.com' },
+                  user: { id: 'u-1', email: 'sara@example.com', role: 'patient' },
                 },
               })
             : response(401, REFRESH_REFUSED_401),
@@ -550,7 +551,7 @@ describe("a mid-session refresh, on the backend's own 401 (H1)", () => {
                 data: {
                   accessToken: 'access-1',
                   refreshToken: 'refresh-2',
-                  user: { id: 'u-1', email: 'sara@example.com' },
+                  user: { id: 'u-1', email: 'sara@example.com', role: 'patient' },
                 },
               })
             : response(502, null),

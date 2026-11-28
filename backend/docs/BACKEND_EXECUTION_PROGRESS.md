@@ -142,3 +142,52 @@ Unchanged from the audit (OWN-1 … OWN-14), plus:
    retry (with the push-delivery assertion); a lint/spec guard for RUN-01 (lazy Prisma query inside `runAsSystem`);
    CLN-02 once the owner answers; then the DB-dependent items as the Database team lands them.
 4. Owner/infra/CI items: section 5 and section 6.
+
+## 8. Integration with `origin/main` (merge, 2026-11-28)
+
+`origin/main` advanced 44 commits (to `01edb56`) after this work started, and independently delivered
+ADR-048 (patient account linking), **ADR-049** (patient booking, cancellation, reschedule requests) and
+**ADR-050** (patient hospital directory, information layer, patient AI). It was merged into this branch with a
+merge commit; the 17 commits above are unchanged ancestors.
+
+**Resolution rule: main is authoritative where both sides built the same thing.**
+
+| Area | Taken from main | Kept from this branch | Removed from this branch |
+|---|---|---|---|
+| `POST /me/appointments` | `PatientBookingController/Service/Repository` (initial status `pending`, ADR-049) | — | the branch's booking service and its route on `PatientAppointmentController` |
+| `GET /patient/doctors/:doctorId/slots` | main's `PatientSlotController` (response contract unchanged) | — | the branch's `patient-slot.controller.ts`, `PublishedSlotService.bookable` and the booking-only repository methods |
+| `GET /patient/hospitals[/:id]` | `PatientHospitalController` (ADR-050) | — | the two handlers on `DiscoveryController` and their service, repository, DTO and schema code |
+| `/patient/doctors[/:id]` | main's DTO/repository/service (its own `hospital` field) | — | the branch's additive `nextAvailableSlot` field (not in main's contract) |
+| Doctor slot publishing | — | `POST/GET/DELETE /me/published-slots` (main has none; ADR-049 notes publishing as unbuilt) | — |
+| Discovery search | — | `GET /patient/discovery/search` | — |
+| Security fixes, controlled access, AUTH-07, AZ-06, NOT-01, OPS-03, admin/insurance | — | all (none conflicted; the three original defects are still fixed in the merged tree) | — |
+
+Constraint mapping: main's booking maps every unique violation, including the new
+`appointments_one_live_booking_per_slot`, to `409 slot_taken`; the branch's `booking-errors.ts` is reduced
+to the `mentionsConstraint` helper still used by slot publishing. The 8-way concurrency spec now runs
+against main's route (exactly one 201, one row).
+
+**Follow-up fixes made during integration:**
+- Discovery treated a `rescheduled` booking as releasing its slot; main's index and `SLOT_HOLDING_STATUSES`
+  treat it as holding. Aligned (`RELEASED_STATUSES = CANCELLED, COMPLETED, NO_SHOW`), with a test that fails
+  on the old definition.
+- `NotificationDeliveryService.finish()` is fenced on the claim (`status = 'sending'` and the claimed
+  `attempts`), so a worker that outlived its lease cannot overwrite a newer claim's outcome (test fails on
+  the old code). A deleted row keeps today's P2025 behaviour, which `push-delivery.e2e-spec.ts` pins as a
+  known defect awaiting a decision.
+- The scope-selection scanner also matches `SET [LOCAL] app.scope` and a double-quoted `set_config`, with a
+  focused pattern test; its reviewed list matches the merged tree.
+
+**Corrections to earlier sections:** patient cancellation and reschedule *requests* are no longer blocked on
+ADR-033 — ADR-049 decided and main implemented them; only re-confirming a clinic proposal (ADR-033 Q3)
+remains open. SLT-02…SLT-05 are now satisfied by main's ADR-049 implementation, not by this branch's code.
+
+**Deferred LOW findings (with rationale):** the Break-Glass/transfer race needs the source-employment column
+(XH-03 step 2, Database); custom roles are refused as messaging participants (fail-closed, consistent with
+AZ-04); `liveBookingOf` ignores soft-deleted appointments while main's index does not (theoretical); the
+discovery next slot has no 31-day window while main's listing defaults to one (UX only).
+
+**Verification of the merged tree (local):** typecheck, lint and build pass; the full suite as owner (CI
+mode): 4567 passed, 1 failed — `doctor-soft-delete.e2e-spec.ts`, identical to main's file, a global row
+count shifted by concurrent suites (passes alone, twice); the whole e2e suite under the restricted runtime
+role: 171 files, 3016 tests, 0 failures.

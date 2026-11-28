@@ -42,16 +42,14 @@ export interface DoctorSearchCriteria {
   readonly q?: string | undefined;
   readonly specialtyId?: string | undefined;
   readonly departmentId?: string | undefined;
+  readonly hospitalId?: string | undefined;
   readonly sort: 'name:asc' | 'name:desc' | 'rating:desc';
   readonly page: number;
   readonly pageSize: number;
 }
 
-/** A summary plus the internal employment id used to look up the next slot (never serialized). */
-export type SummaryWithEmployment = PatientDoctorSummary & { readonly employment: { readonly id: string; readonly timezone: string } | null };
-
 export interface DoctorPage {
-  readonly items: readonly SummaryWithEmployment[];
+  readonly items: readonly PatientDoctorSummary[];
   readonly totalItems: number;
 }
 
@@ -82,13 +80,6 @@ const SUMMARY_SELECT = {
   languages: true,
   ratingAvg: true,
   department: { select: { name: true } },
-  // DSC-05: the hospital dimension. One active employment per doctor (DB
-  // partial unique), so `take: 1` is exact; the same L6 predicate as above.
-  employments: {
-    where: { endedAt: null, hospital: { is: { status: 'ACTIVE', deletedAt: null } } },
-    select: { id: true, hospital: { select: { id: true, name: true, timezone: true } } },
-    take: 1,
-  },
 } as const;
 
 @Injectable()
@@ -108,6 +99,22 @@ export class PatientDoctorRepository {
         ? {}
         : { specialties: { some: { specialtyId: criteria.specialtyId } } }),
       ...(criteria.departmentId === undefined ? {} : { departmentId: criteria.departmentId }),
+      // ANDed with PATIENT_VISIBLE's own employment clause, never replacing it.
+      ...(criteria.hospitalId === undefined
+        ? {}
+        : {
+            AND: [
+              {
+                employments: {
+                  some: {
+                    hospitalId: criteria.hospitalId,
+                    endedAt: null,
+                    hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+                  },
+                },
+              },
+            ],
+          }),
     };
 
     const [rows, totalItems] = await runAsSystem(
@@ -115,7 +122,7 @@ export class PatientDoctorRepository {
         await Promise.all([
           this.prisma.db.doctor.findMany({
             where,
-            select: SUMMARY_SELECT,
+            select: { ...SUMMARY_SELECT, employments: employmentSelect(criteria.hospitalId) },
             orderBy: orderFor(criteria.sort),
             skip: (criteria.page - 1) * criteria.pageSize,
             take: criteria.pageSize,
@@ -124,7 +131,7 @@ export class PatientDoctorRepository {
         ]),
     );
 
-    return { items: rows.map(toSummary), totalItems };
+    return { items: rows.map((row) => toSummary(row)), totalItems };
   }
 
   /**
@@ -134,9 +141,7 @@ export class PatientDoctorRepository {
    * the caller turns both into the same 404. A separate answer for the
    * second would confirm that a suspended practitioner exists.
    */
-  async findById(
-    doctorId: string,
-  ): Promise<(PatientDoctorDetail & SummaryWithEmployment) | null> {
+  async findById(doctorId: string): Promise<PatientDoctorDetail | null> {
     if (!UUID.test(doctorId)) return null;
 
     const row = await runAsSystem(
@@ -145,6 +150,7 @@ export class PatientDoctorRepository {
           where: { id: doctorId, ...PATIENT_VISIBLE },
           select: {
             ...SUMMARY_SELECT,
+            employments: employmentSelect(undefined),
             biography: true,
             education: true,
             certifications: true,
@@ -196,22 +202,29 @@ interface SummaryRow {
   readonly languages: string[];
   readonly ratingAvg: { toNumber(): number } | null;
   readonly department: { name: string } | null;
-  readonly employments: readonly {
-    id: string;
-    hospital: { id: string; name: string; timezone: string };
-  }[];
+  readonly employments: readonly { hospital: { id: string; name: string } }[];
 }
 
-function toSummary(row: SummaryRow): SummaryWithEmployment {
-  const employment = row.employments[0];
-
+/**
+ * The active employment that names the doctor's hospital: at the filtered
+ * hospital when there is one, else the earliest-started active one — a
+ * deterministic choice for a doctor employed at two hospitals.
+ */
+function employmentSelect(hospitalId: string | undefined) {
   return {
-    employment:
-      employment === undefined
-        ? null
-        : { id: employment.id, timezone: employment.hospital.timezone },
-    hospital: employment === undefined ? null : { id: employment.hospital.id, name: employment.hospital.name },
-    nextAvailableSlot: null,
+    where: {
+      endedAt: null,
+      hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+      ...(hospitalId === undefined ? {} : { hospitalId }),
+    },
+    select: { hospital: { select: { id: true, name: true } } },
+    orderBy: [{ startedAt: 'asc' as const }, { id: 'asc' as const }],
+    take: 1,
+  };
+}
+
+function toSummary(row: SummaryRow): PatientDoctorSummary {
+  return {
     id: row.id,
     fullName: row.fullName,
     title: row.title,
@@ -226,6 +239,7 @@ function toSummary(row: SummaryRow): SummaryWithEmployment {
     // would put `{ s, e, d }` on the wire where the contract promises a
     // number. Converted here, once, rather than in each caller.
     ratingAvg: row.ratingAvg === null ? null : row.ratingAvg.toNumber(),
+    hospital: row.employments[0]?.hospital ?? null,
   };
 }
 

@@ -331,6 +331,11 @@ model AiConversation {
   /// e.g. `LAB-100429` for record/labs/pharmacy modes.
   refPublicId String?       @map("ref_public_id") @db.VarChar(20)
   favorite    Boolean       @default(false)
+  /// ADR-050 — NULL for a clinician thread; `general` | `personal` for a
+  /// patient's own thread under `/me/ai/conversations`. Fixed at creation.
+  /// A CHECK (migration `20261126120000_patient_ai`) forbids a patient
+  /// thread from binding a patient, chart or reference.
+  patientMode String?       @map("patient_mode") @db.VarChar(16)
 
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -364,6 +369,9 @@ model AiMessage {
   error   String?         @db.VarChar(300)
   /// −1 / +1 thumbs (UX 2.5 telemetry).
   feedback Int?           @db.SmallInt
+  /// ADR-050 — a fixed escalation answer from the red-flag pre-check; no
+  /// model was called for this turn.
+  escalated Boolean       @default(false)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 

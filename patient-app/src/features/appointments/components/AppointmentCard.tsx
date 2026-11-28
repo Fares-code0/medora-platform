@@ -1,5 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
+import { isolate } from '@/accessibility/bidi';
 import { Avatar, Card, Icon, StatusBadge, Text } from '@/components';
 import { useT, useDateFormat } from '@/i18n';
 import { useTheme } from '@/theme';
@@ -38,11 +39,20 @@ export function AppointmentCard({
     <Card
       testID={testID}
       onPress={onPress}
-      accessibilityLabel={t('appointments.card.a11y', {
-        when: formatDateTime(appointment.startsAt, appointment.clinicTimezone),
-        doctor: doctorName,
-        specialty: appointment.doctor.specialty,
-      })}
+      accessibilityLabel={
+        appointment.hospital === null
+          ? t('appointments.card.a11y', {
+              when: formatDateTime(appointment.startsAt, appointment.clinicTimezone),
+              doctor: doctorName,
+              specialty: appointment.doctor.specialty,
+            })
+          : t('appointments.card.a11yHospital', {
+              when: formatDateTime(appointment.startsAt, appointment.clinicTimezone),
+              doctor: doctorName,
+              specialty: appointment.doctor.specialty,
+              hospital: isolate(appointment.hospital.name),
+            })
+      }
       accessibilityHint={t('appointments.card.hint')}
     >
       <View style={[styles.row, { columnGap: theme.space[3] }]}>
@@ -56,6 +66,11 @@ export function AppointmentCard({
             {appointment.doctor.specialty}
             {appointment.departmentName === null ? '' : ` · ${appointment.departmentName}`}
           </Text>
+          {appointment.hospital === null ? null : (
+            <Text variant="caption" color="textTertiary" numberOfLines={1}>
+              {appointment.hospital.name}
+            </Text>
+          )}
         </View>
 
         <Icon name="forward" size={18} color="textTertiary" />

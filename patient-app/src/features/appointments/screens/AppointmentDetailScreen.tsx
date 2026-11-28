@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { StyleSheet, View } from 'react-native';
 
 import { headingA11y } from '@/accessibility/a11y';
+import { isolate } from '@/accessibility/bidi';
 import {
   AsyncBoundary,
   Avatar,
@@ -20,7 +21,9 @@ import type { AppointmentsStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
 import { isDeviceTimeZone } from '@/utils/datetime';
 
+import { describeCancelledReason } from '../cancel-reasons';
 import { AppointmentActions } from '../components/AppointmentActions';
+import { RescheduleRequestPanel } from '../components/RescheduleRequestPanel';
 import { useAppointment } from '../hooks';
 
 type Props = NativeStackScreenProps<AppointmentsStackParamList, 'AppointmentDetail'>;
@@ -34,7 +37,7 @@ type Props = NativeStackScreenProps<AppointmentsStackParamList, 'AppointmentDeta
  * patient asks about a rescheduled or cancelled appointment, and a status
  * badge alone does not answer it.
  */
-export function AppointmentDetailScreen({ route }: Props) {
+export function AppointmentDetailScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const { formatDateTime, formatLongDate, formatRelative, formatTime } = useDateFormat();
   const t = useT();
@@ -118,6 +121,18 @@ export function AppointmentDetailScreen({ route }: Props) {
                         {data.departmentName}
                       </Text>
                     )}
+                    {data.hospital === null ? null : (
+                      <Text
+                        variant="caption"
+                        color="textTertiary"
+                        testID="appointment-hospital"
+                        accessibilityLabel={t('appointment.hospital.a11y', {
+                          hospital: isolate(data.hospital.name),
+                        })}
+                      >
+                        {data.hospital.name}
+                      </Text>
+                    )}
                   </View>
                 </View>
               </Card>
@@ -149,13 +164,26 @@ export function AppointmentDetailScreen({ route }: Props) {
                       <Text variant="label" color="error">
                         {t('appointment.cancelledBecause')}
                       </Text>
-                      <Text variant="body">{data.cancelledReason}</Text>
+                      <Text variant="body" testID="appointment-cancelled-reason">
+                        {describeCancelledReason(data.cancelledReason, t)}
+                      </Text>
                     </>
                   )}
                 </Card>
               </Section>
 
-              <AppointmentActions appointment={data} />
+              <RescheduleRequestPanel
+                appointmentId={data.id}
+                pending={data.pendingRescheduleRequest}
+                timeZone={data.clinicTimezone}
+              />
+
+              <AppointmentActions
+                appointment={data}
+                onAskReschedule={() =>
+                  navigation.navigate('RescheduleRequest', { appointmentId: data.id })
+                }
+              />
 
               <Section title={t('appointment.history')}>
                 <Card padded={false}>

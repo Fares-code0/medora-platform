@@ -53,10 +53,10 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 | [ADR-027](#adr-027--the-authorization-core-is-built-ahead-of-its-schema) | The Authorization Core Is Built Ahead of Its Schema | **Accepted** (M7) |
 | [ADR-028](#adr-028--scheduled_reportsrecipients-is-text-not-citext) | `scheduled_reports.recipients` Is `text[]`, Not `citext[]` | **Accepted** (M5.9, corrective) |
 | [ADR-029](#adr-029--naming-vocabularies-conversation-kinds-notification-channels-roles-and-broadcast-channels) | Naming Vocabularies — Conversation Kinds, Notification Channels, Roles and Broadcast Channels | **Accepted** (M5.1/M5.9, retrospective) |
-| [ADR-030](#adr-030--patient-identity-and-authentication) | Patient Identity and Authentication | **Accepted** — owner decision, 2026-09-02 (amends ADR-018 §3) |
+| [ADR-030](#adr-030--patient-identity-and-authentication) | Patient Identity and Authentication | **Accepted** — owner decision, 2026-09-02 (amends ADR-018 §3) · RA-030.1 method decided by ADR-048 |
 | [ADR-031](#adr-031--results-release-policy-patient-visible-clinical-data) | Results Release Policy — Patient-Visible Clinical Data | 🟠 **Proposed — pending clinical/product approval** |
 | [ADR-032](#adr-032--patient-app-is-the-fifth-integration-branch) | `patient-app` Is the Fifth Integration Branch | **Accepted** (audit AD-6) |
-| [ADR-033](#adr-033--patient-appointment-action-policy-cancellation-and-rescheduling) | Patient Appointment Action Policy — Cancellation and Rescheduling | 🟠 **Proposed — pending product/clinical approval** |
+| [ADR-033](#adr-033--patient-appointment-action-policy-cancellation-and-rescheduling) | Patient Appointment Action Policy — Cancellation and Rescheduling | 🟠 **Proposed — pending product/clinical approval** · **Q1/Q2 answered by ADR-049** (2026-11-26); Q3/Q4 open |
 | [ADR-034](#adr-034--the-token-in-body-auth-variant-is-issued-not-only-accepted) | The Token-in-Body Auth Variant Is Issued, Not Only Accepted | **Accepted** (M6.3, corrective) |
 | [ADR-035](#adr-035--registration-is-split-by-role-administrators-are-invited) | Registration Is Split by Role; Administrators Are Invited | **Accepted** (2026-09-06) |
 | [ADR-036](#adr-036--meprofile-is-one-route-owned-by-the-users-module) | `/me/profile` Is One Route, Owned by the Users Module | **Accepted** (M9.1–M9.2) |
@@ -69,13 +69,16 @@ Applied whenever two documents disagree. Derived from the roadmap header, `PROJE
 | [ADR-044](#adr-044--discarding-an-unsigned-prescription-draft-is-a-soft-delete) | Discarding an Unsigned Prescription Draft Is a Soft Delete | **Accepted** (BR-DEC-002) |
 | [ADR-045](#adr-045--refresh-rotation-is-idempotent-for-30-seconds) | Refresh Rotation Is Idempotent for 30 Seconds | **Accepted** — owner decision, 2026-11-21 (amends ADR-026) |
 | [ADR-046](#adr-046--an-access-token-is-refused-once-its-role-claim-is-stale) | An Access Token Is Refused Once Its Role Claim Is Stale | **Proposed** (Backend, 2026-11-23) — implemented with audit F3 (#23); accepted when its pull request is approved |
+| [ADR-048](#adr-048--staff-mediated-patient-account-linking) | Staff-Mediated Patient Account Linking | **Accepted** — owner decision, 2026-11-26 (resolves the method of RA-030.1 / OQ-02) |
+| [ADR-049](#adr-049--patient-appointment-actions-booking-cancellation-reschedule-requests) | Patient Appointment Actions: Booking, Cancellation, Reschedule Requests | **Accepted** — owner decisions, 2026-11-26 (answers ADR-033 Q1/Q2) |
+| [ADR-050](#adr-050--patient-facing-information-layer-and-patient-ai) | Patient-Facing Information Layer and Patient AI | **Accepted** — owner decision, 2026-11-26 (ADR-031 stays proposed) |
 
 **Numbering notes (swept 2026-11-22).** ADR-042 is registered below. ADR-040 and ADR-041 remain
 Accepted with their full text in [`backend/docs/PENDING_ADRS.md`](../backend/docs/PENDING_ADRS.md).
 ADR-043 remains reserved by Phase 20 for a possible split of cross-hospital access and AI retention.
-ADR-044, ADR-045, ADR-046 and ADR-047 are registered.
+ADR-044 to ADR-050 are registered (ADR-048, ADR-049 and ADR-050 allocated 2026-11-26 by the Patient App end-to-end work after the `CLAUDE.md` sweep found them free on every remote branch).
 
-The next unallocated number is **ADR-048** (ADR-047 was allocated 2026-11-23 to multi-hospital
+The next unallocated number is **ADR-051**. Earlier allocations: (ADR-047 was allocated 2026-11-23 to multi-hospital
 authorization enforcement after the sweep below found it free on every remote branch; ADR-046 was allocated 2026-11-23 to the stale role
 claim, audit F3, after the sweep below found it free on every remote branch; ADR-045 was allocated
 2026-11-21 to the refresh grace window the same way; ADR-044 was allocated 2026-10-24 to BR-DEC-002
@@ -4940,6 +4943,324 @@ mapping), DR-05
 - Production steps (not run here): provision the runtime and audit maintenance roles and point the
   service and the retention schedule at them; delete the dev/test administrator accounts; review and
   apply the ownership backfill (owner approval required).
+## ADR-048 — Staff-Mediated Patient Account Linking
+
+**Status:** Accepted — owner decisions of 2026-11-26, relayed in the Patient App end-to-end implementation session; the implementation is accepted when its pull request is approved. Resolves the *method* of RA-030.1 / OQ-02.
+**Migration:** `20261126110000_patient_account_link_codes`
+
+### Context
+
+ADR-030 §4 separates creating a patient account from claiming a clinical
+record, because a wrong claim discloses one person's history to another, and
+forbids linking by email: an address on a record is not evidence that whoever
+controls an account with that address is the patient. Until now only an
+operator could set `patients.user_id`, by hand.
+
+### Decision
+
+Linking happens at the hospital desk, after an in-person identity check.
+
+1. The patient, signed in, calls `POST /me/patient-link/code` and gets an
+   8-character code (alphabet `ABCDEFGHJKMNPQRSTUVWXYZ23456789` — no `0/O`,
+   `1/I/L`; shown grouped `ABCD-EFGH`). 15-minute TTL, single use, and issuing
+   a new code deletes every unused one of that account (partial unique index:
+   one live code per account). Rate limited (`auth` bucket). A linked account
+   gets 409 `already_linked`.
+2. Staff holding `patients.manageAccounts` at a hospital (`@HospitalScope()`;
+   today the Hospital Admin) check an identity document in person and call
+   `POST /patients/:patientId/account-link` with the code and
+   `verification: { method: 'in_person_id_document', documentType }`
+   (`national_id | passport | residence_permit | driving_licence`). The
+   attester is the session. The body has no document-number field (an extra key inside
+   `verification` is refused with 422; extra top-level keys are stripped), so
+   no number can be stored.
+3. One transaction: lock the code row, check unused and unexpired, check the
+   account is a patient account, lock the patient row, check neither side is
+   already linked, set `patients.user_id`, mark the code used, write the audit
+   row `patient.account.link` (warning; metadata `method`, `documentType`;
+   `hospital_id` = the staff member's hospital). `patients.user_id UNIQUE`
+   backs up the "account already linked" check when RLS hides the other
+   record.
+4. `DELETE /patients/:patientId/account-link` unlinks in one transaction:
+   clears `patients.user_id`, revokes every live session of the account
+   (`sessions.revoked_at`, clearing rotation state, as
+   `SessionService.revokeAllFor` does), bumps `users.authz_version`
+   (ADR-046), deletes unused codes, and audits `patient.account.unlink`. The
+   device's access token is refused on its next request (PRE-01), so cached
+   PHI stops being refreshed from the server.
+
+Reach: staff link only records their hospital holds (a Hospital Medical
+Record there, the masked directory's reach, F-08/OD-07). Anything else —
+another hospital's record, an unknown handle, a Platform Admin caller — is
+404. Errors: 422 `link_code_invalid` (unknown, malformed, expired or used,
+indistinguishable), 422 `account_not_patient`, 409 `patient_already_linked`,
+409 `account_already_linked`, 409 `patient_account_not_linked` on unlink.
+
+`patient_account_link_codes` stores `code_hash` (SHA-256, CHECK
+`^[0-9a-f]{64}$`) and is classified Internal/system in the RLS inventory —
+identity data with no `hospital_id`, like `sessions` and `otp_codes`.
+
+### Threat model
+
+- **The code proves possession of the account; the desk proves the person.**
+  Neither alone links. A stolen code is useless without a staff member who
+  checks a document; a staff member cannot name an account without a code.
+- **Guessing:** 31^8 ≈ 8.5 × 10^11 values, at most one live code per account,
+  15 minutes, single use, rate limited on both routes. Lookup is digest
+  equality on a unique index inside PostgreSQL; no plaintext comparison.
+- **Database disclosure:** only digests are stored. An unsalted SHA-256 of a
+  40-bit code is brute-forceable offline, but only within its 15-minute life
+  and only usable at a desk; a keyed (HMAC) digest was not used to avoid a new
+  secret. Recorded as an open point.
+- **Wrong person linked:** the residual risk is a staff error at the desk. The
+  audit row names the staff member, hospital, method and document type;
+  unlink exists and ends the device's sessions.
+- **No email matching** anywhere on this path (ADR-030).
+
+### Still open
+
+- Whether reception staff (not only Hospital Admins) should hold
+  `patients.manageAccounts` — a permission-matrix decision, not taken here.
+- A patient-visible notice that their account was linked/unlinked
+  (notification rule) — not built.
+- Keyed digest (HMAC with a dedicated secret) instead of plain SHA-256.
+- A dedicated rate-limit bucket for linking (today it shares `auth`).
+- Self-service linking (e.g. a code mailed to an address on the record) is
+  out of scope by the owner decision.
+
 ---
 
-*End of decision register. Backend implementation is under way: M0–M8 complete, plus M7 (authorization, ADR-027) and M9 bar its exit gate. ADR-030 (patient identity) was accepted and implemented on 2026-09-02, and ADR-034 corrected the mobile refresh variant with it. The patient mobile client's Phase 1 foundation landed in PR #88; its branch model is ADR-032. **ADR-035 (2026-09-06) closed public administrator self-registration, enforced `users.status` and administrator MFA at login, made a doctor's professional block required so that verification is reachable, and wired patient registration end to end — closing RA-025.1.** **ADR-036 (2026-09-11) made `/me/profile` one route owned by the users module, which unblocked M9.1–M9.2.** **ADR-037 (2026-09-16) kept billing deferred, recorded the `invoices`/`invoice_lines`/`payments` sketch M17.1 asked for, and fixed the flag-off revenue alternate — leaving RA-037.1 open on the two new enums.** **ADR-038 (2026-09-16) kept payments deferred and shipped no code for them, because unlike the revenue slot there is no contract surface to reserve; it declines to sketch payment *processing* at all and records the six decisions that must precede it as RA-038.1.** **ADR-039 (2026-09-18, owner decision) closed RA-037.1: `invoice_status` is `draft|issued|paid|cancelled` and `payment_method` is `cash|card|insurance`; `partially-paid`, `void`, `disputed` and `transfer` are rejected, and overdue is a derived predicate rather than a stored status. It supersedes ADR-037 §2's proposed values, ships no code, and carries the fifteen decisions that remain before a billing migration as RA-039.1.** **ADR-031 (results release) and ADR-033 (patient appointment actions) remain proposed and awaiting a product/clinical owner.** No patient-readable clinical route may ship until ADR-031 is decided, and no patient appointment *write* route until ADR-033 is.*
+## ADR-049 — Patient Appointment Actions: Booking, Cancellation, Reschedule Requests
+
+**Status:** Accepted — owner decisions of 2026-11-26, relayed in the Patient App end-to-end implementation session; the implementation is accepted when its pull request is approved. Answers ADR-033 **Q1** (cancel until start, closed reasons) and **Q2** (= R-B, request workflow); leaves **Q3** and **Q4** open.
+**Migration:** `20261126100000_patient_appointment_actions`.
+**Code:** `backend/src/modules/appointments/` — `patient-appointment.policy.ts` (the rule), `patient-booking.service.ts`, `reschedule-request.service.ts`, `patient-booking.repository.ts`; tests `patient-appointment.policy.spec.ts`, `test/patient-booking.e2e-spec.ts`.
+
+### Context
+
+ADR-033 recorded that no source said who may move a patient appointment between statuses, and blocked every patient write route and `availableActions` on that gap. The owner has now decided booking (DR-10, DR-11, OD-08, OD-09, OD-14), cancellation (Q1) and rescheduling (Q2).
+
+### Decision
+
+**Booking (DR-10/DR-11/OD-08/OD-09/OD-14).** `POST /me/appointments` books only a doctor-**published** slot that is not withdrawn, not started and not held by a live booking, at an active hospital, for a verified, active doctor under an active employment. The new appointment is `pending`; the clinic answers through the existing staff approve/reject routes. `Idempotency-Key` is required (ADR-014 interceptor replays a repeated key). The first booking at a hospital creates the patient's `hospital_medical_records` row there (OD-09: the trigger is booking). An insured patient (an active, unexpired `patient_insurance`) books only where `hospital_insurance_coverage` has an active, date-valid row for the same provider, else `422 insurance_not_covered`; an uninsured patient is not checked (OD-14). The visit type defaults to the catalogue's `CONSULT`; with none, `422 visit_type_required`.
+
+**Cancellation (Q1).** A patient may cancel their own `pending | scheduled | confirmed | rescheduled | awaiting-patient` appointment at any time strictly **before `startsAt`**, with a reason from a closed list (`schedule_conflict | feeling_better | booked_elsewhere | transport | cost | other`), stored as `cancelled_reason = 'patient:<code>'` plus an optional note (≤ 200). The slot is freed immediately (the slot indexes exclude cancelled rows). The patient is not notified of their own act; the doctor is (`appointment.cancelled_by_patient`).
+
+**Reschedule requests (Q2 = R-B).** A patient may request a move of a `scheduled | confirmed | rescheduled` appointment, before `startsAt`, to another published slot of the **same doctor at the same hospital** (never across hospitals). Requests live in a new table, `appointment_reschedule_requests`, not in `appointment_reschedule_proposals` (which stores the clinic's raw times, not slots). Lifecycle: `pending → approved | rejected | withdrawn | superseded`; one pending request per appointment (partial unique index). `superseded` means the appointment was cancelled, completed, moved by the clinic, or reached its start time while the request was pending (applied in the same transaction for cancellation and staff transitions, and lazily before any read for the start time).
+
+**Slot policy while a request is pending (explicit).** The original slot stays booked by the appointment until approval. The requested slot is **not reserved** and stays bookable by others. On approval the server locks and re-checks it inside the transaction; if it is taken, the answer is `409 slot_taken` and the request stays `pending` for the clinic to reject.
+
+**Approval** (staff, `appointments.manageOwn`, the doctor's own book) moves the **same** appointment row onto the requested slot (`published_slot_id`, `starts_at`, `duration_min`) with status `rescheduled` through the ADR-001 machine, writes the `reschedule` event, and marks the request approved; the old slot is freed by the move. **Rejection** requires a reason (3–300) and leaves the appointment untouched. Both notify the patient after commit through the outbox with category-level text only.
+
+**Concurrency.** Capacity one is enforced in the database. Booking and approval take the doctor's schedule lock (BE-1), then lock the slot row `FOR UPDATE` and check for a live holder; the insert or move is then guarded by `appointments_one_live_booking_per_slot`. That new index counts `rescheduled` as holding a slot, which the phase-21 index (`…_one_active_booking_per_slot`) did not. N concurrent bookings of one slot yield one `201` and `409 slot_taken` for the rest (tested).
+
+**Authorization and RLS.** Patient routes admit the `patient` role only (`403 patient_only`), resolve the patient from the session, and scope every row in the WHERE (another patient's appointment, an unknown id: `404`). An unlinked patient account gets `409 patient_not_linked`. The new table has RLS: readable when its parent appointment is visible and belongs to the same hospital; writable where the parent is clinically writable; deletable by `system` only. The booking transaction runs in the `hospital` scope of the slot's own hospital (the narrowest scope in which the slot, the employment and the new record are visible); slot lookups that decide bookability run under `system`, keyed to the slot or doctor named.
+
+**`availableActions`** is computed server-side by the same functions the write routes use, and carried on every patient appointment payload with `hospital`; the detail adds `pendingRescheduleRequest`.
+
+### What stays open
+
+- **ADR-033 Q3** — a patient's response to a clinic proposal (`awaiting-patient → confirmed`). No route.
+- **ADR-033 Q4** — any timing window (a cut-off before `startsAt`, a minimum notice). None is applied beyond "before `startsAt`".
+- **Request expiry** beyond `superseded`: a pending request has no deadline of its own, and there is no sweep; staleness is applied lazily on read and on transitions.
+- **Doctor-side slot publishing** (an API and UI to publish and withdraw `published_slots`) is **not built**. Slots exist only through seeds and fixtures, so the patient booking flow has nothing to offer in a real deployment until it is.
+- No notification rule for `appointment.reschedule_request.created` (listed as unsourced); the clinic sees requests in its queue.
+- Rate limiting of the patient write routes: the only existing bucket is `auth`; none was applied.
+
+---
+
+## ADR-050 — Patient-Facing Information Layer and Patient AI
+
+**Status:** Accepted — owner decisions of 2026-11-26, relayed in the Patient App end-to-end implementation session; the implementation is accepted when its pull request is approved. ADR-031 (results release) stays **proposed**: this ADR exposes no result and adds no release column.
+**Migration:** `20261126120000_patient_ai`.
+
+### Part 1 — The patient-facing information layer
+#### Decision
+
+The patient never sees the medical record, physician notes, internal
+documentation or unrestricted clinical history. A separate, narrow
+*patient-facing information layer* is allowed. In this slice it is:
+
+- **`GET /me/lab-orders`** — test *status* only: `id`, `testName`,
+  `category`, `specimenType`, `status`, `requestedAt`, `collectedAt`,
+  `completedAt`, `hospital {id,name}`, and a fixed
+  `results: { available: false, reason: 'release_policy_pending' }`.
+  Status mapping: `ORDERED → awaiting_collection`,
+  `COLLECTED | PROCESSING → in_progress`, `COMPLETED → completed`,
+  `CANCELLED → cancelled`. The repository's explicit `select` never reads
+  `clinical_indication`, `interpretation`, results, flags,
+  `has_critical_result` or the reviewer, so they cannot leak by a mapper
+  change. Soft-deleted rows and legacy rows with `hospital_id IS NULL`
+  (#17) are excluded.
+- **`GET /me/insurance`** — the policy on file (active, else latest):
+  `providerName`, `plan`, `policyNumberLast4`, `validUntil`, `isActive`;
+  plus `authorizations: { available: false, reason:
+  'authorization_workflow_undecided' }`.
+
+Both are patient-only (403 `patient_only` for any other role), resolve the
+patient from the session only (`PatientSelfScopeService`), and answer an
+unlinked account 409 `patient_not_linked` so the app can show the linking
+screen. Under RLS a patient scope reads only its own rows.
+
+#### Not decided here
+
+- **Results release (ADR-031) remains proposed.** No release column, no
+  release rule and no result values are exposed; the marker above is the
+  only result-related field.
+- **Insurance authorization status:** the approval/rejection state machine is
+  undecided (ADR-039 item 5). No authorization data is exposed; the marker
+  above documents the blocker.
+- Patient instructions "where they exist as data": no patient-instruction
+  field exists on these resources today, so none is exposed.
+
+#### Test-status notifications
+
+`lab_order.completed` and `lab_order.critical_released` carry one identical patient rule (title *Update about your test*, NORMAL, UPDATE). The service publishes the second instead of the first when a value is critical, so a rule on only one of them would disclose criticality by the presence or absence of a notification. The patient is resolved from the order row, never from the payload; unlinked, deleted and no-hospital orders notify nobody. Tapping it opens the status-only Tests list. Tested in `backend/test/patient-lab-notifications.e2e-spec.ts`.
+
+### Part 2 — Patient AI
+**Status:** Draft for the coordinator to merge into `docs/DECISIONS.md` under ADR-050
+(Patient-facing information layer and Patient AI). Implemented on the backend; generation is
+**blocked** until a provider is configured (see Blockers).
+**Date:** 2026-11-26
+**Scope:** `backend/src/modules/ai` (patient files only), migration
+`20261126120000_patient_ai`. The clinician assistant (`/ai/conversations`, ADR/M16) is unchanged
+except for one defence-in-depth filter (below).
+
+#### Context
+
+The owner decided (2026-11-26, decision 7) that patients get an AI assistant in two separate
+experiences, that the provider is unconfigured today and must answer honestly, that patients get
+**no** `ai.use` permission and never reach the clinician routes, and that results stay unexposed
+because ADR-031 (results release policy) is not approved.
+
+#### Decision
+
+##### 1. Two experiences, fixed at creation
+
+| | `general` | `personal` |
+|---|---|---|
+| Purpose | Patient education, terminology, appointment preparation, app guidance | The same, plus the caller's own appointments, lab **test status** and insurance on file |
+| Patient data loaded | **None, ever.** The prompt builder takes no context argument. | Only the patient-facing layer (§3), re-read from the session **every turn** |
+| Needs a linked record | No | Yes — `409 patient_not_linked` on create and on send |
+| Audit of context read | — | `patient_ai.context.read`, metadata counts only |
+
+`POST /me/ai/conversations { mode }` fixes the mode; there is no route that changes it.
+
+##### 2. Isolation boundaries
+
+- **Separate surface.** `PatientAiController` (`/me/ai/conversations`), `PatientAiService`,
+  `PatientAiContextService`, `PatientAiConversationRepository`, `PatientAiContextRepository` and
+  their own prompts. Nothing of the clinician prompt, context resolver or settings routes is used,
+  except `titleFromMessage` and the read of the caller's AI language setting.
+- **Patient-only.** `@Authenticated()` (a patient holds zero capabilities, ADR-030 §6); the service
+  refuses any role other than `patient` with **403 `patient_only`** before touching a row.
+- **Owner-only.** Every read and write is keyed on `owner_id = caller`; another patient's thread, a
+  clinician's thread and an unknown id all answer **404**.
+- **Clinician and patient threads are mutually invisible.** Patient threads carry
+  `patient_mode IS NOT NULL` and every patient query requires it; the clinician repository's `LIVE`
+  filter now also requires `patient_mode IS NULL` (the one change to clinician code — a narrowing
+  filter; all clinician tests stay green). Patients without `ai.use` get 403 on `/ai/*`.
+- **Persistence.** Reuses `ai_conversations` / `ai_messages`:
+  - `ai_conversations.patient_mode varchar(16)` — NULL for clinician threads, `general` | `personal`
+    for patient threads. A CHECK (`ai_conversations_patient_mode_check`) requires a patient thread to
+    have `context_mode = 'general'` and **no** `patient_id`, `hospital_id`,
+    `hospital_medical_record_id` or `ref_public_id`. The personal context is never bound to the row;
+    it is resolved from the session through `PatientSelfScopeService` each turn, so an account
+    unlinked after the thread was opened stops getting personal answers immediately.
+  - `ai_messages.escalated boolean NOT NULL DEFAULT false` — the red-flag answer.
+  - A varchar + CHECK rather than a new enum value, so the `ai_context_mode` vocabulary served by
+    `/meta/enums` and mirrored by the frontend does not change.
+  - RLS: the existing owner-only policies apply unchanged (patient threads have no patient id).
+
+##### 3. Data allowed in personal mode (contract §4)
+
+Read directly with Prisma in `patient-ai-context.repository.ts` (read-only; covered by
+`ai-containment.spec.ts`), with explicit selects:
+
+- **Appointments** (20 most recent by start): public id, start, duration, status (wire value),
+  visit type, department, doctor name and specialty, hospital name. **Not** `reason` / `notes`
+  (they may be patient-typed text).
+- **Lab orders** (20 most recent, `hospital_id` not null, not soft-deleted): public id, test name,
+  category, specimen type, status mapped `ORDERED→awaiting_collection`,
+  `COLLECTED|PROCESSING→in_progress`, `COMPLETED→completed`, `CANCELLED→cancelled`, requested /
+  collected / completed dates, hospital name, and the fixed marker
+  `results: "not available: release policy pending"`. **Never** clinical indication,
+  interpretation, results, flags, `has_critical_result`, reviewer, ordering-doctor notes.
+- **Insurance on file**: provider name, plan, valid-until, active — **no policy number** —
+  and `authorizations: "not available: workflow undecided"` (ADR-039 item 5).
+
+Never: medical records, notes, diagnoses, prescriptions/medications, results, other patients.
+
+##### 4. Prompt-injection hardening
+
+- The data sits in one `<patient_facing_data>` … `</patient_facing_data>` block, one JSON object per
+  line, each with `source` and `date`. Values are `JSON.stringify`-escaped and `<` / `>` are
+  escaped, so no stored value can close the block or open a fake one.
+- The prompt states that the block is data, not instructions, and that nothing in the conversation
+  can change it.
+- **Patient-typed text never enters the system prompt** — it travels only as `user` turns; the
+  builder has no parameter for it.
+- The prompt states explicitly what is **unavailable** (results, interpretation, reason for a test,
+  records, notes, diagnoses, prescriptions, insurance decisions — release policy pending) and that
+  "completed" means the lab work finished, not that a result was released or is normal.
+
+##### 5. Red-flag escalation (deterministic, before the model)
+
+`patient-ai-red-flags.ts` normalises the message (NFKC, lower-case, Arabic diacritics/tatweel
+removed, أ/إ/آ/ٱ→ا, ى→ي, ة→ه, ؤ→و, ئ→ي, punctuation→space) and matches English regexes and Arabic
+phrases (substring, because Arabic attaches prefixes) in eight categories: chest pain, stroke
+signs, severe breathing difficulty, suicidal ideation / self-harm, severe bleeding, anaphylaxis,
+loss of consciousness / seizure, poisoning / overdose.
+
+On a match: the user turn and a **fixed** assistant answer (`en` or `ar`, from the request
+`locale`, else the user's AI language setting, else `en`) are persisted with `escalated: true`; the
+gateway is **not** called; the stream is one `delta` with the text and `done` with
+`escalated: true`. The check runs **before** the configuration check, so escalation works on a
+deployment with no provider. The copy tells the person to contact local emergency services now or
+use the app's Emergency screen; it contains **no phone number** (numbers vary by country; none is
+invented). The matched category is not logged or audited (it is itself health data); the
+transcript log records `outcome: escalated` only.
+
+**Known false-negative limits:** misspellings beyond the normalisations, unlisted dialect
+phrasings, Arabizi / transliterated Arabic, other languages, indirect descriptions ("he went grey
+and collapsed" — partially covered), and a description split across messages. Negation is not
+parsed, deliberately: "no chest pain" escalates (false positive preferred). This is a safety floor,
+not triage.
+
+##### 6. Provider, streaming, limits
+
+- Unconfigured gateway (`describe().configured === false`, the production binding today) →
+  **503 `service_unavailable`** before anything is written or any context is read. No output is
+  fabricated; a fake gateway exists only in tests.
+- A configured gateway that fails mid-stream finishes the message as `error` exactly like the
+  clinician path; client disconnect → `stopped`.
+- SSE frames: `event: delta` / `data: {"text": "…"}` …, then `event: done` /
+  `data: {"messageId","status","error","escalated"}`.
+- Fixed temperature 0.3, 1 000 output tokens, 20-turn window; content 1–2 000 characters.
+- Sends are `@RateLimited('patient_ai')` — a new bucket with its own counter, same
+  `RATE_LIMIT_AUTH_*` max/window, effective only when `RATE_LIMIT_ENABLED`.
+- Transcript log: metadata only (`contextMode: patient_general | patient_personal`).
+- Audit: `patient_ai.conversation.create` / `.delete`, `patient_ai.context.read` (counts), all
+  classified `user_action`.
+
+#### Blockers (not resolved by this ADR)
+
+1. **No provider configured.** Generation needs `AI_PROVIDER` / `AI_API_KEY` and a provider
+   adapter in `shared/ai`, **and** a data-processing agreement with the provider per OD-11
+   (DR-13) before any patient text — let alone personal context — leaves the platform.
+2. **Clinical sign-off** of the escalation copy (en and ar) and of the red-flag phrase lists.
+3. **Results / record explanations are blocked by ADR-031** (release policy not approved). The
+   personal mode must keep stating they are unavailable until it is accepted; no release column
+   exists and none was invented.
+4. Insurance authorization status is blocked by ADR-039 item 5 (state machine undecided).
+
+#### Consequences
+
+- One table pair serves both assistants; the separation is enforced by a column, a CHECK and two
+  mutually exclusive query filters, and is tested in both directions (`test/patient-ai.e2e-spec.ts`).
+- The personal context is always current and never persisted on the thread; each turn costs three
+  indexed reads plus an audit row.
+
+---
+
+*End of decision register. Backend implementation is under way: M0–M8 complete, plus M7 (authorization, ADR-027) and M9 bar its exit gate. ADR-030 (patient identity) was accepted and implemented on 2026-09-02, and ADR-034 corrected the mobile refresh variant with it. The patient mobile client's Phase 1 foundation landed in PR #88; its branch model is ADR-032. **ADR-035 (2026-09-06) closed public administrator self-registration, enforced `users.status` and administrator MFA at login, made a doctor's professional block required so that verification is reachable, and wired patient registration end to end — closing RA-025.1.** **ADR-036 (2026-09-11) made `/me/profile` one route owned by the users module, which unblocked M9.1–M9.2.** **ADR-037 (2026-09-16) kept billing deferred, recorded the `invoices`/`invoice_lines`/`payments` sketch M17.1 asked for, and fixed the flag-off revenue alternate — leaving RA-037.1 open on the two new enums.** **ADR-038 (2026-09-16) kept payments deferred and shipped no code for them, because unlike the revenue slot there is no contract surface to reserve; it declines to sketch payment *processing* at all and records the six decisions that must precede it as RA-038.1.** **ADR-039 (2026-09-18, owner decision) closed RA-037.1: `invoice_status` is `draft|issued|paid|cancelled` and `payment_method` is `cash|card|insurance`; `partially-paid`, `void`, `disputed` and `transfer` are rejected, and overdue is a derived predicate rather than a stored status. It supersedes ADR-037 §2's proposed values, ships no code, and carries the fifteen decisions that remain before a billing migration as RA-039.1.** **ADR-031 (results release) and ADR-033 (patient appointment actions) remain proposed and awaiting a product/clinical owner.** No patient-readable clinical route may ship until ADR-031 is decided, and no patient appointment *write* route until ADR-033 is.* *Update 2026-11-26: ADR-049 answers ADR-033 Q1/Q2 (patient booking, cancellation until start, reschedule requests); ADR-048 decides the RA-030.1 linking method (staff-mediated); ADR-050 adds a status-only patient information layer and the patient assistant. ADR-031 remains proposed: no result, record, note or prescription is readable by a patient.*

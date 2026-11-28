@@ -8,10 +8,6 @@ import { I18nManager } from 'react-native';
 
 import { resolveGlyph, mirrorsInRtl } from '@/components/Icon';
 import { ListItem } from '@/components/layout/ListItem';
-import { AiChatScreen } from '@/features/ai/screens/AiChatScreen';
-import { AiHomeScreen } from '@/features/ai/screens/AiHomeScreen';
-import { AiImageScreen } from '@/features/ai/screens/AiImageScreen';
-import { AiSymptomsScreen } from '@/features/ai/screens/AiSymptomsScreen';
 import { ForgotPasswordScreen } from '@/features/auth/screens/ForgotPasswordScreen';
 import { LoginScreen } from '@/features/auth/screens/LoginScreen';
 import { RegisterScreen } from '@/features/auth/screens/RegisterScreen';
@@ -201,15 +197,8 @@ const AUTH_SCREENS: readonly HostedScreen[] = [
   ['VerifyEmail', VerifyEmailScreen, { email: 'amina@example.com' }],
 ];
 
-/** The assistant (K-01): its disclaimers are inside the W-10 review. */
-const AI_SCREENS: readonly HostedScreen[] = [
-  ['AiHome', AiHomeScreen, {}],
-  ['AiChat', AiChatScreen, {}],
-  ['AiSymptoms', AiSymptomsScreen, {}],
-  ['AiImage', AiImageScreen, {}],
-];
-
-const ALL: readonly HostedScreen[] = [...AUTH_SCREENS, ...SCREENS, ...AI_SCREENS];
+/* The assistant screens (K-01) are in `SCREENS`, so they are swept like every other. */
+const ALL: readonly HostedScreen[] = [...AUTH_SCREENS, ...SCREENS];
 
 describe('the data vocabulary is real, so it cannot hide app copy by accident', () => {
   it('was read from the fixtures', () => {

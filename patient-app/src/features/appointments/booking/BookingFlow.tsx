@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useNavigation, type NavigationProp } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { announce, headingA11y } from '@/accessibility/a11y';
+import { isolate } from '@/accessibility/bidi';
 import {
   AsyncBoundary,
   Button,
@@ -23,9 +24,12 @@ import { useDoctorSearch } from '@/features/doctors/hooks';
 import { useT, useDateFormat } from '@/i18n';
 import type { RootStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
-import { isApiError } from '@/types/api';
 
-import { useBookAppointment, useSlots } from '../hooks';
+import { ActionFailureCard } from '../components/ActionFailureCard';
+import { classifyActionError, type ActionFailure } from '../errors';
+import { useBookAppointment, useSlots, useVisitTypes } from '../hooks';
+import { openPatientLink } from '../link-account';
+import type { BookableSlot } from '../model/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Booking'>;
 
@@ -40,17 +44,19 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Booking'>;
  * ── The two constraints that shaped this file ────────────────────────
  *
  * 1. **No client-side slot generation.** The times on the Time step come
- *    from `useSlots`, which will read `GET /patient/doctors/:id/slots`
- *    (`docs/multi-hospital/API_CONTRACT_CHANGES.md` §6) — doctor-published
- *    slots only (DR-10), signed in (DR-09); the old `/public/*` route and
- *    BE-06's computed availability are superseded and not built. Which
- *    slots exist is the server's decision — this screen renders what it
- *    is given and computes nothing (checklist I-04).
+ *    from `useSlots`, which reads `GET /patient/doctors/:id/slots` —
+ *    doctor-published, unbooked, future slots only (DR-10), each carrying
+ *    its hospital. Which slots exist is the server's decision — this
+ *    screen renders what it is given and computes nothing (checklist I-04).
  *
- * 2. **A 409 must not cost the patient their input.** Somebody else can
- *    take the slot between the Time step and Confirm. When that happens
- *    the flow returns to the Time step with the reason text intact and
- *    the server's message shown, rather than restarting (checklist I-05).
+ * 2. **A failure must not cost the patient their input.** Somebody else
+ *    can take the slot between the Time step and Confirm (`409
+ *    slot_taken`): the flow refreshes the times and returns to the Time
+ *    step with the reason text intact, rather than restarting (checklist
+ *    I-05). A `422 insurance_not_covered` stays on Confirm and shows the
+ *    server's detail. A dropped connection offers a retry that re-sends
+ *    under the SAME idempotency key (`useBookAppointment`), so a lost
+ *    response cannot become two appointments. Nothing here signs anyone out.
  *
  * The date strip is 14 days of local dates — a display convenience for
  * choosing which day to ASK about. It is not an availability calculation:
@@ -61,6 +67,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Booking'>;
 type Step = 'doctor' | 'date' | 'time' | 'reason' | 'confirm';
 
 const STEP_ORDER: readonly Step[] = ['doctor', 'date', 'time', 'reason', 'confirm'];
+const REASON_MIN = 3;
 const REASON_MAX = 300;
 const DATE_STRIP_DAYS = 14;
 
@@ -86,6 +93,30 @@ function dayOffsetOf(iso: string): number | null {
   midnight.setHours(0, 0, 0, 0);
   const offset = Math.round((midnight.getTime() - startOfDay(0).getTime()) / 86_400_000);
   return offset >= 0 && offset < DATE_STRIP_DAYS ? offset : null;
+}
+
+interface HospitalGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly slots: readonly BookableSlot[];
+}
+
+/** The server's slots, kept in its order, under the hospital each belongs to. */
+function groupByHospital(slots: readonly BookableSlot[]): readonly HospitalGroup[] {
+  const groups = new Map<string, { id: string; name: string; slots: BookableSlot[] }>();
+  for (const slot of slots) {
+    const group = groups.get(slot.hospital.id);
+    if (group === undefined) {
+      groups.set(slot.hospital.id, { ...slot.hospital, slots: [slot] });
+    } else {
+      group.slots.push(slot);
+    }
+  }
+  return [...groups.values()];
+}
+
+function hasSeveralHospitals(slots: readonly BookableSlot[]): boolean {
+  return new Set(slots.map((slot) => slot.hospital.id)).size > 1;
 }
 
 export function BookingFlow({ route }: Props) {
@@ -114,7 +145,9 @@ export function BookingFlow({ route }: Props) {
   const [slotStartsAt, setSlotStartsAt] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
-  const [failure, setFailure] = useState<string | null>(null);
+  const [slotHospital, setSlotHospital] = useState<string | null>(null);
+  const [visitTypeId, setVisitTypeId] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionFailure | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
 
   const doctors = useDoctorSearch({});
@@ -122,6 +155,9 @@ export function BookingFlow({ route }: Props) {
   const to = startOfDay(dayOffset + 1).toISOString();
   const slots = useSlots(doctorId ?? '', from, to, doctorId !== undefined && step !== 'doctor');
   const booking = useBookAppointment();
+  const visitTypes = useVisitTypes();
+  /** A second press before the first settles must not send a second request. */
+  const inFlight = useRef(false);
 
   /**
    * Adopt the requested time, but only once the SERVER has said it is
@@ -136,6 +172,7 @@ export function BookingFlow({ route }: Props) {
     if (match === undefined) return;
     setSlotId((current) => (current === null ? match.id : current));
     setSlotStartsAt((current) => (current === null ? match.startsAt : current));
+    setSlotHospital((current) => (current === null ? match.hospital.name : current));
   }, [offered, requestedStartsAt]);
 
   const stepIndex = STEP_ORDER.indexOf(step);
@@ -153,6 +190,8 @@ export function BookingFlow({ route }: Props) {
 
   const submit = async () => {
     if (doctorId === undefined || slotId === null || slotStartsAt === null) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setFailure(null);
     try {
       const trimmedNotes = notes.trim();
@@ -161,6 +200,7 @@ export function BookingFlow({ route }: Props) {
         slotId,
         startsAt: slotStartsAt,
         reason: reason.trim(),
+        ...(visitTypeId === null ? {} : { visitTypeId }),
         // Omitted rather than sent empty. `notes` is optional on
         // `BookingRequest`, and `notes: ''` is a different statement from
         // "the patient added nothing" — the clinic would read a blank note
@@ -174,17 +214,27 @@ export function BookingFlow({ route }: Props) {
         params: { screen: 'AppointmentDetail', params: { appointmentId: created.id } },
       });
     } catch (error) {
-      // A taken slot sends the patient back one step with their reason
-      // intact — never to the start of the flow.
-      if (isApiError(error) && error.kind === 'conflict') {
-        setFailure(error.detail);
+      const classified = classifyActionError(error);
+      setFailure(classified);
+      announce(
+        classified.kind === 'slot_taken' ? t('booking.slotTaken.a11y') : t(classified.messageKey),
+      );
+      if (classified.kind === 'slot_taken' || classified.kind === 'conflict') {
+        // A taken slot sends the patient back one step with their reason
+        // intact — never to the start of the flow. The times are fresh:
+        // the mutation invalidated them, and the list is asked again here.
         setSlotId(null);
         setSlotStartsAt(null);
+        setSlotHospital(null);
         setStep('time');
-        announce(t('booking.slotTaken.a11y'));
-        return;
+        void slots.refetch();
+      } else if (classified.kind === 'visit_type') {
+        setStep('reason');
       }
-      setFailure(t('appointment.action.failed'));
+      // insurance, not-linked, offline and generic stay on Confirm with
+      // everything entered; Send request is the retry.
+    } finally {
+      inFlight.current = false;
     }
   };
 
@@ -222,11 +272,11 @@ export function BookingFlow({ route }: Props) {
       </View>
 
       {failure === null ? null : (
-        <Card tone="error" testID="booking-failure">
-          <Text variant="bodySm" color="error" accessibilityLiveRegion="assertive">
-            {failure}
-          </Text>
-        </Card>
+        <ActionFailureCard
+          failure={failure}
+          testID="booking-failure"
+          onLinkAccount={() => openPatientLink(navigation)}
+        />
       )}
 
       {step === 'doctor' ? (
@@ -311,18 +361,41 @@ export function BookingFlow({ route }: Props) {
             }}
           >
             {(data) => (
-              <View style={[styles.wrap, { columnGap: theme.space[2], rowGap: theme.space[2] }]}>
-                {data.map((slot) => (
-                  <Chip
-                    key={slot.id}
-                    testID={`booking-slot-${slot.id}`}
-                    label={formatTime(slot.startsAt)}
-                    selected={slotId === slot.id}
-                    onPress={() => {
-                      setSlotId(slot.id);
-                      setSlotStartsAt(slot.startsAt);
-                    }}
-                  />
+              <View style={{ rowGap: theme.space[3] }}>
+                {groupByHospital(data).map((group) => (
+                  <View key={group.id} style={{ rowGap: theme.space[2] }}>
+                    {/*
+                      A heading per hospital, only when the day has times at
+                      more than one: a doctor can be published at several, and
+                      the same clock time at two of them is not one choice.
+                    */}
+                    {!hasSeveralHospitals(data) ? null : (
+                      <Text variant="label" color="textSecondary" {...headingA11y(group.name)}>
+                        {group.name}
+                      </Text>
+                    )}
+                    <View
+                      style={[styles.wrap, { columnGap: theme.space[2], rowGap: theme.space[2] }]}
+                    >
+                      {group.slots.map((slot) => (
+                        <Chip
+                          key={slot.id}
+                          testID={`booking-slot-${slot.id}`}
+                          label={formatTime(slot.startsAt)}
+                          accessibilityLabel={t('booking.slot.a11y', {
+                            when: formatDateTime(slot.startsAt),
+                            hospital: isolate(slot.hospital.name),
+                          })}
+                          selected={slotId === slot.id}
+                          onPress={() => {
+                            setSlotId(slot.id);
+                            setSlotStartsAt(slot.startsAt);
+                            setSlotHospital(slot.hospital.name);
+                          }}
+                        />
+                      ))}
+                    </View>
+                  </View>
                 ))}
               </View>
             )}
@@ -352,6 +425,30 @@ export function BookingFlow({ route }: Props) {
             required
             hint={t('booking.reason.hint', { used: reason.length, max: REASON_MAX })}
           />
+          {visitTypes.data !== undefined &&
+          (visitTypes.data.length > 1 ||
+            (failure?.kind === 'visit_type' && visitTypes.data.length > 0)) ? (
+            <View style={{ rowGap: theme.space[1] }} testID="booking-visit-types">
+              <Text variant="label" color="textSecondary">
+                {t('booking.visitType.label')}
+              </Text>
+              <View style={[styles.wrap, { columnGap: theme.space[2], rowGap: theme.space[2] }]}>
+                {visitTypes.data.map((type) => (
+                  <Chip
+                    key={type.id}
+                    testID={`booking-visit-type-${type.id}`}
+                    label={type.name}
+                    selected={visitTypeId === type.id}
+                    // Tapping the chosen one clears it: the select is optional.
+                    onPress={() => setVisitTypeId(visitTypeId === type.id ? null : type.id)}
+                  />
+                ))}
+              </View>
+              <Text variant="caption" color="textTertiary">
+                {t('booking.visitType.hint')}
+              </Text>
+            </View>
+          ) : null}
           {/*
             Optional, and deliberately UNCAPPED.
 
@@ -375,7 +472,7 @@ export function BookingFlow({ route }: Props) {
             label={t('booking.reason.next')}
             size="lg"
             fullWidth
-            disabled={reason.trim().length === 0}
+            disabled={reason.trim().length < REASON_MIN}
             testID="booking-to-confirm"
             onPress={() => setStep('confirm')}
           />
@@ -392,6 +489,17 @@ export function BookingFlow({ route }: Props) {
               {t('booking.confirm.doctor')}
             </Text>
             <Text variant="body">{selectedDoctor?.fullName ?? doctorId}</Text>
+            {slotHospital === null ? null : (
+              <>
+                <Divider />
+                <Text variant="label" color="textTertiary">
+                  {t('booking.confirm.hospital')}
+                </Text>
+                <Text variant="body" testID="booking-confirm-hospital">
+                  {slotHospital}
+                </Text>
+              </>
+            )}
             <Divider />
             <Text variant="label" color="textTertiary">
               {t('booking.confirm.when')}
@@ -407,6 +515,17 @@ export function BookingFlow({ route }: Props) {
               because a patient should not confirm a message to their clinic
               that this screen is holding and not displaying.
             */}
+            {visitTypeId === null ? null : (
+              <>
+                <Divider />
+                <Text variant="label" color="textTertiary">
+                  {t('booking.confirm.visitType')}
+                </Text>
+                <Text variant="body">
+                  {visitTypes.data?.find((type) => type.id === visitTypeId)?.name ?? ''}
+                </Text>
+              </>
+            )}
             {notes.trim() === '' ? null : (
               <>
                 <Divider />

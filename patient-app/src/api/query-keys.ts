@@ -32,10 +32,13 @@ export type KeyFactory = ReturnType<typeof createKeyFactory>;
  * clearing") asserts the sweep removes every listed prefix.
  */
 export const PHI_QUERY_DOMAINS: readonly string[] = [
+  'ai-conversations',
   'appointments',
   'health-records',
   'lab-results',
   'messages',
   'notifications',
+  // The linked record's name and link state (ADR-048).
+  'patient-link',
   'profile',
 ];

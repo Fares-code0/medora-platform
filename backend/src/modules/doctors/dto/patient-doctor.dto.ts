@@ -38,15 +38,11 @@ export interface PatientDoctorSummary {
   readonly languages: readonly string[];
   /** Null when no satisfaction survey has been recorded yet. */
   readonly ratingAvg: number | null;
-  /** DSC-05: the hospital of the doctor's active employment (one per doctor). */
+  /**
+   * The hospital of the doctor's active employment (contract §2) — the
+   * filtered hospital when `hospitalId` is given. Additive.
+   */
   readonly hospital: { readonly id: string; readonly name: string } | null;
-  /** DSC-05: earliest free published slot, or null. Existence only — no booking detail. */
-  readonly nextAvailableSlot: {
-    readonly slotId: string;
-    readonly startsAt: string;
-    readonly durationMinutes: number;
-    readonly timezone: string;
-  } | null;
 }
 
 /** What a patient sees on a doctor's profile screen. */

@@ -58,6 +58,12 @@ function deepLinkFor(related: WireNotification['related']): string | null {
   if (related.appointmentId !== null) {
     return `medora://appointments/${related.appointmentId}`;
   }
+  // ADR-050: a test-status notification opens the Tests list — the
+  // status-only layer this client can open. The order id is not put in
+  // the link: there is no per-test screen, and nothing to read there.
+  if (related.labOrderId !== null) {
+    return 'medora://records/labs';
+  }
   return null;
 }
 

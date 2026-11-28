@@ -30,8 +30,13 @@ import { PrismaService, runAsSystem } from '../../../shared/database';
 
 import type { Coordinates } from './discovery.geo';
 
-/** A slot is occupied by any appointment not in a released status (matches `appointments_one_active_booking_per_slot`). */
-const RELEASED_STATUSES = ['CANCELLED', 'RESCHEDULED', 'COMPLETED', 'NO_SHOW'] as const;
+/**
+ * A slot is occupied by any appointment not in a released status. Matches
+ * `appointments_one_live_booking_per_slot` and the patient slot listing's
+ * `SLOT_HOLDING_STATUSES` (ADR-049): a `rescheduled` booking still holds its
+ * slot, so discovery never advertises a slot the listing would hide.
+ */
+const RELEASED_STATUSES = ['CANCELLED', 'COMPLETED', 'NO_SHOW'] as const;
 
 const ACTIVE_HOSPITAL = { status: 'ACTIVE', deletedAt: null } as const;
 
@@ -107,20 +112,6 @@ export interface CandidateFilters {
   readonly hospitalId?: string | undefined;
   readonly clinicId?: string | undefined;
   readonly locationId?: string | undefined;
-}
-
-export interface HospitalCandidate {
-  readonly id: string;
-  readonly name: string;
-  readonly timezone: string;
-  readonly locations: readonly LocationRow[];
-  readonly specialties: readonly { id: string; name: string }[];
-  readonly employmentIds: readonly string[];
-}
-
-export interface HospitalFilters {
-  readonly q?: string | undefined;
-  readonly specialtyId?: string | undefined;
 }
 
 @Injectable()
@@ -317,125 +308,6 @@ export class DiscoveryRepository {
     }
     return candidates;
   }
-
-  async candidateHospitals(filters: HospitalFilters): Promise<readonly HospitalCandidate[]> {
-    const doctorWhere = {
-      ...VISIBLE_DOCTOR,
-      ...(filters.specialtyId === undefined
-        ? {}
-        : { specialties: { some: { specialtyId: filters.specialtyId } } }),
-    };
-
-    const rows = await runAsSystem(
-      async () =>
-        await this.prisma.db.hospital.findMany({
-          where: {
-            ...ACTIVE_HOSPITAL,
-            ...(filters.q === undefined
-              ? {}
-              : { name: { contains: filters.q, mode: 'insensitive' as const } }),
-            ...(filters.specialtyId === undefined
-              ? {}
-              : { doctorEmployments: { some: { endedAt: null, doctor: { is: doctorWhere } } } }),
-          },
-          select: {
-            id: true,
-            name: true,
-            timezone: true,
-            locations: ACTIVE_LOCATIONS,
-            doctorEmployments: {
-              where: {
-                endedAt: null,
-                doctor: {
-                  is: {
-                    ...VISIBLE_DOCTOR,
-                    ...(filters.specialtyId === undefined
-                      ? {}
-                      : { specialties: { some: { specialtyId: filters.specialtyId } } }),
-                  },
-                },
-              },
-              select: {
-                id: true,
-                doctor: {
-                  select: { specialties: { select: { specialty: { select: { id: true, name: true } } } } },
-                },
-              },
-            },
-          },
-          orderBy: { id: 'asc' },
-        }),
-    );
-
-    return rows.map((row) => {
-      const specialties = new Map<string, string>();
-      for (const employment of row.doctorEmployments) {
-        for (const link of employment.doctor.specialties) {
-          specialties.set(link.specialty.id, link.specialty.name);
-        }
-      }
-
-      return {
-        id: row.id,
-        name: row.name,
-        timezone: row.timezone,
-        locations: row.locations,
-        specialties: [...specialties].map(([id, name]) => ({ id, name })),
-        employmentIds: row.doctorEmployments.map((employment) => employment.id),
-      };
-    });
-  }
-
-  /** One ACTIVE hospital's profile, or `null` — unknown, suspended and deleted look the same. */
-  async hospitalDetail(hospitalId: string) {
-    if (!UUID.test(hospitalId)) return null;
-
-    return await runAsSystem(
-      async () =>
-        await this.prisma.db.hospital.findFirst({
-          where: { id: hospitalId, ...ACTIVE_HOSPITAL },
-          select: {
-            id: true,
-            name: true,
-            timezone: true,
-            clinics: {
-              where: { status: 'ACTIVE', deletedAt: null },
-              select: { id: true, name: true },
-              orderBy: [{ name: 'asc' }, { id: 'asc' }],
-            },
-            locations: {
-              where: { status: 'ACTIVE', deletedAt: null },
-              select: { ...LOCATION_SELECT, postalCode: true, timezone: true },
-              orderBy: [{ name: 'asc' }, { id: 'asc' }],
-            },
-            departments: {
-              where: { status: 'ACTIVE', deletedAt: null },
-              select: { id: true, name: true },
-              orderBy: [{ name: 'asc' }, { id: 'asc' }],
-            },
-            insuranceCoverage: {
-              where: { active: true },
-              select: {
-                planName: true,
-                startsOn: true,
-                endsOn: true,
-                provider: { select: { id: true, name: true } },
-              },
-              orderBy: [{ planName: 'asc' }, { id: 'asc' }],
-            },
-            doctorEmployments: {
-              where: { endedAt: null, doctor: { is: VISIBLE_DOCTOR } },
-              select: {
-                id: true,
-                doctor: {
-                  select: { specialties: { select: { specialty: { select: { id: true, name: true } } } } },
-                },
-              },
-            },
-          },
-        }),
-    );
-  }
 }
 
 /** Coordinates of a location, or `null` unless both are known. */
@@ -444,4 +316,3 @@ export function coordinatesOf(location: LocationRow): Coordinates | null {
   return { latitude: location.latitude.toNumber(), longitude: location.longitude.toNumber() };
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -1,8 +1,6 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { PublishedSlotRepository } from '../src/modules/appointments/repositories/published-slot.repository';
-import { SlotConflictChecker } from '../src/modules/appointments/services/slot-conflict.checker';
 import { type AuthHarness, createAuthHarness, errorBody } from './support/auth-app';
 import {
   bookingDoctor,
@@ -20,12 +18,9 @@ import { createPatientRecords, destroyPatientRecords } from './support/patient-f
  * DR-11 / OD-08 — one booking per slot, enforced by the database.
  *
  * N patients book the same published slot at once: exactly one 201, the
- * rest `409 slot_taken`, one appointment row. The second case removes the
- * application's own "already booked?" and occupancy checks, so only the
- * database guards (the partial unique index on
- * `appointments.published_slot_id`, the `appointments_no_overlap`
- * exclusion, the insert trigger) stand between the requests — and the
- * outcome must be the same.
+ * rest `409 slot_taken`, one appointment row — through `POST
+ * /me/appointments` (ADR-049), whose final guard is the partial unique index
+ * `appointments_one_live_booking_per_slot`.
  */
 let harness: AuthHarness;
 let doctor: DoctorSession;
@@ -71,22 +66,6 @@ describe(`${String(N)} concurrent bookings of one slot`, () => {
     const slotId = await publishOne(doctor, futureAt(60, '09:00'));
 
     expectOneWinner(await race(slotId));
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(1);
-  });
-
-  it('still give exactly one 201 with the application checks removed (database guard)', async () => {
-    const slotId = await publishOne(doctor, futureAt(60, '11:00'));
-
-    const live = vi
-      .spyOn(harness.app.get(PublishedSlotRepository), 'liveBookingOf')
-      .mockResolvedValue(null);
-    const occupancy = vi
-      .spyOn(harness.app.get(SlotConflictChecker), 'findOccupancy')
-      .mockResolvedValue(null);
-
-    expectOneWinner(await race(slotId));
-    expect(live).toHaveBeenCalledTimes(N);
-    expect(occupancy).toHaveBeenCalledTimes(N);
     expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(1);
   });
 });

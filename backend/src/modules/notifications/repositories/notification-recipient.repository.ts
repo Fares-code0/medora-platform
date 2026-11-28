@@ -67,15 +67,28 @@ export class NotificationRecipientRepository {
    * One query rather than three: a critical-result alert needs the
    * orderer, the order and the patient, and fetching them separately
    * would be an N+1 over a batch of claimed events.
+   *
+   * `patientUserId` is the account linked to the order's own patient
+   * (ADR-048) — read from the order, never from the event payload — and is
+   * `null` for an unlinked record or an order with no owning hospital (the
+   * patient-facing layer hides those, ADR-050, so it must not announce them).
    */
   async labOrderTarget(publicId: string): Promise<{
     readonly labOrderId: string;
     readonly patientId: string;
     readonly doctorUserId: string;
+    readonly patientUserId: string | null;
   } | null> {
     const row = await this.prisma.db.labOrder.findUnique({
       where: { publicId },
-      select: { id: true, patientId: true, orderer: { select: { userId: true } } },
+      select: {
+        id: true,
+        patientId: true,
+        hospitalId: true,
+        deletedAt: true,
+        orderer: { select: { userId: true } },
+        patient: { select: { userId: true } },
+      },
     });
 
     if (row === null) return null;
@@ -84,6 +97,7 @@ export class NotificationRecipientRepository {
       labOrderId: row.id,
       patientId: row.patientId,
       doctorUserId: row.orderer.userId,
+      patientUserId: row.hospitalId === null || row.deletedAt !== null ? null : row.patient.userId,
     };
   }
 

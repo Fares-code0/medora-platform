@@ -1,5 +1,10 @@
 /**
- * Recognising the database guards a slot booking relies on (DR-11).
+ * Recognising a named database guard in a Prisma / driver-adapter error.
+ *
+ * Used by slot publishing (`published_slots_active_employment_check`).
+ * Patient booking maps its own guards in `patient-booking.service.ts`
+ * (ADR-049): any unique violation, including
+ * `appointments_one_live_booking_per_slot`, is `409 slot_taken`.
  *
  * The constraint name reaches the application in different places
  * depending on the driver-adapter shape — `meta.target`, the adapter's
@@ -33,12 +38,3 @@ export function mentionsConstraint(error: unknown, names: readonly string[]): bo
 
   return visit(error, 0);
 }
-
-/** The partial unique index: one live booking per published slot. */
-export const ONE_BOOKING_PER_SLOT = 'appointments_one_active_booking_per_slot';
-/** The exclusion constraint: no overlapping live appointments per doctor. */
-export const NO_OVERLAP = 'appointments_no_overlap';
-/** The insert trigger: the slot must be unwithdrawn and match the row. */
-export const SLOT_AVAILABLE = 'appointments_published_slot_available_check';
-/** The insert trigger: the slot's employment must still be active. */
-export const ACTIVE_EMPLOYMENT = 'appointments_active_employment_check';

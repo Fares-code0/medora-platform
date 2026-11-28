@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../../shared/database';
 import { type FileStoragePort, ProfilePhotoUrls } from '../../../shared/files';
 import type { PatientDoctorDetail, PatientDoctorSummary } from '../dto/patient-doctor.dto';
-import type { DiscoveryRepository } from '../discovery/discovery.repository';
 import type { PatientDoctorRepository } from '../repositories/patient-doctor.repository';
 
 import { PatientDoctorService } from './patient-doctor.service';
@@ -32,9 +31,7 @@ function summary(id: string, photoUrl: string | null): PatientDoctorSummary {
     languages: [],
     ratingAvg: null,
     hospital: null,
-    nextAvailableSlot: null,
-    employment: null,
-  } as PatientDoctorSummary;
+  };
 }
 
 function serviceWith(items: PatientDoctorSummary[], options: { signingFails?: boolean } = {}) {
@@ -63,7 +60,6 @@ function serviceWith(items: PatientDoctorSummary[], options: { signingFails?: bo
   const service = new PatientDoctorService(
     repository,
     new ProfilePhotoUrls({ file: { findMany } } as unknown as PrismaService, storage),
-    { nextSlots: vi.fn().mockResolvedValue(new Map()) } as unknown as DiscoveryRepository,
   );
 
   return { service, findMany };

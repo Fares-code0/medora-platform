@@ -11,12 +11,14 @@ import { LabOrderController } from './controllers/lab-order.controller';
 import { LabTestController } from './controllers/lab-test.controller';
 import { LabTrendController } from './controllers/lab-trend.controller';
 import { PatientLabController } from './controllers/patient-lab.controller';
+import { PatientLabStatusController } from './controllers/patient-lab-status.controller';
 import { LabAttachmentRepository } from './repositories/lab-attachment.repository';
 import { LabOrderRepository } from './repositories/lab-order.repository';
 import { LabResultRepository } from './repositories/lab-result.repository';
 import { LabTestRepository } from './repositories/lab-test.repository';
 import { LabTrendRepository } from './repositories/lab-trend.repository';
 import { PatientLabRepository } from './repositories/patient-lab.repository';
+import { PatientLabStatusRepository } from './repositories/patient-lab-status.repository';
 import { LabAttachmentService } from './services/lab-attachment.service';
 import { LabOrderService } from './services/lab-order.service';
 import { LabResultService } from './services/lab-result.service';
@@ -24,6 +26,7 @@ import { LabReviewService } from './services/lab-review.service';
 import { LabTestService } from './services/lab-test.service';
 import { LabTrendService } from './services/lab-trend.service';
 import { PatientLabService } from './services/patient-lab.service';
+import { PatientLabStatusService } from './services/patient-lab-status.service';
 
 /**
  * Laboratory — API §8. M14.
@@ -66,6 +69,7 @@ import { PatientLabService } from './services/patient-lab.service';
     LabOrderController,
     LabTrendController,
     PatientLabController,
+    PatientLabStatusController,
   ],
   providers: [
     LabTestService,
@@ -80,6 +84,8 @@ import { PatientLabService } from './services/patient-lab.service';
     LabAttachmentService,
     LabAttachmentRepository,
     PatientLabService,
+    PatientLabStatusService,
+    PatientLabStatusRepository,
     PatientLabRepository,
   ],
 })

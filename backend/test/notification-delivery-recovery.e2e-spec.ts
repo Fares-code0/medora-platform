@@ -126,6 +126,27 @@ describe('NOT-01 stale claim recovery', () => {
     expect(await row(id)).toMatchObject({ status: 'sent', attempts: 2 });
   });
 
+  it('drops the late outcome of a superseded claim instead of overwriting the newer one', async () => {
+    // Worker A claimed the row (attempts → 1) and stalled past its lease.
+    const id = await seedEmail({
+      status: 'sending',
+      attempts: 1,
+      lastAttemptAt: ago(DELIVERY_LEASE_SECONDS + 60),
+    });
+    // Worker B re-claims it (attempts → 2) and delivers.
+    await delivery.run();
+    expect(await row(id)).toMatchObject({ status: 'sent', attempts: 2 });
+
+    // Worker A wakes up and reports its own (stale) failure.
+    const stale = delivery as unknown as {
+      finish(claim: { id: string; attempts: number }, status: 'failed', error: string, ref: null): Promise<void>;
+    };
+    await stale.finish({ id, attempts: 1 }, 'failed', 'relay-down', null);
+
+    expect(await row(id)).toMatchObject({ status: 'sent', attempts: 2, error: null });
+    expect(mine()).toHaveLength(1);
+  });
+
   it('leaves a fresh sending claim alone (the worker may still be alive)', async () => {
     const id = await seedEmail({ status: 'sending', attempts: 1, lastAttemptAt: ago(5) });
 

@@ -20,7 +20,6 @@ import { AppException } from '../../../common/errors/app.exception';
 import { ProfilePhotoUrls } from '../../../shared/files';
 import type { PatientDoctorDetail, PatientDoctorSummary } from '../dto/patient-doctor.dto';
 import type { DoctorSearchQuery } from '../dto/patient-doctor.schema';
-import { DiscoveryRepository } from '../discovery/discovery.repository';
 import { PatientDoctorRepository } from '../repositories/patient-doctor.repository';
 
 /** API §0.2's `Paginated<T>`, verbatim. */
@@ -37,24 +36,14 @@ export class PatientDoctorService {
   constructor(
     private readonly doctors: PatientDoctorRepository,
     private readonly photos: ProfilePhotoUrls,
-    private readonly slots: DiscoveryRepository,
   ) {}
 
   async search(query: DoctorSearchQuery): Promise<Paginated<PatientDoctorSummary>> {
     const { items, totalItems } = await this.doctors.search(query);
     const photo = await this.photos.lookup(items.map((item) => item.photoUrl));
-    // DSC-05: one batched lookup of each doctor's earliest free published slot.
-    const slots = await this.slots.nextSlots(
-      items.flatMap((item) => (item.employment === null ? [] : [item.employment.id])),
-      new Date(),
-    );
 
     return {
-      items: items.map(({ employment, ...item }) => ({
-        ...item,
-        photoUrl: photo(item.photoUrl),
-        nextAvailableSlot: slotOf(slots.get(employment?.id ?? ''), employment?.timezone),
-      })),
+      items: items.map((item) => ({ ...item, photoUrl: photo(item.photoUrl) })),
       page: query.page,
       pageSize: query.pageSize,
       totalItems,
@@ -74,31 +63,10 @@ export class PatientDoctorService {
     // visibility rule is keeping from them.
     if (doctor === null) throw AppException.notFound('Doctor not found');
 
-    const { employment, ...profile } = doctor;
-    const slots = await this.slots.nextSlots(employment === null ? [] : [employment.id], new Date());
-
-    return {
-      ...profile,
-      photoUrl: await this.photos.resolve(profile.photoUrl),
-      nextAvailableSlot: slotOf(slots.get(employment?.id ?? ''), employment?.timezone),
-    };
+    return { ...doctor, photoUrl: await this.photos.resolve(doctor.photoUrl) };
   }
 
   listSpecialties(): Promise<readonly { id: string; name: string; parentId: string | null }[]> {
     return this.doctors.listSpecialties();
   }
-}
-
-/** The wire shape of a next slot. */
-function slotOf(
-  slot: { slotId: string; startsAt: Date; durationMinutes: number } | undefined,
-  timezone: string | undefined,
-): PatientDoctorSummary['nextAvailableSlot'] {
-  if (slot === undefined || timezone === undefined) return null;
-  return {
-    slotId: slot.slotId,
-    startsAt: slot.startsAt.toISOString(),
-    durationMinutes: slot.durationMinutes,
-    timezone,
-  };
 }

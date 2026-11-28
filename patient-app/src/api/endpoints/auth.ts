@@ -65,6 +65,10 @@ const identitySchema = z.object({
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   emailVerified: z.boolean().optional(),
+  // C-11: the eligibility gate reads it (`features/auth/eligibility.ts`).
+  // Optional here so an older payload still parses; a session WITHOUT a
+  // role is then refused by the gate rather than admitted by default.
+  role: z.string().optional(),
 });
 
 const tokensSchema = z.object({
@@ -153,8 +157,16 @@ export const authEndpoints = {
     return parseResponse('POST /auth/refresh', sessionSchema, raw);
   },
 
-  async logout() {
-    await apiClient.post<unknown>('auth/logout');
+  /**
+   * `skipRefresh` only from the eligibility gate (`AuthService.logout`):
+   * an ordinary sign-out keeps the transport's refresh-once behaviour.
+   */
+  async logout(options: { skipRefresh?: boolean } = {}) {
+    await apiClient.post<unknown>(
+      'auth/logout',
+      undefined,
+      options.skipRefresh === true ? { skipRefresh: true } : {},
+    );
   },
 
   /** Always 202, whether or not the address exists (anti-enumeration). */

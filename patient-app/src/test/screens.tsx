@@ -1,7 +1,11 @@
 import type { ComponentType, ReactElement } from 'react';
 
+import { AiChatScreen } from '@/features/ai/screens/AiChatScreen';
+import { AiConversationsScreen } from '@/features/ai/screens/AiConversationsScreen';
+import { AiHomeScreen } from '@/features/ai/screens/AiHomeScreen';
 import { AppointmentDetailScreen } from '@/features/appointments/screens/AppointmentDetailScreen';
 import { AppointmentsScreen } from '@/features/appointments/screens/AppointmentsScreen';
+import { RescheduleRequestScreen } from '@/features/appointments/screens/RescheduleRequestScreen';
 import type { AuthService, SignInResult } from '@/features/auth/model/types';
 import { ConsentScreen } from '@/features/auth/screens/ConsentScreen';
 import { SessionUnconfirmedScreen } from '@/features/auth/screens/SessionUnconfirmedScreen';
@@ -12,13 +16,12 @@ import { DepartmentScreen } from '@/features/clinic/screens/DepartmentScreen';
 import { DiscoverScreen } from '@/features/doctors/screens/DiscoverScreen';
 import { DoctorProfileScreen } from '@/features/doctors/screens/DoctorProfileScreen';
 import { EmergencyScreen } from '@/features/emergency/screens/EmergencyScreen';
-import { DocumentsScreen } from '@/features/health/screens/DocumentsScreen';
 import { HealthRecordsScreen } from '@/features/health/screens/HealthRecordsScreen';
-import { LabResultsScreen } from '@/features/health/screens/LabResultsScreen';
-import { PrescriptionsScreen } from '@/features/health/screens/PrescriptionsScreen';
-import { VisitDetailScreen } from '@/features/health/screens/VisitDetailScreen';
-import { VisitsScreen } from '@/features/health/screens/VisitsScreen';
+import { InsuranceScreen } from '@/features/health/screens/InsuranceScreen';
+import { TestsScreen } from '@/features/health/screens/TestsScreen';
 import { HomeScreen } from '@/features/home/screens/HomeScreen';
+import { HospitalDetailScreen } from '@/features/hospitals/screens/HospitalDetailScreen';
+import { HospitalsScreen } from '@/features/hospitals/screens/HospitalsScreen';
 import { MessagesScreen } from '@/features/messages/screens/MessagesScreen';
 import { ThreadScreen } from '@/features/messages/screens/ThreadScreen';
 import { NotificationPrefsScreen } from '@/features/notifications/screens/NotificationPrefsScreen';
@@ -93,12 +96,15 @@ export const SCREENS: readonly HostedScreen[] = [
   ['Department', DepartmentScreen, { departmentId: 'DEP-1', departmentName: 'Cardiology' }],
   ['Appointments', AppointmentsScreen, {}],
   ['AppointmentDetail', AppointmentDetailScreen, { appointmentId: 'AP-1' }],
+  ['RescheduleRequest', RescheduleRequestScreen, { appointmentId: 'AP-1' }],
+  ['Hospitals', HospitalsScreen, {}],
+  ['Hospital', HospitalDetailScreen, { hospitalId: 'HOS-1' }],
   ['HealthRecords', HealthRecordsScreen, {}],
-  ['LabResults', LabResultsScreen, {}],
-  ['Prescriptions', PrescriptionsScreen, {}],
-  ['Documents', DocumentsScreen, {}],
-  ['Visits', VisitsScreen, {}],
-  ['VisitDetail', VisitDetailScreen, { visitId: 'VS-1' }],
+  ['Tests', TestsScreen, {}],
+  ['Insurance', InsuranceScreen, {}],
+  ['AiHome', AiHomeScreen, {}],
+  ['AiConversations', AiConversationsScreen, { mode: 'general' }],
+  ['AiChat', AiChatScreen, { mode: 'general' }],
   ['Messages', MessagesScreen, {}],
   ['Thread', ThreadScreen, { conversationId: 'CV-1' }],
   ['Notifications', NotificationsScreen, {}],
@@ -122,6 +128,7 @@ const IDENTITY: SignInResult = {
   tokens: { accessToken: 'access-1', refreshToken: 'refresh-1' },
   identity: {
     subjectId: 'subject-1',
+    role: 'patient',
     displayName: 'Amina Yusuf',
     email: 'amina@example.com',
     emailVerified: true,

@@ -58,8 +58,16 @@ import { apiClient } from '../client';
  * `{ d: [...] }` fails here instead of rendering "[object Object]" as a
  * doctor's rating.
  */
+/**
+ * The doctor's hospital, from the active employment (contract §2). Additive:
+ * `nullish` so a payload from before the field existed still parses, and
+ * the mapper turns an absent one into `null`.
+ */
+const hospitalRefSchema = z.object({ id: z.string().min(1), name: z.string().min(1) });
+
 const summarySchema = z.object({
   id: z.string().min(1),
+  hospital: hospitalRefSchema.nullish(),
   fullName: z.string().min(1),
   title: z.string().nullable(),
   specialty: z.string(),
@@ -113,6 +121,7 @@ export interface DoctorSearchQuery {
   readonly q?: string | undefined;
   readonly specialtyId?: string | undefined;
   readonly departmentId?: string | undefined;
+  readonly hospitalId?: string | undefined;
   readonly page?: number | undefined;
 }
 
@@ -123,6 +132,7 @@ export const doctorEndpoints = {
         q: query.q,
         specialtyId: query.specialtyId,
         departmentId: query.departmentId,
+        hospitalId: query.hospitalId,
         page: query.page,
       },
       ...(signal ? { signal } : {}),

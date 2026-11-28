@@ -62,6 +62,7 @@ function sessionFor(account: DemoAccount): SignInResult {
       displayName: account.displayName,
       email: account.email,
       emailVerified: account.emailVerified,
+      role: 'patient',
     },
   };
 }

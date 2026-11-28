@@ -1,5 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
+import { isolate } from '@/accessibility/bidi';
 import { Avatar, Badge, Card, Icon, Text } from '@/components';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
@@ -33,17 +34,25 @@ export function DoctorCard({
   const displayName =
     doctor.title === null ? doctor.fullName : `${doctor.title} ${doctor.fullName}`;
 
+  const summary =
+    doctor.ratingAvg === null
+      ? t('doctor.card.a11y', { name: displayName, specialty: doctor.specialty })
+      : t('doctor.card.a11yRated', {
+          name: displayName,
+          specialty: doctor.specialty,
+          rating: doctor.ratingAvg,
+        });
+
   return (
     <Card
       testID={testID}
       onPress={onPress}
       accessibilityLabel={
-        doctor.ratingAvg === null
-          ? t('doctor.card.a11y', { name: displayName, specialty: doctor.specialty })
-          : t('doctor.card.a11yRated', {
-              name: displayName,
-              specialty: doctor.specialty,
-              rating: doctor.ratingAvg,
+        doctor.hospital === null
+          ? summary
+          : t('doctor.card.a11yHospital', {
+              summary,
+              hospital: isolate(doctor.hospital.name),
             })
       }
       accessibilityHint={t('doctor.card.hint')}
@@ -62,6 +71,20 @@ export function DoctorCard({
             <Text variant="caption" color="textTertiary" numberOfLines={1}>
               {doctor.departmentName}
             </Text>
+          )}
+          {doctor.hospital === null ? null : (
+            <View style={[styles.row, { columnGap: theme.space[1] }]}>
+              <Icon name="mapPin" size={12} color="textTertiary" />
+              <Text
+                variant="caption"
+                color="textTertiary"
+                numberOfLines={1}
+                style={styles.grow}
+                testID={testID === undefined ? undefined : `${testID}-hospital`}
+              >
+                {doctor.hospital.name}
+              </Text>
+            </View>
           )}
 
           <View style={[styles.row, { columnGap: theme.space[2], marginTop: theme.space[1] }]}>

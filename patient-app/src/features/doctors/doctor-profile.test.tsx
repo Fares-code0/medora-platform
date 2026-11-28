@@ -37,7 +37,7 @@ const FULL: PatientSafeDoctor = {
   biography: 'Consultant cardiologist with a focus on preventive care.',
   education: ['MBBS, University of Jordan', 'Fellowship, Royal College'],
   ratingAvg: 4.6,
-  hospital: 'Medora Central',
+  hospital: { id: 'HOS-9', name: 'Medora Central' },
   officeLocation: 'Level 3, Room 12',
 };
 
@@ -124,7 +124,8 @@ describe('a complete profile (G-04)', () => {
     expect(await view.findByText(/preventive care/i)).toBeTruthy();
     expect(view.getByText(/Arabic/)).toBeTruthy();
     expect(view.getByText(/University of Jordan/)).toBeTruthy();
-    expect(view.getByText('Medora Central')).toBeTruthy();
+    // The badge under the name and the "where" section both name it.
+    expect(view.getAllByText('Medora Central').length).toBeGreaterThanOrEqual(1);
     expect(view.getByText(/Level 3, Room 12/)).toBeTruthy();
   });
 });

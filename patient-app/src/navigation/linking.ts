@@ -72,6 +72,8 @@ const table: LinkingOptions<LinkableParamList> = {
               DiscoverRoot: 'doctors',
               DoctorProfile: 'doctors/:doctorId',
               Clinic: 'clinic',
+              Hospitals: 'hospitals',
+              Hospital: 'hospitals/:hospitalId',
             },
           },
           AppointmentsTab: {
@@ -87,7 +89,8 @@ const table: LinkingOptions<LinkableParamList> = {
             screens: {
               ProfileRoot: 'profile',
               HealthRecords: 'records',
-              LabResults: 'records/labs',
+              Tests: 'records/labs',
+              Insurance: 'records/insurance',
               Notifications: 'notifications',
             },
           },

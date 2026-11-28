@@ -1,60 +1,49 @@
 import { StyleSheet, View } from 'react-native';
 
-import { Badge, Card, Icon, Text } from '@/components';
+import { Card, Icon, Text } from '@/components';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
 /**
- * "No assistant is connected to this copy of Medora."
+ * "The assistant is not available yet."
  *
- * ── This is the shipped state of every assistant screen ─────────────
+ * Shown when the server answers `503 service_unavailable` — no model
+ * provider is configured for this deployment. It is not an error, not a
+ * spinner and not a "coming soon" teaser with a date: it says plainly
+ * that the assistant is off, that the patient's phone and account are
+ * fine, that retrying will not change it, and where to go instead.
  *
- * Not an error, not a spinner, not a "coming soon" teaser with a
- * waitlist. It is the same shape as the emergency screen's unconfigured
- * card (N-04) and for the same reason: a deployment that has not been
- * given a capability should say so plainly, in the place the capability
- * would have been, rather than show a plausible-looking imitation of it.
- *
- * ── Why it names the reason ─────────────────────────────────────────
- *
- * "Not available yet" on its own reads as a bug or a network problem,
- * and a patient who thinks it is a network problem will retry it in a
- * worse moment. Saying that no assistant has been connected — and that
- * a person is the thing to use instead — is both true and the more
- * useful sentence. `blockedBy` is rendered as a caption for whoever is
- * reading the screen with the checklist open; it is a row id, not
- * something a patient needs to act on, so it sits last and quietest.
+ * `accessibilityLiveRegion="polite"` so it is announced when it replaces
+ * the composer, which is the moment a patient has just pressed Send.
  */
-export interface AiUnavailableNoticeProps {
-  /** Row ids from `availability.ts`, rendered as provenance. */
-  readonly blockedBy: readonly string[];
-  readonly testID?: string;
-}
-
-export function AiUnavailableNotice({ blockedBy, testID }: AiUnavailableNoticeProps) {
+export function AiUnavailableNotice({ testID }: { readonly testID?: string }) {
   const theme = useTheme();
   const t = useT();
+  const title = t('ai.unavailable.title');
+  const body = t('ai.unavailable.body');
+  const instead = t('ai.unavailable.instead');
 
   return (
     <Card tone="info" testID={testID ?? 'ai-unavailable'}>
+      <View
+        accessible
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={`${title}. ${body} ${instead}`}
+        style={{ rowGap: theme.space[2] }}
+      >
       <View style={[styles.row, { columnGap: theme.space[2] }]}>
         <Icon name="cpu" size={20} color="info" />
         <Text variant="h3" color="info" style={styles.grow}>
-          {t('ai.unavailable.title')}
+          {title}
         </Text>
-        <Badge label={t('ai.badge.notConnected')} tone="info" testID="ai-unavailable-badge" />
       </View>
       <Text variant="bodySm" color="textSecondary">
-        {t('ai.unavailable.body')}
+        {body}
       </Text>
       <Text variant="bodySm" color="textSecondary">
-        {t('ai.unavailable.instead')}
+        {instead}
       </Text>
-      {blockedBy.length === 0 ? null : (
-        <Text variant="caption" color="textDisabled" testID="ai-unavailable-blockers">
-          {t('ai.unavailable.blockedBy', { rows: blockedBy.join(', ') })}
-        </Text>
-      )}
+      </View>
     </Card>
   );
 }

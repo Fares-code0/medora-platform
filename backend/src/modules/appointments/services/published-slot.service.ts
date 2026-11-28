@@ -22,12 +22,8 @@
  * interval; the database's partial unique index on
  * `appointments.published_slot_id` holds it.
  *
- * ## The patient side: inventory, never working hours
- *
- * `bookable` lists only published, unwithdrawn, future, unoccupied slots
- * (DR-10). It projects the slot and its hospital, never the grid
- * (AST-C6). Discovery requires sign-in (DR-09) but not a linked patient
- * record: browsing is not booking.
+ * Patients list and book these slots through `PatientBookingService`
+ * (ADR-049), which never exposes the working-hours grid (AST-C6).
  */
 
 import { Inject, Injectable } from '@nestjs/common';
@@ -36,9 +32,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import { AppException } from '../../../common/errors/app.exception';
 import { AUDIT_DISPATCHER, type AuditDispatcher } from '../../../shared/audit';
 import { PatientScopeService, principalOf } from '../../../shared/authz';
-import { runAsSystem } from '../../../shared/database';
 import type {
-  BookableSlotQuery,
   PublishedSlotListQuery,
   PublishSlotsInput,
 } from '../dto/published-slot.schema';
@@ -71,20 +65,6 @@ export interface PublishedSlotPage {
   readonly pageSize: number;
   readonly totalItems: number;
   readonly totalPages: number;
-}
-
-export interface BookableSlotView {
-  readonly slotId: string;
-  readonly startsAt: string;
-  readonly durationMin: number;
-  readonly timezone: string;
-  readonly hospital: { readonly id: string; readonly name: string };
-}
-
-export interface BookableSlots {
-  /** The server instant the snapshot was taken at — a listing is not a reservation. */
-  readonly asOf: string;
-  readonly items: readonly BookableSlotView[];
 }
 
 @Injectable()
@@ -278,47 +258,6 @@ export class PublishedSlotService {
     };
   }
 
-  /**
-   * `GET /patient/doctors/:doctorId/slots` — the bookable inventory.
-   *
-   * Patients only. An unknown or non-patient-visible doctor is the same
-   * 404 `/patient/doctors/:id` gives.
-   */
-  async bookable(
-    user: AuthenticatedUser,
-    doctorId: string,
-    query: BookableSlotQuery,
-  ): Promise<BookableSlots> {
-    assertPatient(user);
-
-    const now = new Date();
-    const from =
-      query.from === undefined || query.from.getTime() < now.getTime() ? now : query.from;
-
-    // `runAsSystem`: published slots, employments and time off are
-    // organisational rows (`org_visible`) a patient scope cannot see, the
-    // same reason the patient doctor directory reads under system scope.
-    // Both queries are keyed by `doctorId` and project slot and hospital
-    // fields only — no working hours, no other patient's booking.
-    const visible = await runAsSystem(() => this.slots.patientVisibleDoctor(doctorId));
-    if (!visible) throw AppException.notFound('Doctor not found');
-
-    const rows = await runAsSystem(() =>
-      this.slots.bookableSlots({ doctorId, from, to: query.to }),
-    );
-
-    return {
-      asOf: now.toISOString(),
-      items: rows.map((row) => ({
-        slotId: row.id,
-        startsAt: row.startsAt.toISOString(),
-        durationMin: row.durationMinutes,
-        timezone: row.timezone,
-        hospital: { id: row.hospitalId, name: row.hospitalName },
-      })),
-    };
-  }
-
   private async requireEmployment(user: AuthenticatedUser): Promise<{
     doctorId: string;
     doctorEmploymentId: string;
@@ -347,17 +286,6 @@ function assertNoOverlapWithinBatch(input: PublishSlotsInput, bufferMin: number)
     if (current.startsAt.getTime() < previousEnd) {
       throw AppException.conflict('Two slots in the request overlap each other', 'slot_conflict');
     }
-  }
-}
-
-/**
- * The patient routes are for patients. `@Roles()` cannot name `patient`
- * by design (ADR-030 §6), so the check is here, as a 403: a doctor or
- * administrator is authenticated but not the audience.
- */
-export function assertPatient(user: AuthenticatedUser): void {
-  if (user.role !== 'patient') {
-    throw AppException.forbidden('This route is for patient accounts');
   }
 }
 

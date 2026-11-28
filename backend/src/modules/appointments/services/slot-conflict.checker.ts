@@ -131,8 +131,8 @@ export class SlotConflictChecker {
    * The published-slot variant (DR-10): ADR-005 §4 rules 3–5 — time off,
    * other live appointments with the buffer, duration — without the
    * weekly grid (see `findOccupancyConflict`). Returns the conflict rather
-   * than throwing, because its two callers answer it differently:
-   * publishing with `409 slot_conflict`, booking with `409 slot_taken`.
+   * than throwing, so the caller (slot publishing) chooses the answer:
+   * `409 slot_conflict`.
    */
   async findOccupancy(request: OccupancyRequest): Promise<SlotConflict | null> {
     const { timeOff, booked } = await this.occupancyAround(request, request.bufferMin);

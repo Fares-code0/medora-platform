@@ -25,6 +25,7 @@ names the dependency — it does not invent a plausible path.
 | `OtpScreen` | `authService.verifyOtp` · `resendOtp` | `POST /auth/otp/verify` · `/resend` | auth | `otp_codes` | ✅ **LIVE** |
 | — (cold start) | `authService.refresh` | `POST /auth/refresh` (`X-Client-Type: mobile`) | auth | `sessions` | ✅ **LIVE**, body-token path built and e2e-tested |
 | `SessionUnconfirmedScreen` | `retryRestore` → `authService.refresh` | `POST /auth/refresh` (`X-Client-Type: mobile`) | auth | `sessions` | ✅ frontend only, over the same live route. Shown when a stored refresh token could not be **exchanged because the server did not answer** (no signal, timeout, 5xx, a middlebox's 403). Only a 401 — the one refusal `/auth/refresh` sends — ends the session (`refresh-outcome.ts`); the token is kept and retried, by hand or on reconnect, never while Emergency is open. *Sign out of this phone* is local only: `POST /auth/logout` revokes the session an access token names, and this state has none, so the server is not asked and the confirmation says so |
+| `AccessDeniedScreen` | `SessionProvider` eligibility gate (`features/auth/eligibility.ts`) | login / OTP / `POST /auth/refresh` payload `user.role`; `GET /me/patient-link` `403 patient_only`; `POST /auth/logout` | auth | `users.role` | ✅ frontend only, over live routes (C-11). A non-patient account is revoked server-side and swept locally, then shown *This app is for patients only*; Emergency stays a route. An ordinary endpoint 403 never triggers it |
 | `RegisterScreen` | `authService.register` | `POST /auth/register` | auth | `users`, `user_credentials` | ✅ **LIVE** — ADR-030 added the `patient` role and **ADR-035** made the body a discriminated union whose patient branch carries nothing clinical. Creates an account linked to no record (ADR-030 §4) |
 | `VerifyEmailScreen` | `resendVerification` | `POST /auth/verification/resend` | auth | `verification_tokens` | ✅ **LIVE** |
 | `ForgotPasswordScreen` | `forgotPassword` | `POST /auth/forgot-password` | auth | `verification_tokens` | ✅ **LIVE** |
@@ -103,39 +104,45 @@ names the dependency — it does not invent a plausible path.
 > client renders `availableActions` and renders `409 conflict` when it loses a
 > race. `appointments.test.tsx` asserts no action is derived from `status`.
 >
-> The live payload does not carry `availableActions` yet, and its absence is
-> the contract (§4): `[]` would assert that no action is available, which is a
-> statement about policy ADR-033 has not made. The port therefore makes the
-> field optional — `undefined` is *not stated*, `[]` would be *stated as none*.
+> `availableActions` is now server-computed on every payload and required: `[]`
+> is the server saying "nothing may be done", and a payload without the field
+> fails at the seam rather than rendering no buttons.
 
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
 | `AppointmentsScreen` | `list('upcoming' \| 'past')` | `GET /me/appointments` | appointments (M11) | `appointments` | ✅ **LIVE** — `upcoming=true` resolves on the server's clock; Past uses the contract's `to` |
 | `AppointmentCard` | — | — | — | `appointment_status` | ✅ **LIVE** — all 8 statuses render; the wire value is checked against `APPOINTMENT_STATUSES` at the seam |
 | `AppointmentDetailScreen` | `getById` | `GET /me/appointments/{appointmentId}` | appointments (M11) | `appointments`, `appointment_events` | ✅ **LIVE** — 404 for unknown, not-yours and unlinked alike |
-| `BookingFlow` (5 steps) | `listSlots` + `book` | `GET …/slots` · `POST /me/appointments` | appointments (M11) | `appointments` | 🔴 **ADR-033 / RA-033.1** — a decision, not an unbuilt endpoint |
-| Slot step | `listSlots` | `GET /patient/doctors/:id/slots` (proposed, §6, DR-10; supersedes `GET /public/doctors/{id}/slots`) | appointments (M11) | availability − time-off − booked − buffer | 🔴 **RA-033.1 — no client-side generation.** The slot maths is derivable from ADR-005; the booking policy is not |
-| Cancel sheet | `cancel(id, reason)` | `POST /me/appointments/{id}/cancel` | appointments (M11) | `appointments.cancelled_reason` | 🔴 **ADR-033 Q1** — may a patient cancel, from which statuses, up to when? |
-| Reschedule sheet | `requestReschedule` | `POST …/reschedule` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q2** — request-shaped or direct? |
-| Proposal response | `acceptProposal` | `POST …/confirm` | appointments (M11) | `appointment_reschedule_proposals` | 🔴 **ADR-033 Q3** — plus the doctor-side `propose-slots` (M11.4), unbuilt |
+| `BookingFlow` (5 steps) | `listSlots` + `listVisitTypes` + `book` | `GET /patient/doctors/{id}/slots` · `GET /patient/visit-types` · `POST /me/appointments` (Idempotency-Key) | appointments (M11) | `appointments` | ✅ **Client built to the shared contract (ADR-049)** — backend routes land in parallel. Recovers from `slot_taken`, `insurance_not_covered`, `patient_not_linked` and a dropped connection without losing input |
+| Slot step | `listSlots` | `GET /patient/doctors/{id}/slots` | appointments (M11) | published slots | ✅ Server-listed only; each slot names its hospital. No client-side generation |
+| Cancel sheet | `cancel(id, {reasonCode, note?})` | `POST /me/appointments/{id}/cancel` | appointments (M11) | `appointments.cancelled_reason` | ✅ Closed list of six reason codes, localized; shown only when `availableActions` has `cancel` |
+| `RescheduleRequestScreen` + pending-request panel | `requestReschedule` · `listRescheduleRequests` · `withdrawRescheduleRequest` | `POST /me/appointments/{id}/reschedule-requests` · `GET` same · `POST /me/reschedule-requests/{id}/withdraw` | appointments (M11) | reschedule requests | ✅ A REQUEST (ADR-033 Q2 = R-B): the appointment stays booked and the requested time is not held until the hospital approves |
+| Proposal response | — | — | — | — | ⛔ Removed: the contract has no confirm / accept-proposal route (ADR-033 Q3 stays open) |
 | Event timeline | `getById` | same | appointments (M11) | `appointment_events` | ✅ **LIVE** — `actor` is the coarse `patient \| clinic \| system`; `actor_name` is deliberately not projected |
 
----
-
-## Health records
-
-> Gated by **AD-5**. Every record carries a server-supplied `ReleaseState` and
-> `ReleaseNotice` renders the withheld cases honestly — never a blank, never an
-> error the patient could retry past.
+## Hospitals (discovery)
 
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
-| `HealthRecordsScreen` | `listAllergies` · `listConditions` · `listMedications` · `listHistory` | `GET /me/health/*` | patients (M10) | `patient_allergies`, `patient_chronic_conditions`, `patient_medications`, `patient_medical_history` | 🟡 **BE-09** |
-| `LabResultsScreen` | `listLabOrders` · `getLabOrder` | `GET /me/health/labs` | labs (M14) | `lab_orders`, `lab_results` | 🟡 **BE-09 + AD-5** |
-| `PrescriptionsScreen` | `listPrescriptions` | `GET /me/health/prescriptions` | pharmacy (M13) | `prescriptions` | 🟡 **BE-09** — read-only, permanently |
-| `DocumentsScreen` | `listDocuments` | `GET /me/health/documents` | files (M25) | `patient_documents`, `files` | 🔴 **BE-09 + BE-15** — no object storage exists |
-| `VisitsScreen` | `listVisits` | `GET /me/health/visits` | medical-records (M12) | `medical_records` | 🟡 **BE-09 + AD-5** — the patient projection, never the clinician's note |
-| `VisitDetailScreen` | `listVisits` | same | medical-records (M12) | `medical_records` | 🟡 **BE-09 + AD-5** — **no by-id route.** The contract has the list and nothing else, so `useVisit` selects out of the same query rather than naming a route that does not exist |
+| `HospitalsScreen` | `hospitalService.list` | `GET /patient/hospitals` | patients / identity (§2) | hospitals | ✅ Search and paging server-side |
+| `HospitalDetailScreen` | `hospitalService.getById` | `GET /patient/hospitals/{id}` | patients / identity (§2) | hospitals, clinics, locations, departments | ✅ Sections render only what the server sent; "Find doctors here" opens Discover filtered by hospital |
+
+---
+
+## Health information (patient-facing layer — ADR-050)
+
+> The patient never sees the full medical record, physician notes or
+> unrestricted history (owner decision, 2026-11-26). Results stay unexposed
+> until the ADR-031 release policy is approved. Allergies, conditions,
+> medicines, history, prescriptions, visit summaries and documents have **no
+> screen, route or deep link**; `HealthRecordsScreen` says so in words.
+
+| Screen | Service | Endpoint | Module | Tables | State |
+|---|---|---|---|---|---|
+| `HealthRecordsScreen` (hub) | — | — | — | — | ✅ links to Tests, Insurance and the Appointments tab; states that the record is available from the care team |
+| `TestsScreen` | `listLabTests` | `GET /me/lab-orders` | labs | `lab_orders` (status only — no result, flag, indication or reviewer) | ✅ client built; backend route pending in this worktree. `results.available: false` is rendered as "shared by your care team once released" |
+| `InsuranceScreen` | `getInsurance` | `GET /me/insurance` | insurance | `patient_insurance` | ✅ client built; backend route pending. Authorizations: honest "not available yet" (ADR-039 item 5) |
+| Emergency contacts (on `EmergencyScreen`) | `listEmergencyContacts` | — | patients | `patient_emergency_contacts` | 🟡 **BE-09** — refuses by name |
 
 ---
 
@@ -168,6 +175,7 @@ names the dependency — it does not invent a plausible path.
 | Screen | Service | Endpoint | Module | Tables | State |
 |---|---|---|---|---|---|
 | `ProfileScreen` | `profileService.get` | `GET /me/profile` | patients (ADR-030) | `users`, `patients` | ✅ **LIVE** — `patient: null` is a success, not a 404 |
+| `LinkRecordScreen` | `patientLinkService.getState`, `.issueCode` | `GET /me/patient-link`, `POST /me/patient-link/code` | patients (ADR-048) | patient link codes | ✅ **LIVE per contract** — staff-mediated linking: the screen explains the desk visit with an identity document and shows a short-lived 8-character code (grouped 4-4, countdown to `expiresAt`); `409 already_linked` re-reads the state. The staff route that consumes the code is not called from this app |
 | `EditProfileScreen` (phone) | `profileService.update` | `PATCH /me/account` | users (M8) | `users.phone` | ✅ **LIVE** (P-03) — the account's own contact detail, and the one field on this document a patient owns. `account.controller.ts` names patients as the audience: a `@Can(...)` there would deny people who hold zero capabilities by design (ADR-030 §6). The write re-reads `GET /me/profile` rather than patching its own copy, because `AccountView` carries neither `displayName` nor the clinical half |
 | `EditProfileScreen` (clinical fields) | `profileService.update` | `PATCH /me/profile` | patients (ADR-030) | `patients` | 🔴 **RA-030.2** — not unbuilt but unspecifiable: the editable field set, the conflict rule, and whether an edit needs verification are all undecided. The adapter refuses these by name rather than sending them somewhere they cannot go |
 | `EditProfileScreen` (email) | — | — | — | `users.email` | 🔴 **no flow** — `updateAccountSchema` excludes `email` on purpose: moving a sign-in address needs the new one verified and the old one notified, or a borrowed session walks off with the account. Read-only until that flow exists |
@@ -207,30 +215,23 @@ bot built on it would be the most dangerous thing this project could ship. Phase
 stays closed until a provider, a server-side red-flag classifier, an output filter
 and a **named clinical owner** exist.
 
-What changed on 2026-09-14 is that the interface was built ahead of them, so that
-what is waiting on AD-4 is the clinical and backend work rather than a screen
-nobody has drawn. The Endpoint column below is the point of this table: **every row
-is `—`**. There is no `features/ai/service.ts`, no adapter behind `api/seam.ts` and
-no module in `api/endpoints/` — a seam is a promise that something can be plugged
-in, and nothing can be. `features/ai/ai-honesty.test.ts` fails on a `fetch`, an
-`@/api/` import, a storage call, a client-side classifier, or a string long enough
-to read as a scripted reply.
+**Updated 2026-11-26 (ADR-050).** The assistant is now two separate experiences
+over real routes — "Health assistant" (`general`, given no patient data) and "My
+care assistant" (`personal`, grounded server-side in appointments, test status
+and insurance; never results or records; needs a linked account). The server
+answers `503 service_unavailable` until a provider is configured and the screens
+render that as "not available yet". The symptom-checker and image screens were
+removed. `features/ai/ai.test.tsx` fails on a network call outside the service
+layer, a storage call, client-side red-flag matching, or a string long enough to
+read as a scripted reply.
 
 | Screen / component | Source | Endpoint | State |
 |---|---|---|---|
-| `AiHomeScreen` | `availability.ts` (**constant**) | — | 🟨 renders the unavailable state |
-| `AiChatScreen` | — | — | 🟨 empty transcript, disabled composer. **No seeded greeting** |
-| `AiSymptomsScreen` | `content/intake.ts` (**bundled**) | — | 🟨 the three-step form works; the result step is a placeholder |
-| `AiImageScreen` | — | — | 🟨 picker disabled; EXIF and scan rules stated ahead of the code |
-| `AiDisclaimer` (K-03) | catalogue | — | ✅ non-dismissible, outside the scroll, on all four screens |
-| `AiSafetyCard` | catalogue | — | ✅ unconditional Emergency route; never dials |
-| `AiUnavailableNotice` | `availability.ts` | — | ✅ names AD-4 / BE-14 (and BE-15 on the image screen) |
-| `AiMessageBubble`, `AiTypingIndicator` | props | — | 🟨 drawn and tested; **no screen can produce their input** |
-| `AiComposer` | props | — | 🟨 not editable; states the reason on screen |
-| `AiResultPlaceholder` | props | — | ✅ says nothing read the input and nothing was sent |
-| `AiImagePicker` | props | — | 🟨 four states tested; `empty` is the only one reachable |
-| Assistant replies | — | **BE-14** | 🔴 no provider, no endpoint, no ADR |
-| Red-flag classification | — | **BE-14** | 🔴 K-04 — **server-side by requirement**. Deliberately absent from this tree |
-| Conversation history | — | **BE-14** | 🔴 K-07 — server-persisted. Local storage forbidden and asserted absent |
-| Image upload / scan | — | **BE-15** | 🔴 no object storage, no scanner, no files service (M25) |
+| `AiHomeScreen` | — | — | ✅ two entry points, general disclaimer, safety card |
+| `AiConversationsScreen` | `aiService.listConversations` / `deleteConversation` | `GET`/`DELETE /me/ai/conversations` | ✅ per mode; 409 → link notice, 503 → unavailable notice |
+| `AiChatScreen` | `aiService.createConversation` / `sendMessage` | `POST /me/ai/conversations`, `POST …/{id}/messages` (SSE) | ✅ client built; backend pending. One turn at a time, cancelled on unmount, 2000 chars |
+| `AiDisclaimer` (K-03) | catalogue | — | ✅ non-dismissible, outside the scroll; text differs by mode |
+| `AiEscalationCard` | server message | — | ✅ renders the server's red-flag message with an Emergency button |
+| `AiUnavailableNotice` | 503 | — | ✅ honest "not available yet" |
+| Red-flag classification | server | — | ✅ server-side only; absent from this tree and asserted so |
 | Image findings | — | **BE-14 + L-04** | 🔴 needs a vision model and a named clinical owner's sign-off |

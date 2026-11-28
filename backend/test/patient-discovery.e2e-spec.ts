@@ -30,8 +30,6 @@ const REGISTER = '/api/v1/auth/register';
 const LOGIN = '/api/v1/auth/login';
 const VERIFY = '/api/v1/auth/verify-email';
 const SEARCH = '/api/v1/patient/discovery/search';
-const HOSPITALS = '/api/v1/patient/hospitals';
-const DOCTORS = '/api/v1/patient/doctors';
 
 const RIYADH = '24.7136,46.6753';
 const HOUR = 3_600_000;
@@ -133,7 +131,7 @@ async function book(
   slotId: string,
   tag: (typeof TAGS)[number],
   hospitalId: string,
-  status: 'CONFIRMED' | 'CANCELLED',
+  status: 'CONFIRMED' | 'CANCELLED' | 'RESCHEDULED',
   index: number,
 ): Promise<void> {
   const published = await harness.prisma.publishedSlot.findUniqueOrThrow({ where: { id: slotId } });
@@ -199,10 +197,14 @@ beforeAll(async () => {
   slots['past'] = await slot('dscA', hospitalIds.A, -HOUR);
   slots['withdrawn'] = await slot('dscA', hospitalIds.A, HOUR, true);
   slots['booked'] = await slot('dscA', hospitalIds.A, 2 * HOUR);
+  // A rescheduled booking still holds its slot (`appointments_one_live_booking_per_slot`,
+  // ADR-049), so this one is never "next available" either.
+  slots['heldRescheduled'] = await slot('dscA', hospitalIds.A, 2.5 * HOUR);
   slots['released'] = await slot('dscA', hospitalIds.A, 3 * HOUR);
   slots['free'] = await slot('dscA', hospitalIds.A, 5 * HOUR);
   await book(slots['booked'], 'dscA', hospitalIds.A, 'CONFIRMED', 1);
   await book(slots['released'], 'dscA', hospitalIds.A, 'CANCELLED', 2);
+  await book(slots['heldRescheduled'], 'dscA', hospitalIds.A, 'RESCHEDULED', 4);
 
   slots['b'] = await slot('dscB', hospitalIds.B, 4 * HOUR);
   slots['s'] = await slot('dscS', hospitalIds.S, 4 * HOUR);
@@ -281,15 +283,15 @@ async function search(token: string, query = ''): Promise<Row[]> {
 }
 
 describe('authorization', () => {
-  it('refuses unauthenticated callers with 401 on every discovery route', async () => {
-    for (const path of [SEARCH, HOSPITALS, `${HOSPITALS}/${hospitalIds.A}`]) {
+  it('refuses unauthenticated callers with 401 on the discovery search', async () => {
+    for (const path of [SEARCH]) {
       await request(harness.server).get(path).expect(401);
     }
   });
 
   it('refuses a doctor with 403', async () => {
     const { token } = await doctorToken();
-    for (const path of [SEARCH, HOSPITALS, `${HOSPITALS}/${hospitalIds.A}`]) {
+    for (const path of [SEARCH]) {
       await request(harness.server).get(path).set(as(token)).expect(403);
     }
   });
@@ -368,7 +370,7 @@ describe('GET /patient/discovery/search', () => {
     expect(rows.every((row) => row.insurance === null)).toBe(true);
   });
 
-  it('shows the earliest genuinely free slot: not past, withdrawn or booked', async () => {
+  it('shows the earliest genuinely free slot: not past, withdrawn, booked or held by a reschedule', async () => {
     const { token } = await patientToken();
     const rows = await search(token, `&hospitalId=${hospitalIds.A}`);
 
@@ -418,83 +420,3 @@ describe('GET /patient/discovery/search', () => {
   });
 });
 
-describe('GET /patient/hospitals', () => {
-  it('lists active hospitals with locations, distance, next slot and insurance', async () => {
-    const { token } = await insuredPatientToken();
-    const response = await request(harness.server)
-      .get(`${HOSPITALS}?near=${RIYADH}&pageSize=100`)
-      .set(as(token))
-      .expect(200);
-    const items = dataOf<Page<{
-      hospital: { id: string };
-      locations: { distanceKm: number | null }[];
-      nextAvailableSlot: unknown;
-      insurance: { covered: boolean } | null;
-    }>>(response).items;
-    const ours = items.filter((item) => Object.values(hospitalIds).includes(item.hospital.id));
-
-    expect(ours.map((item) => item.hospital.id)).toEqual([hospitalIds.B, hospitalIds.A, hospitalIds.C]);
-    expect(ours[0]!.insurance).toEqual({ covered: true });
-    expect(ours[1]!.locations[0]!.distanceKm).toBe(0);
-    expect(ours[0]!.nextAvailableSlot).not.toBeNull();
-    expect(ours.map((item) => item.hospital.id)).not.toContain(hospitalIds.S);
-  });
-});
-
-describe('GET /patient/hospitals/:id', () => {
-  it('returns the profile with coordinates, clinics and accepted insurance', async () => {
-    const { token } = await insuredPatientToken();
-    const response = await request(harness.server)
-      .get(`${HOSPITALS}/${hospitalIds.B}`)
-      .set(as(token))
-      .expect(200);
-    const detail = dataOf<{
-      locations: { latitude: number }[];
-      acceptedInsurance: { provider: string; plan: string }[];
-      insurance: { covered: boolean };
-    }>(response);
-
-    expect(detail.locations[0]!.latitude).toBeCloseTo(21.4858, 3);
-    expect(detail.acceptedInsurance).toEqual([{ provider: 'Discovery E2E Insurance', plan: 'Gold' }]);
-    expect(detail.insurance).toEqual({ covered: true });
-
-    const a = await request(harness.server).get(`${HOSPITALS}/${hospitalIds.A}`).set(as(token)).expect(200);
-    expect(dataOf<{ clinics: { name: string }[] }>(a).clinics.map((c) => c.name)).toEqual(['A Heart Clinic']);
-  });
-
-  it('answers 404 identically for suspended, unknown and malformed ids', async () => {
-    const { token } = await patientToken();
-    for (const id of [hospitalIds.S, '00000000-0000-4000-8000-000000000000', 'not-a-uuid']) {
-      await request(harness.server).get(`${HOSPITALS}/${id}`).set(as(token)).expect(404);
-    }
-  });
-});
-
-describe('GET /patient/doctors (DSC-05, additive)', () => {
-  it('adds the hospital and next slot to the summary and the detail', async () => {
-    const { token } = await patientToken();
-    const list = await request(harness.server).get(`${DOCTORS}?pageSize=100`).set(as(token)).expect(200);
-    const row = dataOf<Page<{
-      id: string;
-      fullName: string;
-      ratingAvg: number | null;
-      hospital: { id: string; name: string } | null;
-      nextAvailableSlot: { slotId: string } | null;
-      employment?: unknown;
-    }>>(list).items.find((item) => item.id === doctors.dscA.id)!;
-
-    expect(row.fullName).toBe('Dr. Priya Nair');
-    expect(row.ratingAvg).toBeNull();
-    expect(row.hospital).toEqual({ id: hospitalIds.A, name: 'Discovery Hospital A' });
-    expect(row.nextAvailableSlot?.slotId).toBe(slots['released']);
-    expect(row.employment).toBeUndefined();
-
-    const detail = await request(harness.server)
-      .get(`${DOCTORS}/${doctors.dscA.id}`)
-      .set(as(token))
-      .expect(200);
-    const view = dataOf<{ hospital: { id: string }; nextAvailableSlot: { slotId: string } }>(detail);
-    expect(view.hospital.id).toBe(hospitalIds.A);
-    expect(view.nextAvailableSlot.slotId).toBe(slots['released']);
-  });
-});

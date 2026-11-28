@@ -1,17 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
-import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
+import { zodQuery } from '../../../common/validation/zod-validation.pipe';
 import { Authenticated, NotPhi, principalOf } from '../../../shared/authz';
-import { Idempotent } from '../../../shared/idempotency';
 import type { PatientAppointmentDetail } from '../dto/patient-appointment.dto';
 import {
   patientAppointmentQuerySchema,
   type PatientAppointmentQuery,
 } from '../dto/patient-appointment.schema';
-import { bookAppointmentSchema, type BookAppointmentInput } from '../dto/published-slot.schema';
-import { PatientBookingService } from '../services/patient-booking.service';
 import {
   PatientAppointmentService,
   type PaginatedAppointments,
@@ -20,10 +17,10 @@ import {
 /**
  * `GET /me/appointments` and `/me/appointments/{id}` — contract §4.1/§4.2.
  *
- * Reads, and `POST /me/appointments` — booking a doctor-published slot
- * (DR-10, DR-11; `API_CONTRACT_CHANGES.md` §6; see `PatientBookingService`).
- * `/cancel`, `/reschedule` and `/confirm` are **not** implemented: each
- * needs the ADR-033 patient action policy, which is unresolved.
+ * **Reads only.** `POST /me/appointments`, `/cancel`, `/confirm` and the
+ * slot endpoint are specified in the contract and are **not** implemented,
+ * because each needs a rule no source states — see the service docblock
+ * and contract §4.
  *
  * ## Authorization is ownership, and it is a WHERE clause
  *
@@ -46,10 +43,7 @@ import {
 @Authenticated()
 @Controller('me/appointments')
 export class PatientAppointmentController {
-  constructor(
-    private readonly appointments: PatientAppointmentService,
-    private readonly booking: PatientBookingService,
-  ) {}
+  constructor(private readonly appointments: PatientAppointmentService) {}
 
   @NotPhi('the patient’s own appointments (self access)')
 
@@ -69,21 +63,5 @@ export class PatientAppointmentController {
     @Param('appointmentId') appointmentId: string,
   ): Promise<PatientAppointmentDetail & { clinicTimezone: string }> {
     return this.appointments.ownById(principalOf(user), appointmentId);
-  }
-
-  /**
-   * Book a published slot. `Idempotency-Key` is **required** here
-   * (ADR-014; contract §6): a retried booking must replay, never book
-   * twice.
-   */
-  @NotPhi('the patient’s own booking (self access)')
-  @Post()
-  @Idempotent({ required: true })
-  @HttpCode(HttpStatus.CREATED)
-  book(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body(zodBody(bookAppointmentSchema)) body: BookAppointmentInput,
-  ): Promise<PatientAppointmentDetail & { clinicTimezone: string }> {
-    return this.booking.book(user, body);
   }
 }

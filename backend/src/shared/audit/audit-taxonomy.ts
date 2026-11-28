@@ -92,6 +92,8 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // the coverage spec's first regex only matched two-segment actions and
   // let this one through to `system`.
   ai: 'user_action',
+  // ADR-050 — the patient assistant: `patient_ai.context.read`, thread create/delete.
+  patient_ai: 'user_action',
   doctor: 'user_action',
   patient: 'user_action',
   // `legacy_clinical_record.read` — the safety screen consulted a legacy
@@ -201,6 +203,9 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
 
   // Clinical acts whose reversal is expensive or whose subject is gone.
   'patient.deactivate': 'warning',
+  // Staff-mediated account linking (ADR-048): who an account *is* changes.
+  'patient.account.link': 'warning',
+  'patient.account.unlink': 'warning',
   'appointment.cancel_administratively': 'warning',
   'medical_record.report_issue': 'warning',
   'file.delete': 'warning',
@@ -227,6 +232,8 @@ const PARTICIPLES: Readonly<Record<string, string>> = {
   two_factor_setup: 'two-factor set up',
 
   investigate: 'taken for investigation',
+  link: 'linked',
+  unlink: 'unlinked',
   reauthenticate: 're-authenticated',
   reauthenticate_failed: 're-authentication failed',
   add: 'added',

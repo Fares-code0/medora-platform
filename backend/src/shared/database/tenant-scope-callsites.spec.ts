@@ -25,6 +25,12 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'shared/authz/tenant-context.resolver.ts': "the caller's own staffing, deciding the request context",
   'shared/jobs/job-runner.service.ts': 'platform maintenance jobs (no request, no caller input)',
   'modules/patients/services/patient.service.ts': "the masked directory's reach, from the caller's tenant",
+  'modules/patients/services/patient-account-link.service.ts':
+    "account linking's reach (ADR-048): the caller's own hospital, from their staffing; the unlink transaction (R-04), keyed on the reached record and its account, deletes the account's personal AI threads",
+  'modules/hospitals/repositories/patient-hospital.repository.ts':
+    'the patient-facing hospital directory: active hospitals and their organisational names only (no PHI)',
+  'modules/appointments/repositories/patient-booking.repository.ts':
+    "patient booking (ADR-049): published slots and their doctor's employment (organisational rows, filtered to the slot or doctor named), a yes/no on whether a slot is held, and the caller's own insurance against the hospital's coverage; the booking write itself runs in the slot's hospital scope",
   'modules/appointments/services/appointment-oversight.service.ts': "the overseer's own hospital, from their staffing",
   'modules/medical-records/services/record-issue.service.ts': "the reviewer's own hospital, from their staffing",
   'modules/administration/services/operations.service.ts': "the operator's own hospital, from their staffing",
@@ -39,10 +45,6 @@ const REVIEWED: Readonly<Record<string, string>> = {
     "authenticated patient discovery across hospitals: public columns only, and a published slot's occupancy as existence only (DSC-01)",
   'modules/messaging/repositories/conversation.repository.ts':
     "the caller's own staff affiliation, deciding which hospital a new thread belongs to (MSG-01)",
-  'modules/appointments/services/published-slot.service.ts':
-    'patient slot inventory: published slots of a patient-visible doctor; slot and hospital fields only (DR-10)',
-  'modules/appointments/services/patient-booking.service.ts':
-    "the booking transaction, keyed by the slot id and the caller's own session-derived patient id; writes only that patient's appointment and record (DR-11)",
   'modules/hospitals/repositories/hospital-staffing.repository.ts':
     "revoking a departing user's own grants and requests inside the authorized staffing transaction; narrows access only (XH-03)",
 };
@@ -51,7 +53,8 @@ const REVIEWED: Readonly<Record<string, string>> = {
  * A raw write of `app.scope` is a scope selection too — and one the
  * helper-name pattern below would not see — so it is matched as well.
  */
-const SELECTS_SCOPE = /\b(runAsSystem|runWithTenantContext|setTenantContext)\(|set_config\(\s*'app\.scope'/;
+const SELECTS_SCOPE =
+  /\b(runAsSystem|runWithTenantContext|setTenantContext)\(|set_config\(\s*['"]app\.scope['"]|\bSET\s+(LOCAL\s+)?app\.scope\b/i;
 
 function sources(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
@@ -62,6 +65,23 @@ function sources(directory: string): string[] {
 }
 
 describe('RLS scope selection (F-15)', () => {
+  it('recognises every way of selecting a scope, raw SQL included', () => {
+    for (const text of [
+      'runAsSystem(() => x)',
+      'runWithTenantContext(ctx, work)',
+      'setTenantContext(ctx)',
+      "SELECT set_config('app.scope', 'system', true)",
+      'SELECT set_config("app.scope", $1, true)',
+      "SET LOCAL app.scope = 'system'",
+      'set app.scope to system',
+    ]) {
+      expect(SELECTS_SCOPE.test(text), text).toBe(true);
+    }
+    for (const text of ["SELECT current_setting('app.scope', true)", "set_config('app.hospital_id', $1, true)"]) {
+      expect(SELECTS_SCOPE.test(text), text).toBe(false);
+    }
+  });
+
   it('chooses `system` or an explicit context only at reviewed call sites', () => {
     const found = sources(SRC)
       .filter((path) => !path.endsWith('shared/database/tenant-context.ts') && !path.endsWith('shared/database/index.ts'))

@@ -46,17 +46,20 @@ describe('the demo refresh token', () => {
 });
 
 describe('the demo patient identity', () => {
-  it('is a patient with no role and no permissions, matching the port', () => {
+  it('is a patient with no permissions, matching the port', () => {
     // `model/types.ts` keeps `AuthenticatedIdentity` minimal on purpose:
-    // the client makes no authorization decision, and ADR-030 has not
-    // settled how patient identity is modelled. The fixture must not
-    // invent either.
+    // the client makes no per-action authorization decision. The one
+    // field beyond the minimum is `role`, which the C-11 eligibility gate
+    // requires to be `patient` — without it the demo session would be
+    // refused as ineligible.
     expect(Object.keys(DEMO_PATIENT_SESSION.identity).sort()).toEqual([
       'displayName',
       'email',
       'emailVerified',
+      'role',
       'subjectId',
     ]);
+    expect(DEMO_PATIENT_SESSION.identity.role).toBe('patient');
     expect(DEMO_PATIENT_SESSION.identity.displayName).toBe('Demo Patient');
     expect(DEMO_PATIENT_SESSION.identity.email).toContain('@medora.local');
   });

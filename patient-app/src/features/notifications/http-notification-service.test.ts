@@ -158,11 +158,22 @@ describe('the deep link', () => {
     expect(item?.deepLink).toBe('medora://appointments/APT-3007');
   });
 
+  it('links a labOrderId to the status-only Tests list, without the id (ADR-050)', async () => {
+    stubFetch([
+      json(200, feed([{ ...NOTIFICATION, related: { ...RELATED, labOrderId: 'LAB-1' } }])),
+    ]);
+
+    const [item] = (await httpNotificationService.list()).items;
+
+    // The Tests screen shows status only; the order id stays out of the
+    // link because there is no per-test screen to open.
+    expect(item?.deepLink).toBe('medora://records/labs');
+  });
+
   it.each([
     ['recordId', 'REC-1'],
-    ['labOrderId', 'LAB-1'],
     ['prescriptionId', 'RX-1'],
-  ])('does NOT link a %s — those routes are blocked by ADR-031', async (field, id) => {
+  ])('does NOT link a %s — the patient does not see those in the app', async (field, id) => {
     stubFetch([json(200, feed([{ ...NOTIFICATION, related: { ...RELATED, [field]: id } }]))]);
 
     const [item] = (await httpNotificationService.list()).items;
@@ -360,4 +371,3 @@ describe('the preferences (O-06)', () => {
     expect(error).toMatchObject({ kind: 'validation' });
   });
 });
-

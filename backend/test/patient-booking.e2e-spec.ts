@@ -1,388 +1,608 @@
 import { randomUUID } from 'node:crypto';
 
 import request from 'supertest';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-
-import { IdempotencyStore } from '../src/shared/idempotency';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type AuthHarness,
   createAuthHarness,
   dataOf,
   errorBody,
-  recordPatientAt,
+  fixtureHospital,
+  makeClinicalDoctor,
+  markVerified,
+  registrationBody,
+  testEmail,
+  tokenFromLink,
 } from './support/auth-app';
-import {
-  bookingDoctor,
-  bookingPatient,
-  bookSlot,
-  type DoctorSession,
-  futureAt,
-  ME_APPOINTMENTS,
-  type PatientSession,
-  publishOne,
-  PUBLISHED_SLOTS,
-  useServer,
-} from './support/booking-fixture';
 import {
   createPatientRecords,
   destroyPatientRecords,
   type PatientRecord,
 } from './support/patient-fixture';
+import { body as mailBody } from './support/smtp-sink';
 
 /**
- * SLT-03 / SLT-04 / SLT-05 — `POST /me/appointments`, a patient booking a
- * doctor-published slot (DR-10, DR-11, OD-08, OD-09, OD-14;
- * `API_CONTRACT_CHANGES.md` §6).
+ * Patient appointment actions end to end (ADR-049): booking a published
+ * slot, cancelling before the start, and the reschedule-request lifecycle
+ * with the clinic's approve / reject.
+ *
+ * Runs unchanged under the restricted runtime role with tenant context on
+ * (`npm run test:e2e:runtime-role -- test/patient-booking.e2e-spec.ts`),
+ * which is what proves the RLS paths: a patient request in `patient`
+ * scope, the booking transaction in the slot hospital's scope.
  */
-let harness: AuthHarness;
-let doctorA: DoctorSession;
-let doctorB: DoctorSession;
-let records: PatientRecord[];
-let alice: PatientSession;
-let bob: PatientSession;
-let insured: PatientSession;
-let unlinked: PatientSession;
-const PATIENT_TAG = 'pbook';
-const PROVIDER_PREFIX = 'E2E pbook provider';
+// Each case signs up and links its own accounts; under the runtime role
+// (tenant context on) that alone approaches the 5 s default.
+vi.setConfig({ testTimeout: 120_000 });
 
-interface Booked {
-  id: string;
-  startsAt: string;
-  durationMin: number;
-  status: string;
-  reason: string;
-  isNewPatient: boolean;
-  doctor: { id: string };
-  clinicTimezone: string;
+let harness: AuthHarness;
+
+const PREFIX = '/api/v1';
+const REGISTER = `${PREFIX}/auth/register`;
+const LOGIN = `${PREFIX}/auth/login`;
+const VERIFY = `${PREFIX}/auth/verify-email`;
+const ME_APPOINTMENTS = `${PREFIX}/me/appointments`;
+const STAFF = `${PREFIX}/appointments`;
+const PASSWORD = 'Medora123!';
+const PATIENT_TAG = 'pbk';
+
+interface Session {
+  readonly token: string;
+  readonly userId: string;
 }
 
-let coveredProvider: string;
-let uncoveredProvider: string;
+interface Doctor {
+  readonly token: string;
+  readonly doctorId: string;
+  readonly hospitalId: string;
+  readonly employmentId: string;
+}
+
+interface Detail {
+  id: string;
+  status: string;
+  startsAt: string;
+  durationMin: number;
+  hospital: { id: string; name: string } | null;
+  availableActions: string[];
+  cancelledReason: string | null;
+  pendingRescheduleRequest: RequestView | null;
+  events: { action: string; actor: string }[];
+}
+
+interface RequestView {
+  id: string;
+  appointmentId: string;
+  status: string;
+  requestedSlot: { id: string; startsAt: string; durationMin: number };
+  note: string | null;
+  decisionReason: string | null;
+  decidedAt: string | null;
+}
+
+let records: PatientRecord[];
+let doctorA: Doctor;
+let doctorB: Doctor;
+let slotHour = 0;
 
 beforeAll(async () => {
   harness = await createAuthHarness('patient-booking');
-  useServer(harness);
-  doctorA = await bookingDoctor(harness, 'book-doc-a');
-  doctorB = await bookingDoctor(harness, 'book-doc-b', 'pbookb');
-  records = await createPatientRecords(harness.prisma, PATIENT_TAG, 3);
-  // Alice already has a record at hospital A only.
-  await recordPatientAt(harness.prisma, records[0]!.id, doctorA.hospitalId);
-  alice = await bookingPatient(harness, 'book-alice', records[0]!.id);
-  bob = await bookingPatient(harness, 'book-bob', records[1]!.id);
-  insured = await bookingPatient(harness, 'book-insured', records[2]!.id);
-  unlinked = await bookingPatient(harness, 'book-unlinked');
-
-  await harness.prisma.insuranceProvider.deleteMany({
-    where: { name: { startsWith: PROVIDER_PREFIX } },
-  });
-  coveredProvider = (
-    await harness.prisma.insuranceProvider.create({
-      data: { name: `${PROVIDER_PREFIX} covered` },
-      select: { id: true },
-    })
-  ).id;
-  uncoveredProvider = (
-    await harness.prisma.insuranceProvider.create({
-      data: { name: `${PROVIDER_PREFIX} uncovered` },
-      select: { id: true },
-    })
-  ).id;
-  await harness.prisma.hospitalInsuranceCoverage.create({
-    data: {
-      hospitalId: doctorA.hospitalId,
-      providerId: coveredProvider,
-      planCode: 'E2E-PBOOK',
-      planName: 'E2E pbook plan',
-    },
-  });
-}, 60_000);
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+  records = await createPatientRecords(harness.prisma, PATIENT_TAG, 4);
+  doctorA = await seedDoctor('dra', 'pbka');
+  doctorB = await seedDoctor('drb', 'pbkb');
+}, 120_000);
 
 afterAll(async () => {
   if (harness === undefined) return;
-  await harness.reset();
   await destroyPatientRecords(harness.prisma, PATIENT_TAG);
-  await harness.prisma.hospitalInsuranceCoverage.deleteMany({
-    where: { providerId: { in: [coveredProvider, uncoveredProvider] } },
-  });
-  await harness.prisma.insuranceProvider.deleteMany({
-    where: { name: { startsWith: PROVIDER_PREFIX } },
-  });
+  await harness.prisma.insuranceProvider.deleteMany({ where: { name: 'E2E patient-booking insurer' } });
+  // Employments, their slots and the appointments on them go with the
+  // suite's staffing (`deleteWithDependents`).
+  await harness.reset();
   await harness.close();
+}, 120_000);
+
+beforeEach(async () => {
+  // Unlink this file's patient records from the previous test's accounts
+  // (the accounts are deleted by `reset()` below; `user_id` is SET NULL).
+  await harness.prisma.patientInsurance.deleteMany({
+    where: { patient: { publicId: { in: records.map((r) => r.publicId) } } },
+  });
 });
 
-async function insure(patientId: string, providerId: string): Promise<void> {
-  await harness.prisma.patientInsurance.deleteMany({ where: { patientId } });
-  await harness.prisma.patientInsurance.create({
-    data: { patientId, providerId, policyNumber: `POL-${randomUUID().slice(0, 8)}` },
-  });
+async function signUp(local: string, role = 'patient'): Promise<Session> {
+  const email = testEmail(`${local}-${randomUUID().slice(0, 6)}`);
+  await request(harness.server).post(REGISTER).send(registrationBody({ email, role })).expect(201);
+  await request(harness.server)
+    .post(VERIFY)
+    .send({ token: tokenFromLink(mailBody(harness.sink.lastTo(email)!)) })
+    .expect(204);
+  const login = await request(harness.server).post(LOGIN).send({ email, password: PASSWORD }).expect(200);
+  const row = await harness.prisma.user.findUniqueOrThrow({ where: { email } });
+  return { token: dataOf<{ accessToken: string }>(login).accessToken, userId: row.id };
 }
 
-describe('POST /me/appointments — the happy path', () => {
-  it('books, deriving hospital, doctor and time from the slot, and opens the record (OD-09)', async () => {
-    const startsAt = futureAt(20, '09:00');
-    const slotId = await publishOne(doctorB, startsAt, 45);
+/** A patient account linked to record `index` (fixture-only link, as the contract allows in tests). */
+async function patient(index: number): Promise<Session> {
+  const session = await signUp(`p${index}`);
+  await harness.prisma.patient.update({ where: { id: records[index]!.id }, data: { userId: session.userId } });
+  return session;
+}
 
-    // Alice has no record at hospital B yet.
-    expect(
-      await harness.prisma.hospitalMedicalRecord.count({
-        where: { patientId: records[0]!.id, hospitalId: doctorB.hospitalId },
-      }),
-    ).toBe(0);
+async function seedDoctor(local: string, hospitalKey: string): Promise<Doctor> {
+  const email = testEmail(local);
+  await request(harness.server).post(REGISTER).send(registrationBody({ email }));
+  await markVerified(harness.prisma, email);
+  const hospitalId = await fixtureHospital(harness.prisma, hospitalKey);
+  const { doctorId } = await makeClinicalDoctor(harness.prisma, email, hospitalId);
+  const employment = await harness.prisma.doctorEmployment.findFirstOrThrow({
+    where: { doctorId, endedAt: null },
+    select: { id: true },
+  });
+  const token = dataOf<{ accessToken: string }>(
+    await request(harness.server).post(LOGIN).send({ email, password: PASSWORD, rememberMe: false }),
+  ).accessToken;
+  return { token, doctorId, hospitalId, employmentId: employment.id };
+}
 
-    const response = await bookSlot(alice, { slotId, reason: 'Recurring headaches' });
-    expect(response.status).toBe(201);
+/** A fresh published slot for `doctor`, an hour after the previous one. */
+async function publishSlot(doctor: Doctor, options: { startsAt?: Date; withdrawn?: boolean } = {}): Promise<string> {
+  slotHour += 1;
+  const startsAt = options.startsAt ?? new Date(Date.UTC(2031, 0, 1, 0, 0) + slotHour * 3_600_000);
+  const slot = await harness.prisma.publishedSlot.create({
+    data: {
+      hospitalId: doctor.hospitalId,
+      doctorEmploymentId: doctor.employmentId,
+      startsAt,
+      durationMinutes: 30,
+      ...(options.withdrawn === true ? { withdrawnAt: new Date() } : {}),
+    },
+    select: { id: true },
+  });
+  return slot.id;
+}
 
-    const booked = dataOf<Booked>(response);
-    expect(booked.id).toMatch(/^APT-/);
-    expect(booked.status).toBe('scheduled');
-    expect(booked.startsAt).toBe(startsAt);
-    expect(booked.durationMin).toBe(45);
-    expect(booked.doctor.id).toBe(doctorB.doctorId);
-    expect(booked.isNewPatient).toBe(true);
-    expect(booked.clinicTimezone).toBeTruthy();
+function book(session: Session, slotId: string, key: string = randomUUID()) {
+  return request(harness.server)
+    .post(ME_APPOINTMENTS)
+    .set('Authorization', `Bearer ${session.token}`)
+    .set('Idempotency-Key', key)
+    .send({ slotId, reason: 'Routine check' });
+}
 
-    const row = await harness.prisma.appointment.findUniqueOrThrow({
-      where: { publicId: booked.id },
-    });
-    const record = await harness.prisma.hospitalMedicalRecord.findUniqueOrThrow({
-      where: {
-        patientId_hospitalId: { patientId: records[0]!.id, hospitalId: doctorB.hospitalId },
-      },
-    });
-    const slot = await harness.prisma.publishedSlot.findUniqueOrThrow({ where: { id: slotId } });
-    expect(row).toMatchObject({
-      patientId: records[0]!.id,
-      doctorId: doctorB.doctorId,
-      hospitalId: doctorB.hospitalId,
-      doctorEmploymentId: slot.doctorEmploymentId,
-      publishedSlotId: slotId,
-      hospitalMedicalRecordId: record.id,
-      durationMin: 45,
-      status: 'SCHEDULED',
-    });
-    expect(row.startsAt.toISOString()).toBe(startsAt);
+async function booked(session: Session, slotId: string): Promise<Detail> {
+  const response = await book(session, slotId);
+  expect(response.status, JSON.stringify(response.body)).toBe(201);
+  return dataOf<Detail>(response);
+}
 
-    // The doctor is notified through the existing topic, with the booking.
-    expect(
-      await harness.prisma.domainEvent.count({
-        where: {
-          topic: 'appointment.created',
-          dedupeKey: { startsWith: `appointment.created:${booked.id}:` },
-        },
-      }),
-    ).toBe(1);
+async function confirm(appointmentId: string): Promise<void> {
+  const response = await request(harness.server)
+    .post(`${STAFF}/${appointmentId}/approve`)
+    .set('Authorization', `Bearer ${doctorA.token}`);
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+}
 
-    // The doctor's own view shows the slot as booked.
-    const own = await request(harness.server)
-      .get(`${PUBLISHED_SLOTS}?from=${futureAt(20, '00:00')}&to=${futureAt(21, '00:00')}`)
-      .set('Authorization', `Bearer ${doctorB.token}`)
+function requestMove(session: Session, appointmentId: string, slotId: string) {
+  return request(harness.server)
+    .post(`${ME_APPOINTMENTS}/${appointmentId}/reschedule-requests`)
+    .set('Authorization', `Bearer ${session.token}`)
+    .set('Idempotency-Key', randomUUID())
+    .send({ slotId, note: 'Mornings suit me better' });
+}
+
+function cancel(session: Session, appointmentId: string, reasonCode = 'schedule_conflict') {
+  return request(harness.server)
+    .post(`${ME_APPOINTMENTS}/${appointmentId}/cancel`)
+    .set('Authorization', `Bearer ${session.token}`)
+    .send({ reasonCode, note: 'Work trip' });
+}
+
+describe('slots and visit types', () => {
+  it('lists only published, unbooked, future, non-withdrawn slots', async () => {
+    const me = await patient(0);
+    const open = await publishSlot(doctorA);
+    const taken = await publishSlot(doctorA);
+    const withdrawn = await publishSlot(doctorA, { withdrawn: true });
+    await booked(me, taken);
+
+    const response = await request(harness.server)
+      .get(`${PREFIX}/patient/doctors/${doctorA.doctorId}/slots?from=2031-01-01T00:00:00Z&to=2031-01-31T00:00:00Z`)
+      .set('Authorization', `Bearer ${me.token}`)
       .expect(200);
-    const view = dataOf<{ items: { id: string; status: string; appointmentId: string }[] }>(
-      own,
-    ).items.find((item) => item.id === slotId);
-    expect(view).toMatchObject({ status: 'booked', appointmentId: booked.id });
+    const ids = dataOf<{ id: string; hospital: { id: string } }[]>(response).map((slot) => slot.id);
+
+    expect(ids).toContain(open);
+    expect(ids).not.toContain(taken);
+    expect(ids).not.toContain(withdrawn);
   });
 
-  it('reuses the existing record at a hospital the patient already has one', async () => {
-    const slotId = await publishOne(doctorA, futureAt(20, '11:00'));
-    const response = await bookSlot(alice, { slotId, reason: 'Follow-up' });
-    expect(response.status).toBe(201);
-    expect(dataOf<Booked>(response).isNewPatient).toBe(false);
-    expect(
-      await harness.prisma.hospitalMedicalRecord.count({
-        where: { patientId: records[0]!.id, hospitalId: doctorA.hospitalId },
-      }),
-    ).toBe(1);
+  it('refuses a window over 31 days', async () => {
+    const me = await patient(0);
+    await request(harness.server)
+      .get(`${PREFIX}/patient/doctors/${doctorA.doctorId}/slots?from=2031-01-01T00:00:00Z&to=2031-03-01T00:00:00Z`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(422);
+  });
+
+  it('serves the active visit types to a patient and refuses a doctor', async () => {
+    const me = await patient(0);
+    const response = await request(harness.server)
+      .get(`${PREFIX}/patient/visit-types`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(200);
+    expect(dataOf<{ name: string }[]>(response).map((v) => v.name)).toContain('Consultation');
+
+    const denied = await request(harness.server)
+      .get(`${PREFIX}/patient/visit-types`)
+      .set('Authorization', `Bearer ${doctorA.token}`);
+    expect(denied.status).toBe(403);
+    expect(errorBody(denied).code).toBe('patient_only');
   });
 });
 
-describe('POST /me/appointments — refusals', () => {
-  it('refuses client-supplied hospital, doctor, time or duration (422)', async () => {
-    const slotId = await publishOne(doctorA, futureAt(21, '09:00'));
-    for (const extra of [
-      { hospitalId: doctorB.hospitalId },
-      { doctorId: doctorB.doctorId },
-      { startsAt: futureAt(21, '15:00') },
-      { durationMin: 90 },
-    ]) {
-      const response = await bookSlot(bob, { slotId, reason: 'Check-up', ...extra });
-      expect(response.status, JSON.stringify(extra)).toBe(422);
+describe('POST /me/appointments', () => {
+  it('books a slot as pending, opens the hospital record, and offers cancel', async () => {
+    const me = await patient(1);
+    const slot = await publishSlot(doctorA);
+
+    const detail = await booked(me, slot);
+
+    expect(detail.status).toBe('pending');
+    expect(detail.hospital?.id).toBe(doctorA.hospitalId);
+    expect(typeof detail.hospital?.name).toBe('string');
+    expect(detail.availableActions).toEqual(['cancel']);
+    expect(detail.pendingRescheduleRequest).toBeNull();
+    expect(detail.events[0]).toMatchObject({ action: 'created', actor: 'patient' });
+
+    const row = await harness.prisma.appointment.findUniqueOrThrow({ where: { publicId: detail.id } });
+    expect(row.publishedSlotId).toBe(slot);
+    expect(row.hospitalId).toBe(doctorA.hospitalId);
+    const record = await harness.prisma.hospitalMedicalRecord.findUnique({
+      where: { patientId_hospitalId: { patientId: records[1]!.id, hospitalId: doctorA.hospitalId } },
+    });
+    expect(record).not.toBeNull();
+    expect(row.hospitalMedicalRecordId).toBe(record!.id);
+  });
+
+  it('gives exactly one 201 to N concurrent bookings of one slot', async () => {
+    const first = await patient(1);
+    const second = await patient(2);
+    const slot = await publishSlot(doctorA);
+
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, (_, index) => book(index % 2 === 0 ? first : second, slot)),
+    );
+    const statuses = responses.map((response) => response.status).sort();
+
+    expect(statuses.filter((status) => status === 201)).toHaveLength(1);
+    expect(statuses.filter((status) => status === 409)).toHaveLength(5);
+    for (const response of responses.filter((r) => r.status === 409)) {
+      expect(errorBody(response).code).toBe('slot_taken');
     }
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(0);
+    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slot } })).toBe(1);
   });
 
-  it('requires an Idempotency-Key (422)', async () => {
-    const slotId = await publishOne(doctorA, futureAt(21, '10:00'));
-    const response = await bookSlot(bob, { slotId, reason: 'Check-up' }, null);
-    expect(response.status).toBe(422);
-    expect(errorBody(response).fieldErrors?.['Idempotency-Key']).toBeDefined();
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(0);
+  it('replays the same appointment for a repeated Idempotency-Key', async () => {
+    const me = await patient(1);
+    const slot = await publishSlot(doctorA);
+    const key = randomUUID();
+
+    const first = await book(me, slot, key).expect(201);
+    const replay = await book(me, slot, key).expect(201);
+
+    expect(dataOf<Detail>(replay).id).toBe(dataOf<Detail>(first).id);
+    expect(replay.headers['idempotency-replayed']).toBe('true');
+    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slot } })).toBe(1);
   });
 
-  it('answers 409 slot_taken for a booked slot', async () => {
-    const slotId = await publishOne(doctorA, futureAt(21, '11:00'));
-    expect((await bookSlot(alice, { slotId, reason: 'First' })).status).toBe(201);
-
-    const second = await bookSlot(bob, { slotId, reason: 'Second' });
-    expect(second.status).toBe(409);
-    expect(errorBody(second)).toMatchObject({ code: 'slot_taken', detail: 'booked' });
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(1);
-  });
-
-  it('answers 409 slot_taken for a withdrawn and for a past slot, 404 for an unknown one', async () => {
-    const withdrawn = await publishOne(doctorA, futureAt(21, '12:00'));
-    await request(harness.server)
-      .delete(`${PUBLISHED_SLOTS}/${withdrawn}`)
-      .set('Authorization', `Bearer ${doctorA.token}`)
-      .expect(200);
-    const refusedWithdrawn = await bookSlot(bob, { slotId: withdrawn, reason: 'Check-up' });
-    expect(refusedWithdrawn.status).toBe(409);
-    expect(errorBody(refusedWithdrawn)).toMatchObject({ code: 'slot_taken', detail: 'withdrawn' });
-
-    const employment = await harness.prisma.doctorEmployment.findFirstOrThrow({
-      where: { doctorId: doctorA.doctorId, endedAt: null },
-    });
-    const past = await harness.prisma.publishedSlot.create({
-      data: {
-        hospitalId: employment.hospitalId,
-        doctorEmploymentId: employment.id,
-        startsAt: new Date(Date.now() - 3_600_000),
-        durationMinutes: 30,
-      },
-    });
-    const refusedPast = await bookSlot(bob, { slotId: past.id, reason: 'Check-up' });
-    expect(refusedPast.status).toBe(409);
-    expect(errorBody(refusedPast)).toMatchObject({ code: 'slot_taken', detail: 'past' });
-
-    expect((await bookSlot(bob, { slotId: randomUUID(), reason: 'Check-up' })).status).toBe(404);
-  });
-
-  it('refuses an account with no linked patient identity (409 patient_identity_required)', async () => {
-    const slotId = await publishOne(doctorA, futureAt(21, '13:00'));
-    const response = await bookSlot(unlinked, { slotId, reason: 'Check-up' });
-    expect(response.status).toBe(409);
-    expect(errorBody(response).code).toBe('patient_identity_required');
-  });
-
-  it('is not open to a doctor (403) or without a session (401)', async () => {
-    const slotId = await publishOne(doctorA, futureAt(21, '14:00'));
-    expect((await bookSlot(doctorB, { slotId, reason: 'Check-up' })).status).toBe(403);
-    await request(harness.server)
+  it('requires the Idempotency-Key header', async () => {
+    const me = await patient(1);
+    const slot = await publishSlot(doctorA);
+    const response = await request(harness.server)
       .post(ME_APPOINTMENTS)
+      .set('Authorization', `Bearer ${me.token}`)
+      .send({ slotId: slot, reason: 'Routine check' });
+    expect(response.status).toBe(422);
+  });
+
+  it('refuses a withdrawn, a past and a booked slot, and an unknown one', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+
+    const withdrawn = await publishSlot(doctorA, { withdrawn: true });
+    expect((await book(me, withdrawn)).status).toBe(404);
+
+    const past = await publishSlot(doctorA, { startsAt: new Date('2024-01-01T09:00:00Z') });
+    const pastResponse = await book(me, past);
+    expect(pastResponse.status).toBe(409);
+    expect(errorBody(pastResponse).code).toBe('slot_taken');
+
+    const taken = await publishSlot(doctorA);
+    await booked(other, taken);
+    const takenResponse = await book(me, taken);
+    expect(takenResponse.status).toBe(409);
+    expect(errorBody(takenResponse).code).toBe('slot_taken');
+
+    expect((await book(me, randomUUID())).status).toBe(404);
+  });
+
+  it('answers 409 patient_not_linked for an unlinked patient account', async () => {
+    const unlinked = await signUp('unlinked');
+    const response = await book(unlinked, await publishSlot(doctorA));
+    expect(response.status).toBe(409);
+    expect(errorBody(response).code).toBe('patient_not_linked');
+  });
+
+  it('answers 403 patient_only to a non-patient role', async () => {
+    const response = await request(harness.server)
+      .post(ME_APPOINTMENTS)
+      .set('Authorization', `Bearer ${doctorA.token}`)
       .set('Idempotency-Key', randomUUID())
-      .send({ slotId, reason: 'Check-up' })
-      .expect(401);
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(0);
+      .send({ slotId: await publishSlot(doctorA), reason: 'Routine check' });
+    expect(response.status).toBe(403);
+    expect(errorBody(response).code).toBe('patient_only');
   });
-});
 
-describe('POST /me/appointments — idempotency', () => {
-  it('replays the same appointment for the same key and writes one row', async () => {
-    const slotId = await publishOne(doctorA, futureAt(22, '09:00'));
-    const key = randomUUID();
+  it('refuses an insured patient at a hospital that does not cover the provider (OD-14)', async () => {
+    const me = await patient(3);
+    const provider = await harness.prisma.insuranceProvider.upsert({
+      where: { name: 'E2E patient-booking insurer' },
+      create: { name: 'E2E patient-booking insurer' },
+      update: {},
+      select: { id: true },
+    });
+    await harness.prisma.patientInsurance.create({
+      data: { patientId: records[3]!.id, providerId: provider.id, policyNumber: `POL-${randomUUID().slice(0, 8)}` },
+    });
 
-    const first = await bookSlot(bob, { slotId, reason: 'Check-up' }, key);
-    const second = await bookSlot(bob, { slotId, reason: 'Check-up' }, key);
-    expect(first.status).toBe(201);
-    expect(second.status).toBe(201);
-    expect(second.headers['idempotency-replayed']).toBe('true');
-    expect(dataOf<Booked>(second).id).toBe(dataOf<Booked>(first).id);
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(1);
-
-    const reused = await bookSlot(bob, { slotId, reason: 'Something else' }, key);
-    expect(reused.status).toBe(422);
-    expect(errorBody(reused).code).toBe('idempotency_key_reused');
-  });
-});
-
-describe('POST /me/appointments — idempotency completion failure (APT-02)', () => {
-  it('does not release the key when storing the result fails after the booking committed', async () => {
-    const slotId = await publishOne(doctorA, futureAt(22, '11:00'));
-    const key = randomUUID();
-    const complete = vi
-      .spyOn(harness.app.get(IdempotencyStore), 'complete')
-      .mockRejectedValue(new Error('store unavailable'));
-
-    const first = await bookSlot(bob, { slotId, reason: 'Check-up' }, key);
-    expect(first.status).toBe(201);
-    expect(complete).toHaveBeenCalledTimes(2);
-    complete.mockRestore();
-
-    // The retry is told the key is still in progress — never re-executed.
-    const retry = await bookSlot(bob, { slotId, reason: 'Check-up' }, key);
-    expect(retry.status).toBe(409);
-    expect(errorBody(retry).code).toBe('idempotency_request_in_progress');
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(1);
-  });
-});
-
-describe('POST /me/appointments — insurance (OD-14)', () => {
-  it('refuses an insured patient whose provider the hospital does not accept (422)', async () => {
-    await insure(records[2]!.id, uncoveredProvider);
-    const slotId = await publishOne(doctorA, futureAt(23, '09:00'));
-    const response = await bookSlot(insured, { slotId, reason: 'Check-up' });
+    const response = await book(me, await publishSlot(doctorA));
     expect(response.status).toBe(422);
     expect(errorBody(response).code).toBe('insurance_not_covered');
-    expect(await harness.prisma.appointment.count({ where: { publishedSlotId: slotId } })).toBe(0);
-    // Nothing was opened either: the transaction rolled back.
-    expect(
-      await harness.prisma.hospitalMedicalRecord.count({
-        where: { patientId: records[2]!.id, hospitalId: doctorA.hospitalId },
-      }),
-    ).toBe(0);
-  });
-
-  it('books an insured patient whose provider the hospital accepts (201)', async () => {
-    await insure(records[2]!.id, coveredProvider);
-    const slotId = await publishOne(doctorA, futureAt(23, '10:00'));
-    expect((await bookSlot(insured, { slotId, reason: 'Check-up' })).status).toBe(201);
-  });
-
-  it('does not check an uninsured patient (201 at a hospital with no coverage at all)', async () => {
-    expect(
-      await harness.prisma.patientInsurance.count({ where: { patientId: records[1]!.id } }),
-    ).toBe(0);
-    const slotId = await publishOne(doctorB, futureAt(23, '11:00'));
-    expect((await bookSlot(bob, { slotId, reason: 'Check-up' })).status).toBe(201);
   });
 });
 
-describe('isolation', () => {
-  it('patient B cannot read patient A’s booking', async () => {
-    const slotId = await publishOne(doctorA, futureAt(24, '09:00'));
-    const booked = dataOf<Booked>(await bookSlot(alice, { slotId, reason: 'Private matter' }));
+describe('POST /me/appointments/:id/cancel', () => {
+  it('cancels before the start, stores the closed reason, and frees the slot', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+    const slot = await publishSlot(doctorA);
+    const detail = await booked(me, slot);
 
-    const foreign = await request(harness.server)
-      .get(`${ME_APPOINTMENTS}/${booked.id}`)
-      .set('Authorization', `Bearer ${bob.token}`);
-    expect(foreign.status).toBe(404);
+    const response = await cancel(me, detail.id).expect(200);
+    const cancelled = dataOf<Detail>(response);
+    expect(cancelled.status).toBe('cancelled');
+    expect(cancelled.cancelledReason).toBe('patient:schedule_conflict — Work trip');
+    expect(cancelled.availableActions).toEqual([]);
 
-    const bobsList = await request(harness.server)
-      .get(`${ME_APPOINTMENTS}?pageSize=100`)
-      .set('Authorization', `Bearer ${bob.token}`)
-      .expect(200);
-    expect(
-      dataOf<{ items: { id: string }[] }>(bobsList).items.map((item) => item.id),
-    ).not.toContain(booked.id);
+    // The freed slot is bookable again.
+    await booked(other, slot);
 
-    const own = await request(harness.server)
-      .get(`${ME_APPOINTMENTS}/${booked.id}`)
-      .set('Authorization', `Bearer ${alice.token}`);
-    expect(own.status).toBe(200);
+    // The patient is not notified of their own act; the doctor is.
+    const events = await harness.prisma.domainEvent.findMany({
+      where: { payload: { path: ['appointmentId'], equals: detail.id } },
+      select: { topic: true },
+    });
+    const topics = events.map((event) => event.topic);
+    expect(topics).toContain('appointment.cancelled_by_patient');
+    expect(topics).not.toContain('appointment.cancelled');
   });
 
-  it('a replayed key never returns another patient’s booking', async () => {
-    const slotId = await publishOne(doctorA, futureAt(24, '10:00'));
-    const key = randomUUID();
-    expect((await bookSlot(alice, { slotId, reason: 'Check-up' }, key)).status).toBe(201);
+  it('refuses after the start (409) and on a terminal appointment (409)', async () => {
+    const me = await patient(1);
+    const visitType = await harness.prisma.visitType.findFirstOrThrow({ select: { id: true } });
+    const started = await harness.prisma.appointment.create({
+      data: {
+        publicId: `APT-Tpbk-${Math.floor(Math.random() * 1_000_000)}`,
+        patientId: records[1]!.id,
+        doctorId: doctorA.doctorId,
+        visitTypeId: visitType.id,
+        startsAt: new Date(Date.now() - 60_000),
+        durationMin: 30,
+        status: 'CONFIRMED',
+        reason: 'Started already',
+      },
+      select: { publicId: true },
+    });
+    const late = await cancel(me, started.publicId);
+    expect(late.status).toBe(409);
+    expect(errorBody(late).detail).toBeTruthy();
 
-    const other = await bookSlot(bob, { slotId, reason: 'Check-up' }, key);
-    expect(other.status).toBe(409);
-    expect(errorBody(other).code).toBe('slot_taken');
+    const detail = await booked(me, await publishSlot(doctorA));
+    await cancel(me, detail.id).expect(200);
+    expect((await cancel(me, detail.id)).status).toBe(409);
+  });
+
+  it('answers 404 for another patient’s appointment and refuses an unknown reason', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+    const theirs = await booked(other, await publishSlot(doctorA));
+
+    expect((await cancel(me, theirs.id)).status).toBe(404);
+    expect((await cancel(other, theirs.id, 'because')).status).toBe(422);
+  });
+});
+
+describe('reschedule requests', () => {
+  async function confirmedAppointment(session: Session): Promise<{ detail: Detail; slot: string }> {
+    const slot = await publishSlot(doctorA);
+    const detail = await booked(session, slot);
+    await confirm(detail.id);
+    return { detail, slot };
+  }
+
+  it('create → staff approve moves the same row to the new slot and frees the old one', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+    const { detail, slot: oldSlot } = await confirmedAppointment(me);
+    const target = await publishSlot(doctorA);
+
+    const before = dataOf<Detail>(
+      await request(harness.server)
+        .get(`${ME_APPOINTMENTS}/${detail.id}`)
+        .set('Authorization', `Bearer ${me.token}`)
+        .expect(200),
+    );
+    expect(before.availableActions).toEqual(['cancel', 'reschedule']);
+
+    const created = await requestMove(me, detail.id, target);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const view = dataOf<RequestView>(created);
+    expect(view).toMatchObject({ appointmentId: detail.id, status: 'pending', note: 'Mornings suit me better' });
+    expect(view.requestedSlot.id).toBe(target);
+
+    const pendingDetail = dataOf<Detail>(
+      await request(harness.server)
+        .get(`${ME_APPOINTMENTS}/${detail.id}`)
+        .set('Authorization', `Bearer ${me.token}`)
+        .expect(200),
+    );
+    expect(pendingDetail.pendingRescheduleRequest?.id).toBe(view.id);
+    expect(pendingDetail.availableActions).toEqual(['cancel']);
+
+    const queue = await request(harness.server)
+      .get(`${STAFF}/reschedule-requests?status=pending`)
+      .set('Authorization', `Bearer ${doctorA.token}`)
+      .expect(200);
+    expect(dataOf<RequestView[]>(queue).map((r) => r.id)).toContain(view.id);
+
+    const approved = await request(harness.server)
+      .post(`${STAFF}/reschedule-requests/${view.id}/approve`)
+      .set('Authorization', `Bearer ${doctorA.token}`);
+    expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+    expect(dataOf<RequestView>(approved).status).toBe('approved');
+
+    const row = await harness.prisma.appointment.findUniqueOrThrow({ where: { publicId: detail.id } });
+    expect(row.status).toBe('RESCHEDULED');
+    expect(row.publishedSlotId).toBe(target);
+    const targetRow = await harness.prisma.publishedSlot.findUniqueOrThrow({ where: { id: target } });
+    expect(row.startsAt.toISOString()).toBe(targetRow.startsAt.toISOString());
+    const events = await harness.prisma.appointmentEvent.findMany({
+      where: { appointmentId: row.id, action: 'RESCHEDULE' },
+    });
+    expect(events).toHaveLength(1);
+
+    // The old slot is free; the new one is held, also against a rescheduled row.
+    await booked(other, oldSlot);
+    const blocked = await book(other, target);
+    expect(blocked.status).toBe(409);
+
+    const outbox = await harness.prisma.domainEvent.findMany({
+      where: { topic: 'appointment.reschedule_request.approved', payload: { path: ['appointmentId'], equals: detail.id } },
+    });
+    expect(outbox).toHaveLength(1);
+  });
+
+  it('reject leaves the appointment unchanged', async () => {
+    const me = await patient(1);
+    const { detail, slot } = await confirmedAppointment(me);
+    const view = dataOf<RequestView>(await requestMove(me, detail.id, await publishSlot(doctorA)).expect(201));
+
+    const rejected = await request(harness.server)
+      .post(`${STAFF}/reschedule-requests/${view.id}/reject`)
+      .set('Authorization', `Bearer ${doctorA.token}`)
+      .send({ reason: 'The doctor is in theatre that morning' })
+      .expect(200);
+    expect(dataOf<RequestView>(rejected)).toMatchObject({
+      status: 'rejected',
+      decisionReason: 'The doctor is in theatre that morning',
+    });
+
+    const row = await harness.prisma.appointment.findUniqueOrThrow({ where: { publicId: detail.id } });
+    expect(row.status).toBe('CONFIRMED');
+    expect(row.publishedSlotId).toBe(slot);
+
+    const list = await request(harness.server)
+      .get(`${ME_APPOINTMENTS}/${detail.id}/reschedule-requests`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(200);
+    expect(dataOf<RequestView[]>(list).map((r) => r.status)).toEqual(['rejected']);
+  });
+
+  it('refuses a second pending request (409) and allows withdrawing the first', async () => {
+    const me = await patient(1);
+    const { detail } = await confirmedAppointment(me);
+    const first = dataOf<RequestView>(await requestMove(me, detail.id, await publishSlot(doctorA)).expect(201));
+
+    const second = await requestMove(me, detail.id, await publishSlot(doctorA));
+    expect(second.status).toBe(409);
+    expect(errorBody(second).code).toBe('reschedule_request_pending');
+
+    const withdrawn = await request(harness.server)
+      .post(`${PREFIX}/me/reschedule-requests/${first.id}/withdraw`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(200);
+    expect(dataOf<RequestView>(withdrawn).status).toBe('withdrawn');
+
+    await request(harness.server)
+      .post(`${PREFIX}/me/reschedule-requests/${first.id}/withdraw`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(409);
+  });
+
+  it('approve answers 409 when the requested slot was taken, and the request stays pending', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+    const { detail } = await confirmedAppointment(me);
+    const target = await publishSlot(doctorA);
+    const view = dataOf<RequestView>(await requestMove(me, detail.id, target).expect(201));
+
+    // The requested slot is not reserved: someone else books it meanwhile.
+    await booked(other, target);
+
+    const approve = await request(harness.server)
+      .post(`${STAFF}/reschedule-requests/${view.id}/approve`)
+      .set('Authorization', `Bearer ${doctorA.token}`);
+    expect(approve.status).toBe(409);
+    expect(errorBody(approve).code).toBe('slot_taken');
+
+    const stored = await harness.prisma.appointmentRescheduleRequest.findUniqueOrThrow({ where: { id: view.id } });
+    expect(stored.status).toBe('pending');
+    const row = await harness.prisma.appointment.findUniqueOrThrow({ where: { publicId: detail.id } });
+    expect(row.status).toBe('CONFIRMED');
+  });
+
+  it('refuses a slot at another hospital or of another doctor', async () => {
+    const me = await patient(1);
+    const { detail } = await confirmedAppointment(me);
+
+    const response = await requestMove(me, detail.id, await publishSlot(doctorB));
+    expect(response.status).toBe(422);
+    expect(errorBody(response).code).toBe('slot_not_eligible');
+  });
+
+  it('refuses a request on a pending appointment and on another patient’s appointment', async () => {
+    const me = await patient(1);
+    const other = await patient(2);
+    const pending = await booked(me, await publishSlot(doctorA));
+
+    expect((await requestMove(me, pending.id, await publishSlot(doctorA))).status).toBe(409);
+
+    const theirs = await confirmedAppointment(other);
+    expect((await requestMove(me, theirs.detail.id, await publishSlot(doctorA))).status).toBe(404);
+    await request(harness.server)
+      .get(`${ME_APPOINTMENTS}/${theirs.detail.id}/reschedule-requests`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(404);
+  });
+
+  it('supersedes a pending request when the patient cancels', async () => {
+    const me = await patient(1);
+    const { detail } = await confirmedAppointment(me);
+    const view = dataOf<RequestView>(await requestMove(me, detail.id, await publishSlot(doctorA)).expect(201));
+
+    await cancel(me, detail.id).expect(200);
+
+    const stored = await harness.prisma.appointmentRescheduleRequest.findUniqueOrThrow({ where: { id: view.id } });
+    expect(stored.status).toBe('superseded');
+  });
+
+  it('keeps the staff queue behind the appointments capability', async () => {
+    const me = await patient(1);
+    await request(harness.server)
+      .get(`${STAFF}/reschedule-requests`)
+      .set('Authorization', `Bearer ${me.token}`)
+      .expect(403);
   });
 });

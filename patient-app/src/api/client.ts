@@ -1,3 +1,5 @@
+import { fetch as streamingFetch } from 'expo/fetch';
+
 import { env } from '@/configs/env';
 import { ResponseContractError } from '@/schemas/envelope';
 import { isApiError, isTokenExpiryError, type ApiError } from '@/types/api';
@@ -208,6 +210,87 @@ export class ApiClient {
 
   delete<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return this.request<T>('DELETE', path, options);
+  }
+
+  /**
+   * A POST whose success body is a stream the caller reads itself — the
+   * assistant's `text/event-stream` reply (API §11.3).
+   *
+   * It exists because `request()` reads a success body to the end as JSON,
+   * which is exactly wrong for a stream. Everything else is the same
+   * discipline: the bearer token, the correlation id, the error envelope
+   * normalised by `normalizeHttpError`, and one refresh-and-replay on a
+   * token-expiry 401 — a refusal (503, 409, 404) is thrown BEFORE any
+   * stream is returned, so the caller never sees a half-open response for
+   * an error.
+   *
+   * `expo/fetch` is used rather than the global `fetch` because it is the
+   * runtime's streaming implementation: `response.body` is a readable
+   * stream there and is absent on the stock React Native `fetch`
+   * (`readSseFrames` falls back to reading the whole text when it is).
+   *
+   * **No timeout by default.** A reply takes as long as it takes and the
+   * caller owns cancellation through `signal`; a 30 s deadline would cut
+   * a healthy stream. The initial connection is still bounded by
+   * `connectTimeoutMs`, which is cleared once the headers arrive.
+   */
+  async openStream(
+    path: string,
+    body: unknown,
+    options: { readonly signal?: AbortSignal; readonly connectTimeoutMs?: number } = {},
+    isReplay = false,
+  ): Promise<Response> {
+    if (options.signal?.aborted) throw normalizeCancellationError();
+
+    const url = this.buildUrl(path);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, options.connectTimeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const onCallerAbort = () => controller.abort();
+    options.signal?.addEventListener('abort', onCallerAbort);
+    // Kept for the whole stream: a caller abort must reach the body read.
+
+    const sentGeneration = this.sessionGeneration;
+    let response: Response;
+    try {
+      response = await streamingFetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { ...this.buildHeaders({ body }), Accept: 'text/event-stream' },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      options.signal?.removeEventListener('abort', onCallerAbort);
+      if (timedOut) throw normalizeTimeoutError();
+      if (options.signal?.aborted) throw normalizeCancellationError();
+      throw normalizeNetworkError();
+    } finally {
+      clearTimeout(timer);
+    }
+
+    this.notifyResponse(response.headers);
+
+    if (!response.ok) {
+      options.signal?.removeEventListener('abort', onCallerAbort);
+      const error = await normalizeHttpError(response);
+      const refreshable =
+        !isReplay &&
+        this.onRefresh !== null &&
+        isApiError(error) &&
+        isTokenExpiryError(error) &&
+        sentGeneration === this.sessionGeneration;
+      if (refreshable) {
+        const token = await this.refreshOnce();
+        if (sentGeneration !== this.sessionGeneration) throw normalizeCancellationError();
+        if (token !== null) return this.openStream(path, body, options, true);
+        this.onSessionLost?.();
+      }
+      throw error;
+    }
+    return response;
   }
 
   /**

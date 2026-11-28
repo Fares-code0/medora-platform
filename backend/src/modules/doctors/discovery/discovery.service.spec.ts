@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../../../common/auth/authenticated-user'
 import type { ProfilePhotoUrls } from '../../../shared/files';
 
 import type { DiscoveryRepository } from './discovery.repository';
-import { discoverySearchSchema, hospitalListSchema } from './discovery.schema';
+import { discoverySearchSchema } from './discovery.schema';
 import { haversineKm } from './discovery.geo';
 import { DiscoveryService } from './discovery.service';
 
@@ -41,12 +41,7 @@ describe('DiscoveryService authorization', () => {
     const query = discoverySearchSchema.parse({});
 
     await expect(discovery.search(user(role), query)).rejects.toMatchObject({ status: 403 });
-    await expect(discovery.hospitals(user(role), hospitalListSchema.parse({}))).rejects.toMatchObject({
-      status: 403,
-    });
-    await expect(discovery.hospital(user(role), 'x')).rejects.toMatchObject({ status: 403 });
     expect(repository.candidateDoctors).not.toHaveBeenCalled();
-    expect(repository.hospitalDetail).not.toHaveBeenCalled();
   });
 
   it('serves a patient', async () => {
