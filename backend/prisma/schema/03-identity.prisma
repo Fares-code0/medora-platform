@@ -96,6 +96,8 @@ model User {
   loginEvents        LoginEvent[]
   verificationTokens VerificationToken[]
   otpCodes           OtpCode[]
+  /// Staff-mediated linking codes (ADR-048).
+  patientLinkCodes   PatientAccountLinkCode[]
   activity           UserActivityLog[]
   grantedRolePermissions RolePermission[]
   grantedUserPermissions UserPermission[] @relation("UserPermissionGrantedBy")
@@ -125,6 +127,8 @@ model User {
   cancelledAppointments Appointment[]                  @relation("AppointmentCancelledBy")
   appointmentEvents    AppointmentEvent[]              @relation("AppointmentEventActor")
   proposedReschedules  AppointmentRescheduleProposal[] @relation("ProposalProposedBy")
+  requestedReschedules AppointmentRescheduleRequest[]  @relation("RescheduleRequestRequestedBy")
+  decidedReschedules   AppointmentRescheduleRequest[]  @relation("RescheduleRequestDecidedBy")
 
   recordedDiagnoses    RecordDiagnosis[]     @relation("DiagnosisRecordedBy")
   authoredRecordNotes  RecordNote[]          @relation("RecordNoteAuthor")
@@ -566,4 +570,33 @@ model UserActivityLog {
 
   @@index([userId, occurredAt(sort: Desc)])
   @@map("user_activity_log")
+}
+
+/// A one-time code a patient account presents at the hospital desk so staff
+/// can link it to that person's clinical record (ADR-048).
+///
+/// The code proves *possession of the account*; the in-person identity
+/// document check by staff proves *the person*. Neither alone links.
+///
+/// Only a SHA-256 digest is stored — the code itself is shown to the patient
+/// once and never persisted. Codes live 15 minutes, are single-use
+/// (`used_at`), and issuing a new code deletes every unused one of that
+/// account, so at most one live code exists per account (partial unique
+/// index below). Identity data, not hospital data: no `hospital_id`, no RLS
+/// policy — the same treatment as `sessions` and `otp_codes`.
+model PatientAccountLinkCode {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  codeHash  String    @map("code_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([codeHash], map: "patient_account_link_codes_code_hash_key")
+  @@unique([userId], where: raw("used_at IS NULL"), map: "patient_account_link_codes_one_live_per_user_key")
+  @@index([userId, expiresAt], map: "patient_account_link_codes_user_expires_idx")
+  @@map("patient_account_link_codes")
 }

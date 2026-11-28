@@ -308,7 +308,7 @@ describe('ErrorState', () => {
 
   it('says a capability is not built yet rather than showing a failure', () => {
     const { getByText } = renderWithProviders(
-      <ErrorState error={new EndpointNotImplementedError('BE-05', 'capability.booking')} />,
+      <ErrorState error={new EndpointNotImplementedError('BE-05', 'capability.messages')} />,
     );
     expect(getByText('Not available yet')).toBeTruthy();
   });
@@ -552,7 +552,7 @@ describe('AsyncBoundary — which refresh failures keep cached records', () => {
     ['a cancelled request', async () => ({ kind: 'cancelled' as const })],
     [
       'an unavailable endpoint',
-      async () => new EndpointNotImplementedError('BE-09', 'capability.booking'),
+      async () => new EndpointNotImplementedError('BE-09', 'capability.messages'),
     ],
     ['a response contract error', async () => new ResponseContractError('GET /x', ['data'])],
     ['an unknown thrown value', async () => new Error('boom')],

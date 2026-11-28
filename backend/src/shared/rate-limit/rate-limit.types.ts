@@ -7,8 +7,14 @@
 
 export const RATE_LIMITER = Symbol('RATE_LIMITER');
 
-/** A named group of routes that share one counter per client. */
-export type RateLimitBucket = 'auth';
+/**
+ * A named group of routes that share one counter per client.
+ *
+ * `patient_ai` (ADR-050): patient assistant sends, counted apart from the
+ * credential routes so a chat cannot spend a login allowance. Same
+ * max / window as `auth` (RATE_LIMIT_AUTH_*), off unless RATE_LIMIT_ENABLED.
+ */
+export type RateLimitBucket = 'auth' | 'patient_ai';
 
 export interface RateLimitHit {
   /** Requests counted in the current window, this one included. */

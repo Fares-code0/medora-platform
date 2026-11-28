@@ -56,7 +56,7 @@ import {
 } from '../../../shared/files';
 import { FileRepository, type FileRow } from '../repositories/file.repository';
 
-import { FileAccessService } from './file-access.service';
+import { CLINICAL_KINDS_DENIED_TO_PATIENTS, FileAccessService, PATIENT_ROLE } from './file-access.service';
 
 @Injectable()
 export class FilesService {
@@ -78,6 +78,16 @@ export class FilesService {
     // F-09: outside clinical standing, only the documents that restore it.
     if (kind !== 'verification_document' && !(await this.access.inStanding(user))) {
       throw AppException.forbidden('Clinical standing is required for this upload', 'clinical_standing_required');
+    }
+
+    // R-02: a patient never holds a clinical-kind file. The database refuses
+    // to return one to a patient (`files_read`), so the insert would fail at
+    // INSERT … RETURNING. Refuse it here, before storage, naming the field.
+    if (user.role === PATIENT_ROLE && CLINICAL_KINDS_DENIED_TO_PATIENTS.has(kind)) {
+      throw AppException.validation(
+        { kind: ['This kind of file cannot be uploaded from a patient account'] },
+        'This file cannot be uploaded',
+      );
     }
 
     // Before storage, so a rejected type is a 422 naming the field

@@ -4,6 +4,8 @@ import { Icon, Text } from '@/components';
 import { useT } from '@/i18n';
 import { useTheme } from '@/theme';
 
+import type { AiMode } from '../model/types';
+
 /**
  * The persistent framing — checklist K-03.
  *
@@ -22,23 +24,23 @@ import { useTheme } from '@/theme';
  * - **`accessibilityRole="alert"`**, so it is announced when the screen
  *   opens rather than only when somebody walks to it.
  *
- * ── Why warning tone and not error ──────────────────────────────────
+ * ── Two texts, because the two assistants differ in what they see ────
  *
- * `error` is reserved in this app for the emergency surfaces and for
- * something that has gone wrong. An assistant that is working normally
- * is neither, and if every card on the screen were red the one red card
- * that means "call an ambulance" would stop being legible as one.
- * `AiSafetyCard` carries the emergency route, in error tone, once.
+ * With no `mode` (the assistant's front door) and for `general`, it says
+ * what any assistant here is not: not a doctor, not a diagnosis, not for
+ * emergencies. For `personal` it adds what the assistant uses — the
+ * patient's appointments, test status and insurance — and what it does
+ * NOT see: results and the medical record. Saying so on the screen where
+ * the question is typed is what lets the patient judge what to ask.
  *
- * The copy IS in the message catalogue, unlike the emergency guidance.
- * `messages/en.ts` draws that line: this says what Medora is not, which
- * is product and legal copy, rather than telling a patient what to do
- * about a medical emergency.
+ * Warning tone and not error: `error` is reserved in this app for the
+ * emergency surfaces. `AiSafetyCard` carries the emergency route, in
+ * error tone, once.
  */
-export function AiDisclaimer() {
+export function AiDisclaimer({ mode }: { readonly mode?: AiMode }) {
   const theme = useTheme();
   const t = useT();
-  const body = t('ai.disclaimer.body');
+  const body = t(mode === 'personal' ? 'ai.disclaimer.personal' : 'ai.disclaimer.body');
 
   return (
     <View

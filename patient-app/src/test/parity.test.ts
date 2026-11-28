@@ -369,8 +369,9 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     // patient-safe projection, so `GET /patient/doctors`, `/{id}` and
     // `/patient/specialties` are three more real routes. `appointments.ts`
     // joined them with I-01/I-06: `GET /me/appointments` and
-    // `/me/appointments/{id}` are live, and the four write routes are NOT —
-    // which is why that module calls two paths and rejects five methods.
+    // `/me/appointments/{id}` are live,
+    // and its write routes (booking, cancellation, reschedule requests)
+    // joined them with ADR-049. `hospitals.ts` is hospital discovery.
     // `sessions.ts` joined them with P-06: M8 shipped
     // `account-security.controller.ts`, so `GET /me/sessions` and
     // `DELETE /me/sessions/{id}` are two more real routes. It is a
@@ -385,7 +386,17 @@ describe('the endpoint layer names only real routes (V-02)', () => {
       'appointments.ts',
       'auth.ts',
       'doctors.ts',
+      'hospitals.ts',
       'notifications.ts',
+      // The patient-facing information layer and the patient assistant
+      // (ADR-050). Their backend controllers land in the parallel
+      // backend work and are listed in `PENDING_BACKEND_ROUTES` below.
+      'patient-ai.ts',
+      'patient-info.ts',
+      // ADR-048: `GET /me/patient-link` (also the C-11 eligibility probe)
+      // and `POST /me/patient-link/code`. The staff half of linking is a
+      // clinician route and has no path string here.
+      'patient-link.ts',
       'profile.ts',
       'sessions.ts',
     ]);
@@ -414,14 +425,7 @@ describe('the endpoint layer names only real routes (V-02)', () => {
 
   it('the two session routes exist on the controller behind them', () => {
     const controller = fs.readFileSync(
-      path.join(
-        BACKEND,
-        'src',
-        'modules',
-        'auth',
-        'controllers',
-        'account-security.controller.ts',
-      ),
+      path.join(BACKEND, 'src', 'modules', 'auth', 'controllers', 'account-security.controller.ts'),
       'utf8',
     );
 
@@ -455,26 +459,53 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     expect(source).not.toMatch(/['"`]doctors['"`]/);
   });
 
-  it('the appointment adapter calls the two read routes and no write route', () => {
+  it('the appointment adapter calls exactly the contract §3 routes', () => {
     // Comments are stripped first, as in the invented-route test below:
-    // this module explains at length which routes it refuses to call, and
-    // punishing it for naming them in a docblock would reward silence.
+    // this module explains at length what each route is, and punishing it
+    // for naming them in a docblock would reward silence.
     const source = fs
       .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'appointments.ts'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/\/\/.*$/gm, '');
-    const called = [...source.matchAll(/apiClient\.\w+<[^>]*>\(\s*[`']([^`'$]+)/g)].map(
-      (entry) => entry[1],
-    );
+    // `verb path-template`, with `${…}` interpolations kept so the SHAPE of
+    // each route is what is compared.
+    const called = [
+      ...source.matchAll(/apiClient\.(get|post|put|patch|delete)<[^>]*>\(\s*[`']([^`']+)[`']/g),
+    ].map((entry) => `${(entry[1] ?? '').toUpperCase()} ${entry[2] ?? ''}`);
 
-    expect(new Set(called)).toEqual(new Set(['me/appointments', 'me/appointments/']));
-    // The write routes are ADR-033's and do not exist. A path string for
-    // any of them here would be an invented endpoint.
-    for (const blocked of ['/cancel', '/confirm', '/reschedule', 'slots']) {
-      expect(source).not.toContain(blocked);
-    }
-    // Reads only: no POST, PUT, PATCH or DELETE reaches this surface.
-    expect(source).not.toMatch(/apiClient\.(post|put|patch|delete)/);
+    // ADR-049's routes, as the shared contract states them (the backend
+    // controller for the writes is built in parallel — see the checklist).
+    expect(new Set(called)).toEqual(
+      new Set([
+        'GET me/appointments',
+        'GET me/appointments/${encodeURIComponent(appointmentId)}',
+        'GET patient/doctors/${encodeURIComponent(doctorId)}/slots',
+        'GET patient/visit-types',
+        'POST me/appointments',
+        'POST me/appointments/${encodeURIComponent(appointmentId)}/cancel',
+        'POST me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests',
+        'GET me/appointments/${encodeURIComponent(appointmentId)}/reschedule-requests',
+        'POST me/reschedule-requests/${encodeURIComponent(requestId)}/withdraw',
+      ]),
+    );
+    // Rescheduling is a REQUEST. No route moves an appointment, and there
+    // is no confirm/accept-proposal route in the contract.
+    expect(source).not.toContain('/confirm');
+    expect(source).not.toMatch(/apiClient\.(put|patch|delete)/);
+  });
+
+  it('the hospital adapter calls the two discovery routes and nothing else', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'hospitals.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const called = [
+      ...source.matchAll(/apiClient\.(get|post|put|patch|delete)<[^>]*>\(\s*[`']([^`']+)[`']/g),
+    ].map((entry) => `${(entry[1] ?? '').toUpperCase()} ${entry[2] ?? ''}`);
+
+    expect(new Set(called)).toEqual(
+      new Set(['GET patient/hospitals', 'GET patient/hospitals/${encodeURIComponent(hospitalId)}']),
+    );
   });
 
   it('the notification adapter calls the live routes and no unbuilt one', () => {
@@ -584,6 +615,60 @@ describe('the endpoint layer names only real routes (V-02)', () => {
     expect(controller).toContain("@Post('read-all')");
     expect(controller).toContain("@Post(':notificationId/read')");
     expect(controller).toContain("@Post(':notificationId/unread')");
+  });
+
+  /**
+   * The patient information layer, the patient assistant and the link
+   * probe (ADR-048, ADR-050) — each route this client calls is asserted
+   * against the controller decorators that serve it.
+   */
+  it('names the patient information, linking and assistant routes the backend serves', () => {
+    if (!backendPresent) return;
+    const read = (rel: string): string => fs.readFileSync(path.join(BACKEND, 'src', rel), 'utf8');
+
+    const labs = read('modules/labs/controllers/patient-lab-status.controller.ts');
+    expect(labs).toContain("@Controller('me/lab-orders')");
+    expect(labs).toContain('@Get()');
+
+    const self = read('modules/patients/controllers/patient-self-link.controller.ts');
+    expect(self).toContain("@Controller('me')");
+    expect(self).toContain("@Get('insurance')");
+    expect(self).toContain("@Get('patient-link')");
+    expect(self).toContain("@Post('patient-link/code')");
+
+    const ai = read('modules/ai/controllers/patient-ai.controller.ts');
+    expect(ai).toContain("@Controller('me/ai/conversations')");
+    expect(ai).toContain("@Get(':conversationId')");
+    expect(ai).toContain("@Delete(':conversationId')");
+    expect(ai).toContain("@Post(':conversationId/messages')");
+
+    const hospitals = read('modules/hospitals/controllers/patient-hospital.controller.ts');
+    expect(hospitals).toContain("@Controller('patient/hospitals')");
+    expect(hospitals).toContain("@Get(':hospitalId')");
+  });
+
+  it('the information adapter calls exactly the two read routes, GET only', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'patient-info.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const called = [...source.matchAll(/apiClient\.\w+<[^>]*>\(\s*[`']([^`'$]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(new Set(called)).toEqual(new Set(['me/lab-orders', 'me/insurance']));
+    expect(source).not.toMatch(/apiClient\.(post|put|patch|delete)/);
+  });
+
+  it('the assistant adapter stays under /me/ai/conversations and never the doctor tree', () => {
+    const source = fs
+      .readFileSync(path.resolve(__dirname, '..', 'api', 'endpoints', 'patient-ai.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    const paths = [
+      ...source.matchAll(/(?:apiClient\.\w+(?:<[^>]*>)?|openStream)\(\s*[`']([^`'$]+)/g),
+    ].map((m) => m[1]);
+    expect(paths.length).toBeGreaterThan(0);
+    for (const called of paths) expect(called?.startsWith('me/ai/conversations')).toBe(true);
   });
 
   it('names the profile route the backend actually serves', () => {

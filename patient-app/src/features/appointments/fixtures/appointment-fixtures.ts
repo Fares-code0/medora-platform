@@ -1,4 +1,4 @@
-import { FIXTURE_DOCTORS } from '@/features/doctors/fixtures/doctor-fixtures';
+import { FIXTURE_DOCTORS, MEDORA_HOSPITAL } from '@/features/doctors/fixtures/doctor-fixtures';
 
 import type {
   Appointment,
@@ -6,6 +6,8 @@ import type {
   AppointmentPage,
   AppointmentService,
   BookableSlot,
+  RescheduleRequest,
+  VisitType,
 } from '../model/types';
 
 /**
@@ -76,8 +78,8 @@ const UPCOMING: readonly Appointment[] = [
     notes: null,
     cancelledReason: null,
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+    hospital: MEDORA_HOSPITAL,
     availableActions: ['cancel', 'reschedule'],
-    proposedSlots: [],
   },
   {
     id: 'APT-2002',
@@ -92,8 +94,8 @@ const UPCOMING: readonly Appointment[] = [
     notes: null,
     cancelledReason: null,
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+    hospital: MEDORA_HOSPITAL,
     availableActions: ['cancel'],
-    proposedSlots: [],
   },
   {
     id: 'APT-2003',
@@ -108,12 +110,8 @@ const UPCOMING: readonly Appointment[] = [
     notes: null,
     cancelledReason: null,
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
-    availableActions: ['confirm', 'cancel'],
-    proposedSlots: [
-      { id: 'PS-1', startsAt: isoIn(15, 9, 0), durationMin: 30 },
-      { id: 'PS-2', startsAt: isoIn(16, 15, 30), durationMin: 30 },
-      { id: 'PS-3', startsAt: isoIn(18, 10, 0), durationMin: 30 },
-    ],
+    hospital: MEDORA_HOSPITAL,
+    availableActions: ['cancel'],
   },
 ];
 
@@ -131,8 +129,8 @@ const PAST: readonly Appointment[] = [
     notes: null,
     cancelledReason: null,
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+    hospital: MEDORA_HOSPITAL,
     availableActions: [],
-    proposedSlots: [],
   },
   {
     id: 'APT-1985',
@@ -147,8 +145,8 @@ const PAST: readonly Appointment[] = [
     notes: null,
     cancelledReason: null,
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+    hospital: MEDORA_HOSPITAL,
     availableActions: [],
-    proposedSlots: [],
   },
   {
     id: 'APT-1970',
@@ -163,8 +161,8 @@ const PAST: readonly Appointment[] = [
     notes: null,
     cancelledReason: 'Cancelled by the patient',
     clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+    hospital: MEDORA_HOSPITAL,
     availableActions: [],
-    proposedSlots: [],
   },
 ];
 
@@ -179,11 +177,63 @@ const SLOT_HOURS = [9, 9.5, 10, 11, 13.5, 14, 15, 16] as const;
  */
 const FIXTURE_PAGE_SIZE = 2;
 
-let created: Appointment[] = [];
+const VISIT_TYPES: readonly VisitType[] = [
+  { id: 'VT-1', name: 'New patient', durationMin: 30 },
+  { id: 'VT-2', name: 'Follow-up', durationMin: 20 },
+];
+
+let created: AppointmentDetail[] = [];
 let overrides = new Map<string, Appointment>();
+let requests = new Map<string, RescheduleRequest[]>();
 
 function current(appointment: Appointment): Appointment {
   return overrides.get(appointment.id) ?? appointment;
+}
+
+function notFound(): Error {
+  return Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
+}
+
+function find(id: string): Appointment {
+  const found = [...created, ...ALL].map(current).find((item) => item.id === id);
+  if (found === undefined) throw notFound();
+  return found;
+}
+
+/** The newest request still open, if any. */
+function pendingOf(id: string): RescheduleRequest | null {
+  return (requests.get(id) ?? []).find((request) => request.status === 'pending') ?? null;
+}
+
+function detailOf(appointment: Appointment): AppointmentDetail {
+  return {
+    ...appointment,
+    // A stored list, exactly as a server would send it — the fixture does
+    // not decide it, so a pending request is expressed by the override.
+    pendingRescheduleRequest: pendingOf(appointment.id),
+    events: [
+      {
+        id: `${appointment.id}-E1`,
+        at: appointment.startsAt,
+        fromStatus: null,
+        toStatus: 'pending',
+        actor: 'You',
+        reason: null,
+      },
+      ...(appointment.status === 'pending'
+        ? []
+        : [
+            {
+              id: `${appointment.id}-E2`,
+              at: appointment.startsAt,
+              fromStatus: 'pending' as const,
+              toStatus: appointment.status,
+              actor: 'The clinic',
+              reason: appointment.cancelledReason,
+            },
+          ]),
+    ],
+  };
 }
 
 export const fixtureAppointmentService: AppointmentService = {
@@ -206,35 +256,7 @@ export const fixtureAppointmentService: AppointmentService = {
   },
 
   async getById(id): Promise<AppointmentDetail> {
-    const found = [...created, ...ALL].map(current).find((item) => item.id === id);
-    if (found === undefined) {
-      throw Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
-    }
-    return {
-      ...found,
-      events: [
-        {
-          id: `${found.id}-E1`,
-          at: found.startsAt,
-          fromStatus: null,
-          toStatus: 'pending',
-          actor: 'You',
-          reason: null,
-        },
-        ...(found.status === 'pending'
-          ? []
-          : [
-              {
-                id: `${found.id}-E2`,
-                at: found.startsAt,
-                fromStatus: 'pending' as const,
-                toStatus: found.status,
-                actor: 'The clinic',
-                reason: found.cancelledReason,
-              },
-            ]),
-      ],
-    };
+    return detailOf(find(id));
   },
 
   async listSlots(_doctorId, fromIso) {
@@ -247,15 +269,19 @@ export const fixtureAppointmentService: AppointmentService = {
         id: `SL-${day.toDateString()}-${index}`,
         startsAt: slot.toISOString(),
         durationMin: 30,
+        hospital: MEDORA_HOSPITAL,
       };
     });
   },
 
+  async listVisitTypes() {
+    return VISIT_TYPES;
+  },
+
   async book(request) {
     const doctor = FIXTURE_DOCTORS.find((item) => item.id === request.doctorId);
-    if (doctor === undefined) {
-      throw Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
-    }
+    if (doctor === undefined) throw notFound();
+    const visitType = VISIT_TYPES.find((item) => item.id === request.visitTypeId);
     const appointment: Appointment = {
       id: `APT-${String(3000 + created.length)}`,
       startsAt: request.startsAt,
@@ -266,74 +292,81 @@ export const fixtureAppointmentService: AppointmentService = {
       priority: 'normal',
       doctor: summaryOf(doctor),
       departmentName: doctor.departmentName,
-      visitType: 'New patient',
+      visitType: visitType?.name ?? 'New patient',
       reason: request.reason,
       notes: request.notes ?? null,
       cancelledReason: null,
       clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
+      hospital: MEDORA_HOSPITAL,
       availableActions: ['cancel'],
-      proposedSlots: [],
     };
-    created = [appointment, ...created];
-    return appointment;
+    const detail = detailOf(appointment);
+    created = [detail, ...created];
+    return detail;
   },
 
-  async cancel(id, reason) {
-    const found = [...created, ...ALL].map(current).find((item) => item.id === id);
-    if (found === undefined) {
-      throw Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
-    }
+  async cancel(id, request) {
+    const found = find(id);
     const next: Appointment = {
       ...found,
       status: 'cancelled',
-      cancelledReason: reason,
+      cancelledReason: `patient:${request.reasonCode}${
+        request.note === undefined ? '' : ` ${request.note}`
+      }`,
       clinicTimezone: FIXTURE_CLINIC_TIMEZONE,
       availableActions: [],
-      proposedSlots: [],
     };
     overrides.set(id, next);
-    return next;
+    return detailOf(next);
   },
 
-  async requestReschedule(id, reason) {
-    const found = [...created, ...ALL].map(current).find((item) => item.id === id);
-    if (found === undefined) {
-      throw Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
-    }
-    const next: Appointment = {
-      ...found,
-      status: 'rescheduled',
-      notes: reason,
-      availableActions: ['cancel'],
+  async requestReschedule(id, submission) {
+    const found = find(id);
+    const request: RescheduleRequest = {
+      id: `RR-${String((requests.get(id)?.length ?? 0) + 1)}`,
+      appointmentId: found.id,
+      status: 'pending',
+      requestedSlot: {
+        id: submission.slotId,
+        startsAt: found.startsAt,
+        durationMin: found.durationMin,
+      },
+      note: submission.note ?? null,
+      decisionReason: null,
+      createdAt: new Date().toISOString(),
+      decidedAt: null,
     };
-    overrides.set(id, next);
-    return next;
+    requests.set(id, [request, ...(requests.get(id) ?? [])]);
+    // The appointment itself is untouched — a request is not a move. Only
+    // the server-computed actions change: no second request while one is open.
+    overrides.set(id, { ...found, availableActions: ['cancel'] });
+    return request;
   },
 
-  async acceptProposal(id, slotId) {
-    const found = [...created, ...ALL].map(current).find((item) => item.id === id);
-    if (found === undefined) {
-      throw Object.assign(new Error('API error: not_found'), { kind: 'not_found' as const });
-    }
-    // The fixture always populates `proposedSlots`; the port makes it
-    // optional because the LIVE payload does not carry it yet.
-    const slot = (found.proposedSlots ?? []).find((item) => item.id === slotId);
-    if (slot === undefined) {
-      // The same 409 a real race produces, so the recovery path is exercised.
-      throw Object.assign(new Error('API error: conflict'), {
-        kind: 'conflict' as const,
-        detail: 'That time is no longer offered.',
+  async listRescheduleRequests(id) {
+    return requests.get(id) ?? [];
+  },
+
+  async withdrawRescheduleRequest(requestId) {
+    for (const [appointmentId, list] of requests) {
+      const request = list.find((item) => item.id === requestId);
+      if (request === undefined) continue;
+      const withdrawn: RescheduleRequest = {
+        ...request,
+        status: 'withdrawn',
+        decidedAt: new Date().toISOString(),
+      };
+      requests.set(
+        appointmentId,
+        list.map((item) => (item.id === requestId ? withdrawn : item)),
+      );
+      overrides.set(appointmentId, {
+        ...find(appointmentId),
+        availableActions: ['cancel', 'reschedule'],
       });
+      return withdrawn;
     }
-    const next: Appointment = {
-      ...found,
-      status: 'confirmed',
-      startsAt: slot.startsAt,
-      availableActions: ['cancel', 'reschedule'],
-      proposedSlots: [],
-    };
-    overrides.set(id, next);
-    return next;
+    throw notFound();
   },
 };
 
@@ -341,4 +374,5 @@ export const fixtureAppointmentService: AppointmentService = {
 export function resetAppointmentFixtures(): void {
   created = [];
   overrides = new Map();
+  requests = new Map();
 }

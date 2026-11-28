@@ -1,10 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { httpAiService } from '@/features/ai/http-ai-service';
 import { httpAppointmentService } from '@/features/appointments/http-appointment-service';
 import { httpAuthService } from '@/features/auth/http-auth-service';
 import { httpDoctorService } from '@/features/doctors/http-doctor-service';
+import { httpHealthService } from '@/features/health/http-health-service';
+import { httpHospitalService } from '@/features/hospitals/http-hospital-service';
 import { httpNotificationService } from '@/features/notifications/http-notification-service';
+import { httpPatientLinkService } from '@/features/patient-link/http-patient-link-service';
 import { httpProfileService } from '@/features/profile/http-profile-service';
 
 /**
@@ -51,12 +55,13 @@ const FEATURES = path.resolve(__dirname, '..', 'features');
 
 /**
  * Adapters that are neither `unavailableService` nor named `http…`, with
- * the decision that allows each. Emergency passes a frozen
- * `UNCONFIGURED_EMERGENCY` — numbers a clinic has not configured are
- * absent rather than guessed (N-04), which is a *value*, not a fixture.
+ * the decision that allows each. Emergency passes the operator's own
+ * build-time list (`EXPO_PUBLIC_EMERGENCY_NUMBERS`), or the frozen
+ * `UNCONFIGURED_EMERGENCY` when there is none — numbers an operator has not
+ * configured are absent rather than guessed (N-04): a *value*, not a fixture.
  */
 const ALLOWED_CUSTOM_ADAPTERS: Record<string, string> = {
-  emergency: 'unconfigured',
+  emergency: 'operatorConfigured',
 };
 
 /** The production adapters that are real objects, by feature. */
@@ -64,7 +69,11 @@ const IMPLEMENTATIONS: Record<string, object> = {
   appointments: httpAppointmentService,
   auth: httpAuthService,
   doctors: httpDoctorService,
+  hospitals: httpHospitalService,
+  health: httpHealthService,
+  ai: httpAiService,
   notifications: httpNotificationService,
+  'patient-link': httpPatientLinkService,
   profile: httpProfileService,
 };
 
@@ -152,6 +161,7 @@ describe('no feature can serve a patient invented data', () => {
     // A guard that quietly inspects nothing is worse than none: this is
     // the assertion that the scan above actually found the features.
     expect(SEAMS.map((seam) => seam.feature)).toEqual([
+      'ai',
       'appointments',
       'auth',
       'clinic',
@@ -159,8 +169,10 @@ describe('no feature can serve a patient invented data', () => {
       'emergency',
       'health',
       'home',
+      'hospitals',
       'messages',
       'notifications',
+      'patient-link',
       'profile',
     ]);
   });

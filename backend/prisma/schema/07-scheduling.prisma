@@ -128,6 +128,7 @@ model Appointment {
 
   events             AppointmentEvent[]
   proposals          AppointmentRescheduleProposal[]
+  rescheduleRequests AppointmentRescheduleRequest[]
   survey             SatisfactionSurvey?
   waitingRoomEntries WaitingRoomEntry[]
   medicalRecords     MedicalRecord[]
@@ -152,6 +153,12 @@ model Appointment {
   @@unique([publishedSlotId], where: raw("(published_slot_id IS NOT NULL) AND (status <> ALL (ARRAY['cancelled'::appointment_status, 'rescheduled'::appointment_status, 'completed'::appointment_status, 'no-show'::appointment_status]))"), map: "appointments_one_active_booking_per_slot")
   @@index([hospitalId, doctorEmploymentId], map: "appointments_hospital_employment_idx")
   @@index([publishedSlotId], map: "appointments_published_slot_idx")
+  /// ADR-049: a `rescheduled` appointment still occupies its slot (it is a
+  /// live booking at its new time), which the older index above excludes. This
+  /// one closes that gap: one live booking per published slot.
+  @@unique([publishedSlotId], where: raw("(published_slot_id IS NOT NULL) AND (status <> ALL (ARRAY['cancelled'::appointment_status, 'completed'::appointment_status, 'no-show'::appointment_status]))"), map: "appointments_one_live_booking_per_slot")
+  /// The target of `appointment_reschedule_requests`' composite key.
+  @@unique([id, hospitalId], map: "appointments_id_hospital_key")
 
   @@index([startsAt], where: raw("status = 'pending'"), map: "appointments_pending_idx")
   @@index([hospitalId, hospitalDepartmentId], map: "appointments_hospital_department_idx")
@@ -229,6 +236,47 @@ model AppointmentRescheduleProposal {
   @@index([appointmentId])
   @@index([status])
   @@map("appointment_reschedule_proposals")
+}
+
+/// A patient's request to move a booked appointment to another published
+/// slot (ADR-049; ADR-033 Q2 = R-B).
+///
+/// Distinct from `appointment_reschedule_proposals`, which is the doctor's
+/// offer of raw times: a request names a **published slot** of the same
+/// doctor at the same hospital, and the composite keys make that
+/// representable only that way — the appointment and the slot share
+/// `hospital_id`, and the slot's employment is recorded beside it.
+///
+/// The requested slot is NOT reserved while the request is pending; staff
+/// approval re-checks it inside the moving transaction.
+model AppointmentRescheduleRequest {
+  id                 String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentId      String @map("appointment_id") @db.Uuid
+  hospitalId         String @map("hospital_id") @db.Uuid
+  doctorEmploymentId String @map("doctor_employment_id") @db.Uuid
+  requestedSlotId    String @map("requested_slot_id") @db.Uuid
+  requestedBy        String? @map("requested_by") @db.Uuid
+
+  /// pending | approved | rejected | withdrawn | superseded — closed by CHECK.
+  status         String    @default("pending") @db.VarChar(20)
+  note           String?   @db.VarChar(300)
+  decisionReason String?   @map("decision_reason") @db.VarChar(300)
+  decidedBy      String?   @map("decided_by") @db.Uuid
+  decidedAt      DateTime? @map("decided_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  appointment   Appointment   @relation(fields: [appointmentId, hospitalId], references: [id, hospitalId], onDelete: Cascade, map: "appointment_reschedule_requests_appointment_fkey")
+  requestedSlot PublishedSlot @relation(fields: [requestedSlotId, hospitalId, doctorEmploymentId], references: [id, hospitalId, doctorEmploymentId], onDelete: Restrict, map: "appointment_reschedule_requests_slot_fkey")
+  requester     User?         @relation("RescheduleRequestRequestedBy", fields: [requestedBy], references: [id], onDelete: SetNull)
+  decider       User?         @relation("RescheduleRequestDecidedBy", fields: [decidedBy], references: [id], onDelete: SetNull)
+
+  @@unique([appointmentId], where: raw("((status)::text = 'pending'::text)"), map: "appointment_reschedule_requests_one_pending")
+  @@index([appointmentId, createdAt(sort: Desc)], map: "appointment_reschedule_requests_appointment_idx")
+  @@index([hospitalId, status], map: "appointment_reschedule_requests_hospital_status_idx")
+  @@index([requestedSlotId], map: "appointment_reschedule_requests_slot_idx")
+  @@map("appointment_reschedule_requests")
 }
 
 /// Post-visit satisfaction (DB §S7).

@@ -19,6 +19,8 @@ import {
 } from '@/components';
 import { SkeletonCard } from '@/components/feedback/Skeleton';
 import { useSession } from '@/features/auth/SessionProvider';
+import { LinkRecordBanner } from '@/features/patient-link/components/LinkRecordBanner';
+import { usePatientLink } from '@/features/patient-link/hooks';
 import { useT } from '@/i18n';
 import type { ProfileStackParamList } from '@/navigation/routes';
 import { useTheme } from '@/theme';
@@ -47,6 +49,11 @@ export function ProfileScreen({ navigation }: Props) {
   const [confirmLogout, setConfirmLogout] = useState(false);
 
   const profile = useQuery({ queryKey: profileKeys.all, queryFn: () => profileService.get() });
+  // ADR-048: the linked record's name, from the link state rather than the
+  // profile, and only once the server says the account is linked.
+  const link = usePatientLink();
+  const linkedName =
+    link.data?.linked === true && link.data.patient !== null ? link.data.patient.fullName : null;
 
   return (
     <Screen testID="profile-screen">
@@ -62,9 +69,21 @@ export function ProfileScreen({ navigation }: Props) {
             ) : (
               <Badge label={t('profile.notLinked')} tone="warning" icon="alert" />
             )}
+            {linkedName === null ? null : (
+              <Text
+                variant="bodySm"
+                color="textSecondary"
+                align="center"
+                testID="profile-linked-record"
+              >
+                {t('link.profile.linkedAs', { name: linkedName })}
+              </Text>
+            )}
           </View>
         )}
       </AsyncBoundary>
+
+      <LinkRecordBanner onLink={() => navigation.navigate('LinkRecord')} />
 
       <Section title={t('profile.section.health')}>
         <Card padded={false}>
@@ -78,22 +97,17 @@ export function ProfileScreen({ navigation }: Props) {
             />
             <Divider />
             <ListItem
-              title={t('profile.labResults')}
+              title={t('profile.tests')}
               icon="lab"
               testID="profile-to-labs"
-              onPress={() => navigation.navigate('LabResults')}
+              onPress={() => navigation.navigate('Tests')}
             />
             <Divider />
             <ListItem
-              title={t('profile.prescriptions')}
-              icon="pill"
-              onPress={() => navigation.navigate('Prescriptions')}
-            />
-            <Divider />
-            <ListItem
-              title={t('profile.documents')}
-              icon="folder"
-              onPress={() => navigation.navigate('Documents')}
+              title={t('profile.insurance')}
+              icon="shield"
+              testID="profile-to-insurance"
+              onPress={() => navigation.navigate('Insurance')}
             />
           </View>
         </Card>

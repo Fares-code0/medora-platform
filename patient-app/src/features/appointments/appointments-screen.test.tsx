@@ -52,6 +52,8 @@ function appointment(overrides: Partial<Appointment> = {}): Appointment {
     notes: null,
     cancelledReason: null,
     clinicTimezone: CLINIC_ZONE,
+    hospital: null,
+    availableActions: [],
     ...overrides,
   };
 }

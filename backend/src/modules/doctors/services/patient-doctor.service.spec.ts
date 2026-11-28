@@ -30,6 +30,7 @@ function summary(id: string, photoUrl: string | null): PatientDoctorSummary {
     yearsOfExperience: 5,
     languages: [],
     ratingAvg: null,
+    hospital: null,
   };
 }
 

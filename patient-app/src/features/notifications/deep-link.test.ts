@@ -52,16 +52,25 @@ describe('what it refuses', () => {
     expect(notificationTarget('medora-evil://appointments/APT-1')).toBeNull();
   });
 
-  it.each([['medora://records/labs'], ['medora://records/REC-1'], ['medora://prescriptions/RX-1']])(
-    'refuses %s — "notified" is not "may see it"',
-    (link) => {
-      // `deepLinkFor` already declines to BUILD these, because whether a
-      // patient may see an unreviewed result is AD-5's decision. This is
-      // the second half of the same rule: even if one appeared in a
-      // payload, nothing would open.
-      expect(notificationTarget(link)).toBeNull();
-    },
-  );
+  it.each([
+    ['medora://records/REC-1'],
+    ['medora://prescriptions/RX-1'],
+    ['medora://records/labs/LAB-1'],
+  ])('refuses %s — "notified" is not "may see it"', (link) => {
+    // Records, prescriptions and a single test's result are never opened
+    // from a notification: the patient does not see them in the app
+    // (owner decision 2026-11-26) and results wait on ADR-031.
+    expect(notificationTarget(link)).toBeNull();
+  });
+
+  it('opens the status-only Tests list for medora://records/labs (ADR-050)', () => {
+    // The Tests screen shows status, never a result — the patient-facing
+    // layer the owner approved — so a test-status notification may open it.
+    expect(notificationTarget('medora://records/labs')).toEqual([
+      'Tabs',
+      { screen: 'ProfileTab', params: { screen: 'Tests' } },
+    ]);
+  });
 
   it('refuses an appointment link with no id', () => {
     expect(notificationTarget('medora://appointments')).toBeNull();

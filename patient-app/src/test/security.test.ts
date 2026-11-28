@@ -240,11 +240,17 @@ describe('no secrets in configuration, continued', () => {
     // public is the entire point of a privacy policy. The schema accepts
     // `https:` only, which is narrower than the store link, so neither
     // can carry a deep link into another app.
+    //
+    // `emergencyNumbers` (N-04) are the public emergency lines an operator
+    // configures for the release country — printed on every ambulance.
+    // Strictly validated (digits only), so the field cannot carry a URL or
+    // a token.
     const env = parseEnv({});
     expect(Object.keys(env).sort()).toEqual([
       'apiBaseUrl',
       'appEnv',
       'appStoreUrl',
+      'emergencyNumbers',
       'enableMocks',
       'isDev',
       'phiSweepAfterMs',

@@ -1,157 +1,72 @@
-import type {
-  AllergySeverity,
-  DocumentCategory,
-  HistoryEventKind,
-  LabResultFlag,
-  LabStatus,
-  MedicationStatus,
-  PrescriptionStatus,
-  ReleaseState,
-} from '@/types/vocabularies';
-
 /**
- * Health records and lab results.
+ * The patient-facing information layer.
  *
- * ── The gate this feature is built around (audit AD-5) ───────────────
+ * ── What this feature is, and what it is not ─────────────────────────
  *
- * **Not every clinical record is automatically visible to the patient.**
- * Whether someone may see a `critical-high` result before a clinician has
- * reviewed it is a clinical policy decision with a named owner, not a UI
- * toggle. `lab_orders.reviewed_by` and `criticalUnreviewed` already exist
- * on the backend; the release POLICY does not.
+ * Owner decision (2026-11-26, ADR-050): **the patient never sees the full
+ * medical record, physician notes, internal documentation or unrestricted
+ * history.** What a patient CAN see is a separate, deliberately thin
+ * layer: the *status* of tests that were ordered for them, and the
+ * insurance they have on file. That is all this feature models.
  *
- * So every record here carries a `release: ReleaseState`, and the screens
- * render four outcomes honestly:
+ * Absent by design, and not "not built yet":
  *
- *   released       show it
- *   pending-review held until a clinician has looked at it — say so, and
- *                  give a route to ask
- *   not-released   the clinic has not shared this — say so
- *   unavailable    it exists but cannot be fetched right now
+ *  - allergies, conditions, medicines, history, prescriptions, visit
+ *    summaries and documents — the record is read with the care team;
+ *  - any lab RESULT, value, flag or interpretation. Whether and when a
+ *    result is released to a patient is a clinical policy (ADR-031),
+ *    which is not approved. There is no field here a result could be put
+ *    in, so no screen can render one by accident.
  *
- * The client does NOT decide which state a record is in. It renders the
- * state the server sends. A client that hid a result based on its own
- * reading of `flag` would be implementing clinical policy in a phone app,
- * and would show the result anyway to anyone with a proxy.
- *
- * ── And what is NOT here ─────────────────────────────────────────────
- * No interpretation. No "your cholesterol is high, consider…". No
- * reference-range verdict beyond the flag the lab itself set. Rendering a
- * clinical interpretation is practising medicine (§19 of the brief).
+ * The old types (`Allergy`, `LabResult`, `ReleaseState` handling, …) were
+ * deleted with the screens that rendered them, rather than left as dead
+ * model that a future screen could quietly pick back up.
  */
 
-export interface Allergy {
+/** What the server's laboratory workflow is, said the way a patient would. */
+export type LabTestStatus = 'awaiting_collection' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface LabTest {
   readonly id: string;
-  readonly allergen: string;
-  readonly severity: AllergySeverity;
-  readonly reaction: string | null;
-  readonly release: ReleaseState;
+  readonly testName: string;
+  readonly category: string | null;
+  readonly specimenType: string | null;
+  readonly status: LabTestStatus;
+  readonly requestedAt: string;
+  readonly collectedAt: string | null;
+  readonly completedAt: string | null;
+  readonly hospitalName: string | null;
 }
 
-export interface ChronicCondition {
-  readonly id: string;
-  readonly name: string;
-  readonly diagnosedOn: string | null;
-  readonly release: ReleaseState;
+/** The insurance on file. `policyNumberLast4` is the only part of the number that ever arrives. */
+export interface InsuranceOnFile {
+  readonly providerName: string;
+  readonly plan: string | null;
+  readonly policyNumberLast4: string;
+  readonly validUntil: string | null;
+  readonly isActive: boolean;
 }
 
-export interface Medication {
-  readonly id: string;
-  readonly name: string;
-  readonly dosage: string;
-  readonly frequency: string;
-  readonly status: MedicationStatus;
-  readonly startedOn: string | null;
-  readonly release: ReleaseState;
-}
-
-export interface HistoryEvent {
-  readonly id: string;
-  readonly kind: HistoryEventKind;
-  readonly title: string;
-  readonly occurredOn: string;
-  readonly detail: string | null;
-  readonly release: ReleaseState;
-}
-
-export interface LabOrder {
-  readonly id: string;
-  readonly panelName: string;
-  readonly orderedOn: string;
-  readonly status: LabStatus;
-  readonly release: ReleaseState;
-  readonly resultCount: number;
-}
-
-export interface LabResult {
-  readonly id: string;
-  readonly analyteName: string;
-  /** Rendered as text. Never compared, never interpreted. */
-  readonly value: string | null;
-  readonly unit: string | null;
-  /** The lab's own reference range, as a display string. */
-  readonly referenceRange: string | null;
-  /** The LAB's flag. Not a client judgement. */
-  readonly flag: LabResultFlag | null;
-  readonly release: ReleaseState;
-}
-
-export interface LabOrderDetail extends LabOrder {
-  readonly results: readonly LabResult[];
-}
-
-export interface Prescription {
-  readonly id: string;
-  readonly medicationName: string;
-  readonly dosage: string;
-  readonly frequency: string;
-  readonly status: PrescriptionStatus;
-  readonly issuedOn: string;
-  readonly refillsRemaining: number | null;
-  readonly release: ReleaseState;
-}
-
-export interface VisitSummary {
-  readonly id: string;
-  readonly title: string;
-  readonly visitedOn: string;
-  readonly doctorName: string;
-  /** A patient-appropriate projection, NOT the clinician's document. */
-  readonly summary: string | null;
-  readonly release: ReleaseState;
-}
-
-export interface PatientDocument {
-  readonly id: string;
-  readonly title: string;
-  readonly category: DocumentCategory;
-  readonly uploadedOn: string;
-  /**
-   * `File` has a scan gate: a download is `403 scan_pending` until the
-   * file is scanned clean. That is NOT an error to retry past
-   * (checklist J-09).
-   */
-  readonly scanState: 'clean' | 'pending' | 'blocked';
-  readonly release: ReleaseState;
+/**
+ * `insurance` is `null` when nothing is on file — an answer, not an error.
+ *
+ * Authorization (approval/rejection of a service) is not modelled: the
+ * state machine is undecided (ADR-039 item 5) and the server says so. The
+ * screen renders that as an honest notice, never as "no authorizations".
+ */
+export interface InsuranceView {
+  readonly insurance: InsuranceOnFile | null;
 }
 
 /**
  * A person the clinic would call about this patient — checklist N-08.
  *
- * ── Why this lives with the health record and not with Emergency ─────
+ * Kept here, unchanged, because the Emergency screen reads it through
+ * this service and it is not part of the record being withdrawn: it is
+ * the patient's own contact list. No route serves it today (BE-09), so
+ * production refuses by name and the Emergency screen says so.
  *
- * `patient_emergency_contacts` is a row of the patient's clinical record
- * and reads through `GET /me/health/*` (BE-09) like the rest of it. The
- * Emergency *screen* renders it, but the emergency *service* must not
- * own it: that service never throws and needs no session, because the
- * screen it feeds has to render in airplane mode from the signed-out
- * stack. A contact list needs both. Putting it there would have made the
- * one screen that must never fail depend on a call that can.
- *
- * **Read-only, and that is a data-ownership fact rather than a phase.**
- * The clinic records who to call, and a patient editing it here would be
- * editing a clinician's record through a screen designed for a crisis.
- * RA-030.2 is the decision that would change it, and it is open.
+ * **Read-only**: the clinic records who to call.
  */
 export interface EmergencyContact {
   readonly id: string;
@@ -163,16 +78,17 @@ export interface EmergencyContact {
   readonly primary: boolean;
 }
 
+export interface LabTestPage {
+  readonly items: readonly LabTest[];
+  readonly totalItems: number;
+  readonly hasMore: boolean;
+}
+
 export interface HealthService {
-  listAllergies(): Promise<readonly Allergy[]>;
-  listConditions(): Promise<readonly ChronicCondition[]>;
-  listMedications(): Promise<readonly Medication[]>;
-  listHistory(): Promise<readonly HistoryEvent[]>;
-  listLabOrders(): Promise<readonly LabOrder[]>;
-  getLabOrder(id: string): Promise<LabOrderDetail>;
-  listPrescriptions(): Promise<readonly Prescription[]>;
-  listVisits(): Promise<readonly VisitSummary[]>;
-  listDocuments(): Promise<readonly PatientDocument[]>;
-  /** N-08. Rendered by the Emergency screen; owned by the record. */
+  /** `GET /me/lab-orders` — status only, one page at a time. */
+  listLabTests(page: number): Promise<LabTestPage>;
+  /** `GET /me/insurance`. */
+  getInsurance(): Promise<InsuranceView>;
+  /** N-08. Rendered by the Emergency screen. Not served yet (BE-09). */
   listEmergencyContacts(): Promise<readonly EmergencyContact[]>;
 }

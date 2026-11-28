@@ -50,6 +50,31 @@ import { FileRepository, type FileRow } from '../repositories/file.repository';
  */
 const PUBLICLY_READABLE = new Set(['profile_photo', 'branding_asset']);
 
+/**
+ * R-02 (PR-68 audit): kinds the `patient` role never reads, whoever the
+ * file's subject or uploader is.
+ *
+ * The approved owner decision is that a patient never reaches lab results,
+ * medical documents, clinical attachments or record content, and ADR-031
+ * (results release) is still open. These three kinds are exactly the files
+ * that carry that content. The rule is a property of the role and the kind,
+ * checked before the uploader shortcut: `POST /files` accepts these kinds
+ * from a patient (upload is not role-gated per kind), so "the uploader,
+ * always" would otherwise be a second road to a clinical-kind file.
+ *
+ * The database enforces the same rule (migration
+ * 20261127120000_r02_patient_clinical_files_deny: `files_read` refuses a
+ * patient any clinical file, by kind or by link), and `FilesService.upload`
+ * refuses a patient these kinds outright
+ * (docs/audits/PR-68-R02-PATIENT-FILE-ACCESS-DESIGN.md §12).
+ */
+export const PATIENT_ROLE = 'patient';
+export const CLINICAL_KINDS_DENIED_TO_PATIENTS: ReadonlySet<string> = new Set([
+  'patient_document',
+  'record_attachment',
+  'lab_attachment',
+]);
+
 @Injectable()
 export class FileAccessService {
   constructor(
@@ -97,6 +122,13 @@ export class FileAccessService {
       return PUBLICLY_READABLE.has(file.kind) || (file.kind === 'verification_document' && file.uploadedBy === user.id);
     }
 
+    // R-02: a patient never reads a clinical-kind file — not their own
+    // chart's, not another patient's, and not one they uploaded themselves.
+    // Before the uploader shortcut on purpose (see the constant's note).
+    if (user.role === PATIENT_ROLE && CLINICAL_KINDS_DENIED_TO_PATIENTS.has(file.kind)) {
+      return false;
+    }
+
     // The uploader, always. Checked first because it needs no query.
     if (file.uploadedBy === user.id) return true;
     if (PUBLICLY_READABLE.has(file.kind)) return true;
@@ -139,7 +171,10 @@ export class FileAccessService {
    * DR-05 at resource level (F-01, F-14): a clinician reads a patient's file
    * only when it belongs to the hospital where they reach the patient — a
    * file another hospital holds, or one no hospital has adopted, is not
-   * theirs. Or the patient reading their own file.
+   * theirs. Or the patient reading their own file — a branch R-02 now
+   * closes before this is called (`CLINICAL_KINDS_DENIED_TO_PATIENTS`
+   * covers every kind routed here); kept so that lifting that rule, once
+   * ADR-031 decides release, restores ownership scoping rather than none.
    */
   private async reachesPatient(
     user: AuthenticatedUser,

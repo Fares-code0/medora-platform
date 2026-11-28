@@ -12,6 +12,7 @@ import { useTheme } from '@/theme';
 
 import { DepartmentFilter } from '../components/DepartmentFilter';
 import { DoctorResults } from '../components/DoctorResults';
+import { HospitalFilter } from '../components/HospitalFilter';
 import { useDoctorSearch, useSpecialties } from '../hooks';
 import { listRecentDoctors, type RecentDoctor } from '../recent';
 
@@ -48,13 +49,25 @@ const SEARCH_DEBOUNCE_MS = 300;
  * is memory-only and grows on the profile screen; see `recent.ts` for
  * why it is not written to a store.
  */
-export function DiscoverScreen({ navigation }: Props) {
+export function DiscoverScreen({ navigation, route }: Props) {
   const theme = useTheme();
   const t = useT();
   const [rawQuery, setRawQuery] = useState('');
   const [query, setQuery] = useState('');
   const [specialtyId, setSpecialtyId] = useState<string | undefined>(undefined);
   const [departmentId, setDepartmentId] = useState<string | undefined>(undefined);
+  // A hospital's own screen opens Discover already narrowed to it. A
+  // hosted test screen may mount without a route, so both reads are guarded.
+  const routeParams = (route as Props['route'] | undefined)?.params;
+  const [hospitalId, setHospitalId] = useState<string | undefined>(routeParams?.hospitalId);
+  const hospitalName = routeParams?.hospitalName;
+
+  // The same screen instance is re-used when a hospital screen navigates
+  // back here with a different hospital; follow the parameter.
+  const arrivedHospitalId = routeParams?.hospitalId;
+  useEffect(() => {
+    if (arrivedHospitalId !== undefined) setHospitalId(arrivedHospitalId);
+  }, [arrivedHospitalId]);
 
   useEffect(() => {
     const timer = setTimeout(() => setQuery(rawQuery), SEARCH_DEBOUNCE_MS);
@@ -73,6 +86,7 @@ export function DiscoverScreen({ navigation }: Props) {
     ...(query.trim() === '' ? {} : { q: query.trim() }),
     ...(specialtyId === undefined ? {} : { specialtyId }),
     ...(departmentId === undefined ? {} : { departmentId }),
+    ...(hospitalId === undefined ? {} : { hospitalId }),
   });
 
   /**
@@ -80,7 +94,11 @@ export function DiscoverScreen({ navigation }: Props) {
    * been asked yet. A department filter is a question, so it hides the
    * list for the same reason a search term does.
    */
-  const isBrowsing = query.trim() === '' && specialtyId === undefined && departmentId === undefined;
+  const isBrowsing =
+    query.trim() === '' &&
+    specialtyId === undefined &&
+    departmentId === undefined &&
+    hospitalId === undefined;
 
   return (
     <DoctorResults
@@ -144,17 +162,25 @@ export function DiscoverScreen({ navigation }: Props) {
 
           <DepartmentFilter selectedId={departmentId} onChange={setDepartmentId} />
 
+          <HospitalFilter
+            selectedId={hospitalId}
+            selectedName={hospitalName}
+            onChange={setHospitalId}
+          />
+
           <Card
             tone="sunken"
-            onPress={() => navigation.navigate('Clinic')}
-            accessibilityLabel={t('discover.clinicCard.title')}
+            testID="discover-hospitals-card"
+            onPress={() => navigation.navigate('Hospitals')}
+            accessibilityLabel={t('discover.hospitalsCard.title')}
+            accessibilityHint={t('discover.hospitalsCard.hint')}
           >
             <View style={[styles.row, { columnGap: theme.space[3] }]}>
               <Icon name="mapPin" size={20} color="primary" />
               <View style={styles.grow}>
-                <Text variant="bodyStrong">{t('discover.clinicCard.title')}</Text>
+                <Text variant="bodyStrong">{t('discover.hospitalsCard.title')}</Text>
                 <Text variant="caption" color="textTertiary">
-                  {t('discover.clinicCard.subtitle')}
+                  {t('discover.hospitalsCard.subtitle')}
                 </Text>
               </View>
               <Icon name="forward" size={18} color="textTertiary" />

@@ -9,6 +9,7 @@ import { doctorService } from '@/features/doctors/service';
 import { emergencyService } from '@/features/emergency/service';
 import { healthService } from '@/features/health/service';
 import { activityService } from '@/features/home/service';
+import { hospitalService } from '@/features/hospitals/service';
 import { messagingService } from '@/features/messages/service';
 import { notificationService } from '@/features/notifications/service';
 import { profileService } from '@/features/profile/service';
@@ -70,7 +71,8 @@ jest.mock('@react-navigation/native', () => ({
  * produced a half-translated refusal. `api/seam.ts` carries the reasoning.
  */
 const SERVICES: readonly (readonly [MessageKey, object])[] = [
-  ['capability.booking', appointmentService],
+  ['capability.messages', appointmentService],
+  ['capability.clinic', hospitalService],
   ['capability.clinic', clinicService],
   ['capability.departments', doctorService],
   ['capability.clinic', emergencyService],

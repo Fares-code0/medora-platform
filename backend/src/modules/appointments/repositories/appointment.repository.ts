@@ -535,6 +535,13 @@ export class AppointmentRepository {
       readonly startsAt?: Date | undefined;
       readonly durationMin?: number | undefined;
       readonly doctorId?: string | undefined;
+      /**
+       * Set on a reschedule (R-01): the published slot the appointment
+       * now occupies, or `null` to release the one it held. Written in the
+       * same statement as `startsAt`, so the phase-21 slot trigger sees the
+       * new time and the new binding together.
+       */
+      readonly publishedSlotId?: string | null | undefined;
     },
     outer?: ScheduleTx,
   ): Promise<TransitionResult | null> {
@@ -548,6 +555,9 @@ export class AppointmentRepository {
             : { cancelledReason: input.cancelledReason }),
           ...(input.startsAt === undefined ? {} : { startsAt: input.startsAt }),
           ...(input.durationMin === undefined ? {} : { durationMin: input.durationMin }),
+          ...(input.publishedSlotId === undefined
+            ? {}
+            : { publishedSlotId: input.publishedSlotId }),
           ...(input.doctorId === undefined ? {} : { doctorId: input.doctorId }),
           ...(UUID.test(input.actorId) ? { updatedBy: input.actorId } : {}),
         },
@@ -578,6 +588,67 @@ export class AppointmentRepository {
 
       return { row };
     });
+  }
+
+  /**
+   * R-01 — the hospital and employment an appointment is booked under,
+   * which decide the published slots a move may land on. Read inside the
+   * doctor's schedule lock: every writer that changes them (`reassignTo`)
+   * or binds a slot (patient booking, request approval) holds that lock
+   * too, so no row lock is taken here — the move's own compare-and-set
+   * UPDATE locks the row.
+   */
+  slotBinding(
+    appointmentId: string,
+    tx: ScheduleTx,
+  ): Promise<{ hospitalId: string | null; doctorEmploymentId: string | null } | null> {
+    return tx.appointment.findUnique({
+      where: { id: appointmentId },
+      select: { hospitalId: true, doctorEmploymentId: true },
+    });
+  }
+
+  /**
+   * R-01 — the free published slot a doctor reschedule lands on exactly,
+   * locked, or `null` when the new time is not a published slot.
+   *
+   * "Exactly" is the phase-21 trigger's own rule: same hospital, same
+   * employment, same start, same duration, not withdrawn. "Free" means no
+   * live booking other than the one being moved holds it — the predicate
+   * of `appointments_one_live_booking_per_slot`, deliberately without
+   * `deleted_at`, because the index does not look at it either. Every
+   * writer that binds a slot holds the doctor's schedule lock, which the
+   * caller holds too, so the answer cannot change before the update; the
+   * unique index remains the backstop.
+   */
+  async freeSlotAt(
+    input: {
+      readonly hospitalId: string;
+      readonly doctorEmploymentId: string;
+      readonly startsAt: Date;
+      readonly durationMin: number;
+      readonly appointmentId: string;
+    },
+    tx: ScheduleTx,
+  ): Promise<string | null> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT s.id::text AS id
+        FROM published_slots s
+       WHERE s.hospital_id = ${input.hospitalId}::uuid
+         AND s.doctor_employment_id = ${input.doctorEmploymentId}::uuid
+         AND s.starts_at = ${input.startsAt}
+         AND s.duration_minutes = ${input.durationMin}
+         AND s.withdrawn_at IS NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM appointments a
+                WHERE a.published_slot_id = s.id
+                  AND a.id <> ${input.appointmentId}::uuid
+                  AND a.status::text NOT IN ('cancelled', 'completed', 'no-show'))
+       ORDER BY s.id
+       LIMIT 1
+       FOR UPDATE OF s`;
+
+    return rows[0]?.id ?? null;
   }
 
   /**
@@ -638,11 +709,20 @@ export class AppointmentRepository {
     });
   }
 
-  /** Supersedes any outstanding proposal when the appointment resolves. */
+  /**
+   * Supersedes any outstanding proposal when the appointment resolves —
+   * and any patient reschedule request still pending (ADR-049: a request
+   * is `superseded` when the appointment is cancelled, completed or moved
+   * by the clinic while it waits).
+   */
   async expireProposals(appointmentId: string): Promise<void> {
     await this.prisma.db.appointmentRescheduleProposal.updateMany({
       where: { appointmentId, status: 'pending' },
       data: { status: 'expired' },
+    });
+    await this.prisma.db.appointmentRescheduleRequest.updateMany({
+      where: { appointmentId, status: 'pending' },
+      data: { status: 'superseded', decidedAt: new Date() },
     });
   }
 

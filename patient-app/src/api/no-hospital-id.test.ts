@@ -151,6 +151,10 @@ describe('representative calls through the real endpoints', () => {
       () => appointmentEndpoints.byId('APT-1'),
       () =>
         doctorEndpoints.search({ q: 'heart', specialtyId: 's-1', departmentId: 'd-1', page: 1 }),
+      () => appointmentEndpoints.book({ slotId: 's-1', reason: 'Checkup' }, 'key-1'),
+      () => appointmentEndpoints.cancel('APT-1', { reasonCode: 'other' }),
+      () => appointmentEndpoints.requestReschedule('APT-1', { slotId: 's-2' }, 'key-2'),
+      () => appointmentEndpoints.slots('doc-1', 'a', 'b'),
       () => profileEndpoints.get(),
       () => notificationEndpoints.feed({ page: 1 }),
       () => notificationEndpoints.badgeCounts(),
@@ -177,10 +181,46 @@ describe('the endpoint sources', () => {
     // Comments are stripped: prose may explain why there is no selector.
     const code = readFileSync(join(dir, file), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      // A RESPONSE field the server returns (`hospital: { id, name }` on a
+      // lab order) is read, never sent: only its schema declaration is
+      // exempt, and only in the shape `hospital: <name>Schema`.
+      .replace(/^\s*hospital: \w+Schema(\.nullable\(\))?,$/gm, '');
     const offenders = code.match(
       /\b(hospital|tenant|facility)[A-Za-z_]*\b|['"`]x-(hospital|tenant|facility|clinic)[^'"`]*['"`]|\bclinic(Id|_id)\b/gi,
     );
-    expect(offenders).toBeNull();
+    // Each name below is a RESPONSE field or a discovery resource, never a
+    // selector sent to scope a request. Scope is the session's alone; a
+    // name is added here only with that justification, per file.
+    const allowed = ALLOWED_HOSPITAL_NAMES[file] ?? new Set<string>();
+    const unexplained = (offenders ?? []).filter((name) => !allowed.has(name.toLowerCase()));
+    expect(unexplained).toEqual([]);
   });
 });
+
+/**
+ * Where the word legitimately appears in an endpoint module.
+ *
+ * - `appointments.ts`, `doctors.ts`: the `hospital` field of a RESPONSE
+ *   projection (`{ id, name }`), and its schema.
+ * - `doctors.ts`: `hospitalId` — contract §2's optional discovery FILTER
+ *   (which hospital's doctors to list). A patient choosing what to browse
+ *   is not a tenant selector: the caller's scope still comes from the
+ *   session, and the filter only narrows a list the server already scoped.
+ * - `hospitals.ts`: the hospital-discovery resource itself
+ *   (`GET /patient/hospitals/{id}`) — the hospital is the thing asked
+ *   for, not a header or body field scoping some other request. The
+ *   plain word `hospitals` is the URL path segment.
+ */
+const ALLOWED_HOSPITAL_NAMES: Readonly<Record<string, ReadonlySet<string>>> = {
+  'appointments.ts': new Set(['hospital', 'hospitalrefschema']),
+  'doctors.ts': new Set(['hospital', 'hospitalrefschema', 'hospitalid']),
+  'hospitals.ts': new Set([
+    'hospitals',
+    'hospitalendpoints',
+    'hospitallistquery',
+    'hospitalid',
+    'wirehospitalsummary',
+    'wirehospitaldetail',
+  ]),
+};

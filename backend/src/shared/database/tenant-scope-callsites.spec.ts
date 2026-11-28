@@ -25,6 +25,12 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'shared/authz/tenant-context.resolver.ts': "the caller's own staffing, deciding the request context",
   'shared/jobs/job-runner.service.ts': 'platform maintenance jobs (no request, no caller input)',
   'modules/patients/services/patient.service.ts': "the masked directory's reach, from the caller's tenant",
+  'modules/patients/services/patient-account-link.service.ts':
+    "account linking's reach (ADR-048): the caller's own hospital, from their staffing; the unlink transaction (R-04), keyed on the reached record and its account, deletes the account's personal AI threads",
+  'modules/hospitals/repositories/patient-hospital.repository.ts':
+    'the patient-facing hospital directory: active hospitals and their organisational names only (no PHI)',
+  'modules/appointments/repositories/patient-booking.repository.ts':
+    "patient booking (ADR-049): published slots and their doctor's employment (organisational rows, filtered to the slot or doctor named), a yes/no on whether a slot is held, and the caller's own insurance against the hospital's coverage; the booking write itself runs in the slot's hospital scope",
   'modules/appointments/services/appointment-oversight.service.ts': "the overseer's own hospital, from their staffing",
   'modules/medical-records/services/record-issue.service.ts': "the reviewer's own hospital, from their staffing",
   'modules/administration/services/operations.service.ts': "the operator's own hospital, from their staffing",

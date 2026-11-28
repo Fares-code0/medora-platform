@@ -9,14 +9,19 @@ import { OutboxKernelModule } from '../../shared/outbox';
 import { AdminAppointmentController } from './controllers/admin-appointment.controller';
 import { AppointmentController } from './controllers/appointment.controller';
 import { PatientAppointmentController } from './controllers/patient-appointment.controller';
+import { PatientBookingController, PatientSlotController } from './controllers/patient-booking.controller';
+import { RescheduleRequestController } from './controllers/reschedule-request.controller';
 import { TimeOffResolutionController } from './controllers/time-off-resolution.controller';
 import { AppointmentRepository } from './repositories/appointment.repository';
 import { AppointmentsJobs } from './services/appointments.jobs';
 import { PatientAppointmentRepository } from './repositories/patient-appointment.repository';
+import { PatientBookingRepository } from './repositories/patient-booking.repository';
 import { AppointmentOversightService } from './services/appointment-oversight.service';
 import { AppointmentService } from './services/appointment.service';
 import { CLINIC_TIMEZONE, PlatformClinicTimezone } from './services/clinic-timezone';
 import { PatientAppointmentService } from './services/patient-appointment.service';
+import { PatientBookingService } from './services/patient-booking.service';
+import { RescheduleRequestService } from './services/reschedule-request.service';
 import { SlotConflictChecker } from './services/slot-conflict.checker';
 import { TimeOffResolutionService } from './services/time-off-resolution.service';
 
@@ -37,16 +42,13 @@ import { TimeOffResolutionService } from './services/time-off-resolution.service
  *    scope parameter on the first.
  *  - **`TimeOffResolutionService`** (M11.5) — the second phase of the
  *    emergency flow, gated on the blast-radius confirmation.
- *  - **`PatientAppointmentService`** — the patient's read-only view of
- *    their own appointments, which predates this milestone.
- *
- * The **write** routes on the patient side remain deliberately absent:
- * booking, cancelling and re-confirming as a *patient* each depend on a
- * policy no source in this repository states — whether a patient may
- * cancel a `confirmed` appointment and up to when, what the reschedule
- * cut-off is. ADR-001 says which statuses may follow which; it does not
- * say who may move between them. See `PATIENT_MOBILE_API_CONTRACT.md`
- * §4 for the exact decisions required.
+ *  - **`PatientAppointmentService`** — the patient's view of their own
+ *    appointments.
+ *  - **`PatientBookingService`** / **`RescheduleRequestService`** — the
+ *    patient actions of ADR-049 (booking a published slot, cancelling
+ *    before the start, reschedule requests) and the clinic's side of the
+ *    request queue. Re-confirming and answering a clinic proposal (ADR-033
+ *    Q3) remain absent.
  */
 @Module({
   imports: [
@@ -57,10 +59,15 @@ import { TimeOffResolutionService } from './services/time-off-resolution.service
     OutboxKernelModule,
   ],
   controllers: [
+    // Before `AppointmentController`: `GET /appointments/reschedule-requests`
+    // must not be read as `GET /appointments/:appointmentId`.
+    RescheduleRequestController,
     AppointmentController,
     AdminAppointmentController,
     TimeOffResolutionController,
     PatientAppointmentController,
+    PatientBookingController,
+    PatientSlotController,
   ],
   providers: [
     AppointmentService,
@@ -70,6 +77,9 @@ import { TimeOffResolutionService } from './services/time-off-resolution.service
     AppointmentRepository,
     PatientAppointmentService,
     PatientAppointmentRepository,
+    PatientBookingRepository,
+    PatientBookingService,
+    RescheduleRequestService,
     { provide: CLINIC_TIMEZONE, useClass: PlatformClinicTimezone },
     AppointmentsJobs,
   ],

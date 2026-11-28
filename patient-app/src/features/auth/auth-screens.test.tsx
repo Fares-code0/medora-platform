@@ -330,7 +330,13 @@ describe('the OTP step-up (D-07)', () => {
   it('sends the code with the pending token, which the screen never shows', async () => {
     const verify = stub('verifyOtp').mockResolvedValue({
       tokens: { accessToken: 'a', refreshToken: 'r' },
-      identity: { subjectId: 's', displayName: 'A', email: 'a@b.c', emailVerified: true },
+      identity: {
+        subjectId: 's',
+        displayName: 'A',
+        email: 'a@b.c',
+        emailVerified: true,
+        role: 'patient',
+      },
     });
     const view = await renderOtp();
 
@@ -457,6 +463,7 @@ describe('a recovery code in place of the step-up code (owner decision R1)', () 
     tokens: { accessToken: 'a', refreshToken: 'r' },
     identity: {
       subjectId: 's',
+      role: 'patient',
       displayName: 'Sara',
       email: 'sara@example.com',
       emailVerified: true,
