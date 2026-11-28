@@ -58,6 +58,8 @@ let hospitalId: string;
 let alice: string;
 let bob: string;
 let unlinked: string;
+/** Set only when this file created the insurer, so teardown removes exactly that row. */
+let createdProviderId: string | undefined;
 let doctor: string;
 
 const as = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -154,9 +156,12 @@ beforeAll(async () => {
     ],
   });
 
+  const existing = await harness.prisma.insuranceProvider.findFirst({ where: { active: true } });
   const provider =
-    (await harness.prisma.insuranceProvider.findFirst({ where: { active: true } })) ??
-    (await harness.prisma.insuranceProvider.create({ data: { name: 'E2E Info Layer Insurer' } }));
+    existing ?? (await harness.prisma.insuranceProvider.create({ data: { name: 'E2E Info Layer Insurer' } }));
+  // `insurance_providers` is seeded empty (DB §5; schema-reference asserts it),
+  // so a row this file creates must not outlive it.
+  if (existing === null) createdProviderId = provider.id;
   await harness.prisma.patientInsurance.deleteMany({ where: { patientId: records[0]!.id } });
   await harness.prisma.patientInsurance.create({
     data: {
@@ -180,7 +185,13 @@ afterAll(async () => {
     data: { userId: null },
   });
   await harness.reset();
+  await harness.prisma.patientInsurance.deleteMany({
+    where: { patientId: { in: records.map((record) => record.id) } },
+  });
   await destroyPatientRecords(harness.prisma, TAG);
+  if (createdProviderId !== undefined) {
+    await harness.prisma.insuranceProvider.deleteMany({ where: { id: createdProviderId } });
+  }
   await harness.close();
 });
 
