@@ -5,6 +5,7 @@ import {
   type ExecutionContext,
   HttpStatus,
   Injectable,
+  Logger,
   type NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -14,7 +15,7 @@ import { catchError, concatMap, from, type Observable, of, throwError } from 'rx
 import { AUTHENTICATED_USER, type RequestWithUser } from '../../common/auth/authenticated-user';
 import { AppException } from '../../common/errors/app.exception';
 
-import { IDEMPOTENT } from './idempotent.decorator';
+import { IDEMPOTENT, type IdempotentMetadata } from './idempotent.decorator';
 import { IdempotencyStore } from './idempotency.store';
 
 export const IDEMPOTENCY_HEADER = 'idempotency-key';
@@ -34,10 +35,13 @@ const KEY_SHAPE = /^[\x21-\x7E]{1,128}$/;
  * ## The four answers
  *
  * - **No header** — the default path, unchanged (ADR-014 §3). A client
- *   that sends nothing behaves exactly as it did.
+ *   that sends nothing behaves exactly as it did — except on a route
+ *   marked `@Idempotent({ required: true })`, which answers 422.
  * - **A new key** — the request executes; its result is stored against
- *   `(user, key)` for 24 h. A failure releases the key, so a retry after
- *   a 4xx or 5xx executes again rather than replaying the failure.
+ *   `(user, key)` for 24 h. A failure of the handler releases the key,
+ *   so a retry after a 4xx or 5xx executes again rather than replaying
+ *   the failure. A failure to store the result *after* the handler
+ *   succeeded does not (APT-02): the key stays in progress.
  * - **A key seen before, same request** — the stored result is returned
  *   and the handler **does not run**: no second appointment, no second
  *   signed prescription, no second message. `Idempotency-Replayed: true`
@@ -60,22 +64,33 @@ const KEY_SHAPE = /^[\x21-\x7E]{1,128}$/;
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(IdempotencyInterceptor.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly store: IdempotencyStore,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const marked = this.reflector.getAllAndOverride<boolean | undefined>(IDEMPOTENT, [
+    const marked = this.reflector.getAllAndOverride<IdempotentMetadata | undefined>(IDEMPOTENT, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (marked !== true) return next.handle();
+    if (marked === undefined) return next.handle();
+    const required = marked !== true && marked.required === true;
 
     const http = context.switchToHttp();
     const request = http.getRequest<Request & RequestWithUser>();
     const raw = request.headers[IDEMPOTENCY_HEADER];
-    if (raw === undefined) return next.handle();
+    if (raw === undefined) {
+      if (!required) return next.handle();
+      return throwError(() =>
+        AppException.validation(
+          { 'Idempotency-Key': ['This request requires an Idempotency-Key header'] },
+          'The Idempotency-Key header is required',
+        ),
+      );
+    }
 
     const key = Array.isArray(raw) ? raw[0] : raw;
     if (key === undefined || !KEY_SHAPE.test(key) || Array.isArray(raw)) {
@@ -130,17 +145,41 @@ export class IdempotencyInterceptor implements NestInterceptor {
             );
 
           case 'claimed':
+            // APT-02: only a failure of the *handler* releases the key. The
+            // completion write runs after the handler's business commit, so
+            // a failure there must not release the key — the retry would
+            // execute the write a second time. It is retried once; if it
+            // still fails the key stays `in_progress` (a retry is told 409
+            // `idempotency_request_in_progress`, never re-executed) and the
+            // committed result is returned.
             return next.handle().pipe(
-              concatMap((body: unknown) =>
-                from(this.store.complete(claim.id, body)).pipe(concatMap(() => of(body))),
-              ),
               catchError((error: unknown) =>
                 from(this.store.release(claim.id)).pipe(concatMap(() => throwError(() => error))),
+              ),
+              concatMap((body: unknown) =>
+                from(this.completeAfterCommit(claim.id, body)).pipe(concatMap(() => of(body))),
               ),
             );
         }
       }),
     );
+  }
+
+  private async completeAfterCommit(id: string, body: unknown): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.store.complete(id, body);
+        return;
+      } catch (error) {
+        if (attempt === 1) {
+          this.logger.error(
+            `Idempotency completion failed after the request committed; the key stays in progress (${
+              error instanceof Error ? error.name : 'unknown error'
+            })`,
+          );
+        }
+      }
+    }
   }
 }
 

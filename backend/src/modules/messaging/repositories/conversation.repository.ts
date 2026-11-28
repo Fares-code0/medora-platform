@@ -24,7 +24,8 @@ import { Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../../../generated/prisma/client';
 import { BADGE_COUNTS, CacheService } from '../../../shared/cache';
-import { PrismaService } from '../../../shared/database';
+import { DoctorPracticeStatus, DoctorVerificationStatus } from '../../../generated/prisma/enums';
+import { PrismaService, runAsSystem } from '../../../shared/database';
 import type { ClinicalReach } from '../../../shared/authz';
 import type { MessagingFolder } from '../dto/messaging-enums';
 
@@ -257,16 +258,121 @@ export class ConversationRepository {
     return rows.map((row) => row.userId);
   }
 
-  /** Which of these ids are real, active accounts (API §9.2). */
-  async existingUsers(ids: readonly string[]): Promise<readonly string[]> {
+  /**
+   * Which of these ids are active accounts with standing at `hospitalId`
+   * (API §9.2; checklist F1, AF-16) — the only accounts a thread at that
+   * hospital may name:
+   *
+   * | Role | Standing at the hospital |
+   * | --- | --- |
+   * | `doctor` | an active employment there, the doctor verified and in clinical practice (the `clinicalEmployment` rule) |
+   * | `reception`, `laboratory`, `pharmacy`, `nurse` | an active affiliation there |
+   * | `admin` | an active hospital `admin` assignment there (a Platform Admin holds none: the database keeps the two exclusive) |
+   *
+   * A patient account, an ended employment or affiliation, a revoked
+   * assignment and every other hospital's staff match nothing.
+   *
+   * Read under the request's own tenant context, not `system`: the
+   * staffing tables are `org_visible(hospital_id)`, so the caller's own
+   * hospital's rows are exactly the ones visible, and `users`, `roles`,
+   * `doctors` and `staff_members` carry no policy.
+   */
+  async usersWithStandingAt(
+    ids: readonly string[],
+    hospitalId: string,
+  ): Promise<readonly string[]> {
+    const ACTIVE_HOSPITAL = { status: 'ACTIVE', deletedAt: null } as const;
     const rows = await this.prisma.db.user.findMany({
-      where: { id: { in: [...ids] }, status: 'ACTIVE' },
+      where: {
+        id: { in: [...ids] },
+        status: 'ACTIVE',
+        deletedAt: null,
+        OR: [
+          {
+            role: { is: { code: 'doctor' } },
+            doctor: {
+              is: {
+                deletedAt: null,
+                verificationStatus: DoctorVerificationStatus.VERIFIED,
+                practiceStatus: { in: [...CLINICAL_PRACTICE_STATUSES] },
+                employments: {
+                  some: { hospitalId, endedAt: null, hospital: { is: ACTIVE_HOSPITAL } },
+                },
+              },
+            },
+          },
+          {
+            role: { is: { code: { in: [...STAFF_ROLE_CODES] } } },
+            staffMember: {
+              some: {
+                deletedAt: null,
+                hospitalAffiliations: {
+                  some: { hospitalId, endedAt: null, hospital: { is: ACTIVE_HOSPITAL } },
+                },
+              },
+            },
+          },
+          {
+            role: { is: { code: 'admin' } },
+            hospitalRoleAssignments: {
+              some: {
+                hospitalId,
+                revokedAt: null,
+                role: { is: { code: 'admin' } },
+                hospital: { is: ACTIVE_HOSPITAL },
+              },
+            },
+          },
+        ],
+      },
       select: { id: true },
     });
 
     return rows.map((row) => row.id);
   }
+
+  /**
+   * A staff account's one hospital: its single active affiliation at an
+   * ACTIVE hospital, or `null` (none, or several — ambiguous, fail closed).
+   * The caller's own staffing, read under `system` scope exactly as
+   * `TenantContextResolver` reads it.
+   */
+  async staffHospitalOf(userId: string): Promise<string | null> {
+    // Trusted lookup of the caller's own staffing (the same read the
+    // tenant-context resolver makes before any tenant context exists).
+    // `async` + `await`: a Prisma query is lazy, so returned un-awaited it
+    // would run after `runAsSystem` had returned — under the caller's scope.
+    const rows = await runAsSystem(async () =>
+      await this.prisma.db.hospitalStaffAffiliation.findMany({
+        where: {
+          endedAt: null,
+          staff: { is: { userId, deletedAt: null } },
+          hospital: { is: { status: 'ACTIVE', deletedAt: null } },
+        },
+        select: { hospitalId: true },
+        distinct: ['hospitalId'],
+        take: 2,
+      }),
+    );
+
+    return rows.length === 1 ? (rows[0]?.hospitalId ?? null) : null;
+  }
 }
+
+/**
+ * The practice states that hold clinical standing — the same pair as the
+ * authz kernel's `CLINICAL_PRACTICE_STATUSES`, which is not exported through
+ * its index (M2.3 forbids importing kernel internals).
+ */
+const CLINICAL_PRACTICE_STATUSES = [DoctorPracticeStatus.ACTIVE, DoctorPracticeStatus.VACATION] as const;
+
+/** The staff roles whose hospital standing is an affiliation. */
+export const STAFF_ROLE_CODES: ReadonlySet<string> = new Set([
+  'reception',
+  'laboratory',
+  'pharmacy',
+  'nurse',
+]);
 
 export type ParticipantRow = Prisma.ConversationParticipantGetPayload<{
   select: typeof LIST_SELECT;

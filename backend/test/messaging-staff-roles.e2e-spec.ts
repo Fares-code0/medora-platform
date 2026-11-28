@@ -30,8 +30,8 @@ import {
  *
  * **Not decided here, and not tested as if it were:** the staff
  * participant rule (API-W09 — whom a reception account may open a thread
- * with) and hospital scoping (multi-hospital AF-16). Today any holder of
- * `messages.send` may address any active account; this suite asserts the
+ * with). Hospital scoping (multi-hospital AF-16, MSG-01) is enforced and
+ * tested in `messaging-participants.e2e-spec.ts`; this suite asserts the
  * roles can use messaging, not that the participant set is right.
  */
 let harness: AuthHarness;

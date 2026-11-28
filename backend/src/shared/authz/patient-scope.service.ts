@@ -42,6 +42,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { AppException } from '../../common/errors/app.exception';
+import { AUDIT_DISPATCHER, type AuditDispatcher } from '../audit';
 import { runAsSystem } from '../database';
 import {
   type ClinicalEmployment,
@@ -66,6 +67,13 @@ export class PatientScopeService {
      * changes nothing a caller can see.
      */
     @Optional() private readonly shadow?: HospitalPatientScopeShadow,
+    /**
+     * Records each refusal (AZ-06, checklist B5). Optional so the unit
+     * specs that build the service by hand keep their shape; the kernel
+     * module always provides it. The dispatcher resolves rather than
+     * throws, so a ledger outage never turns a 404 into something else.
+     */
+    @Optional() @Inject(AUDIT_DISPATCHER) private readonly audit?: AuditDispatcher,
   ) {}
 
   /**
@@ -148,6 +156,8 @@ export class PatientScopeService {
   async assertCanReach(principal: Principal, patientId: string): Promise<void> {
     if (await this.canReach(principal, patientId)) return;
 
+    await this.recordDenial(principal, patientId);
+
     // Deliberately identical to the message a genuinely missing patient
     // would produce, and carrying no patient id: the response must not
     // distinguish "not yours" from "does not exist" (MG §11.6 also
@@ -168,7 +178,31 @@ export class PatientScopeService {
         : null;
     this.observeShadow(principal, patientId, reach !== null);
     if (reach !== null) return reach;
+    await this.recordDenial(principal, patientId);
     throw AppException.notFound('Patient not found');
+  }
+
+  /**
+   * A refused reach, on the ledger (AZ-06, checklist B5: "audit
+   * cross-hospital denials"). Every refusal is recorded — a foreign
+   * hospital's patient, one with no care relationship, and an id that
+   * does not exist alike — because telling them apart would take a lookup
+   * across the boundary the refusal protects, and the response must stay
+   * identical in all three cases anyway. Only the requested identifier and
+   * the caller are written: no clinical content, no name.
+   */
+  private async recordDenial(principal: Principal, patientId: string): Promise<void> {
+    if (this.audit === undefined) return;
+    await this.audit.record({
+      action: 'patient_scope.denied',
+      actor: {
+        userId: principal.userId,
+        role: principal.roleCode,
+        ...(principal.sessionId === undefined ? {} : { sessionId: principal.sessionId }),
+      },
+      entityType: 'patient',
+      entityId: patientId,
+    });
   }
 
   /**

@@ -433,6 +433,33 @@ describe('RM M16.3 verify — context binding is server-authoritative', () => {
     expect(await harness.prisma.aiConversation.count()).toBe(before);
   });
 
+  it('stamps a reference-bound thread with the hospital the patient was reached at (AI-02)', async () => {
+    // A labs/record/pharmacy thread is still a thread about this patient at
+    // this hospital. Before AI-02 the reference-bound path returned no
+    // chart, so the row carried no hospital: the runtime role's
+    // `ai_conversations` insert policy refused it, and on an owner
+    // connection it was unattributed PHI.
+    const order = await orderTest(harness, doctorToken, patient.id);
+
+    const created = await createThread(doctorToken, { mode: 'labs', patientId: patient.id, refId: order.id }, 201);
+    const threadId = dataOf<{ id: string }>(created).id;
+
+    const row = await harness.prisma.aiConversation.findUniqueOrThrow({
+      where: { id: threadId },
+      select: { hospitalId: true, hospitalMedicalRecordId: true, refPublicId: true },
+    });
+    const orderRow = await harness.prisma.labOrder.findFirstOrThrow({
+      where: { publicId: order.id },
+      select: { hospitalId: true },
+    });
+
+    expect(row.refPublicId).toBe(order.id);
+    expect(row.hospitalId).not.toBeNull();
+    expect(row.hospitalMedicalRecordId).not.toBeNull();
+    // The reach hospital is the one the bound entity belongs to.
+    expect(row.hospitalId).toBe(orderRow.hospitalId);
+  });
+
   it('refuses a refId belonging to another patient', async () => {
     // Without the patient clause on the entity query, binding another
     // chart's order under a chart the caller legitimately holds would
@@ -975,6 +1002,42 @@ describe('RM M16.1 — the gateway sees a prompt, never a chart', () => {
       role: 'user',
       content: 'Summarise the risks',
     });
+  });
+
+  it('carries nothing of another chart the same doctor holds, in any mode (AI-08)', async () => {
+    // The whole request object — system, turns, settings — serialised, so
+    // a field added to the request later is covered too.
+    const other = await seedPatient(harness, doctorToken, { fullName: 'Leila Haddad' });
+    charts.push(other.id);
+    const ownOrder = await orderTest(harness, doctorToken, patient.id);
+    const otherOrder = await orderTest(harness, doctorToken, other.id);
+
+    // The same doctor talks about the other chart first, so a context
+    // cache or a shared history would have something to leak.
+    const otherThread = dataOf<ConversationView>(
+      await createThread(doctorToken, { mode: 'patient', patientId: other.id }),
+    );
+    script = { kind: 'stream', deltas: ['Noted.'] };
+    await send(doctorToken, otherThread.id, 'Leila Haddad private question');
+
+    const contexts = [
+      { mode: 'patient', patientId: patient.id },
+      { mode: 'labs', patientId: patient.id, refId: ownOrder.id },
+    ];
+
+    for (const context of contexts) {
+      const thread = dataOf<ConversationView>(await createThread(doctorToken, context));
+      script = { kind: 'stream', deltas: ['Noted.'] };
+      lastRequest = null;
+      await send(doctorToken, thread.id, 'Summarise');
+
+      const payload = JSON.stringify(gatewaySaw());
+      expect(payload).toContain(patient.id);
+      for (const foreign of [other.id, other.name, other.mrn, otherOrder.id, 'Leila Haddad private question']) {
+        expect(payload, `${context.mode} leaked ${foreign}`).not.toContain(foreign);
+      }
+      expect(payload).not.toContain(patient.mrn);
+    }
   });
 
   it('applies the caller’s temperature and length to the request', async () => {

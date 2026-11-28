@@ -52,6 +52,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   // Unmasking a patient's identity (M7.3) is reaching past the masking
   // boundary — the same kind of act as reading message content.
   patient_identity: 'security',
+  // AZ-06 / checklist B5: a refused patient reach — another hospital's
+  // chart, no care relationship, or an unknown id — is a boundary event.
+  patient_scope: 'security',
   // Re-sealing stored second factors under a new envelope key (M37 key
   // rotation) changes nothing about who may sign in, but it rewrites the
   // ciphertext every second factor depends on.
@@ -77,6 +80,9 @@ const CATEGORY_BY_ENTITY: Readonly<Record<string, AuditCategory>> = {
   audit_ledger: 'admin_activity',
   // §2.13: a read of clinical content or clear identity.
   phi: 'user_action',
+  // A doctor publishing or withdrawing a bookable slot (SLT-01) is
+  // ordinary scheduling work, like the appointment actions.
+  published_slot: 'user_action',
   information_request: 'user_action',
 
   account: 'user_action',
@@ -137,6 +143,7 @@ const SEVERITY_BY_ACTION: Readonly<Record<string, AuditSeverity>> = {
   'communication_access.view': 'warning',
   'communication_access.revoke': 'warning',
   'patient_identity.reveal': 'warning',
+  'patient_scope.denied': 'warning',
   'roles.user_overrides': 'warning',
   'roles.create': 'warning',
   // Changing who may act at which hospital, or across all of them.

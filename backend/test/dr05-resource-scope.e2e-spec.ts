@@ -245,6 +245,10 @@ describe('standing ends access, and assignments do not outlive it', () => {
       from: { ...employment, doctorId: doctorRow.id, endedAt: null, userId: doctorRow.userId },
       toHospitalId: hospitalB,
       departmentId: undefined,
+      // The repository is driven directly here; the service supplies the
+      // acting administrator and the audit (XH-03), which this test is not about.
+      actorId: doctorRow.userId,
+      audit: () => Promise.resolve(),
     });
     // Sessions were revoked by the transfer; sign in again.
     await login('r5-a');
@@ -271,7 +275,11 @@ describe('standing ends access, and assignments do not outlive it', () => {
       where: { doctorId: doctorRow.id, endedAt: null },
       select: { id: true, hospitalId: true },
     });
-    await staffing.endEmployment({ ...employment, doctorId: doctorRow.id, endedAt: null, userId: doctorRow.userId });
+    await staffing.endEmployment(
+      { ...employment, doctorId: doctorRow.id, endedAt: null, userId: doctorRow.userId },
+      doctorRow.userId,
+      () => Promise.resolve(),
+    );
     // The session it held is revoked, and the account cannot open a new one.
     const response = await request(harness.server).get(`${PATIENTS}/${stranger}/vitals`).set(as('r5-b'));
     expect(response.status).toBe(401);

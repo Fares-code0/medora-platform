@@ -19,7 +19,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
-import { PatientScopeService, principalOf } from '../../../shared/authz';
+import { AdminScopeService, PatientScopeService, principalOf } from '../../../shared/authz';
 
 import { AppException } from '../../../common/errors/app.exception';
 import { CONVERSATION_KIND_TO_WIRE } from '../dto/messaging-enums';
@@ -33,6 +33,7 @@ import {
   ConversationRepository,
   type MembershipRow,
   type ParticipantRow,
+  STAFF_ROLE_CODES,
 } from '../repositories/conversation.repository';
 
 export interface PaginatedConversations {
@@ -48,6 +49,7 @@ export class ConversationService {
   constructor(
     private readonly conversations: ConversationRepository,
     private readonly scope: PatientScopeService,
+    private readonly admins: AdminScopeService,
   ) {}
 
   async list(userId: string, query: ConversationQuery): Promise<PaginatedConversations> {
@@ -70,13 +72,18 @@ export class ConversationService {
   }
 
   /**
-   * API §9.2. Every named participant must be a real, active account.
+   * API §9.2. Every named participant must be an active account with
+   * standing **in the caller's hospital** (checklist F1, AF-16): a doctor
+   * employed there, a staff member affiliated there, or that hospital's
+   * administrator. Patient accounts, Platform Admins, ended employments and
+   * other hospitals' staff are refused — a conversation across hospitals
+   * goes only through the consultation path (checklist E), never here.
    *
    * A thread created against a deleted or suspended id would be one
    * nobody can answer, and silently dropping the id would create a
-   * *different* thread from the one the caller asked for — so an
-   * unknown participant is a 422 naming the count rather than the ids,
-   * which would confirm which of them exist.
+   * *different* thread from the one the caller asked for — so a refused
+   * participant is a 422 naming the count rather than the ids, which
+   * would confirm which of them exist (or where they work).
    */
   async create(user: AuthenticatedUser, body: CreateConversationBody): Promise<{ id: string }> {
     const userId = user.id;
@@ -89,16 +96,14 @@ export class ConversationService {
       );
     }
 
-    const existing = await this.conversations.existingUsers(requested);
+    // The thread's hospital is the caller's; a caller with no unambiguous
+    // hospital standing has no colleague to name, so every participant is
+    // refused — the same answer, never an unscoped lookup.
+    const hospitalId = await this.callerHospitalOf(user);
+    const admitted =
+      hospitalId === null ? [] : await this.conversations.usersWithStandingAt(requested, hospitalId);
 
-    if (existing.length !== requested.length) {
-      // The count, never the ids: naming which of them resolved would
-      // confirm which accounts exist to a caller guessing at uuids.
-      throw AppException.validation(
-        { participantIds: ['One or more participants could not be found'] },
-        'One or more participants could not be found',
-      );
-    }
+    if (admitted.length !== requested.length) throw participantsNotFound();
 
     // A thread *about* a patient is that patient's PHI at a hospital
     // (F-01, F-06): only a caller who reaches the patient may tag one, and
@@ -106,6 +111,11 @@ export class ConversationService {
     // gets the same 404 a missing patient produces.
     const chart =
       body.patientId === undefined ? undefined : await this.scope.reachAt(principalOf(user), body.patientId);
+
+    // The reach hospital is the doctor's clinical hospital, so this holds by
+    // construction; checked so that the members of a patient-tagged thread
+    // can never stand at a hospital other than the patient's record.
+    if (chart !== undefined && chart.hospitalId !== hospitalId) throw participantsNotFound();
 
     const id = await this.conversations.create({
       authorId: userId,
@@ -115,6 +125,22 @@ export class ConversationService {
     });
 
     return { id };
+  }
+
+  /**
+   * The hospital the caller acts for, resolved the way the rest of the
+   * request is scoped: a doctor's clinical hospital, a staff member's one
+   * active affiliation, a Hospital Admin's assignment. `null` for anyone
+   * else — a Platform Admin, an unmapped administrator, a patient.
+   */
+  private async callerHospitalOf(user: AuthenticatedUser): Promise<string | null> {
+    if (user.role === 'doctor') return this.scope.clinicalHospitalOf(principalOf(user));
+    if (STAFF_ROLE_CODES.has(user.role)) return this.conversations.staffHospitalOf(user.id);
+    if (user.role === 'admin') {
+      const scope = await this.admins.scopeOf(user);
+      return scope.kind === 'hospital' ? scope.hospitalId : null;
+    }
+    return null;
   }
 
   /** The membership row, or 404 — every thread route starts here. */
@@ -144,6 +170,17 @@ export class ConversationService {
 
     if (moved === 0) throw AppException.notFound('Conversation not found');
   }
+}
+
+/**
+ * The count, never the ids: naming which of them resolved would confirm
+ * which accounts exist — or where they work — to a caller guessing at uuids.
+ */
+function participantsNotFound(): AppException {
+  return AppException.validation(
+    { participantIds: ['One or more participants could not be found'] },
+    'One or more participants could not be found',
+  );
 }
 
 function lastAuthorIs(row: ParticipantRow, userId: string): boolean {

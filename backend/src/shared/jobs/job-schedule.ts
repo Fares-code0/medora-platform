@@ -13,8 +13,9 @@
  * drifts apart across replicas: three instances started a minute apart
  * run the same sweep three times a quarter-hour instead of once. Anchor
  * the grid at the Unix epoch and every instance computes the *same*
- * instant for the same schedule, which is what makes the leader election
- * a safety net rather than the only thing preventing duplicates.
+ * instant for the same schedule, so replicas agree on *when* a sweep is
+ * due. Preventing duplicate work is the driver's job: the BullMQ scheduler
+ * for the Redis driver, and idempotent, row-claiming jobs for the inline one.
  */
 
 import type { JobSchedule } from './job.types';

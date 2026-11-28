@@ -12,11 +12,11 @@
  * A `backups` row is not a backup. It carries `storage_ref` — a pointer
  * into object storage — and `size_mb`, the size of the artifact it points
  * at. Producing that artifact needs two things this milestone does not
- * own: somewhere to put it (**M25**, whose `FILE_STORAGE` port rejects
- * with 503 today, deliberately, so that an id is never handed back for
- * bytes that do not exist) and something to run a database dump outside
- * a request (**M30.2**, the scheduled-job registry, where the roadmap
- * already lists "backup trigger").
+ * own: somewhere to put it (**M25**, now bound to the S3 adapter, so the
+ * store exists) and something that produces the artifact: a database dump
+ * taken outside a request, uploaded and recorded. Neither the dump nor the
+ * upload exists yet. The scheduled-job registry (**M30.2**) exists and is
+ * where the roadmap already lists "backup trigger".
  *
  * Writing the row without the artifact is the one failure mode that
  * matters here. An administrator reads this panel at exactly one moment —
@@ -53,7 +53,7 @@ export class BackupService {
     return (await this.settings.backups(BACKUP_PAGE)).map(toView);
   }
 
-  /** §19.6 — manual backup. Blocked on M25 + M30.2; see the header. */
+  /** §19.6 — manual backup. Blocked on the artifact pipeline; see the header. */
   create(): never {
     throw new AppException(501, {
       message:
@@ -63,7 +63,7 @@ export class BackupService {
     });
   }
 
-  /** §19.6 — restore. Blocked on the same two, plus an unstated policy. */
+  /** §19.6 — restore. Blocked on the same artifact pipeline, plus an unstated policy. */
   restore(): never {
     throw new AppException(501, {
       message:

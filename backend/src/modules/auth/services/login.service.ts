@@ -176,8 +176,13 @@ export class LoginService {
     await this.assertMaySignIn(user, context, email);
 
     // A successful password check clears the counter (on success only;
-    // see `CredentialLockoutService.clear`).
-    await this.lockout.clear(user.id);
+    // see `CredentialLockoutService.clear`) — when the password is the
+    // whole sign-in. For a 2FA account it is only the first half: the
+    // counter also holds second-factor failures, and clearing it here would
+    // let anybody holding the password reset the code-guess budget at will
+    // (AUTH-07, audit B-09). That account's counter is cleared by
+    // `StepUpService` once the second factor is proved.
+    if (!user.twoFactorEnabled) await this.lockout.clear(user.id);
 
     // ADR-035 §7 — an administrator signs in with a second factor or not
     // at all.

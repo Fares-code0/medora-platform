@@ -7,6 +7,7 @@ import { PrismaService } from '../../../shared/database';
 import { IdentityRepository } from '../repositories/identity.repository';
 
 import { AuthMailService } from './auth-mail.service';
+import { CredentialLockoutService } from './credential-lockout.service';
 import { LoginService, type LoginSuccess, type RequestContext } from './login.service';
 import {
   OtpChallengeService,
@@ -55,6 +56,7 @@ export class StepUpService {
     private readonly recoveryCodes: RecoveryCodeService,
     private readonly disclosureAudit: TransactionalAuditWriter,
     private readonly mail: AuthMailService,
+    private readonly lockout: CredentialLockoutService,
     @Inject(ACTIVITY_RECORDER) private readonly activity: ActivityRecorder,
   ) {}
 
@@ -68,21 +70,22 @@ export class StepUpService {
     // them all the same 401, so nothing here distinguishes them.
     if (challenge === null) throw otpInvalid();
 
+    // AUTH-07: the guess is reserved from the account's budget before the
+    // code is looked at, so a locked account refuses even a correct code
+    // and parallel guesses cannot overrun the limit.
+    await this.reserveAttempt(challenge.userId);
+
     const secret = await this.twoFactor.secretFor(challenge.userId);
     if (secret === null || !this.totp.verify(secret, code)) {
-      const spent = await this.challenges.countFailure(challenge.challengeId);
-      // The bound is the same `loginAttemptLimit` the password lockout
-      // uses. Reusing it is deliberate: it is the platform's answer to
-      // "how many tries", and a second number would be a second thing an
-      // administrator has to find (ADR-025).
-      if (spent) throw AppException.rateLimited(OTP_CHALLENGE_TTL_SECONDS, 'Too many attempts');
-      throw otpInvalid();
+      await this.refuseWrongCode(challenge.userId, challenge.challengeId);
     }
 
     // Claimed before the session is created, and the claim decides. Two
     // verifications of one challenge arriving together must not both
     // mint a session.
     if (!(await this.challenges.consume(challenge.challengeId))) throw otpInvalid();
+    // The second factor is proved: only now is the account's budget reset.
+    await this.lockout.clear(challenge.userId);
 
     const user = await this.identity.findById(challenge.userId);
     // Deactivated between the password check and the code. Rare, and the
@@ -104,7 +107,8 @@ export class StepUpService {
    * already been proved at `/auth/login`, so a recovery code replaces the
    * **second** factor and never the first. The challenge's attempt bound is
    * the same one the six-digit path spends, so the two paths share one
-   * guess budget per challenge.
+   * guess budget per challenge — and, since AUTH-07, one per account: both
+   * reserve from `CredentialLockoutService.reserveSecondFactorAttempt`.
    *
    * ## Atomic and single-use
    *
@@ -143,6 +147,10 @@ export class StepUpService {
     // while the challenge was open is refused without spending one of its
     // recovery codes (nor the challenge).
     await this.login.assertMaySignIn(user, context);
+
+    // AUTH-07: a recovery code spends from the same account budget as an
+    // authenticator code, reserved the same way.
+    await this.reserveAttempt(user.id);
 
     const outcome = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT user_id FROM user_credentials WHERE user_id = ${user.id}::uuid FOR UPDATE`;
@@ -186,11 +194,9 @@ export class StepUpService {
     });
 
     if (outcome.kind === 'spent') throw otpInvalid();
-    if (outcome.kind === 'no-match') {
-      const spent = await this.challenges.countFailure(challenge.challengeId);
-      if (spent) throw AppException.rateLimited(OTP_CHALLENGE_TTL_SECONDS, 'Too many attempts');
-      throw otpInvalid();
-    }
+    if (outcome.kind === 'no-match') await this.refuseWrongCode(user.id, challenge.challengeId);
+
+    await this.lockout.clear(user.id);
 
     const session = await this.login.establishSession(user, challenge.rememberMe, context);
 
@@ -209,6 +215,29 @@ export class StepUpService {
     }
 
     return session;
+  }
+
+  /** 429 while the account is locked; otherwise one guess is reserved. */
+  private async reserveAttempt(userId: string): Promise<void> {
+    const lockedFor = await this.lockout.reserveSecondFactorAttempt(userId);
+    if (lockedFor > 0) throw AppException.rateLimited(lockedFor, 'Too many failed attempts');
+  }
+
+  /**
+   * A wrong second factor, after its guess was reserved. Always throws.
+   *
+   * The account's lock (the reserved guess was the last one) answers with
+   * the lock's remaining time; a challenge out of its own attempts answers
+   * as before. The per-challenge bound is the same `loginAttemptLimit` the
+   * password lockout uses (ADR-025) and is kept: it is now subsumed by the
+   * account budget, but it still makes one challenge single-purpose.
+   */
+  private async refuseWrongCode(userId: string, challengeId: string): Promise<never> {
+    const spent = await this.challenges.countFailure(challengeId);
+    const lockedFor = await this.lockout.lockedForSeconds(userId);
+    if (lockedFor > 0) throw AppException.rateLimited(lockedFor, 'Too many failed attempts');
+    if (spent) throw AppException.rateLimited(OTP_CHALLENGE_TTL_SECONDS, 'Too many attempts');
+    throw otpInvalid();
   }
 
   /**

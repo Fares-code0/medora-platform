@@ -79,12 +79,10 @@ export class SelfProfileController {
   /**
    * API §3.3 — the profile photo, multipart.
    *
-   * **503 today**, and honestly so: `FILE_STORAGE` is
-   * `UnconfiguredFileStorage` until M25.2 wires the adapter, and that
-   * stub rejects rather than pretending to store. The route, the
-   * multipart parsing and the type and size checks are real — M9.2
-   * anticipated exactly this ("stub storage acceptable until M25; same
-   * interface").
+   * `FILE_STORAGE` is bound to the S3 adapter (M25.2), so the photo is
+   * stored; a storage outage still answers 503 rather than pretending to
+   * store. The route, the multipart parsing and the type and size checks
+   * sit in front of the same port M9.2 defined ("same interface").
    *
    * `FileInterceptor` rather than a body schema: the payload is bytes,
    * and Zod has nothing to say about them. The field name is fixed at

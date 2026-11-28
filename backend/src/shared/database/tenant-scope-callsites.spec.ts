@@ -41,7 +41,20 @@ const REVIEWED: Readonly<Record<string, string>> = {
   'modules/doctors/repositories/admin-doctor.repository.ts': 'per-doctor counts only (patients, appointments) for the doctor directory',
   'modules/controlled-access/services/controlled-access.service.ts':
     'whether the target hospital holds the record a grant or request names (ids only), and its admins to notify',
+  'modules/doctors/discovery/discovery.repository.ts':
+    "authenticated patient discovery across hospitals: public columns only, and a published slot's occupancy as existence only (DSC-01)",
+  'modules/messaging/repositories/conversation.repository.ts':
+    "the caller's own staff affiliation, deciding which hospital a new thread belongs to (MSG-01)",
+  'modules/hospitals/repositories/hospital-staffing.repository.ts':
+    "revoking a departing user's own grants and requests inside the authorized staffing transaction; narrows access only (XH-03)",
 };
+
+/**
+ * A raw write of `app.scope` is a scope selection too — and one the
+ * helper-name pattern below would not see — so it is matched as well.
+ */
+const SELECTS_SCOPE =
+  /\b(runAsSystem|runWithTenantContext|setTenantContext)\(|set_config\(\s*['"]app\.scope['"]|\bSET\s+(LOCAL\s+)?app\.scope\b/i;
 
 function sources(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
@@ -52,10 +65,27 @@ function sources(directory: string): string[] {
 }
 
 describe('RLS scope selection (F-15)', () => {
+  it('recognises every way of selecting a scope, raw SQL included', () => {
+    for (const text of [
+      'runAsSystem(() => x)',
+      'runWithTenantContext(ctx, work)',
+      'setTenantContext(ctx)',
+      "SELECT set_config('app.scope', 'system', true)",
+      'SELECT set_config("app.scope", $1, true)',
+      "SET LOCAL app.scope = 'system'",
+      'set app.scope to system',
+    ]) {
+      expect(SELECTS_SCOPE.test(text), text).toBe(true);
+    }
+    for (const text of ["SELECT current_setting('app.scope', true)", "set_config('app.hospital_id', $1, true)"]) {
+      expect(SELECTS_SCOPE.test(text), text).toBe(false);
+    }
+  });
+
   it('chooses `system` or an explicit context only at reviewed call sites', () => {
     const found = sources(SRC)
       .filter((path) => !path.endsWith('shared/database/tenant-context.ts') && !path.endsWith('shared/database/index.ts'))
-      .filter((path) => /\b(runAsSystem|runWithTenantContext|setTenantContext)\(/.test(readFileSync(path, 'utf8')))
+      .filter((path) => SELECTS_SCOPE.test(readFileSync(path, 'utf8')))
       .map((path) => relative(SRC, path).split('\\').join('/'))
       .sort();
 

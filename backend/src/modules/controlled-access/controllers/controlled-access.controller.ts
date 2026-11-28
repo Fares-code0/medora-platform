@@ -3,26 +3,37 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user';
 import { CurrentUser } from '../../../common/auth/current-user.decorator';
 import { zodBody, zodQuery } from '../../../common/validation/zod-validation.pipe';
-import { Authenticated, PhiRead } from '../../../shared/authz';
+import { Authenticated, HospitalScope, NotPhi, PhiRead, Roles } from '../../../shared/authz';
 import {
+  approveExceptionalAccessSchema,
   approveInformationRequestSchema,
   categoryQuerySchema,
   createInformationRequestSchema,
   decisionSchema,
+  grantQueueQuerySchema,
+  listQuerySchema,
   requestExceptionalAccessSchema,
+  requestQueueQuerySchema,
   reviewSchema,
+  type ApproveExceptionalAccessInput,
   type ApproveInformationRequestInput,
   type CategoryQuery,
   type CreateInformationRequestInput,
   type DecisionInput,
+  type GrantQueueQuery,
+  type ListQuery,
   type RequestExceptionalAccessInput,
+  type RequestQueueQuery,
   type ReviewInput,
 } from '../dto/controlled-access.schema';
 import {
   ControlledAccessService,
   type DataView,
+  type GrantListItem,
   type GrantView,
+  type InformationRequestListItem,
   type InformationRequestView,
+  type PageView,
 } from '../services/controlled-access.service';
 
 /**
@@ -34,6 +45,12 @@ import {
  * `ControlledAccessService` (clinical standing, administrative scope, the
  * owning hospital's administrator, never self-approval). No permission-matrix
  * cell or override can grant it.
+ *
+ * The lists (XH-05) return metadata only — ids, kind, status, categories,
+ * the requester's id and name, times; never the patient, the reason or any
+ * clinical row — so they are `@NotPhi`. `…/mine` is the caller's own rows;
+ * `…/queue` is the Hospital Admin's own hospital (its scope, not a
+ * parameter), refused to a Platform Admin, who decides nothing here (F-11).
  */
 @Controller()
 export class ControlledAccessController {
@@ -49,12 +66,33 @@ export class ControlledAccessController {
   }
 
   @Authenticated()
+  @NotPhi('the caller’s own grants: ids, kind, status, categories and times, no patient or clinical data')
+  @Get('exceptional-access/mine')
+  mine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query(zodQuery(listQuerySchema)) query: ListQuery,
+  ): Promise<PageView<GrantListItem>> {
+    return this.access.myGrants(user, query);
+  }
+
+  @Roles('admin')
+  @HospitalScope()
+  @NotPhi('grant queue metadata for the admin’s own hospital: no patient, reason or clinical data')
+  @Get('exceptional-access/queue')
+  queue(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query(zodQuery(grantQueueQuerySchema)) query: GrantQueueQuery,
+  ): Promise<PageView<GrantListItem>> {
+    return this.access.grantQueue(user, query);
+  }
+
+  @Authenticated()
   @Post('exceptional-access/:grantId/approve')
   @HttpCode(HttpStatus.OK)
   approve(
     @CurrentUser() user: AuthenticatedUser,
     @Param('grantId') grantId: string,
-    @Body(zodBody(decisionSchema)) body: DecisionInput,
+    @Body(zodBody(approveExceptionalAccessSchema)) body: ApproveExceptionalAccessInput,
   ): Promise<GrantView> {
     return this.access.approveExceptional(user, grantId, body);
   }
@@ -106,6 +144,27 @@ export class ControlledAccessController {
     @Body(zodBody(createInformationRequestSchema)) body: CreateInformationRequestInput,
   ): Promise<InformationRequestView> {
     return this.access.createInformationRequest(user, body);
+  }
+
+  @Authenticated()
+  @NotPhi('the caller’s own information requests: ids, status, items and times, no patient or clinical data')
+  @Get('information-requests/mine')
+  myRequests(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query(zodQuery(listQuerySchema)) query: ListQuery,
+  ): Promise<PageView<InformationRequestListItem>> {
+    return this.access.myRequests(user, query);
+  }
+
+  @Roles('admin')
+  @HospitalScope()
+  @NotPhi('information-request queue metadata for the admin’s own hospital: no patient, reason or clinical data')
+  @Get('information-requests/queue')
+  requestQueue(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query(zodQuery(requestQueueQuerySchema)) query: RequestQueueQuery,
+  ): Promise<PageView<InformationRequestListItem>> {
+    return this.access.requestQueue(user, query);
   }
 
   @Authenticated()

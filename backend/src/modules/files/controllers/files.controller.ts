@@ -34,9 +34,9 @@ import { FilesService } from '../services/files.service';
  * ## `FileInterceptor`, with the field name fixed
  *
  * The payload is bytes; the field is `file` and a client cannot choose
- * it. `kind` rides in the multipart body as a text field, which is why
- * it is validated separately rather than through `@Body(zodBody(...))`
- * over the whole request — multer hands text fields back as strings, and
+ * it. `kind` rides in the multipart body as a text field, so the body
+ * schema (`zodBody(uploadFileSchema)`) covers those text fields only and
+ * never the file part — multer hands text fields back as strings, and
  * the one that matters is the one that decides the size and type rules.
  */
 @Authenticated()

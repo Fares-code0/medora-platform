@@ -154,7 +154,13 @@ export class OtpChallengeService {
     };
   }
 
-  /** Counts a wrong guess. Returns true once the challenge is spent. */
+  /**
+   * Counts a wrong guess. Returns true once the challenge is spent.
+   *
+   * Per challenge only. The per-account bound that survives a new
+   * challenge is `CredentialLockoutService.reserveSecondFactorAttempt`
+   * (AUTH-07), which the step-up spends before this is reached.
+   */
   async countFailure(challengeId: string): Promise<boolean> {
     const [{ loginAttemptLimit }, row] = await Promise.all([
       this.policy.current(),

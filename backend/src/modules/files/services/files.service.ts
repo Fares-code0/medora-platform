@@ -31,8 +31,9 @@
  * marked **infected**, which is worse than no gate — it is a gate that
  * reports success on the one file it existed to stop.
  *
- * Nothing sets `scan_result` yet: the scanner runs on the queue, and the
- * queue is **M30.2** ("malware scans (M25.3)"). So every freshly
+ * Nothing sets `scan_result` yet: the scanner runs from the job registry
+ * (**M30.2**, `files.jobs.ts`), and the only engine bound scans nothing
+ * (`UnconfiguredMalwareScanner`). So every freshly
  * uploaded file is undownloadable, which is the correct behaviour of a
  * gate whose scanner has not run — and is asserted as such rather than
  * worked around.

@@ -162,13 +162,10 @@ export class SelfProfileService {
   /**
    * API §3.3 — the profile photo.
    *
-   * **Answers 503 today, by design.** `FILE_STORAGE` is still
-   * `UnconfiguredFileStorage` until M25.2 wires the S3 adapter, and that
-   * stub rejects rather than resolving — "a `put()` that resolved
+   * `FILE_STORAGE` is bound to the S3 adapter (M25.2). A storage
+   * failure rejects rather than resolving — "a `put()` that resolved
    * without writing anything would hand the caller a file id for bytes
-   * that do not exist". The route is real, the validation is real, and
-   * the adapter is the part that is absent; M9.2 anticipated exactly
-   * this ("stub storage acceptable until M25; same interface").
+   * that do not exist" — so an outage answers 503, never a dangling id.
    *
    * The type and size checks run **before** the storage call, so they
    * are the answer a client gets today rather than being masked by the
